@@ -7,8 +7,12 @@ export default function ConversationChangeContext({ active, intent, target, reco
   const status = changeContextStatus(intent);
   return (
     <div className="team-change-context" role="note" aria-label={t('work.changeContext.label')} data-state={status}>
-      <strong>{t(`work.changeContext.${status}.title`)}</strong>
-      <p>{t(`work.changeContext.${status}.body`)}</p>
+      {!intent ? <details className="team-change-context-help">
+        <summary>{t(`work.changeContext.${status}.title`)}</summary>
+        <p>{t(`work.changeContext.${status}.body`)}</p>
+        {active && !target ? <small>{t('work.changeContext.noBoundary')}</small> : null}
+      </details> : <><strong>{t(`work.changeContext.${status}.title`)}</strong>
+        <p>{t(`work.changeContext.${status}.body`)}</p></>}
       {!intent && recordedChange?.event === 'change_request_committed'
         && recordedChange.details?.intent_status === 'committed' ? (
           <small>{t('work.changeContext.committed.body')}</small>
@@ -17,7 +21,7 @@ export default function ConversationChangeContext({ active, intent, target, reco
         <Button type="button" variant="secondary" disabled={busy} busy={busy} onClick={onBegin}>
           {t('work.changeContext.begin')}
         </Button>
-      ) : <small>{t('work.changeContext.noBoundary')}</small> : null}
+      ) : null : null}
     </div>
   );
 }

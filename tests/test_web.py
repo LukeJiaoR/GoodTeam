@@ -4739,7 +4739,8 @@ def test_decide_approval_rejects_gate_that_is_not_actionable(tmp_path):
         raise AssertionError("Expected blocked release approval to fail")
 
 
-def test_retry_blocked_workflow_reruns_workers_to_release_gate(tmp_path, monkeypatch):
+@pytest.mark.parametrize("blocked_node", ["blocked", "failure_triage"])
+def test_retry_blocked_workflow_reruns_workers_to_release_gate(tmp_path, monkeypatch, blocked_node):
     project = tmp_path / "contentops"
     for repo in ["docs", "backend", "frontend"]:
         (project / repo).mkdir(parents=True)
@@ -4764,7 +4765,7 @@ def test_retry_blocked_workflow_reruns_workers_to_release_gate(tmp_path, monkeyp
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
     state.current_node = "implementation"
-    state.next_node = "blocked"
+    state.next_node = blocked_node
     state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved", "release": "pending"})
     state.blockers = ["implementation worker failed: Codex CLI exited with code 1."]
     StateStore(tmp_path).write_project_current(state)
@@ -4845,10 +4846,11 @@ def test_retry_blocked_workflow_refreshes_role_models_before_dispatch(tmp_path, 
     assert payload["role_models"]["qa"]["primary"] == "codex:gpt-5.6-sol"
 
 
-def test_retry_blocked_workflow_rejects_non_blocked_run(tmp_path):
+@pytest.mark.parametrize("current_node,next_node", [("release_review_gate", "await_release_approval"), ("implementation", "failure_triage")])
+def test_retry_blocked_workflow_rejects_non_blocked_run(tmp_path, current_node, next_node):
     state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
-    state.current_node = "release_review_gate"
-    state.next_node = "await_release_approval"
+    state.current_node = current_node
+    state.next_node = next_node
     StateStore(tmp_path).write_project_current(state)
 
     try:

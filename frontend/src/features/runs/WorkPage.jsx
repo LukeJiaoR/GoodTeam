@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import WorkflowCanvas from '../../components/WorkflowCanvas';
 import Button from '../../components/ui/Button';
@@ -24,6 +24,9 @@ import {
   WORK_VIEWS,
 } from './workspace/presentationUtils';
 import WorkTaskDetailDialog, { findMatchingReview } from './workspace/WorkTaskDetailDialog';
+
+const ReviewPage = lazy(() => import('../reviews/ReviewPage'));
+const AssistantRuntimePanel = lazy(() => import('../team/AssistantRuntimePanel'));
 
 const VIEWS = WORK_VIEWS;
 function usePrefersReducedMotion() {
@@ -714,7 +717,7 @@ function DeliveryView({ data, projectKey, t }) {
 
 export default function WorkPage() {
   const { projectKey = '', runId = '' } = useParams();
-  const { language, t, workDrawer = null } = useOutletContext();
+  const { language, t } = useOutletContext();
   const reducedMotion = usePrefersReducedMotion();
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
@@ -723,6 +726,7 @@ export default function WorkPage() {
   const legacyView = VIEWS.includes(viewParam) ? viewParam : 'plan';
   const { data, error, refresh, status } = useProjectState(projectKey);
   const [mutationError, setMutationError] = useState(null);
+  const [panel, setPanel] = useState(null);
   const [busy, setBusy] = useState('');
   const [runHistory, setRunHistory] = useState([]);
   const [historyStatus, setHistoryStatus] = useState('loading');
@@ -1028,7 +1032,7 @@ export default function WorkPage() {
     onAssistantAction: handleAssistantAction,
     contextTitle: runId ? contextTitle : '',
     onClearContext: () => selectTask(''),
-    taskNavigation: <TaskNavigation runs={runHistory} selectedRunId={runId} onSelect={selectTask}
+    taskNavigation: <TaskNavigation currentRunId={data.state?.run_id} currentBlocked={data.team_workspace?.attention_request?.kind === 'blocker' && !(data.team_workspace?.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working')} runs={runHistory} selectedRunId={runId} onSelect={selectTask}
       assistant={data.project_assistant} busy={conversation.busy} onAction={handleAssistantAction} t={t} />,
   };
 
@@ -1045,65 +1049,60 @@ export default function WorkPage() {
         reducedMotion={reducedMotion}
         t={t}
       />
-      <header
-        aria-hidden={workDrawer ? !workDrawer.open : undefined}
-        className="product-page-header work-context-drawer"
-        data-open={workDrawer ? String(workDrawer.open) : 'true'}
-        id="work-context-drawer"
-        inert={workDrawer && !workDrawer.open ? '' : undefined}
-        onBlurCapture={workDrawer?.onLeave}
-        onFocusCapture={workDrawer?.onEnter}
-        onPointerEnter={workDrawer?.onEnter}
-        onPointerLeave={workDrawer?.onLeave}
-      >
-        <div className="product-work-page__identity"><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
-        <div className="product-page-header__meta">
-          {hasRunContext ? (
-            <section className={`work-run-context${showRunSelector ? ' work-run-context--selectable' : ''}`} aria-label={t('work.manager.currentMission')}>
-              <div className="work-run-context__mission">
-                <span>{t('work.manager.currentMission')}</span>
-                <strong className="work-run-title" title={contextTitle}>{contextTitle}</strong>
-              </div>
-              <div className="work-run-context__facts">
-                <StatusBadge tone={tone(contextStep?.status || contextMission?.status || 'active')}>
-                  {contextStep
-                    ? statusLabel(contextStep, t)
-                    : contextMission
-                      ? statusText(contextMission.status, t)
-                      : t('work.active')}
-                </StatusBadge>
-                {contextStep ? (
-                  <span className="work-run-context__fact">
-                    <small>{t('work.context.currentStage')}</small>
-                    <strong>{stepTitle(contextStep, t)}</strong>
-                  </span>
-                ) : null}
-                {workflowSteps.length ? (
-                  <span className="work-run-context__fact">
-                    <small>{t('work.context.progressLabel')}</small>
-                    <strong>{t('work.context.progress', { complete: completedStepCount, total: workflowSteps.length })}</strong>
-                  </span>
-                ) : null}
-                {contextUpdatedLabel ? (
-                  <time className="work-run-context__updated" dateTime={contextUpdatedAt}>
-                    {t('work.context.updated', { time: contextUpdatedLabel })}
-                  </time>
-                ) : null}
-              </div>
-              {runSelector}
-            </section>
-          ) : <StatusBadge>{t('work.noRun')}</StatusBadge>}
-          <div className="work-run-context__actions">
-            {!hasRunContext ? runSelector : null}
+      <details className="work-context-disclosure">
+        <summary>{t('work.context.taskAndHistory')}</summary>
+        <header className="product-page-header work-context-drawer">
+          <div className="product-work-page__identity"><p className="product-eyebrow">{projectName}</p><h1>{t('work.title')}</h1><p>{t('work.description')}</p></div>
+          <div className="product-page-header__meta">
+            {hasRunContext ? (
+              <section className={`work-run-context${showRunSelector ? ' work-run-context--selectable' : ''}`} aria-label={t('work.manager.currentMission')}>
+                <div className="work-run-context__mission">
+                  <span>{t('work.manager.currentMission')}</span>
+                  <strong className="work-run-title" title={contextTitle}>{contextTitle}</strong>
+                </div>
+                <div className="work-run-context__facts">
+                  <StatusBadge tone={tone(contextStep?.status || contextMission?.status || 'active')}>
+                    {contextStep
+                      ? statusLabel(contextStep, t)
+                      : contextMission
+                        ? statusText(contextMission.status, t)
+                        : t('work.active')}
+                  </StatusBadge>
+                  {contextStep ? (
+                    <span className="work-run-context__fact">
+                      <small>{t('work.context.currentStage')}</small>
+                      <strong>{stepTitle(contextStep, t)}</strong>
+                    </span>
+                  ) : null}
+                  {workflowSteps.length ? (
+                    <span className="work-run-context__fact">
+                      <small>{t('work.context.progressLabel')}</small>
+                      <strong>{t('work.context.progress', { complete: completedStepCount, total: workflowSteps.length })}</strong>
+                    </span>
+                  ) : null}
+                  {contextUpdatedLabel ? (
+                    <time className="work-run-context__updated" dateTime={contextUpdatedAt}>
+                      {t('work.context.updated', { time: contextUpdatedLabel })}
+                    </time>
+                  ) : null}
+                </div>
+                {runSelector}
+              </section>
+            ) : <StatusBadge>{t('work.noRun')}</StatusBadge>}
+            <div className="work-run-context__actions">
+              {!hasRunContext ? runSelector : null}
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
+      </details>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
       {hasProjectedWorkspace ? (
         <>
           {isHistorical ? <HistoricalRunSummary language={language} detail={historicalDetail} summary={selectedSummary} projectKey={projectKey} t={t} /> : null}
           <TeamWorkspace
+            onConfigureRuntime={() => setPanel({ type: 'runtime' })}
+            onOpenReview={(approval) => setPanel({ type: 'review', approval, runId: currentRunId })}
             {...conversationProps}
             busy={busy}
             data={isHistorical || contextIsLoading ? historicalDetail || {
@@ -1135,6 +1134,7 @@ export default function WorkPage() {
         </>
       ) : !data?.active_run && !hasProjectedMission ? (
         <ManagerMissionEntry
+          draftKey={JSON.stringify([projectKey, currentRunId || 'new'])}
           busy={busy === 'start'}
           data={data}
           embedded={false}
@@ -1190,6 +1190,18 @@ export default function WorkPage() {
           {legacyView === 'delivery' ? <DeliveryView data={data} projectKey={projectKey} t={t} /> : null}
         </>
       )}
+      <Suspense fallback={<p role="status">{t('product.states.loading')}</p>}>
+      {panel?.type === 'runtime' ? <AssistantRuntimePanel
+        data={data} projectKey={projectKey} onClose={() => setPanel(null)} refresh={refresh} t={t} /> : null}
+      {panel?.type === 'review' && !isHistorical ? <ReviewPage embedded
+        selectedReviewId={panel.approval} expectedRunId={panel.runId}
+        onClose={() => setPanel(null)} onUpdated={refresh}
+        onChangeDiscussion={async () => {
+          await refresh();
+          setPanel(null);
+          requestAnimationFrame(() => document.querySelector('.team-manager-dock textarea')?.focus());
+        }} /> : null}
+      </Suspense>
     </main>
   );
 }

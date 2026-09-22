@@ -89,7 +89,7 @@ function briefRiskText(risk, t) {
   return briefStatusLabel(risk.status || risk.severity, t);
 }
 
-function ManagerApprovalBrief({ brief, t }) {
+function FullManagerApprovalBrief({ brief, t }) {
   const decision = brief.decision || {};
   const artifact = decision.artifact || {};
   const scope = brief.scope || {};
@@ -240,4 +240,27 @@ function ManagerApprovalBrief({ brief, t }) {
 }
 
 
-export default ManagerApprovalBrief;
+export default function ManagerApprovalBrief({ brief, t, compact = false }) {
+  if (!compact) return <FullManagerApprovalBrief brief={brief} t={t} />;
+  const risks = brief.risks || [];
+  const blockers = brief.mission_blockers || [];
+  const evidence = (brief.evidence || []).filter(item => ['ci', 'smoke', 'qa'].includes(item.kind));
+  const recommendation = brief.recommendation || {};
+  return <div className="approval-decision-summary">
+    <p className="approval-decision-summary__decision">{approvalBriefDecision(brief, t)}</p>
+    {risks.length || blockers.length ? <div className="approval-decision-summary__warning" role="note">
+      <strong>{t('work.approvalCard.risks', { count: risks.length + blockers.length })}</strong>
+      <p>{t('work.approvalCard.inspectFirst')}</p>
+      {blockers.length ? <ul>{blockers.map((item, index) => <li key={index}>{item}</li>)}</ul> : null}
+    </div> : null}
+    {evidence.length ? <ul className="approval-decision-summary__checks">{evidence.map((item, index) =>
+      <li key={index}><span>{briefEvidenceLabel(item, t)}</span><strong>{briefStatusLabel(item.status, t)}</strong></li>
+    )}</ul> : null}
+    <div className="approval-decision-summary__consequence"><strong>{t('work.manager.approvalBrief.afterApproval')}</strong><p>{approvalBriefConsequence(brief, t)}</p></div>
+    {recommendation.verdict ? <p className="approval-decision-summary__advice">{translated(t, `work.manager.approvalBrief.recommendations.${recommendation.verdict}`, recommendation.verdict)}{recommendation.confidence ? ` · ${t('work.manager.approvalBrief.confidence', { confidence: briefStatusLabel(recommendation.confidence, t) })}` : ''}</p> : null}
+    <details className="approval-decision-summary__details">
+      <summary>{t('work.approvalCard.details')}</summary>
+      <FullManagerApprovalBrief brief={brief} t={t} />
+    </details>
+  </div>;
+}

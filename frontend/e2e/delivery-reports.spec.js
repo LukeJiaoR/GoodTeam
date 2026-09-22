@@ -80,6 +80,7 @@ test('delivery: exact constraints, current reports and archived versions remain 
     const reports = page.getByRole('region', { name: 'Delivery reports', exact: true });
     await expect(reports).toContainText(unverified);
     await expect(reports).toContainText(finished);
+    await expect(reports).toContainText('Current task delivery');
     expect(reportReads).toHaveLength(0);
     const postsBeforeRead = [...requests];
     const read = page.waitForResponse((res) => res.request().method() === 'GET'
@@ -138,6 +139,7 @@ test('delivery: exact constraints, current reports and archived versions remain 
     await page.goto(`/projects/${fixture.key}/work/runs/${runId}`);
     await expect(page.getByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
     await page.getByRole('tab', { name: /Outcomes/ }).click();
+    await expect(reports).toContainText('Historical task delivery · read-only');
     await expect(reports).toContainText(finished);
     await expect(reports).toContainText(unverified);
     await reports.getByRole('button', { name: /handoff/i }).click();

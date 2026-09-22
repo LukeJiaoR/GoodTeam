@@ -1,0 +1,46 @@
+.workspace-panel {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(94vw, 78rem);
+  height: 100dvh;
+  max-width: 100vw;
+  max-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  color: var(--product-text);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: 20px 0 0 20px;
+  overflow: auto;
+}
+.workspace-panel::backdrop { background: rgb(15 23 42 / 38%); }
+.workspace-panel__header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--product-surface);
+  border-bottom: 1px solid var(--product-border);
+}
+.workspace-panel__header h2 { margin: 0; font-size: 1.05rem; }
+.workspace-panel__body { padding: 1.25rem; }
+.product-shell.product-shell--neumorphic .workspace-panel .product-review-page { width: 100%; padding: 0; margin: 0; }
+.product-shell.product-shell--neumorphic .workspace-panel .review-workspace { grid-template-columns: minmax(0, 1.6fr) minmax(17rem, 1fr); }
+.workspace-panel--compact { inset: 0; margin: auto; width: min(90vw, 32rem); height: fit-content; border-radius: 16px; }
+@media (max-width: 900px) {
+  .workspace-panel { width: 100vw; border-radius: 0; }
+  .product-shell.product-shell--neumorphic .workspace-panel .review-workspace { grid-template-columns: minmax(0, 1fr); }
+  .workspace-panel__body { padding: 1rem; }
+  .workspace-panel--compact { width: 94vw; border-radius: 16px; }
+}
+
+.product-shell.product-shell--neumorphic .workspace-panel .review-inspector {
+  grid-column: auto;
+  position: static;
+  max-height: none;
+  overflow: visible;
+}

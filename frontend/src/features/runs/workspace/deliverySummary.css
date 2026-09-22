@@ -7,4 +7,10 @@
 .delivery-report-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .delivery-report button { display: inline-flex; align-items: center; gap: 6px; text-align: left; }
 .delivery-version { display: block; font-size: 11px; overflow-wrap: anywhere; margin-top: 4px; }
-.delivery-report-content { max-height: 420px; overflow: auto; margin-top: 12px; }
+.delivery-report-content { overflow-wrap: anywhere; margin-top: 12px; }
+
+.delivery-summary h4 { margin: 16px 0 4px; font-size: 12px; font-weight: 650; }
+.delivery-summary .delivery-scope { margin-top: 0; color: var(--product-text-muted); font-size: 12px; }
+.delivery-evidence { margin-top: 8px; font-size: 12px; }
+.delivery-evidence summary { cursor: pointer; }
+.delivery-evidence summary:focus-visible { outline: 2px solid var(--product-accent); outline-offset: 3px; }

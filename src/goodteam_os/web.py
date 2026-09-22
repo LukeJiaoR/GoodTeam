@@ -4696,7 +4696,10 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
         from goodteam_os.workflow_revisions import retry_fix_workflow
 
         return retry_fix_workflow(state, workspace)
-    if state.current_node != "implementation" or state.next_node != "blocked":
+    retryable_implementation = state.next_node == "blocked" or (
+        state.next_node == "failure_triage" and bool(state.blockers)
+    )
+    if state.current_node != "implementation" or not retryable_implementation:
         raise ValueError(f"Current run is not blocked at implementation: {key}")
 
     before_node = state.next_node

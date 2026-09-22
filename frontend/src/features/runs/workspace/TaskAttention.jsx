@@ -1,3 +1,4 @@
+import { blockerSummary } from './blockerPresentation';
 import { useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -10,6 +11,9 @@ import PreparationFacts from './PreparationFacts';
 
 export function TaskAttention({
   attention,
+  jobs = [],
+  activeJobs = [],
+  error,
   busy,
   onConfirmChangeIntent,
   onDecide,
@@ -22,6 +26,33 @@ export function TaskAttention({
 }) {
   const intent = attention?.intent_commit || null;
   if (!attention) return null;
+  const failureJobs = jobs.filter((job) => (attention.refs || []).includes(job.id) && job.status === 'failed');
+  if (attention.kind === 'blocker' && activeJobs.length) return (
+    <section className="task-blocker" aria-label={t('work.blocker.executing')}>
+      <h3>{t('work.blocker.executing')}</h3>
+      <p role="status">{t('work.blocker.workerActive')}</p>
+      <ul>{activeJobs.map(job => <li key={job.id}>
+        <strong>{translated(t, `work.plan.role.${job.role}`, job.role)}</strong>
+        <p>{t('work.blocker.lastHeartbeat')} {new Date(job.heartbeat_at || job.updated_at).toLocaleString()}</p>
+      </li>)}</ul>
+      <p>{t('work.blocker.heartbeatOnly')}</p>
+      <details><summary>{t('work.blocker.previousFailure')}</summary><pre>{attention.reason}</pre></details>
+      <Button disabled>{t('work.blocker.executing')}</Button>
+    </section>
+  );
+  if (attention.kind === 'blocker') return (
+    <section className="task-blocker" aria-label={t('work.blocker.title')}>
+      <h3>{t('work.blocker.title')}</h3>
+      <p>{blockerSummary(attention, t)}</p>
+      <p>{t(String(attention.reason || '').includes('[rate_limit') ? 'work.blocker.actionHelp' : 'work.blocker.genericHelp')}</p>
+      {failureJobs.length ? <p className="task-blocker-record">{t('work.blocker.recorded')} <time dateTime={failureJobs.map(job => job.updated_at).sort().at(-1)}>{new Date(failureJobs.map(job => job.updated_at).sort().at(-1)).toLocaleString()}</time></p> : null}
+      {projectKey ? <Link className="product-button product-button--secondary" to={routes.projectTeam(projectKey)}>{t('work.blocker.configure')}</Link> : null}
+      <details><summary>{t('work.blocker.details')}</summary><pre>{attention.reason}</pre></details>
+      {error ? <p role="alert">{t('work.blocker.retryFailed')} {error.message || String(error)}</p> : null}
+      {busy === 'retry' ? <p role="status">{t('work.blocker.retrying')}</p> : null}
+      {(attention.actions || []).includes('retry') && onRetry ? <Button busy={busy === 'retry'} onClick={onRetry}>{t('work.blocker.retry')}</Button> : null}
+    </section>
+  );
   const actions = new Set(attention.actions || []);
   const gate = attention.target_id || '';
   const approvalBrief = attention.approval_brief?.schema_version === 'manager_approval_brief.v1'
@@ -59,7 +90,7 @@ export function TaskAttention({
         {translated(t, `work.manager.attentionKinds.${attention.kind}`, attention.reason)}
       </h3>
       {approvalBrief ? (
-        <ManagerApprovalBrief brief={approvalBrief} t={t} />
+        <ManagerApprovalBrief brief={approvalBrief} t={t} compact />
       ) : (
         <p>{translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason)}</p>
       )}
@@ -221,12 +252,12 @@ export function TaskRunControls({ busy, canCancel, onTerminate, t }) {
   return (
     <div className="team-manager-controls">
       {!confirmCancel ? (
-        <button type="button" onClick={() => setConfirmCancel(true)}>{t('work.manager.cancelMission')}</button>
+        <button type="button" onClick={() => setConfirmCancel(true)}>{t('work.manager.archiveTask')}</button>
       ) : (
-        <div className="team-attention__confirm" role="group" aria-label={t('work.manager.cancelMission')}>
-          <p>{t('work.manager.cancelConfirm')}</p>
+        <div className="team-attention__confirm" role="group" aria-label={t('work.manager.archiveTask')}>
+          <p>{t('work.manager.archiveExplanation')}</p>
           <div>
-            <Button busy={busy === 'terminate'} variant="danger" onClick={onTerminate}>{t('work.actions.terminate')}</Button>
+            <Button busy={busy === 'terminate'} variant="danger" onClick={onTerminate}>{t('work.manager.archiveTask')}</Button>
             <Button variant="secondary" onClick={() => setConfirmCancel(false)}>{t('work.manager.keepWorking')}</Button>
           </div>
         </div>

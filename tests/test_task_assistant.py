@@ -1,3 +1,5 @@
+import pytest
+
 from importlib import import_module
 
 
@@ -282,3 +284,62 @@ def test_manager_chat_receives_recent_conversation_and_pending_proposal(tmp_path
     assert "实现登录，可选邮箱或手机号" in calls[0]["context"]
     assert "请选择一种登录方式。" in calls[0]["context"]
     assert "Pending proposal" in calls[0]["context"]
+
+
+def test_factual_project_answer_does_not_start_readiness_or_replace_pending_draft(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    config = tmp_path / "demo.local.yaml"
+    config.write_text("key: DEMO\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    store = import_module("goodteam_os.task_assistant_session").TaskAssistantSessionStore(workspace, "DEMO")
+    store.append_message("earlier", "user", "Implement login")
+    store.propose_task(["earlier"], "Implement login")
+    original = store.read()["proposed_task"]
+    executor = FakeReadiness(readiness())
+    service = service_type()(
+        workspace, readiness_executor=executor, project_config=config,
+        manager_turn=lambda **_: {"intent": "project_question", "response": "有，这个项目已使用 Git。"},
+    )
+    result = service.send_message(project_key="DEMO", root=root, text="他有git吗", message_id="question")
+    assert result["intent"] == "project_question"
+    assert result["workflow_started"] is False
+    assert executor.started == []
+    assert result["session"]["proposed_task"] == original
+    reply = result["session"]["timeline"][-1]
+    assert reply["event"] == "project_question_answered"
+    assert reply["content"] == "有，这个项目已使用 Git。"
+
+
+@pytest.mark.parametrize("text", [
+    "这是一个新项目，请帮我梳理想法并开始搭建。",
+    "这是一个新项目，请先帮我梳理产品想法。",
+    "This is a new project. Help me shape and start it.",
+    "This is a new project. Help me clarify the product idea first.",
+])
+@pytest.mark.parametrize("configured", [False, True])
+def test_onboarding_discovery_never_creates_or_changes_a_task(tmp_path, text, configured):
+    root = tmp_path / "repo"
+    root.mkdir()
+    config = tmp_path / "demo.local.yaml"
+    config.write_text("key: DEMO\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    executor = FakeReadiness(readiness("new_project"))
+    service = service_type()(
+        workspace, readiness_executor=executor,
+        project_config=config if configured else None,
+        manager_turn=lambda **_: pytest.fail("Generic onboarding must not invoke a model or propose work"),
+    )
+    store = import_module("goodteam_os.task_assistant_session").TaskAssistantSessionStore(workspace, "DEMO")
+    for index in range(2):
+        original = store.read()["proposed_task"]
+        result = service.send_message(project_key="DEMO", root=root, text=text, message_id=f"discovery-{index}")
+        assert result["intent"] == "ambiguous"
+        assert result["workflow_started"] is False
+        assert result["session"]["proposed_task"] == original
+        assert result["session"]["timeline"][-1]["event"] == "intent_clarification_requested"
+        assert result["session"]["timeline"][-1]["content"]
+        assert executor.started == []
+        if index == 0:
+            store.append_message("existing", "user", "Implement login")
+            store.propose_task(["existing"], "Implement login")

@@ -714,3 +714,24 @@
   padding: 0.35rem 0.5rem;
 }
 .team-skills-dialog__missing code { overflow-wrap: anywhere; font-size: 0.62rem; }
+/* Workbench configuration keeps the current conversation mounted behind it. */
+.team-dialog-backdrop.team-dialog-backdrop--sheet {
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+}
+.product-shell.product-shell--neumorphic .team-dialog-backdrop--sheet .team-dialog {
+  width: min(100%, 42rem);
+  max-height: 100dvh;
+  margin: 0;
+  border-radius: 20px 0 0 20px;
+  overflow-y: auto;
+}
+@media (max-width: 767px) {
+  .product-shell.product-shell--neumorphic .team-dialog-backdrop--sheet .team-dialog { border-radius: 0; }
+}
+
+.team-runtime-activity { padding: 1rem; overflow-wrap: anywhere; }
+.team-runtime-activity summary { cursor: pointer; }
+.team-runtime-activity ul { padding-left: 1.25rem; }

@@ -1,0 +1,161 @@
+import { test, expect, importProject } from './fixtures.js';
+
+test('waiting reply and project inspection are readable without duplicated request text', async ({ page, fixture }, testInfo) => {
+  await importProject(page, fixture);
+  let waiting = true;
+  const question = 'Help me understand this project.';
+  await page.route('**/api/state?*', async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    if (new URL(route.request().url()).searchParams.get('project') === fixture.key) {
+      data.project_assistant.assistant_requests = waiting ? { ui_wait: { status: 'running', text: question, attempt: 1, updated_at: new Date(Date.now() - 31000).toISOString() } } : {};
+      data.project_assistant.timeline = [{ id: 'ui_user', actor: 'user', content: question }, ...(!waiting ? [{
+        id: 'ui_reply', actor: 'task_assistant', event: 'project_understanding_ready',
+        content: '技术栈 / Stack: Node.js / JavaScript\n入口 / Entry points: apps/admin/main.tsx, apps/server/index.ts\n命令 / Commands: npm run test, npm run test, npm run build\n风险 / Risks: Repository scan reached the bounded entry limit; deeper indexing is recommended.',
+      }] : [])];
+    }
+    await route.fulfill({ response, json: data });
+  });
+  await page.reload();
+  const timeline = page.locator('.team-manager-timeline');
+  await expect(timeline.locator('.assistant-pending-reply')).toContainText('Responding');
+  await expect(timeline).toContainText('No need to send the message again.');
+  await expect(timeline.getByText(question, { exact: true })).toHaveCount(1);
+  await expect(page.locator('.assistant-request')).toHaveCount(0);
+  await timeline.locator('.assistant-pending-reply').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('waiting.png') });
+  waiting = false;
+  await page.reload();
+  await expect(timeline.locator('.assistant-pending-reply')).toHaveCount(0);
+  await expect(timeline).toContainText('This project uses Node.js / JavaScript.');
+  await expect(timeline).toContainText('Some files were not examined');
+  const report = timeline.locator('.project-understanding-reply');
+  const commands = report.locator('details').filter({ hasText: 'Development commands (2)' });
+  await expect(commands).not.toHaveAttribute('open', '');
+  await commands.locator('summary').click();
+  await expect(commands.getByText('npm run test', { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await report.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('inspection-mobile.png') });
+});
+
+
+test('factual answers and specific clarification appear without execution boilerplate', async ({ page, fixture }) => {
+  await importProject(page, fixture);
+  await page.route('**/api/state?*', async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    if (new URL(route.request().url()).searchParams.get('project') === fixture.key) {
+      data.project_assistant.assistant_requests = {};
+      data.project_assistant.timeline = [
+        { id: 'fact', actor: 'task_assistant', event: 'project_question_answered', content: 'Yes, this project uses Git.' },
+        { id: 'clarify', actor: 'task_assistant', event: 'intent_clarification_requested', content: 'Which branch do you mean?' },
+      ];
+    }
+    await route.fulfill({ response, json: data });
+  });
+  await page.reload();
+  const timeline = page.locator('.team-manager-timeline');
+  await expect(timeline.getByText('Yes, this project uses Git.', { exact: true })).toBeVisible();
+  await expect(timeline.getByText('Which branch do you mean?', { exact: true })).toBeVisible();
+  await expect(timeline).not.toContainText('I won’t start work until');
+});
+
+
+test('execution blocker lives in the task pane with collapsed diagnostics', async ({ page, fixture }) => {
+  await importProject(page, fixture);
+  await page.route('**/api/state?*', async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    if (new URL(route.request().url()).searchParams.get('project') === fixture.key) {
+      data.team_workspace.attention_request = { id: 'blocked-ui', kind: 'blocker', reason: 'NEEDS HUMAN [rate_limit]: ui worker failed [rate_limit, 3 attempts]: Codex CLI exited with code 1.', actions: ['retry'], refs: [] };
+    }
+    await route.fulfill({ response, json: data });
+  });
+  await page.reload();
+  const task = page.locator('.team-pane--execution');
+  await expect(page.getByRole('button', { name: 'Manage tasks', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Manage tasks', exact: true }).click();
+  await expect(task.locator('.task-blocker')).toBeVisible();
+  await expect(page.locator('.team-pane--manager .task-blocker')).toHaveCount(0);
+  await expect(page.locator('.conversation-blocker-notice')).toContainText('rate limited');
+  await expect(task.getByText(/NEEDS HUMAN/)).not.toBeVisible();
+  await expect(task.getByRole('link', { name: 'Check execution settings' })).toHaveAttribute('href', `/projects/${fixture.key}/team`);
+  await task.getByText('View failure details', { exact: true }).click();
+  await expect(task.getByText(/NEEDS HUMAN/)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#team-tab-manager').click();
+  await page.locator('.conversation-blocker-notice').getByRole('button', { name: 'View task' }).click();
+  await expect(task.locator('.task-blocker')).toBeVisible();
+  let retryRequests = 0;
+  let rejectRetry;
+  const retryGate = new Promise(resolve => { rejectRetry = resolve; });
+  await page.route('**/api/retry', async route => {
+    retryRequests += 1;
+    expect(route.request().postDataJSON().project_key).toBe(fixture.key);
+    await retryGate;
+    await route.fulfill({ status: 409, json: { code: 'invalid_request', message: 'Task state changed. Refresh before retrying.' } });
+  });
+  await task.getByRole('button', { name: 'Retry execution', exact: true }).click();
+  await expect(task.getByRole('button', { name: 'Retry execution', exact: true })).toBeDisabled();
+  await expect(task.getByRole('status')).toContainText('Requesting a retry');
+  rejectRetry();
+  await expect(task.getByRole('alert')).toContainText('Retry failed: Task state changed.');
+  expect(retryRequests).toBe(1);
+  const expectedHttpError = fixture.errors.indexOf('Failed to load resource: the server responded with a status of 409 (Conflict)');
+  if (expectedHttpError !== -1) fixture.errors.splice(expectedHttpError, 1);
+});
+
+test('server receipt clears sent input while a reply is pending', async ({ page, fixture }) => {
+  await importProject(page, fixture);
+  let messageId;
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  await page.route(`**/api/projects/${fixture.key}/task-assistant/messages`, async route => {
+    messageId = route.request().postDataJSON().message_id;
+    const response = await route.fetch();
+    await held;
+    await route.fulfill({ response });
+  });
+  await page.route('**/api/state?*', async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    if (messageId && new URL(route.request().url()).searchParams.get('project') === fixture.key) {
+      data.project_assistant.timeline = [{ id: messageId, actor: 'user', content: 'Tell me about this project.' }];
+      data.project_assistant.assistant_requests = { [messageId]: { status: 'running', text: 'Tell me about this project.', updated_at: new Date().toISOString() } };
+    }
+    await route.fulfill({ response, json: data });
+  });
+  try {
+    const input = page.getByRole('textbox', { name: 'Message', exact: true });
+    await input.fill('Tell me about this project.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(input).toHaveValue('');
+    await expect(page.getByRole('button', { name: 'Awaiting reply', exact: true })).toBeDisabled();
+    await input.fill('My next question');
+    await expect(input).toHaveValue('My next question');
+    await expect(page.locator('.team-manager-timeline')).not.toContainText('Sending…');
+  } finally { release(); }
+});
+
+test('running execution replaces the stale blocker and prevents retry after reload', async ({ page, fixture }) => {
+  await importProject(page, fixture);
+  await page.route('**/api/state?*', async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    if (new URL(route.request().url()).searchParams.get('project') === fixture.key) {
+      data.team_workspace.attention_request = { kind: 'blocker', reason: 'old failure', actions: ['retry'] };
+      data.team_workspace.execution_actors = [{ id: 'implementation', role: 'implementation', state: 'working', current_attempt_id: 'current-job' }];
+      data.worker_jobs = [{ id: 'current-job', role: 'implementation', status: 'running', updated_at: new Date().toISOString() }];
+    }
+    await route.fulfill({ response, json: data });
+  });
+  await page.reload();
+  const task = page.locator('.task-blocker');
+  await expect(task.getByRole('heading', { name: 'Execution in progress' })).toBeVisible();
+  await expect(task.getByRole('button', { name: 'Execution in progress' })).toBeDisabled();
+  await expect(task.getByRole('button', { name: 'Retry execution' })).toHaveCount(0);
+  await expect(page.locator('.conversation-blocker-notice')).toContainText('A Worker has started');
+  await expect(task.getByText('old failure', { exact: true })).not.toBeVisible();
+});

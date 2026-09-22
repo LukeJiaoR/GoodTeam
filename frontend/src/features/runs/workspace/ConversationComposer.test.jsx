@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ConversationComposer from './ConversationComposer';
+
+beforeEach(() => sessionStorage.clear());
 
 const t = (key) => key;
 const message = 'work.taskAssistant.message';
@@ -102,4 +104,74 @@ describe('persistent conversation composer', () => {
     expect(onDiscussChangeIntent).toHaveBeenCalledTimes(1);
     expect(onStart).not.toHaveBeenCalled();
   });
+});
+
+
+it('restores exact unsent text after navigation and keeps projects and runs separate', () => {
+  const props = { t, onStart: vi.fn(), draftKey: 'project-a:run-1' };
+  const first = render(<ConversationComposer {...props} />);
+  const draft = '  Keep this draft.\nAnd its formatting.  ';
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: draft } });
+  first.unmount();
+  const next = render(<ConversationComposer {...props} draftKey="project-b:run-1" />);
+  expect(screen.getByRole('textbox')).toHaveValue('');
+  next.rerender(<ConversationComposer {...props} draftKey="project-a:run-2" />);
+  expect(screen.getByRole('textbox')).toHaveValue('');
+  next.rerender(<ConversationComposer {...props} />);
+  expect(screen.getByRole('textbox')).toHaveValue(draft);
+  expect(props.onStart).not.toHaveBeenCalled();
+});
+
+it('clears only the delivered draft and retains newer typing during a request', async () => {
+  let resolve;
+  const props = { t, draftKey: 'project-a:run-1', onStart: vi.fn(() => new Promise((done) => { resolve = done; })) };
+  const first = render(<ConversationComposer {...props} />);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Send this' } });
+  fireEvent.submit(screen.getByRole('textbox').closest('form'));
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My next question' } });
+  resolve({});
+  await waitFor(() => expect(screen.getByRole('button', { name: 'work.taskAssistant.send' })).toBeEnabled());
+  first.unmount();
+  const second = render(<ConversationComposer {...props} onStart={vi.fn().mockResolvedValue({})} />);
+  expect(screen.getByRole('textbox')).toHaveValue('My next question');
+  fireEvent.submit(screen.getByRole('textbox').closest('form'));
+  await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue(''));
+  second.unmount();
+  render(<ConversationComposer {...props} />);
+  expect(screen.getByRole('textbox')).toHaveValue('');
+});
+
+it('ignores malformed browser drafts', () => {
+  sessionStorage.setItem('goodteam:conversation-draft:broken', '{');
+  render(<ConversationComposer t={t} draftKey="broken" onStart={vi.fn()} />);
+  expect(screen.getByRole('textbox')).toHaveValue('');
+});
+
+
+it('does not restore a delivered draft when the request finishes after leaving', async () => {
+  let resolve;
+  const props = { t, draftKey: 'late-delivery', onStart: vi.fn(() => new Promise((done) => { resolve = done; })) };
+  const first = render(<ConversationComposer {...props} />);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Delivered after navigation' } });
+  fireEvent.submit(screen.getByRole('textbox').closest('form'));
+  first.unmount();
+  resolve({});
+  await waitFor(() => expect(sessionStorage.getItem('goodteam:conversation-draft:late-delivery')).toBeNull());
+  render(<ConversationComposer {...props} />);
+  expect(screen.getByRole('textbox')).toHaveValue('');
+});
+
+
+it('clears a server-accepted message before the reply completes and preserves subsequent typing', () => {
+  const props = { t, draftKey: 'accepted-message', onStart: vi.fn(() => new Promise(() => {})) };
+  const { rerender } = render(<ConversationComposer {...props} />);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My question' } });
+  fireEvent.submit(screen.getByRole('textbox').closest('form'));
+  expect(screen.getByRole('textbox')).toHaveValue('My question');
+  rerender(<ConversationComposer {...props} awaitingReply acceptedMessage={{ id: 'receipt-1', text: 'My question' }} />);
+  expect(screen.getByRole('textbox')).toHaveValue('');
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Next question' } });
+  rerender(<ConversationComposer {...props} awaitingReply acceptedMessage={{ id: 'receipt-1', text: 'My question' }} />);
+  expect(screen.getByRole('textbox')).toHaveValue('Next question');
+  expect(props.onStart).toHaveBeenCalledTimes(1);
 });
