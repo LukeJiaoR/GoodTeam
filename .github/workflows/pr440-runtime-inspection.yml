@@ -1,0 +1,48 @@
+name: S0 current Runtime inspection only
+on:
+  push:
+    branches: [diag/440-runtime-inspection-20260922]
+    paths: [.github/workflows/pr440-runtime-inspection.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    if: github.repository == 'LukeJiaoR/GoodTeam' && github.ref == 'refs/heads/diag/440-runtime-inspection-20260922'
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: f4d58d02d3741271ba48d1381819c95d21775f43
+          persist-credentials: false
+      - name: Run existing help/version-only inspection
+        shell: bash
+        run: |
+          output="$RUNNER_TEMP/pr440-inspection-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "PR440_INSPECTION=$output" >> "$GITHUB_ENV"
+          set +e
+          PYTHONPATH=src python3.12 -m goodteam_os.skill_conformance --output "$output"
+          result=$?
+          set -e
+          echo "$result" > "$output/inspection-exit-code.txt"
+          OUTPUT="$output" RESULT="$result" python3.12 - <<'PY'
+          import json, os, pathlib
+          report = json.loads((pathlib.Path(os.environ['OUTPUT']) / 'report.json').read_text())
+          if (os.environ['RESULT'] != '2' or report['mode'] != 'inspect'
+                  or report['strict_binding_supported'] is not False
+                  or report['cli_execution_attempts'] != 0 or report['provider_requests'] != 0):
+              raise SystemExit('Unexpected inspection mode or side-effect accounting')
+          if any(check['status'] != 'unverified' for check in report['checks'].values()):
+              raise SystemExit('Help/version inspection cannot establish live conformance')
+          print('Inspection evidence captured; strict Runtime remains UNVERIFIED, not PASS.')
+          PY
+      - name: Preserve only bounded inspection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-runtime-inspection-${{ github.run_id }}
+          path: |
+            ${{ env.PR440_INSPECTION }}/report.json
+            ${{ env.PR440_INSPECTION }}/inspection-exit-code.txt
+          if-no-files-found: error
+          retention-days: 7
