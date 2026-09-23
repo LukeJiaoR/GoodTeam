@@ -78,11 +78,12 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     await expect(witness).toContainText(accepted.resource_reads[0].version_id);
     await expect(witness).toContainText('not proof of comprehension');
     await witness.getByText('Resource read witnesses', { exact: true }).click();
-    await review.getByText('Locked method version', { exact: true }).click();
-    await expect(review.getByText(installed.installed.version_id, { exact: true })).toBeVisible();
+    const methods = review.locator('details').filter({ has: page.getByText('Locked method version', { exact: true }) });
+    await methods.getByText('Locked method version', { exact: true }).click();
+    await expect(methods.getByText(installed.installed.version_id, { exact: true })).toBeVisible();
     await review.getByRole('button', { name: 'Open review report', exact: true }).click();
     await expect(review.getByText('No findings reported')).toBeVisible();
-    await expect(review.getByText('This Reviewer did not run the application test suite.')).toBeVisible();
+    await expect(review.getByText('No application tests were run by the Reviewer.')).toBeVisible();
     await review.getByText('E1 · candidate:1–1', { exact: true }).click();
     await expect(review.locator('pre')).toHaveText("export const fixture = 'read-only source';");
     await testInfo.attach('received-advisory-source-evidence', { body: await page.screenshot(), contentType: 'image/png' });
@@ -270,7 +271,7 @@ test('cancel review: exact UI request reaches a real child and persists confirme
     await expect(review.getByText('Cancelled', { exact: true })).toBeVisible();
     await expect(review.getByRole('button', { name: 'Cancel review', exact: true })).toHaveCount(0);
     await expect(review.getByRole('button', { name: 'Retry with locked inputs', exact: true })).toBeVisible();
-    await expect(review.getByRole('button', { name: 'Open review report', exact: true })).toHaveCount(0);
+    await expect(review.getByRole('button', { name: 'Open review report' })).toHaveCount(0);
     const final = await (await page.request.get(`${endpoint}/${active.job_id}`)).json();
     expect(final.status).toBe('cancelled');
     expect(final.methods[0].version_id).toBe(installed.installed.version_id);
