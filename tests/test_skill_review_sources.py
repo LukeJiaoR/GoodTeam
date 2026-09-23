@@ -362,9 +362,13 @@ def test_rename_retains_both_sides_as_add_delete_and_mode_changes(ctx):
 
 def test_submodule_cannot_be_hidden_by_repo_diff_configuration(ctx):
     target = commits(ctx.repo)
-    git(ctx.repo, "config", "diff.ignoreSubmodules", "all")
     git(ctx.repo, "update-index", "--add", "--cacheinfo", "160000", target["base_sha"], "submodule")
     git(ctx.repo, "commit", "-qm", "gitlink")
     target["head_sha"] = git(ctx.repo, "rev-parse", "HEAD")
+    # Commit the fixture before enabling its hostile display configuration.
+    # Older Git can treat an ignored gitlink-only index as nothing to commit.
+    assert git(ctx.repo, "ls-tree", target["head_sha"], "submodule").startswith("160000 commit ")
+    git(ctx.repo, "config", "diff.ignoreSubmodules", "all")
+    assert git(ctx.repo, "config", "--get", "diff.ignoreSubmodules") == "all"
     with pytest.raises(SkillError, match="Symlink, submodule"):
         capture_git_sources(ctx.repo, target)
