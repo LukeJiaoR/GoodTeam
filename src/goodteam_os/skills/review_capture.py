@@ -17,11 +17,21 @@ MAX_EVENT_BYTES = 512 * 1024
 
 
 @dataclass(frozen=True)
+class CapturedCommand:
+    item_id: str
+    command: str
+    output: str
+    started_digest: str
+    completed_digest: str
+
+
+@dataclass(frozen=True)
 class CapturedReviewTurn:
     report_bytes: bytes
     transcript_digest: str
     thread_id: str
     event_count: int
+    commands: tuple[CapturedCommand, ...] = ()
 
 
 def capture_final_turn(stdout: bytes, *, returncode: int) -> CapturedReviewTurn:
@@ -34,6 +44,9 @@ def capture_final_turn(stdout: bytes, *, returncode: int) -> CapturedReviewTurn:
     started = completed = False
     last_message = None
     count = 0
+    pending_commands = {}
+    finished_commands = set()
+    commands = []
 
     def pairs(entries):
         value = {}
@@ -74,6 +87,8 @@ def capture_final_turn(stdout: bytes, *, returncode: int) -> CapturedReviewTurn:
         elif kind == "turn.completed":
             if not started or last_message is None:
                 raise SkillError("review_capture_incomplete", "A successful Reviewer turn must contain a final message.")
+            if pending_commands:
+                raise SkillError("review_capture_incomplete", "A native command has no terminal event.")
             completed = True
         elif kind in {"item.started", "item.updated", "item.completed"}:
             if not started:
@@ -81,6 +96,27 @@ def capture_final_turn(stdout: bytes, *, returncode: int) -> CapturedReviewTurn:
             item = event.get("item")
             if not isinstance(item, dict) or not isinstance(item.get("type"), str):
                 raise SkillError("review_capture_json", "The Reviewer emitted an invalid item.")
+            if item["type"] == "command_execution":
+                identity, command = item.get("id"), item.get("command")
+                if (not isinstance(identity, str) or not identity or len(identity) > 128
+                        or not isinstance(command, str) or not command or len(command) > 32768):
+                    raise SkillError("review_capture_command", "The native command event has invalid identity.")
+                if kind == "item.started":
+                    if identity in pending_commands or identity in finished_commands:
+                        raise SkillError("review_capture_command", "Duplicate native command identity.")
+                    pending_commands[identity] = (command, content_digest(line))
+                elif kind == "item.completed":
+                    previous = pending_commands.pop(identity, None)
+                    if previous is None or previous[0] != command:
+                        raise SkillError("review_capture_command", "The native command lacks its matching start event.")
+                    finished_commands.add(identity)
+                    if item.get("status") == "completed" and type(item.get("exit_code")) is int and item["exit_code"] == 0:
+                        output = item.get("aggregated_output")
+                        if not isinstance(output, str):
+                            raise SkillError("review_capture_command", "A completed native command has no textual output.")
+                        commands.append(CapturedCommand(identity, command, output, previous[1], content_digest(line)))
+                elif identity not in pending_commands or pending_commands[identity][0] != command:
+                    raise SkillError("review_capture_command", "A native command update changed its identity.")
             if kind == "item.completed" and item["type"] == "agent_message":
                 text = item.get("text")
                 if not isinstance(text, str):
@@ -94,4 +130,4 @@ def capture_final_turn(stdout: bytes, *, returncode: int) -> CapturedReviewTurn:
             raise SkillError("review_capture_event_unsupported", "This Reviewer channel event is not supported by the pinned adapter.")
     if not completed or last_message is None:
         raise SkillError("review_capture_incomplete", "The Reviewer channel ended without a completed result turn.")
-    return CapturedReviewTurn(last_message, content_digest(stdout), thread_id, count)
+    return CapturedReviewTurn(last_message, content_digest(stdout), thread_id, count, tuple(commands))

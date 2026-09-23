@@ -210,3 +210,15 @@ live-model or escaped-descendant confinement evidence. `selected_review_runtime`
 remains closed; the pinned Linux Codex envelope, discovery/provider-only egress,
 request/spend enforcement, actual resource-read witnesses and authorized live
 custom-Skill acceptance remain outstanding in #440/#445/#446.
+
+
+## Pinned Codex candidate after #467
+
+The existing selector can now construct a concrete pinned Linux ARM64 adapter
+when an independent, typed host/provider admission is supplied by server
+composition. Ordinary product construction still has no such admitted route and
+remains closed. See [pinned Codex Reviewer](pinned-codex-reviewer.md) for the
+container/guard/command contract, original-task runtime pin, paired native-event
+resource witnesses and explicit unverified boundaries. The new read receipts are
+saved with the immutable report, revalidated against locked resource bytes and
+shown collapsed in execution details; they are not comprehension or approval.

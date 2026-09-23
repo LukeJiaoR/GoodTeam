@@ -215,3 +215,29 @@ describe('Exact-attempt cancellation', () => {
     expect(screen.queryByRole('button', { name: 'Open review report' })).not.toBeInTheDocument();
   });
 });
+
+function readItem() {
+  return { ...item, runtime: { session_id: 'session-a' }, stages: { ...item.stages, resource_read_observed: 'observed' }, resource_reads: [{
+    schema_version: 'goodteam.codex-resource-read.v1', origin: 'native_command_event', item_id: 'item_0',
+    skill_id: 'skill-a', version_id: 'version-a', package_digest: 'sha256:method', path: 'references/check.md', size: 12,
+    context_digest: item.context_ref.digest, runtime_session_id: 'session-a', runtime_verification: 'contract_fixture',
+    resource_digest: `sha256:${'1'.repeat(64)}`, transcript_digest: `sha256:${'2'.repeat(64)}`,
+    started_digest: `sha256:${'3'.repeat(64)}`, completed_digest: `sha256:${'4'.repeat(64)}`,
+  }] };
+}
+it('shows context-bound read witnesses only in collapsed execution details, not method bodies', async () => {
+  requestJson.mockResolvedValue({ ...list, reviews: [readItem()] });
+  setup(); openPanel();
+  const summary = await screen.findByText('Resource read witnesses');
+  expect(summary.closest('details')).not.toHaveAttribute('open');
+  expect(screen.getByText('references/check.md')).toBeInTheDocument();
+  expect(screen.getByText(/not proof of comprehension/)).toBeInTheDocument();
+  expect(requestJson).toHaveBeenCalledTimes(1);
+});
+it.each(['context_digest', 'version_id', 'runtime_session_id', 'resource_digest'])('rejects foreign or corrupt read witness %s', async field => {
+  const wrong = readItem(); wrong.resource_reads[0][field] = 'other';
+  requestJson.mockResolvedValue({ ...list, reviews: [wrong] });
+  setup(); openPanel();
+  expect(await screen.findByRole('alert')).toHaveTextContent('No successful report is shown');
+  expect(screen.queryByText('Resource read witnesses')).not.toBeInTheDocument();
+});

@@ -19,6 +19,7 @@ from .content import MAX_CONTEXT_BYTES, OBSERVED_STAGES, SkillContextProvider, _
 from .filesystem import directory, open_lock_file, regular_file, write_new
 from .models import SkillConflict, SkillError, content_digest, identifier
 from .review_capture import CapturedReviewTurn
+from .codex_reads import resource_witnesses, validate_witnesses
 from .review_protocol import locked_review_contract
 from .review_report import validate_report
 
@@ -233,8 +234,7 @@ class ReviewResultStore:
                 raise SkillConflict("review_already_started", "This Reviewer cannot be launched again; recover its existing outcome or explicitly retry the task.")
             _replace(fd, "state.json", {**state, "status": "running", "updated_at": _now()})
 
-    @staticmethod
-    def _validate_outcome(record, outcome):
+    def _validate_outcome(self, record, outcome):
         if (outcome.get("schema_version") != RESULT_SCHEMA
                 or outcome.get("binding_digest") != content_digest(_bytes(record))
                 or not isinstance(outcome.get("status"), str) or outcome.get("status") not in _TERMINAL
@@ -247,6 +247,9 @@ class ReviewResultStore:
                     or type(capture["event_count"]) is not int or capture["event_count"] < 4):
                 raise SkillError("review_result_corrupt", "The report has no parent-controlled terminal capture.")
             identifier(capture["transcript_digest"], "sha256:")
+            if "resource_reads" in outcome:
+                validate_witnesses(outcome["resource_reads"], capture=capture, record=record,
+                                   packages=requests._services(self.workers)[2].packages)
             raw = outcome.get("raw_report")
             if not isinstance(raw, str):
                 raise SkillError("review_result_corrupt", "The report payload is unavailable.")
@@ -281,12 +284,13 @@ class ReviewResultStore:
             if read_cancellation(fd, record) is not None:
                 raise SkillConflict("review_cancel_requested", "A cancelled attempt cannot accept a late successful report.")
             self._target(snapshot)  # Never receive a changed candidate as this task's current result.
+            witnesses = resource_witnesses(capture, record, requests._services(self.workers)[2].packages)
             previous = _read_optional(fd, "outcome.json")
             observation = {"transcript_digest": capture.transcript_digest, "thread_id": capture.thread_id,
                            "event_count": capture.event_count}
             if previous is not None:
                 if (previous.get("status") != "received" or previous.get("raw_report") != capture.report_bytes.decode("utf-8")
-                        or previous.get("capture") != observation):
+                        or previous.get("capture") != observation or previous.get("resource_reads", []) != witnesses):
                     raise SkillConflict("review_result_conflict", "This attempt already has a different immutable outcome.")
                 self._outcome(fd, record, previous)
             else:
@@ -296,6 +300,8 @@ class ReviewResultStore:
                 outcome = {"schema_version": RESULT_SCHEMA, "binding_digest": content_digest(_bytes(record)),
                            "status": "received", "updated_at": _now(), "capture": observation,
                            "raw_report": capture.report_bytes.decode("utf-8"), "report": report}
+                if witnesses:
+                    outcome["resource_reads"] = witnesses
                 self._outcome(fd, record, outcome)
         return self.detail()
 
@@ -441,6 +447,10 @@ class ReviewResultStore:
                     result.update(report_available=True, report_digest=content_digest(_bytes(report)),
                                   summary=report["summary"], finding_count=len(report["findings"]),
                                   unfinished_check_count=sum(item["status"] != "checked" for item in report["checks"]))
+                    reads = outcome.get("resource_reads", [])
+                    if reads:
+                        result["stages"]["resource_read_observed"] = "observed"
+                        result["resource_reads"] = deepcopy(reads)
                     if include_report:
                         result["report"] = report
                 else:

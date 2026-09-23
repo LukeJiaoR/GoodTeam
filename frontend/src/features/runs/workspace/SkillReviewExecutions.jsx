@@ -19,6 +19,7 @@ const words = {
     stopPending: 'Stop requested. Termination is not yet confirmed; no report or retry is available.',
     retry: 'Retry with locked inputs', retrying: 'Retrying…', retryFailed: 'Retry was not confirmed. Refresh to inspect the saved attempt.',
     files: 'Changed files · exact base and head', base: 'Base commit', head: 'Head commit',
+    reads: 'Resource read witnesses', readBoundary: 'Exact command-output bytes matched the locked resource. This is not proof of comprehension or method adherence.',
     required: 'Required', on_demand: 'On demand', promoted: 'Explicitly required by this task',
   },
   zh: {
@@ -37,6 +38,7 @@ const words = {
     stopPending: '已请求停止，尚未确认终止；目前不能查看成功报告或重试。',
     retry: '使用原输入重试', retrying: '正在重试…', retryFailed: '尚未确认重试结果，请刷新查看已保存的执行。',
     files: '变更文件 · 固定前后版本', base: '起始提交', head: '目标提交',
+    reads: '资源读取依据', readBoundary: '命令返回的完整字节与锁定资源匹配。这不代表模型已理解或遵循该方法。',
     required: '必需', on_demand: '按需', promoted: '当前任务明确要求',
   },
 };
@@ -46,6 +48,24 @@ const stageWords = {
 };
 const jobPattern = /^job-skill-[0-9a-f]{64}$/;
 const endpoint = (project, run) => `/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(run)}/skill-reviews`;
+
+function validReads(item) {
+  if (item.resource_reads === undefined) return true;
+  if (!Array.isArray(item.resource_reads) || item.resource_reads.length > 1024) return false;
+  const ids = new Set();
+  return item.resource_reads.every(read => {
+    const method = (item.methods || []).find(method => method.skill_id === read?.skill_id);
+    if (!read || read.schema_version !== 'goodteam.codex-resource-read.v1' || read.origin !== 'native_command_event'
+      || !method || method.version_id !== read.version_id || method.package_digest !== read.package_digest
+      || read.context_digest !== item.context_ref?.digest || read.runtime_session_id !== item.runtime?.session_id
+      || read.runtime_verification !== item.runtime_verification || typeof read.item_id !== 'string' || !read.item_id
+      || ids.has(read.item_id) || !Number.isSafeInteger(read.size) || read.size < 0
+      || typeof read.path !== 'string' || read.path.split('/').some(part => ['', '.', '..'].includes(part))
+      || ['resource_digest', 'transcript_digest', 'started_digest', 'completed_digest'].some(key => !/^sha256:[0-9a-f]{64}$/.test(read[key]))) return false;
+    ids.add(read.item_id);
+    return true;
+  });
+}
 
 function matchesScope(payload, projectKey, runId) {
   return payload?.project_key === projectKey && payload?.run_id === runId;
@@ -170,7 +190,8 @@ function ReviewPanel({ projectKey, runId, language }) {
       if (request.signal.aborted) return;
       if (!matchesScope(payload, projectKey, runId) || payload.schema_version !== 'goodteam.task-reviews.v1'
         || !Array.isArray(payload.reviews) || payload.reviews.some((item) => !jobPattern.test(item.job_id)
-          || item.task_skill_context?.task?.logical_id !== runId || item.task_skill_context?.task?.project_key !== projectKey)) {
+          || item.task_skill_context?.task?.logical_id !== runId || item.task_skill_context?.task?.project_key !== projectKey
+          || !validReads(item))) {
         throw new Error('review_scope_mismatch');
       }
       setItems(payload.reviews);
@@ -215,6 +236,14 @@ function ReviewPanel({ projectKey, runId, language }) {
         <details><summary>{w.states}</summary><dl>{Object.entries(item.stages || {}).map(([stage, state]) => <div key={stage}>
           <dt>{stageWords[locale][stage] || stage}</dt><dd>{w[state] || w.unobserved}</dd>
         </div>)}</dl></details>
+        {item.status === 'received' && item.report_available && !item.cancel_requested && item.resource_reads?.length ?
+          <details><summary>{w.reads}</summary><p>{w.readBoundary}</p>
+            {item.resource_reads.map(read => <div key={read.item_id}>
+              <strong>{read.path}</strong><code>{read.version_id}</code>
+              <code>{read.resource_digest}</code><small>{read.item_id} · {read.size} bytes</small>
+              <code>{read.transcript_digest}</code>
+            </div>)}
+          </details> : null}
         {item.cancel_requested === true && (['prepared', 'running', 'stopping'].includes(item.status) || item.control_status === 'stopping')
           ? <p role="status">{w.stopPending}</p> : null}
         {item.cancel_available === true && !item.cancel_requested && !item.report_available

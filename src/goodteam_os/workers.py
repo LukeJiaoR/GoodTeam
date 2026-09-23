@@ -847,7 +847,14 @@ _NO_TASK_SKILL_CONTEXT = object()
 
 
 class WorkerJobStore:
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path, *, codex_review_admission=None):
+        # Internal service composition only; never loaded from job/Team JSON,
+        # environment variables, a Skill package, or a persisted success flag.
+        if codex_review_admission is not None:
+            from goodteam_os.skills.codex_runtime import CodexReviewAdmission
+            if not isinstance(codex_review_admission, CodexReviewAdmission):
+                raise ValueError("Codex Reviewer needs a control-plane admission authority, not configuration.")
+        self._codex_review_admission = codex_review_admission
         self.project_root = project_root
         self.root = project_root / ".goodteam" / "workers" / "jobs"
 
