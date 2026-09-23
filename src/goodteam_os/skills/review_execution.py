@@ -6,6 +6,7 @@ The internal adapter seam is exercised by subprocess fixtures only in tests.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from .content import SkillContextProvider
 from .filesystem import directory, subdirectory, write_new
 from .models import SkillError, canonical_json, content_digest
 from .review_process import run_review_process
+from .review_cancel import check_cancellation
 from .review_report import report_output_instructions
 from .review_results import ReviewResultStore, _read_optional
 
@@ -117,6 +119,33 @@ def _mirror(workers, job_id, snapshot, ref, *, status, error_code="", runtime_st
     return result
 
 
+@contextmanager
+def _execution_envelope(runtime, record, provider, context_ref):
+    """An outer-envelope cleanup error is not a retryable transport failure.
+
+    Normal context exit is the internal adapter's confirmation of owned cleanup;
+    no process-group result can substitute for that outer-envelope confirmation.
+    The selected production adapter remains closed pending real conformance.
+    """
+    entered, body_error = False, None
+    try:
+        with runtime.execution(record, provider, context_ref) as data:
+            entered = True
+            try:
+                yield data
+            except BaseException as exc:
+                body_error = exc
+                raise
+        # A context manager must not suppress transport/cancellation errors and
+        # allow a missing or invalid capture to proceed as successful evidence.
+        if body_error is not None:
+            raise body_error
+    except (SkillError, OSError) as exc:
+        if entered and exc is not body_error:
+            raise SkillError("review_termination_unknown", "The Reviewer envelope did not confirm cleanup.") from exc
+        raise
+
+
 def continue_review_worker(workers, job_id, snapshot, ref):
     """Called after existing Worker preflight, outside its request-file lock.
 
@@ -155,7 +184,7 @@ def continue_review_worker(workers, job_id, snapshot, ref):
         record = results.private_attempt()
         # Admission and physical readonly projection are adapter responsibilities,
         # not a prompt request or a public metadata capability flag.
-        with runtime.execution(record, provider, context_ref) as (spec, prompt):
+        with _execution_envelope(runtime, record, provider, context_ref) as (spec, prompt):
             expected_prompt, _private = _input(provider, context_ref, record)
             if prompt != expected_prompt:
                 raise SkillError("review_input_mismatch", "The adapter did not deliver the complete original method/input contract.")
@@ -163,7 +192,10 @@ def continue_review_worker(workers, job_id, snapshot, ref):
                 results.observe_delivery("content_delivered", content_digest(prompt))
                 results.observe_delivery("catalog_presented", content_digest(prompt))
             results.mark_running()  # Durable before subprocess creation; uncertain crash cannot rerun.
-            capture = run_review_process(spec, prompt, check_current=lambda: runtime.check_current(provider, context_ref),
+            def check_current():
+                check_cancellation(results)
+                runtime.check_current(provider, context_ref)
+            capture = run_review_process(spec, prompt, check_current=check_current,
                                          on_input_delivered=delivered)
         # The adapter context must confirm outer-envelope cleanup before receive.
         results.receive(capture)
@@ -180,7 +212,16 @@ def continue_review_worker(workers, job_id, snapshot, ref):
                     if code == "review_termination_unknown":
                         results.mark_stopping()
                     else:
-                        results.fail(code, status="invalid" if code.startswith(("review_report", "review_capture")) else "failed")
+                        # A stop may race with materialization or delivery-state
+                        # publication, not only a running transport poll. The
+                        # owner/envelope has exited before this terminal branch.
+                        try:
+                            check_cancellation(results)
+                        except SkillError as stop:
+                            if stop.code == "review_cancel_requested":
+                                code = "review_cancelled"
+                        results.fail(code, status=("cancelled" if code == "review_cancelled" else
+                                     "invalid" if code.startswith(("review_report", "review_capture")) else "failed"))
             except (SkillError, OSError):
                 code = "review_result_save_failed"
         return _mirror(workers, job_id, snapshot, ref, status="failed", error_code=code, runtime_status="blocked")

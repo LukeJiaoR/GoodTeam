@@ -15,6 +15,8 @@ const words = {
     unobserved: 'Not observed', observed: 'Observed by parent', findings: 'Findings', none: 'No findings reported',
     checks: 'Reviewer-reported checks', evidence: 'Source evidence', checked: 'Inspected by Reviewer',
     not_run: 'Not performed', inconclusive: 'Inconclusive', unverified: 'Not verified',
+    cancel: 'Cancel review', cancelling: 'Requesting stop…', cancelFailed: 'Stop was not confirmed. Refresh the saved execution; do not assume it has stopped.',
+    stopPending: 'Stop requested. Termination is not yet confirmed; no report or retry is available.',
     retry: 'Retry with locked inputs', retrying: 'Retrying…', retryFailed: 'Retry was not confirmed. Refresh to inspect the saved attempt.',
     files: 'Changed files · exact base and head', base: 'Base commit', head: 'Head commit',
     required: 'Required', on_demand: 'On demand', promoted: 'Explicitly required by this task',
@@ -31,6 +33,8 @@ const words = {
     unobserved: '未观察到', observed: '父进程已观察到', findings: '发现的问题', none: '未报告问题',
     checks: 'Reviewer 陈述的检查', evidence: '源码依据', checked: 'Reviewer 已检查',
     not_run: '未执行', inconclusive: '未得出结论', unverified: '未验证',
+    cancel: '取消审查', cancelling: '正在请求停止…', cancelFailed: '尚未确认停止，请刷新已保存的执行；不能据此认为进程已终止。',
+    stopPending: '已请求停止，尚未确认终止；目前不能查看成功报告或重试。',
     retry: '使用原输入重试', retrying: '正在重试…', retryFailed: '尚未确认重试结果，请刷新查看已保存的执行。',
     files: '变更文件 · 固定前后版本', base: '起始提交', head: '目标提交',
     required: '必需', on_demand: '按需', promoted: '当前任务明确要求',
@@ -49,6 +53,7 @@ function matchesScope(payload, projectKey, runId) {
 function matchesReport(payload, item, projectKey, runId) {
   return matchesScope(payload, projectKey, runId) && payload.schema_version === 'goodteam.review-execution.v1'
     && payload.job_id === item.job_id && payload.status === 'received' && payload.report_available === true
+    && !payload.cancel_requested && !item.cancel_requested
     && payload.snapshot_ref?.digest === item.snapshot_ref?.digest && payload.snapshot_ref?.id === item.snapshot_ref?.id
     && payload.context_ref?.digest === item.context_ref?.digest
     && payload.task_skill_context?.task?.logical_id === runId && payload.task_skill_context?.task?.project_key === projectKey
@@ -110,23 +115,29 @@ function ReviewReport({ item, projectKey, runId, w }) {
   );
 }
 
-function RetryReview({ item, projectKey, runId, w, onRefresh }) {
+function ReviewControl({ item, projectKey, runId, w, onRefresh, action }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const controller = useRef(null);
   useEffect(() => () => controller.current?.abort(), []);
-  const retry = async () => {
+  const submit = async () => {
     if (busy) return;
     const request = new AbortController();
     controller.current = request;
     setBusy(true); setError(false);
     try {
-      const result = await requestJson(`${endpoint(projectKey, runId)}/${item.job_id}/retry`, {
+      const result = await requestJson(`${endpoint(projectKey, runId)}/${item.job_id}/${action}`, {
         method: 'POST', signal: request.signal, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ snapshot_digest: item.snapshot_ref.digest, context_digest: item.context_ref.digest }),
       });
       if (request.signal.aborted) return;
-      if (!matchesScope(result, projectKey, runId) || result.original_job_id !== item.job_id || !jobPattern.test(result.job_id)) {
+      const exactCancel = result.job_id === item.job_id && result.snapshot_digest === item.snapshot_ref.digest
+        && result.context_digest === item.context_ref.digest && result.cancel_requested === true
+        && result.advisory === true && result.approval_changed === false
+        && ((result.termination_confirmed === false && result.status === 'stopping')
+          || (result.termination_confirmed === true && ['cancelled', 'failed', 'invalid', 'interrupted'].includes(result.status)));
+      if (!matchesScope(result, projectKey, runId) || !jobPattern.test(result.job_id)
+        || (action === 'cancel' ? !exactCancel : result.original_job_id !== item.job_id)) {
         throw new Error('review_scope_mismatch');
       }
       onRefresh();
@@ -136,8 +147,8 @@ function RetryReview({ item, projectKey, runId, w, onRefresh }) {
       if (!request.signal.aborted) setBusy(false);
     }
   };
-  return <div><button type="button" onClick={retry} disabled={busy}>{busy ? w.retrying : w.retry}</button>
-    {error ? <p role="alert">{w.retryFailed}</p> : null}</div>;
+  return <div><button type="button" onClick={submit} disabled={busy}>{busy ? (action === 'cancel' ? w.cancelling : w.retrying) : w[action]}</button>
+    {error ? <p role="alert">{action === 'cancel' ? w.cancelFailed : w.retryFailed}</p> : null}</div>;
 }
 
 function ReviewPanel({ projectKey, runId, language }) {
@@ -204,9 +215,16 @@ function ReviewPanel({ projectKey, runId, language }) {
         <details><summary>{w.states}</summary><dl>{Object.entries(item.stages || {}).map(([stage, state]) => <div key={stage}>
           <dt>{stageWords[locale][stage] || stage}</dt><dd>{w[state] || w.unobserved}</dd>
         </div>)}</dl></details>
-        {item.retry_available === true && ['failed', 'invalid', 'cancelled', 'interrupted'].includes(item.status) ? <RetryReview
+        {item.cancel_requested === true && (['prepared', 'running', 'stopping'].includes(item.status) || item.control_status === 'stopping')
+          ? <p role="status">{w.stopPending}</p> : null}
+        {item.cancel_available === true && !item.cancel_requested && !item.report_available
+          && (['prepared', 'running', 'stopping'].includes(item.status)
+            || (item.status === 'unavailable' && ['prepared', 'running', 'stopping'].includes(item.control_status)))
+          && item.snapshot_ref?.digest && item.context_ref?.digest ? <ReviewControl action="cancel"
           item={item} projectKey={projectKey} runId={runId} w={w} onRefresh={load} /> : null}
-        {item.report_available === true && item.status === 'received' ? <ReviewReport
+        {item.retry_available === true && ['failed', 'invalid', 'cancelled', 'interrupted'].includes(item.status) ? <ReviewControl action="retry"
+          item={item} projectKey={projectKey} runId={runId} w={w} onRefresh={load} /> : null}
+        {item.report_available === true && item.status === 'received' && !item.cancel_requested ? <ReviewReport
           item={item} projectKey={projectKey} runId={runId} w={w}
         /> : null}
       </article>)}

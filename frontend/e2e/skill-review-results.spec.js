@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { test, expect, importProject } from './fixtures.js';
 import { approveGate, clickMutation, prepareFirstTask, sendTask, snapshot, workState } from './business-loop-helpers.js';
 
@@ -175,5 +175,109 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
       body: JSON.stringify({ project: fixture.key, live_runtime_acceptance: false, results, evidence }, null, 2),
       contentType: 'application/json',
     });
+  }
+});
+
+test('cancel review: exact UI request reaches a real child and persists confirmed termination', async ({ page, fixture }, testInfo) => {
+  const evidence = [];
+  let child, done, stage;
+  const results = [];
+  try {
+    await importProject(page, fixture);
+    await sendTask(page, fixture, 'Implement the baseline task before checking Reviewer cancellation.');
+    await prepareFirstTask(page, fixture, evidence);
+    for (const gate of ['takeover', 'prd', 'rfc', 'security', 'release']) await approveGate(page, fixture, gate);
+    const baseline = await workState(page, fixture.key);
+    const label = baseline.team.roles.find(role => role.role === 'code_review').label;
+    const name = `cancel-method-${fixture.name.replace(/[^a-z0-9]/gi, '').slice(-10).toLowerCase()}`;
+    const source = path.join(process.env.GOODTEAM_E2E_ROOT, 'skills', name);
+    fs.mkdirSync(source, { recursive: true });
+    fs.writeFileSync(path.join(source, 'SKILL.md'), `---\nname: ${name}\ndescription: Inspect the exact source before cancellation.\n---\nCite the exported source and state which checks were not performed.\n`);
+    await page.goto(`/projects/${fixture.key}/team`);
+    await page.getByRole('button', { name: 'Skills', exact: true }).click();
+    let dialog = page.getByRole('dialog', { name: 'Skills', exact: true });
+    await dialog.getByLabel('Server directory').fill(source);
+    await clickMutation(page, dialog.getByRole('button', { name: 'Preview', exact: true }), '/api/skills/local/preview');
+    const installed = await clickMutation(page, dialog.getByRole('button', { name: 'Install Skill', exact: true }), '/api/skills/local/install');
+    await dialog.locator('footer').getByRole('button', { name: 'Close Skills', exact: true }).click();
+    dialog = await methodDialog(page, fixture, label);
+    await dialog.getByRole('radio', { name: /Custom Skills/ }).check();
+    await dialog.getByRole('checkbox', { name: new RegExp(name) }).check();
+    await clickMutation(page, dialog.getByRole('button', { name: 'Save methods', exact: true }), `/api/projects/${fixture.key}/team/commands`);
+    await sendTask(page, fixture, 'Implement the exact source review and preserve the original method when cancellation is requested.');
+    await clickMutation(page, page.getByRole('button', { name: 'Start this task', exact: true }), `/api/projects/${fixture.key}/task-assistant/actions`);
+    const before = await snapshot(page, fixture, evidence);
+    const runId = before.state.run_id;
+    const endpoint = `/api/projects/${fixture.key}/runs/${runId}/skill-reviews`;
+    child = spawn(process.env.GOODTEAM_E2E_PYTHON || '../.venv/bin/python', [
+      '../tests/fixtures/skill_review_browser_driver.py', fixture.key, runId, 'cancel-wait',
+    ], { env: { ...process.env, PYTHONPATH: path.resolve('../src') }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', value => { stdout += value.toString(); });
+    child.stderr.on('data', value => { stderr += value.toString(); });
+    done = new Promise(resolve => {
+      child.once('error', error => resolve({ code: null, error: String(error) }));
+      child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    let active;
+    await expect.poll(async () => {
+      const payload = await (await page.request.get(endpoint)).json();
+      active = payload.reviews.find(value => value.status === 'running');
+      return active?.job_id || '';
+    }).toMatch(/^job-skill-[0-9a-f]{64}$/);
+    stage = path.join(process.env.GOODTEAM_E2E_ROOT, `review-process-${active.job_id.slice(-16)}`);
+    const marker = path.join(stage, 'child-pid');
+    await expect.poll(() => fs.existsSync(marker)).toBe(true);
+    const actualPid = Number(fs.readFileSync(marker, 'utf8'));
+    expect(actualPid).toBeGreaterThan(0);
+    expect(() => process.kill(actualPid, 0)).not.toThrow();
+    let details = await panel(page, fixture);
+    let review = details.getByRole('article', { name: active.job_id, exact: true });
+    await expect(review.getByText('Running', { exact: true })).toBeVisible();
+    await expect(review.getByRole('button', { name: 'Retry with locked inputs' })).toHaveCount(0);
+    const accepted = await clickMutation(page, review.getByRole('button', { name: 'Cancel review', exact: true }), `${endpoint}/${active.job_id}/cancel`);
+    results.push(accepted);
+    expect(accepted.termination_confirmed).toBe(false);
+    expect(accepted.status).toBe('stopping');
+    const exited = await done;
+    expect(exited.code, stderr || exited.error).toBe(0);
+    const result = JSON.parse(stdout.trim()); results.push(result);
+    expect(result.fixture_processes).toBe(1);
+    expect(result.provider_calls).toBe(0);
+    expect(result.result.skill_error_code).toBe('review_cancelled');
+    let alive = true;
+    try { process.kill(actualPid, 0); } catch (error) { expect(error.code).toBe('ESRCH'); alive = false; }
+    expect(alive).toBe(false);
+    // Reload reads the durable outcome, not an optimistic button state.
+    await page.reload();
+    await page.getByRole('button', { name: 'Review execution details', exact: true }).click();
+    details = page.getByRole('region', { name: 'Review execution details', exact: true });
+    review = details.getByRole('article', { name: active.job_id, exact: true });
+    await expect(review.getByText('Cancelled', { exact: true })).toBeVisible();
+    await expect(review.getByRole('button', { name: 'Cancel review', exact: true })).toHaveCount(0);
+    await expect(review.getByRole('button', { name: 'Retry with locked inputs', exact: true })).toBeVisible();
+    await expect(review.getByRole('button', { name: 'Open review report', exact: true })).toHaveCount(0);
+    const final = await (await page.request.get(`${endpoint}/${active.job_id}`)).json();
+    expect(final.status).toBe('cancelled');
+    expect(final.methods[0].version_id).toBe(installed.installed.version_id);
+    expect(final.context_ref).toEqual(active.context_ref);
+    const duplicate = await page.request.post(`${endpoint}/${active.job_id}/cancel`, { data: {
+      snapshot_digest: active.snapshot_ref.digest, context_digest: active.context_ref.digest,
+    } });
+    expect(duplicate.status()).toBe(200);
+    expect((await duplicate.json()).termination_confirmed).toBe(true);
+    expect((await page.request.get(`${endpoint}/${active.job_id}/report`)).status()).toBe(409);
+    await testInfo.attach('cancelled-exact-review-no-report', { body: await page.screenshot(), contentType: 'image/png' });
+    const after = await snapshot(page, fixture, evidence);
+    expect(after.state).toEqual(before.state);
+    expect(fixture.errors).toEqual([]);
+  } finally {
+    // Release only this test's owned constant child if an assertion failed.
+    // Its production transport still owns the deadline and process-group reap.
+    if (stage && fs.existsSync(stage)) fs.writeFileSync(path.join(stage, 'fixture-release'), 'test cleanup\n');
+    if (done) await done;
+    await testInfo.attach('cancellation-control-evidence', { body: JSON.stringify({
+      live_runtime_acceptance: false, results, evidence,
+    }, null, 2), contentType: 'application/json' });
   }
 });

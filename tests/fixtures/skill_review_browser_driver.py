@@ -76,13 +76,23 @@ class BrowserFixtureRuntime:
         program = ("import sys; from pathlib import Path; assert sys.stdin.buffer.read(); "
                    + "assert Path(" + repr(candidate) + ").read_text() == " + repr(exact_source) + "; "
                    + "sys.stdout.write(" + repr(output) + ")")
-        yield ReviewProcess((sys.executable, "-I", "-c", program), path, {}, 5), prompt
+        deadline = 5
+        if self.mode == "cancel-wait":
+            # The browser cancels this actual child through the product API.
+            # A fixture-only release file keeps failure teardown bounded; it is
+            # never a production cancellation or Runtime admission mechanism.
+            program = ("import os,sys,time\nfrom pathlib import Path\nassert sys.stdin.buffer.read()\n"
+                       "Path('child-pid').write_text(str(os.getpid()))\n"
+                       "while not Path('fixture-release').exists(): time.sleep(0.02)\n"
+                       "sys.stdout.write(" + repr(output) + ")\n")
+            deadline = 20
+        yield ReviewProcess((sys.executable, "-I", "-c", program), path, {}, deadline), prompt
 
 
 def main():
     root = owned_root()
     key, run_id, mode = sys.argv[1:]
-    if mode not in {"valid", "malformed", "save-failure", "revoke", "git-malformed", "git-retry"}:
+    if mode not in {"valid", "malformed", "save-failure", "revoke", "git-malformed", "git-retry", "cancel-wait"}:
         raise RuntimeError("Unsupported fixed fixture action")
     workspace = root / "workspace"
     state = StateStore(workspace).read_project_current(key)

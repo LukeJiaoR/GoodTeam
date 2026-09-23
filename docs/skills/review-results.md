@@ -164,3 +164,49 @@ substitutes a constant process after the real UI has created the retry job.
 That is model-free integration evidence, **not** the requested live Reviewer
 acceptance. Public cancellation UX, admitted Codex integration, actual optional
 resource-read observations and live model conformance remain open. Keep exact commands, observed outcomes and final-head CI in PR #467.
+
+## Explicit current-task cancellation
+
+`POST /api/projects/{project}/runs/{run}/skill-reviews/{job}/cancel` takes only
+`{snapshot_digest, context_digest}` from the displayed attempt. The task registry,
+original Worker root and protected attempt select the process identity; the API
+accepts no PID, command, report, changed model or new methods. Both HTTP servers
+admit the exact route and retain their same-origin/JSON checks. Historical tasks
+remain read-only. Cancellation does not take the long-running workflow guard;
+otherwise a retry holding that guard could block its own stop request. The API
+rechecks the current task/root under the per-attempt result lock before writing.
+
+An immutable `cancel-request.json` is fsynced before projecting `stopping` and
+returning **HTTP 202, `termination_confirmed=false`**. That acknowledges a stop
+request, not termination. A failed mutable projection cannot erase the receipt;
+identical replay repairs the projection without relaunching or signalling an
+unrelated process. Content revocation does not remove metadata-only stop access.
+The UI shows a pending stop, never an optimistic cancelled/successful result.
+Aborting a view's HTTP request on navigation does not cancel an execution.
+
+The existing execution owner checks cancellation before launch and throughout
+process polling, including after all stdio pipes close. Only after transport
+reaping and normal exit of the internal adapter's execution context does it save
+`cancelled`. A replay after a reconciled terminal outcome returns **HTTP 200,
+`termination_confirmed=true`**. Retry still requires the protected failure outcome
+and immutable original inputs; a stop request alone cannot permit retry. Failure
+to signal/probe/reap, or an error from outer-envelope cleanup, remains `stopping`
+with no report or retry. No PID-based restart cleanup is attempted: an abandoned
+owner needs independently proven envelope termination, not a reused host PID.
+
+Cancellation and report reception use the same per-attempt lock. A received
+immutable report wins over a later cancellation, which is rejected. A durable
+stop receipt wins over a late report, which cannot publish success. Neither
+operation advances a gate, changes the original task/Role configuration, writes
+memory, approves/merges a PR, or deploys.
+
+The cancellation tests use real HTTP servers and real bounded **constant child
+processes**, including a held workflow guard, closed stdio, signal/probe failures,
+cleanup failures, concurrent replay, receipt-save interruption, revocation, task
+switches and both report/cancel orderings. The browser imports a user method and
+uses the actual Cancel review button, then verifies the exact child has exited
+and a reload shows the saved cancelled result without a report. These are not
+live-model or escaped-descendant confinement evidence. `selected_review_runtime`
+remains closed; the pinned Linux Codex envelope, discovery/provider-only egress,
+request/spend enforcement, actual resource-read witnesses and authorized live
+custom-Skill acceptance remain outstanding in #440/#445/#446.

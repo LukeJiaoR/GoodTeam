@@ -218,6 +218,8 @@ class ReviewResultStore:
             _publish_immutable(fd, "observed-" + stage + ".json", _bytes(receipt), code="review_observation_conflict")
 
     def mark_running(self) -> None:
+        from .review_cancel import read_cancellation
+
         operator, snapshot, ref, expected = self._registered()
         with self._store(operator) as fd:
             record, state = _read_optional(fd, "attempt.json"), _read_optional(fd, "state.json")
@@ -225,6 +227,8 @@ class ReviewResultStore:
                 raise SkillError("review_attempt_missing", "The review attempt has not been prepared.")
             self._check_record(record, snapshot, ref, expected)
             self._check_state(state, record)
+            if read_cancellation(fd, record) is not None:
+                raise SkillConflict("review_cancel_requested", "The operator stopped this attempt before launch.")
             if state["status"] != "prepared" or _read_optional(fd, "outcome.json") is not None:
                 raise SkillConflict("review_already_started", "This Reviewer cannot be launched again; recover its existing outcome or explicitly retry the task.")
             _replace(fd, "state.json", {**state, "status": "running", "updated_at": _now()})
@@ -263,6 +267,8 @@ class ReviewResultStore:
 
     def receive(self, capture: CapturedReviewTurn) -> dict:
         """Called only by the parent after a successful, reaped Reviewer process."""
+        from .review_cancel import read_cancellation
+
         if not isinstance(capture, CapturedReviewTurn):
             raise SkillError("review_capture_required", "A model-written success claim is not a captured Reviewer turn.")
         operator, snapshot, ref, expected = self._registered()
@@ -272,6 +278,8 @@ class ReviewResultStore:
                 raise SkillError("review_attempt_missing", "The result has no original review attempt.")
             self._check_record(record, snapshot, ref, expected)
             self._check_state(state, record)
+            if read_cancellation(fd, record) is not None:
+                raise SkillConflict("review_cancel_requested", "A cancelled attempt cannot accept a late successful report.")
             self._target(snapshot)  # Never receive a changed candidate as this task's current result.
             previous = _read_optional(fd, "outcome.json")
             observation = {"transcript_digest": capture.transcript_digest, "thread_id": capture.thread_id,
@@ -328,7 +336,7 @@ class ReviewResultStore:
             if record is None:
                 raise SkillError("review_attempt_missing", "The review attempt is unavailable.")
             self._check_state(state, record)
-            if state["status"] not in {"running", "stopping"}:
+            if state["status"] not in {"prepared", "running", "stopping"}:
                 raise SkillConflict("review_result_conflict", "A terminal Reviewer cannot be changed to stopping.")
             _replace(fd, "state.json", {**state, "status": "stopping", "updated_at": _now()})
 
@@ -380,6 +388,8 @@ class ReviewResultStore:
 
     def detail(self, *, expected_task_context=None, include_report=False) -> dict:
         """Read authoritative data, without private prompts, paths or Skill bodies."""
+        from .review_cancel import ACTIVE, read_cancellation
+
         operator, snapshot, ref, expected = self._registered()
         if expected_task_context is not None and expected_task_context != expected["task_skill_context"]:
             raise SkillError("snapshot_scope_mismatch", "The requested review belongs to another task.")
@@ -440,4 +450,12 @@ class ReviewResultStore:
                 # A crash after immutable outcome publication but before status
                 # publication is recoverable, not a successful report in the UI.
                 result.update(status="recovery_required", error_code="review_result_projection_pending")
+            cancellation = read_cancellation(fd, record)
+            result.update(cancel_requested=cancellation is not None,
+                          cancel_available=state["status"] in ACTIVE and outcome is None and cancellation is None)
+            if cancellation is not None:
+                if outcome is not None and outcome["status"] == "received":
+                    raise SkillError("review_result_corrupt", "A stopped attempt cannot also own a received report.")
+                if outcome is None:
+                    result.update(status="stopping", report_available=False, retry_available=False)
         return result

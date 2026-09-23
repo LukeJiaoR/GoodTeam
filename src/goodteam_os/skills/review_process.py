@@ -38,6 +38,14 @@ def _group_exists(pid: int) -> bool:
 
 
 def _terminate(process, *, grace=1.0):
+    """A failed signal/probe/reap must not become an ordinary retryable failure."""
+    try:
+        _terminate_group(process, grace=grace)
+    except OSError as exc:
+        raise SkillError("review_termination_unknown", "Reviewer process-group termination could not be confirmed.") from exc
+
+
+def _terminate_group(process, *, grace):
     """Never interpret a kill request or parent exit as descendant termination."""
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
@@ -132,7 +140,10 @@ def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Cal
         check_current()
         return capture_final_turn(bytes(stdout), returncode=returncode)
     finally:
-        _terminate(process)
-        for stream in (process.stdin, process.stdout, process.stderr):
-            if stream is not None and not stream.closed:
-                stream.close()
+        try:
+            _terminate(process)
+        finally:
+            # Closing transport handles is not a claim that the process stopped.
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()

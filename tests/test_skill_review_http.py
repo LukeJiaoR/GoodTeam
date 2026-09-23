@@ -123,7 +123,7 @@ def test_actual_http_retry_preserves_scope_checks_source_and_new_context(ctx, mo
         assert len(runtime.records) == 2
 
 
-@pytest.mark.parametrize("suffix", ["report", "cancel", "retry/", "retry/extra"])
+@pytest.mark.parametrize("suffix", ["report", "submit", "cancel/", "cancel/extra", "retry/", "retry/extra"])
 def test_retry_admission_does_not_grant_other_report_writes(suffix):
     prefix = "/api/projects/DEMO/runs/git-review/skill-reviews/job-skill-" + "a" * 64
     assert not web._is_project_api_post_path(prefix + "/" + suffix)

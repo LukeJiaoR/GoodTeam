@@ -150,3 +150,68 @@ describe('Locked-source retry', () => {
     expect(screen.queryByText('No findings reported')).not.toBeInTheDocument();
   });
 });
+
+describe('Exact-attempt cancellation', () => {
+  const running = { ...item, status: 'running', report_available: false, retry_available: false, cancel_available: true };
+  const stopping = { ...running, status: 'stopping', cancel_available: false, cancel_requested: true };
+  const stopped = { ...stopping, status: 'cancelled', retry_available: true };
+  const response = { project_key: 'DEMO', run_id: 'run', job_id: item.job_id,
+    snapshot_digest: item.snapshot_ref.digest, context_digest: item.context_ref.digest,
+    cancel_requested: true, status: 'stopping', termination_confirmed: false, advisory: true, approval_changed: false };
+  it('posts only displayed identity, shows stopping, and allows retry only after saved termination', async () => {
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [running] }).mockResolvedValueOnce(response)
+      .mockResolvedValueOnce({ ...list, reviews: [stopping] }).mockResolvedValueOnce({ ...list, reviews: [stopped] });
+    setup(); openPanel(); fireEvent.click(await screen.findByRole('button', { name: 'Cancel review', exact: true }));
+    expect(await screen.findByText('Stop requested. Termination is not yet confirmed; no report or retry is available.')).toBeVisible();
+    const [url, options] = requestJson.mock.calls[1];
+    expect(url).toBe(`/api/projects/DEMO/runs/run/skill-reviews/${item.job_id}/cancel`);
+    expect(options.method).toBe('POST');
+    expect(JSON.parse(options.body)).toEqual({ snapshot_digest: item.snapshot_ref.digest, context_digest: item.context_ref.digest });
+    expect(screen.queryByRole('button', { name: 'Retry with locked inputs' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Cancelled', { exact: true })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh reviews' }));
+    expect(await screen.findByText('Cancelled', { exact: true })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry with locked inputs' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Open review report' })).not.toBeInTheDocument();
+  });
+  it.each(['received', 'failed', 'invalid', 'cancelled', 'interrupted', 'recovery_required'])('does not offer stop for terminal/uncertain %s despite a flag', async (status) => {
+    requestJson.mockResolvedValue({ ...list, reviews: [{ ...running, status }] });
+    setup(); openPanel(); await screen.findByRole('article');
+    expect(screen.queryByRole('button', { name: 'Cancel review', exact: true })).not.toBeInTheDocument();
+  });
+  it('retains metadata-only cancellation after method revocation but never exposes a report', async () => {
+    requestJson.mockResolvedValue({ ...list, reviews: [{ ...running, status: 'unavailable', control_status: 'running', error_code: 'skill_revoked' }] });
+    setup(); openPanel();
+    expect(await screen.findByRole('button', { name: 'Cancel review', exact: true })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Open review report' })).not.toBeInTheDocument();
+  });
+  it.each(['context_digest', 'snapshot_digest', 'job_id', 'run_id'])('rejects a cancellation response with wrong %s', async (key) => {
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [running] }).mockResolvedValueOnce({ ...response, [key]: 'other' });
+    setup(); openPanel(); fireEvent.click(await screen.findByRole('button', { name: 'Cancel review', exact: true }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Stop was not confirmed');
+    expect(requestJson).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Cancelled', { exact: true })).not.toBeInTheDocument();
+  });
+  it('does not treat a failed HTTP request as termination', async () => {
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [running] }).mockRejectedValueOnce(new Error('offline'));
+    setup(); openPanel(); fireEvent.click(await screen.findByRole('button', { name: 'Cancel review', exact: true }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Stop was not confirmed');
+    expect(screen.queryByRole('button', { name: 'Retry with locked inputs' })).not.toBeInTheDocument();
+  });
+  it('aborts only the view request on task switch, without claiming to cancel the execution', async () => {
+    let resolve;
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [running] }).mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const view = setup(); openPanel(); fireEvent.click(await screen.findByRole('button', { name: 'Cancel review', exact: true }));
+    const signal = requestJson.mock.calls[1][1].signal;
+    view.rerender(<SkillReviewExecutions projectKey="DEMO" runId="next" language="en" />);
+    expect(signal.aborted).toBe(true);
+    await act(async () => resolve(response));
+    expect(requestJson).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+  });
+  it('does not expose a late successful report carrying an acknowledged cancellation', async () => {
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [{ ...item, cancel_requested: true }] });
+    setup(); openPanel(); await screen.findByRole('article');
+    expect(screen.queryByRole('button', { name: 'Open review report' })).not.toBeInTheDocument();
+  });
+});
