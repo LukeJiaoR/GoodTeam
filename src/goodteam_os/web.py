@@ -5846,6 +5846,11 @@ def handle_project_api_get(
     workspace: Path,
     path: str,
 ) -> tuple[int, dict[str, object]] | None:
+    from goodteam_os.skills.review_api import handle_review_get
+
+    review_response = handle_review_get(workspace, path)
+    if review_response is not None:
+        return review_response
     if path == "/api/skills":
         return 200, SkillLibraryService(service_state_dir(), worker_roots=(workspace,)).list_library()
     skill_proposal_match = re.fullmatch(r"/api/skills/proposals/(proposal-[0-9a-f]{32})", path)
@@ -5962,6 +5967,11 @@ def handle_project_api_post(
     path: str,
     request: dict[str, object],
 ) -> tuple[int, dict[str, object]] | None:
+    from goodteam_os.skills.review_api import handle_review_post
+
+    review_response = handle_review_post(workspace, path, request)
+    if review_response is not None:
+        return review_response
     if path == "/api/settings":
         return 200, save_workspace_product_settings(workspace, request)
     if path == "/api/projects/import":
@@ -6431,6 +6441,7 @@ def _is_project_api_post_path(path: str) -> bool:
             r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions)|team/commands)",
             path,
         )
+        or re.fullmatch(r"/api/projects/[^/]+/runs/[^/]+/skill-reviews/job-skill-[0-9a-f]{64}/(?:retry|cancel)", path)
     )
 
 

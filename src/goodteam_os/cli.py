@@ -149,6 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--research-report", type=Path)
     dispatch.add_argument("--allow-unsafe", action="store_true")
     dispatch.add_argument("--task-id", default="", help="Stable bounded direct-task identity for an explicit retry.")
+    dispatch.add_argument("--review-base", default="", help="Exact base commit for one locked code_review track.")
+    dispatch.add_argument("--review-head", default="", help="Exact head commit for one locked code_review track.")
 
     memory_append = subparsers.add_parser("memory-append")
     memory_append.add_argument("--project-root", type=Path, required=True)
@@ -369,6 +371,12 @@ def main(argv: list[str] | None = None) -> int:
             parse_dispatch_track_spec(track, base_dir=Path.cwd())
             for track in args.track
         ]
+        if args.review_base or args.review_head:
+            from goodteam_os.skills.review_sources import source_request
+
+            if len(tracks) != 1 or tracks[0]["role"] != "code_review" or args.verify:
+                raise ValueError("Exact Git review requires one code_review track and no shell verification command.")
+            tracks[0]["review_target"] = source_request({"kind": "git_change", "base_sha": args.review_base, "head_sha": args.review_head})
         verify_commands = dict(parse_dispatch_verify_spec(item) for item in args.verify)
         payload = dispatch_tracks(
             **({"logical_task_id": args.task_id} if args.task_id else {}),

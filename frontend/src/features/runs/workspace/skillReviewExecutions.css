@@ -1,0 +1,13 @@
+.skill-review-executions { margin-block: 1rem; min-width: 0; }
+.skill-review-executions > section { padding-block: .75rem; }
+.skill-review-executions article { padding-block: .75rem; border-top: 1px solid var(--border-color, #d5d9df); }
+.skill-review-executions h3, .skill-review-executions h4 { margin-block: .6rem; font-size: .95rem; }
+.skill-review-executions p, .skill-review-executions dd, .skill-review-executions li { overflow-wrap: anywhere; }
+.skill-review-executions dl { margin-block: .6rem; }
+.skill-review-executions dt { font-weight: 600; }
+.skill-review-executions dd { margin: 0 0 .5rem; }
+.skill-review-executions code { display: block; font-size: .75rem; overflow-wrap: anywhere; white-space: normal; }
+.skill-review-executions details { margin-block: .65rem; }
+.skill-review-executions summary { cursor: pointer; }
+.skill-review-executions pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
+.skill-review-advisory { font-size: .85rem; line-height: 1.5; }

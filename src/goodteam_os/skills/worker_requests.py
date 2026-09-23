@@ -144,6 +144,15 @@ def reject_legacy_key_collision(store, command_key: str) -> None:
 
 def _request(values: dict[str, Any]) -> dict[str, Any]:
     request = deepcopy({key: value for key, value in values.items() if key not in _INPUT_EXCLUSIONS})
+    # Adding an optional source field must not alter historical request digests.
+    if request.get("review_target") is None:
+        request.pop("review_target", None)
+    else:
+        from .review_sources import source_request
+
+        request["review_target"] = source_request(request["review_target"])
+        if request.get("role") != "code_review" or request.get("execution_policy") != "read_only":
+            raise SkillError("review_target_invalid", "Git sources require a locked read-only Reviewer.")
     for key in ("constraints", "expected_artifacts"):
         value = request.get(key)
         if value is None:
@@ -329,6 +338,12 @@ def create_skill_worker_job(store, values: dict[str, Any]) -> tuple[dict[str, An
             original_id = request.get("original_failed_job_id", "")
             files = (_retry_bundle(store, locks, operator, request, context, subject)
                      if is_skill_job_id(original_id) else _input_files(request, methods["role_contract"]))
+            if request.get("review_target") and not is_skill_job_id(original_id):
+                from .review_sources import SOURCE_FILE, capture_git_sources
+
+                if "review_prompt_base.md" not in files:
+                    raise SkillError("review_protocol_unsupported", "Git review needs the captured new-session thin protocol.")
+                files[SOURCE_FILE] = canonical_json(capture_git_sources(root, request["review_target"]))
             payload = {"schema_version": WORKER_REQUEST_SCHEMA, "worker_root": str(root),
                        "request": request, "files": files}
         else:
@@ -359,9 +374,10 @@ def _retry_bundle(store, locks, operator, request, context, subject):
         raise SkillError("snapshot_missing", "The original Reviewer snapshot is unavailable.")
     original = registered["snapshot"]
     expected = _metadata(original_id, registered["ref"], original)
+    protocol_review = expected["role"] == "code_review" and "review_prompt_base.md" in original["job_input"]["files"]
     if (original["task_lock_ref"] != context["task_lock_ref"] or original["subject"] != subject
-            or expected["execution_policy"] != "read_only" or not expected.get("profile_id")
-            or expected.get("phase") not in {"implementation", "release"}):
+            or expected["execution_policy"] != "read_only"
+            or (not protocol_review and (not expected.get("profile_id") or expected.get("phase") not in {"implementation", "release"}))):
         raise SkillError("review_retry_identity", "Reviewer retry must retain its original task, subject and read-only policy.")
     attempt = int(expected.get("retry_attempt") or expected.get("attempt") or 1) + 1
     if (request.get("retry_attempt") != attempt or request.get("attempt") != attempt
@@ -373,6 +389,11 @@ def _retry_bundle(store, locks, operator, request, context, subject):
     if ({key: value for key, value in request.items() if key not in mutable}
             != {key: value for key, value in original_request.items() if key not in mutable}):
         raise SkillConflict("operation_conflict", "Reviewer retry cannot change the original immutable request.")
+    terminal_failure = False
+    if protocol_review:
+        from .review_results import ReviewResultStore
+
+        terminal_failure = ReviewResultStore(store, original_id).assert_retryable()
     with _request_lock(operator, original_id) as authority_fd:
         if not _read_publication(authority_fd, original_id, expected):
             raise SkillError("worker_skill_publication_missing", "The original Reviewer was not completely published.")
@@ -384,9 +405,18 @@ def _retry_bundle(store, locks, operator, request, context, subject):
         if not isinstance(attempt_id, str) or re.fullmatch(r"preflight-[0-9a-f]{32}", attempt_id) is None:
             raise SkillError("review_retry_state_changed", "Reviewer failure has no trusted attempt evidence.")
         recorded = _json(regular_file(authority_fd, original_id + "." + attempt_id + ".json", maximum=MAX_RESOURCE_BYTES)[0])
+        if (protocol_review and not terminal_failure
+                and not (status.get("skill_runtime_status") == "not_connected"
+                         and status.get("invocation_evidence", {}).get("external_invocation") is False)):
+            raise SkillError("review_retry_unconfirmed", "A projected failure cannot prove the previous Reviewer has stopped.")
         if recorded != status or status.get("status") != "failed":
             raise SkillConflict("review_retry_state_changed", "The original Reviewer failure state is unavailable or changed.")
-        _verify_artifact(expected)
+        if original_request.get("review_target"):
+            from .review_sources import captured_git_target
+
+            captured_git_target(original)
+        else:
+            _verify_artifact(expected)
         return deepcopy(original["job_input"]["files"])
 
 
@@ -500,7 +530,13 @@ def run_skill_worker_job(store, job_id: str, *, sandbox_context=None) -> dict[st
                 # Preserve the immutable job request even when a caller tampers
                 # with it. Failure reporting must not silently repair job.json.
                 _write_status(fd, result)
-                return result
+    if checked == "verified":
+        from .review_execution import continue_review_worker
+
+        continued = continue_review_worker(store, job_id, snapshot, ref)
+        if continued is not None:
+            return continued
+    return result
 
 
 def reject_unverified_runtime_entry(job_root: Path, job: dict[str, Any]) -> None:

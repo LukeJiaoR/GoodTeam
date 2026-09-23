@@ -225,6 +225,8 @@ def _create_track_job(
     from goodteam_os.skills.review_protocol import review_execution_fields
 
     fields.update(review_execution_fields(store, method_context, role=str(track["role"])))
+    if "review_target" in track:
+        fields["review_target"] = track["review_target"]
     job, _created = store.create_or_reuse_job(
         **fields,
         run_id=run_id,
