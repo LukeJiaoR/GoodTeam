@@ -92,7 +92,8 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     expect(received.methods).toHaveLength(1);
     expect(received.methods[0].skill_id).toBe(installed.installed.skill_id);
     expect(received.methods[0].version_id).toBe(installed.installed.version_id);
-    expect(received.stages.resource_read_observed).toBe('unobserved');
+    expect(received.stages.resource_read_observed).toBe('observed');
+    expect(received.resource_reads).toEqual(accepted.resource_reads);
     const historical = await page.request.get(`/api/projects/${fixture.key}/runs/${oldRun}/skill-reviews/${accepted.job_id}/report`);
     expect(historical.status()).toBe(404);
     const gitFailure = drive(fixture, runId, 'git-malformed'); results.push(gitFailure);
@@ -111,6 +112,8 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     const reread = await (await page.request.get(`${endpoint}/${accepted.job_id}/report`)).json();
     expect(reread.methods).toEqual(received.methods);
     expect(reread.report_digest).toBe(received.report_digest);
+    expect(reread.resource_reads).toEqual(received.resource_reads);
+    expect(reread.context_ref).toEqual(received.context_ref);
     details = await panel(page, fixture);
     await page.reload();
     await page.getByRole('button', { name: 'Review execution details', exact: true }).click();
