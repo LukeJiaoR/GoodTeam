@@ -24,11 +24,65 @@ The existing nine offline helper checks do not establish any of these. No live
 provider call, credential discovery/reuse, package script, deployment, or approval
 is performed by this continuation. Do not merge this Draft as completed S5/S6.
 
-The initial report target is one explicitly named, SHA-256-versioned UTF-8
-artifact captured by the parent. This is not yet a complete exact-Git-change
-source bundle. Only the captured target, exposed as `candidate`, can support
-line evidence. Full custom-Skill source review therefore remains an acceptance
-gap, not something a passing fixture can establish.
+## Exact Git-change source input and retry
+
+A Reviewer can now select `review_target = {kind: "git_change", base_sha,
+head_sha}` with two full commit IDs in its registered Worker root. The parent
+captures all changed files from those exact commits, both base/head sides,
+**before** registering/publishing the immutable Worker input. It never substitutes
+the current worktree, a branch tip, a Builder summary or a model-provided path.
+The ordinary single-artifact target remains supported without migrating historical
+requests. Absent `review_target` is omitted, preserving old request hashes.
+
+The existing direct dispatcher exposes `--review-base` / `--review-head` for one
+`code_review` track, with no shell verification command. It requires the existing
+registered project/task and locked Reviewer methods; it cannot enable the closed
+Runtime. CLI return/status remains advisory, not automatic workflow success.
+Automatic selection of a PR candidate across all other producers is not claimed.
+
+Git objects are read locally with a fresh environment and bounded process/output
+limits. Raw `diff-tree -z --no-renames --ignore-submodules=none` and `cat-file blob`
+do not run external diff/textconv/filter programs; hooks/fsmonitor, replacement
+objects, lazy fetch and network protocols are disabled. Binary, invalid UTF-8,
+LFS pointers, symlinks, submodules and administrative paths reject the entire
+capture, rather than silently disappearing from a successful review. Limits:
+128 changed files, 256 KiB per side/file, 768 KiB complete serialized bundle, 30
+seconds; complete model-input budget is checked separately without truncation.
+Renames are deletion+addition; executable-mode changes retain both modes.
+
+The protected bundle records commit IDs, repository-relative names, modes, blob
+IDs, SHA-256 byte digests and exact text. Report evidence names `base/<path>` or
+`head/<path>` explicitly; the same filename from the other side cannot satisfy a
+quote. `SKILL.md` in reviewed source remains **source data**, not a selected method.
+Runtime source files are under `sources/`, separate from locked `methods/`.
+The scope is **all changed files on both sides**, not every unchanged dependency,
+full repository history or a guarantee the Reviewer checked every file.
+
+`POST /api/projects/{project}/runs/{run}/skill-reviews/{job}/retry` accepts only
+the displayed `snapshot_digest` and `context_digest`. The task/workflow guard
+prevents concurrent task transitions. The server selects the original request,
+source bundle, TaskSkillLock, methods, model, readonly policy and a new reviewer
+session. It uses the existing deterministic next-attempt identity. No provider,
+model, source path, package or replacement target can be supplied by this POST.
+
+A retry requires a reconciled durable terminal failure. Failed Worker status
+alone is insufficient: running/stopping, unconfirmed process termination, partial
+preparation and pending outcome recovery are rejected. Successful reports are not
+retryable here. Historical tasks remain read-only. Duplicate submissions reuse
+the same next job and existing outcome, never produce another paid attempt.
+After Role/worktree changes, even loss of the original Git checkout, retry uses
+saved original source bytes and methods. Changed/revoked packages still block it.
+
+The page shows the exact pair and file versions on expansion, and offers an
+explicit **Retry with locked inputs** action only for eligible failures. Creating
+a new attempt is not displayed as a successful report. Refresh and task-switch
+protection apply to the new request too. Aborting an HTTP view does **not** mean
+the execution is cancelled; public cancellation and admitted outer-process
+termination remain separate outstanding work.
+
+Git command semantics: https://git-scm.com/docs/git-diff-tree and
+https://git-scm.com/docs/git-cat-file. The fixed-source tests verify the actual
+local Git behavior; these are not native Codex discovery/isolation proofs.
 
 ## Result and authority contract
 
@@ -101,7 +155,12 @@ source-backed zero-findings reports, changes Role methods, replays the old job,
 reloads, and exercises invalid reports, interrupted projection and revocation.
 It never seeds report JSON or mocks the HTTP report API.
 
+The continuation also exercises exact Git-source creation, the real HTTP retry
+button after Role/worktree changes, a new labelled child context with unchanged
+source/method versions, duplicate requests, refresh and source-side mismatches.
+The production HTTP process remains closed; only the explicit owned test driver
+substitutes a constant process after the real UI has created the retry job.
+
 That is model-free integration evidence, **not** the requested live Reviewer
-acceptance. Public cancellation UX, retry-as-new-Reviewer-attempt after a real
-runtime failure, exact change-source bundling and live model conformance remain
-open. Keep exact commands, observed outcomes and final-head CI in PR #467.
+acceptance. Public cancellation UX, admitted Codex integration, actual optional
+resource-read observations and live model conformance remain open. Keep exact commands, observed outcomes and final-head CI in PR #467.

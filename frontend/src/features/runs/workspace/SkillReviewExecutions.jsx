@@ -15,6 +15,8 @@ const words = {
     unobserved: 'Not observed', observed: 'Observed by parent', findings: 'Findings', none: 'No findings reported',
     checks: 'Reviewer-reported checks', evidence: 'Source evidence', checked: 'Inspected by Reviewer',
     not_run: 'Not performed', inconclusive: 'Inconclusive', unverified: 'Not verified',
+    retry: 'Retry with locked inputs', retrying: 'Retrying…', retryFailed: 'Retry was not confirmed. Refresh to inspect the saved attempt.',
+    files: 'Changed files · exact base and head', base: 'Base commit', head: 'Head commit',
     required: 'Required', on_demand: 'On demand', promoted: 'Explicitly required by this task',
   },
   zh: {
@@ -29,6 +31,8 @@ const words = {
     unobserved: '未观察到', observed: '父进程已观察到', findings: '发现的问题', none: '未报告问题',
     checks: 'Reviewer 陈述的检查', evidence: '源码依据', checked: 'Reviewer 已检查',
     not_run: '未执行', inconclusive: '未得出结论', unverified: '未验证',
+    retry: '使用原输入重试', retrying: '正在重试…', retryFailed: '尚未确认重试结果，请刷新查看已保存的执行。',
+    files: '变更文件 · 固定前后版本', base: '起始提交', head: '目标提交',
     required: '必需', on_demand: '按需', promoted: '当前任务明确要求',
   },
 };
@@ -48,7 +52,9 @@ function matchesReport(payload, item, projectKey, runId) {
     && payload.snapshot_ref?.digest === item.snapshot_ref?.digest && payload.snapshot_ref?.id === item.snapshot_ref?.id
     && payload.context_ref?.digest === item.context_ref?.digest
     && payload.task_skill_context?.task?.logical_id === runId && payload.task_skill_context?.task?.project_key === projectKey
-    && payload.target?.artifact_version === item.target?.artifact_version && payload.report_digest === item.report_digest
+    && payload.target?.artifact_version === item.target?.artifact_version
+    && payload.target?.kind === item.target?.kind && payload.target?.base_sha === item.target?.base_sha
+    && payload.target?.head_sha === item.target?.head_sha && payload.report_digest === item.report_digest
     && payload.report?.schema_version === 'goodteam.code-review-report.v1'
     && payload.report.advisory === true && payload.report.judgment_verification === 'not_independently_verified'
     && typeof payload.report.summary === 'string' && Array.isArray(payload.report.findings)
@@ -104,6 +110,36 @@ function ReviewReport({ item, projectKey, runId, w }) {
   );
 }
 
+function RetryReview({ item, projectKey, runId, w, onRefresh }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  const controller = useRef(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  const retry = async () => {
+    if (busy) return;
+    const request = new AbortController();
+    controller.current = request;
+    setBusy(true); setError(false);
+    try {
+      const result = await requestJson(`${endpoint(projectKey, runId)}/${item.job_id}/retry`, {
+        method: 'POST', signal: request.signal, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ snapshot_digest: item.snapshot_ref.digest, context_digest: item.context_ref.digest }),
+      });
+      if (request.signal.aborted) return;
+      if (!matchesScope(result, projectKey, runId) || result.original_job_id !== item.job_id || !jobPattern.test(result.job_id)) {
+        throw new Error('review_scope_mismatch');
+      }
+      onRefresh();
+    } catch {
+      if (!request.signal.aborted) setError(true);
+    } finally {
+      if (!request.signal.aborted) setBusy(false);
+    }
+  };
+  return <div><button type="button" onClick={retry} disabled={busy}>{busy ? w.retrying : w.retry}</button>
+    {error ? <p role="alert">{w.retryFailed}</p> : null}</div>;
+}
+
 function ReviewPanel({ projectKey, runId, language }) {
   const locale = String(language || '').startsWith('zh') ? 'zh' : 'en';
   const w = words[locale];
@@ -151,6 +187,13 @@ function ReviewPanel({ projectKey, runId, language }) {
         <dl><dt>{w.target}</dt><dd>{item.target?.display_name || item.target?.artifact_key}<code>{item.target?.artifact_version}</code></dd>
           <dt>{w.runtime}</dt><dd>{item.runtime_verification === 'contract_fixture' ? w.fixture : item.runtime_verification || w.unverified}</dd>
         </dl>
+        {item.target?.kind === 'git_change' ? <details><summary>{w.files}</summary>
+          <dl><dt>{w.base}</dt><dd><code>{item.target.base_sha}</code></dd>
+            <dt>{w.head}</dt><dd><code>{item.target.head_sha}</code></dd></dl>
+          {(item.target.files || []).map((file) => <div key={file.path}><strong>{file.change} · {file.path}</strong>
+            {['base', 'head'].map((side) => file[side] ? <p key={side}>{side}: <code>{file[side].blob_id}</code></p> : null)}
+          </div>)}
+        </details> : null}
         <details><summary>{w.method}</summary>
           {(item.methods || []).map((method) => <div key={method.skill_id}>
             <code>{method.skill_id}</code><code>{method.version_id}</code><code>{method.package_digest}</code>
@@ -161,6 +204,8 @@ function ReviewPanel({ projectKey, runId, language }) {
         <details><summary>{w.states}</summary><dl>{Object.entries(item.stages || {}).map(([stage, state]) => <div key={stage}>
           <dt>{stageWords[locale][stage] || stage}</dt><dd>{w[state] || w.unobserved}</dd>
         </div>)}</dl></details>
+        {item.retry_available === true && ['failed', 'invalid', 'cancelled', 'interrupted'].includes(item.status) ? <RetryReview
+          item={item} projectKey={projectKey} runId={runId} w={w} onRefresh={load} /> : null}
         {item.report_available === true && item.status === 'received' ? <ReviewReport
           item={item} projectKey={projectKey} runId={runId} w={w}
         /> : null}

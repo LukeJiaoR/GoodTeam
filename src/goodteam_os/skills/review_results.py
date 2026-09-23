@@ -97,6 +97,10 @@ class ReviewResultStore:
 
     def _target(self, snapshot):
         request = snapshot["job_input"]["request"]
+        if request.get("review_target"):
+            from .review_sources import captured_git_target
+
+            return captured_git_target(snapshot)
         path, version, key = (request.get(name) for name in ("artifact_path", "artifact_version", "artifact_key"))
         if not isinstance(path, str) or not path or not isinstance(key, str) or not key:
             raise SkillError("review_target_missing", "This Reviewer needs an explicitly identified, versioned review artifact.")
@@ -111,7 +115,7 @@ class ReviewResultStore:
         except UnicodeError as exc:
             raise SkillError("review_target_unsupported", "The selected Reviewer path currently accepts bounded UTF-8 review input.") from exc
         return {"kind": "artifact", "artifact_key": key, "artifact_version": version,
-                "display_name": source_path.name, "source_name": "candidate"}, text
+                "display_name": source_path.name, "source_name": "candidate"}, {"candidate": text}
 
     def begin(self, provider: SkillContextProvider, context_ref: dict) -> dict:
         """Capture source bytes and bind a context before any process is launched."""
@@ -123,7 +127,7 @@ class ReviewResultStore:
         operator, current, ref, expected = self._registered()
         if current != snapshot or context_ref["snapshot_ref"] != ref:
             raise SkillError("snapshot_scope_mismatch", "The review context differs from its registered input.")
-        target, text = self._target(snapshot)
+        target, sources = self._target(snapshot)
         record = {
             "schema_version": RESULT_SCHEMA, "job_id": self.job_id,
             "task_skill_context": expected["task_skill_context"], "snapshot_ref": ref,
@@ -132,7 +136,7 @@ class ReviewResultStore:
             "methods": [{key: item[key] for key in ("skill_id", "version_id", "package_digest", "activation")}
                         for item in context["input"]["catalog"]],
             "required_skill_ids": deepcopy(snapshot["required_skill_ids"]),
-            "sources": {"candidate": text},
+            "sources": sources,
         }
         if len(_bytes(record)) > MAX_CONTEXT_BYTES:
             raise SkillError("review_target_unsupported", "The captured review input exceeds its storage bound.")
@@ -166,6 +170,11 @@ class ReviewResultStore:
         source = record.get("sources")
         target = record.get("target")
         request = snapshot["job_input"]["request"]
+        if request.get("review_target"):
+            fixed_target, fixed_sources = self._target(snapshot)
+            if target != fixed_target or source != fixed_sources:
+                raise SkillError("review_result_identity", "Stored report sources differ from the original Git change snapshot.")
+            return
         if (not isinstance(source, dict) or set(source) != {"candidate"} or not isinstance(source["candidate"], str)
                 or not isinstance(target, dict) or target.get("artifact_version") != request.get("artifact_version")
                 or target.get("artifact_key") != request.get("artifact_key")
@@ -323,6 +332,35 @@ class ReviewResultStore:
                 raise SkillConflict("review_result_conflict", "A terminal Reviewer cannot be changed to stopping.")
             _replace(fd, "state.json", {**state, "status": "stopping", "updated_at": _now()})
 
+    def assert_retryable(self) -> bool:
+        """A failed status projection alone is never proof of process termination.
+
+        False means there is no result directory at all: the caller must then
+        prove an original blocked-before-invocation preflight. Partial storage,
+        running/stopping, unreconciled and successful outcomes cannot be retried.
+        """
+        operator, snapshot, ref, expected = self._registered()
+        try:
+            with self._store(operator) as fd:
+                record, state, outcome = (_read_optional(fd, name) for name in ("attempt.json", "state.json", "outcome.json"))
+                if record is None:
+                    raise SkillError("review_retry_unconfirmed", "Partial review preparation must be recovered before retry.")
+                self._check_record(record, snapshot, ref, expected)
+                self._check_state(state, record)
+                if (outcome is None or state["status"] not in {"failed", "invalid", "cancelled", "interrupted"}
+                        or outcome.get("status") != state["status"]
+                        or state.get("outcome_digest") != content_digest(_bytes(outcome))):
+                    raise SkillError("review_retry_unconfirmed", "Only a confirmed terminal failure can create a new Reviewer attempt.")
+                self._validate_outcome(record, outcome)
+        except SkillError as exc:
+            if isinstance(exc.__cause__, FileNotFoundError):
+                # Only a wholly absent store means execution has not begun.
+                path = operator / "skills" / "review-results" / self.job_id
+                if not path.exists() and not path.is_symlink():
+                    return False
+            raise
+        return True
+
     def recover(self) -> dict:
         """Republish only a validated durable outcome; never re-run a model."""
         operator, snapshot, ref, expected = self._registered()
@@ -362,7 +400,7 @@ class ReviewResultStore:
                       "runtime": {key: record["runtime_session"][key] for key in
                                   ("adapter", "adapter_version", "binary_version", "binary_digest", "model", "config_digest", "session_id")},
                       "stages": {key: "unobserved" for key in OBSERVED_STAGES},
-                      "status": state["status"], "updated_at": state["updated_at"],
+                      "status": state["status"], "updated_at": state["updated_at"], "retry_available": False,
                       "advisory": True, "judgment_verification": "not_independently_verified", "report_available": False}
             for stage in ("materialized", "catalog_presented", "content_delivered"):
                 observed = _read_optional(fd, "observed-" + stage + ".json")
@@ -397,6 +435,7 @@ class ReviewResultStore:
                         result["report"] = report
                 else:
                     result["error_code"] = outcome.get("error_code", "review_failed")
+                    result["retry_available"] = state["status"] in {"failed", "invalid", "cancelled", "interrupted"}
             elif outcome is not None:
                 # A crash after immutable outcome publication but before status
                 # publication is recoverable, not a successful report in the UI.

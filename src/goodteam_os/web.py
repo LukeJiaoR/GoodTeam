@@ -5967,6 +5967,11 @@ def handle_project_api_post(
     path: str,
     request: dict[str, object],
 ) -> tuple[int, dict[str, object]] | None:
+    from goodteam_os.skills.review_api import handle_review_post
+
+    review_response = handle_review_post(workspace, path, request)
+    if review_response is not None:
+        return review_response
     if path == "/api/settings":
         return 200, save_workspace_product_settings(workspace, request)
     if path == "/api/projects/import":

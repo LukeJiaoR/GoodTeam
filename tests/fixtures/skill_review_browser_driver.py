@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 from unittest.mock import patch
 
@@ -52,31 +53,36 @@ class BrowserFixtureRuntime:
         self.calls += 1
         path = self.root / ("review-process-" + record["job_id"][-16:])
         prompt = materialize_review_inputs(provider, ref, record, path)
+        source_name = "head/review-change.js" if record["target"]["kind"] == "git_change" else "candidate"
+        exact_source = record["sources"][source_name]
         report = {
             "schema_version": "goodteam.code-review-report.v1",
             "summary": "Fixture review of the exact captured source; no independent test execution.",
             "findings": [],
-            "evidence": [{"id": "E1", "path": "candidate", "line_start": 1, "line_end": 1,
-                          "quote": self.source.splitlines()[0], "observation": "The captured file exports the fixture constant."}],
+            "evidence": [{"id": "E1", "path": source_name, "line_start": 1, "line_end": 1,
+                          "quote": exact_source.splitlines()[0], "observation": "The captured file exports the fixture constant."}],
             "checks": [{"name": "Export declaration", "status": "checked", "evidence_ids": ["E1"],
                         "detail": "Inspected the exact captured source in this model-free contract fixture."},
                        {"name": "Application tests", "status": "not_run", "evidence_ids": [],
                         "detail": "This Reviewer did not run the application test suite."}],
         }
-        if self.mode == "malformed":
+        if self.mode in {"malformed", "git-malformed"}:
             report["summary"] = ""
         events = [{"type": "thread.started", "thread_id": "owned-browser-fixture"}, {"type": "turn.started"},
                   {"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": json.dumps(report)}},
                   {"type": "turn.completed", "usage": {"input_tokens": 0, "output_tokens": 0}}]
         output = "\n".join(json.dumps(item) for item in events) + "\n"
-        program = "import sys; assert sys.stdin.buffer.read(); sys.stdout.write(" + repr(output) + ")"
+        candidate = "sources/" + source_name if record["target"]["kind"] == "git_change" else "candidate"
+        program = ("import sys; from pathlib import Path; assert sys.stdin.buffer.read(); "
+                   + "assert Path(" + repr(candidate) + ").read_text() == " + repr(exact_source) + "; "
+                   + "sys.stdout.write(" + repr(output) + ")")
         yield ReviewProcess((sys.executable, "-I", "-c", program), path, {}, 5), prompt
 
 
 def main():
     root = owned_root()
     key, run_id, mode = sys.argv[1:]
-    if mode not in {"valid", "malformed", "save-failure", "revoke"}:
+    if mode not in {"valid", "malformed", "save-failure", "revoke", "git-malformed", "git-retry"}:
         raise RuntimeError("Unsupported fixed fixture action")
     workspace = root / "workspace"
     state = StateStore(workspace).read_project_current(key)
@@ -100,12 +106,37 @@ def main():
     workers = WorkerJobStore(repo)
     source_path = repo / "src" / "main.js"
     source = source_path.read_text()
-    job = workers.create_job(run_id=run_id, project_key=key, role="code_review", adapter="codex", model="fixture-only",
+    target = None
+    if mode == "git-malformed":
+        # Only this owned fixture repository; never production or arbitrary commands.
+        def git(*args):
+            return subprocess.check_output(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@localhost", *args], cwd=repo).decode().strip()
+        git("init", "-q")
+        (repo / "review-change.js").write_text("export const reviewed = 'base';\n")
+        (repo / "review-delete.txt").write_text("removed in head\n")
+        git("add", "review-change.js", "review-delete.txt")
+        git("commit", "-qm", "Bounded fixture base")
+        base = git("rev-parse", "HEAD")
+        (repo / "review-change.js").write_text("export const reviewed = 'head';\n")
+        (repo / "review-delete.txt").unlink()
+        (repo / "review-added.txt").write_text("added in head\n")
+        git("add", "review-change.js", "review-delete.txt", "review-added.txt")
+        git("commit", "-qm", "Bounded fixture head")
+        target = {"kind": "git_change", "base_sha": base, "head_sha": git("rev-parse", "HEAD")}
+    if mode == "git-retry":
+        candidates = [item for item in workers.list_jobs() if item.get("run_id") == run_id
+                      and item.get("original_failed_job_id") and item.get("review_target")]
+        if len(candidates) != 1:
+            raise RuntimeError("The real UI must create exactly one new retry attempt first")
+        job = candidates[0]
+    else:
+        job = workers.create_job(run_id=run_id, project_key=key, role="code_review", adapter="codex", model="fixture-only",
         task="Review the exact fixture source with this task's original methods.", context="Model-free browser contract.",
         execution_policy="read_only", artifact_key="fixture_source", artifact_path=str(source_path),
         artifact_version=content_digest(source.encode()), expected_artifacts=["review-report"],
         idempotency_key="browser-review:" + run_id + ":" + mode, task_skill_context=state.task_skill_context,
-        skill_subject="role:code_review", skill_loader_version=WORKER_METADATA_LOADER)
+        skill_subject="role:code_review", skill_loader_version=WORKER_METADATA_LOADER,
+        **({"review_target": target} if target else {}))
     runtime = BrowserFixtureRuntime(root, mode, source)
     from goodteam_os.skills import review_results
     original = review_results._replace

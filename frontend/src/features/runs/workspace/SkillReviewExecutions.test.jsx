@@ -94,3 +94,59 @@ describe('Task-bound Skill review details', () => {
     expect(await within(panel).findByText('合同测试夹具 · 不是真实 Runtime 验收')).toBeVisible();
   });
 });
+
+describe('Locked-source retry', () => {
+  const failed = { ...item, status: 'invalid', report_available: false, retry_available: true };
+  it('posts only displayed immutable identity, then refreshes without claiming a received report', async () => {
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [failed] })
+      .mockResolvedValueOnce({ project_key: 'DEMO', run_id: 'run', original_job_id: item.job_id,
+        job_id: `job-skill-${'b'.repeat(64)}`, status: 'failed' })
+      .mockResolvedValueOnce({ ...list, reviews: [failed, { ...failed, job_id: `job-skill-${'b'.repeat(64)}`, retry_available: false }] });
+    setup(); openPanel();
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry with locked inputs' }));
+    await screen.findAllByRole('article');
+    await vi.waitFor(() => expect(requestJson).toHaveBeenCalledTimes(3));
+    const [url, options] = requestJson.mock.calls[1];
+    expect(url).toBe(`/api/projects/DEMO/runs/run/skill-reviews/${item.job_id}/retry`);
+    expect(options.method).toBe('POST');
+    expect(options.headers['Content-Type']).toBe('application/json');
+    expect(JSON.parse(options.body)).toEqual({ snapshot_digest: item.snapshot_ref.digest, context_digest: item.context_ref.digest });
+    expect(screen.queryByRole('button', { name: 'Open review report' })).not.toBeInTheDocument();
+  });
+  it.each(['running', 'stopping', 'received', 'recovery_required', 'unavailable'])('does not offer retry for %s despite a contradictory flag', async (status) => {
+    requestJson.mockResolvedValue({ ...list, reviews: [{ ...failed, status }] });
+    setup(); openPanel(); await screen.findByRole('article');
+    expect(screen.queryByRole('button', { name: 'Retry with locked inputs' })).not.toBeInTheDocument();
+  });
+  it('keeps an API-rejected retry as a failure, not an optimistic success', async () => {
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [failed] }).mockRejectedValueOnce(new Error('revoked'));
+    setup(); openPanel(); fireEvent.click(await screen.findByRole('button', { name: 'Retry with locked inputs' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Retry');
+    expect(screen.queryByText('Report received', { exact: true })).not.toBeInTheDocument();
+    expect(requestJson).toHaveBeenCalledTimes(2);
+  });
+  it('aborts pending retry UI on task switch and ignores its late response', async () => {
+    let resolve;
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [failed] }).mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const view = setup(); openPanel(); fireEvent.click(await screen.findByRole('button', { name: 'Retry with locked inputs' }));
+    const signal = requestJson.mock.calls[1][1].signal;
+    view.rerender(<SkillReviewExecutions projectKey="DEMO" runId="next" language="en" />);
+    expect(signal.aborted).toBe(true);
+    await act(async () => resolve({ project_key: 'DEMO', run_id: 'run', original_job_id: item.job_id, job_id: `job-skill-${'b'.repeat(64)}` }));
+    expect(requestJson).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+  });
+  it('shows exact commit pair and collapsed file versions; rejects the other source side', async () => {
+    const target = { ...item.target, kind: 'git_change', base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40),
+      files: [{ path: 'src/main.js', change: 'M', base: { blob_id: '1'.repeat(40) }, head: { blob_id: '2'.repeat(40) } }] };
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [{ ...item, target }] })
+      .mockResolvedValueOnce({ ...report, target: { ...target, head_sha: 'c'.repeat(40) } });
+    setup(); openPanel();
+    const heading = await screen.findByText('Changed files · exact base and head');
+    expect(heading.closest('details')).not.toHaveAttribute('open');
+    fireEvent.click(heading);
+    expect(screen.getByText('b'.repeat(40))).toBeVisible();
+    await openReport(); await screen.findByRole('alert');
+    expect(screen.queryByText('No findings reported')).not.toBeInTheDocument();
+  });
+});

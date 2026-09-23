@@ -44,8 +44,10 @@ def _input(provider, context_ref, record):
                for item in private["catalog"]]
     text = (base + "\n# Locked methods\n" + required + "\n# Optional method catalog\n"
             + canonical_json(catalog) + "\nResources: methods/<skill_id>/<relative path>. Read only when relevant.\n"
-            + "# Captured review source: candidate\n" + record["sources"]["candidate"]
-            + "\n# Result channel contract\n" + report_output_instructions(["candidate"]))
+            + "# Exact review target\n" + canonical_json(record["target"])
+            + "\n# Captured sources (logical names; files under sources/ for Git targets)\n"
+            + canonical_json(record["sources"])
+            + "\n# Result channel contract\n" + report_output_instructions(list(record["sources"])))
     encoded = text.encode("utf-8")
     if len(encoded) > provider.limits.max_input_bytes:
         raise SkillError("content_budget_exceeded", "The complete Reviewer prompt exceeds its limit; no input was truncated.")
@@ -63,9 +65,15 @@ def materialize_review_inputs(provider, context_ref, record, root: Path):
     with directory(root.parent) as parent:
         os.mkdir(root.name, mode=0o700, dir_fd=parent)
         with subdirectory(parent, root.name) as fd:
-            write_new(fd, "candidate", record["sources"]["candidate"].encode(), mode=0o400)
+            if record["target"]["kind"] == "artifact":
+                write_new(fd, "candidate", record["sources"]["candidate"].encode(), mode=0o400)
             os.fsync(fd)
         os.fsync(parent)
+    if record["target"]["kind"] == "git_change":
+        for name, text in record["sources"].items():
+            target = root / "sources" / name
+            with directory(target.parent, create=True) as fd:
+                write_new(fd, target.name, text.encode("utf-8"), mode=0o400)
     for item in private["catalog"]:
         for resource in item["resources"]:
             relative = resource["path"]

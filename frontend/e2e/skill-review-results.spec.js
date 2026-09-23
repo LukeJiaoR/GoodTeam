@@ -84,6 +84,13 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     expect(received.stages.resource_read_observed).toBe('unobserved');
     const historical = await page.request.get(`/api/projects/${fixture.key}/runs/${oldRun}/skill-reviews/${accepted.job_id}/report`);
     expect(historical.status()).toBe(404);
+    const gitFailure = drive(fixture, runId, 'git-malformed'); results.push(gitFailure);
+    expect(gitFailure.fixture_processes).toBe(1);
+    const gitOriginal = await (await page.request.get(`${endpoint}/${gitFailure.job_id}`)).json();
+    expect(gitOriginal.status).toBe('invalid');
+    expect(gitOriginal.target.kind).toBe('git_change');
+    expect(gitOriginal.target.files).toHaveLength(3);
+    expect(gitOriginal.target.files.find(file => file.path === 'review-delete.txt').head).toBeNull();
     dialog = await methodDialog(page, fixture, label);
     await dialog.getByRole('radio', { name: /GoodTeam default methods/ }).check();
     await clickMutation(page, dialog.getByRole('button', { name: 'Restore default methods', exact: true }), `/api/projects/${fixture.key}/team/commands`);
@@ -99,6 +106,44 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     review = page.getByRole('article', { name: accepted.job_id, exact: true });
     await review.getByRole('button', { name: 'Open review report', exact: true }).click();
     await expect(review.getByText('No findings reported')).toBeVisible();
+    // Edit the working tree AFTER capture and Role edit; retry must use old bytes.
+    fs.writeFileSync(path.join(fixture.root, 'review-change.js'), "WRONG CURRENT WORKTREE\n");
+    details = await panel(page, fixture);
+    const gitInvalid = details.getByRole('article', { name: gitFailure.job_id, exact: true });
+    const retried = await clickMutation(page, gitInvalid.getByRole('button', { name: 'Retry with locked inputs', exact: true }),
+      `${endpoint}/${gitFailure.job_id}/retry`);
+    results.push(retried);
+    expect(retried.created).toBe(true);
+    expect(retried.job_id).not.toBe(gitFailure.job_id);
+    expect(retried.status).toBe('failed'); // Production Runtime remains closed, not a fake success.
+    let retryReview = details.getByRole('article', { name: retried.job_id, exact: true });
+    await expect(retryReview).toBeVisible();
+    await expect(retryReview.getByRole('button', { name: 'Open review report' })).toHaveCount(0);
+    const executedRetry = drive(fixture, runId, 'git-retry'); results.push(executedRetry);
+    expect(executedRetry.job_id).toBe(retried.job_id);
+    expect(executedRetry.fixture_processes).toBe(1);
+    const retryReport = await (await page.request.get(`${endpoint}/${retried.job_id}/report`)).json();
+    expect(retryReport.target).toEqual(gitOriginal.target);
+    expect(retryReport.methods).toEqual(gitOriginal.methods);
+    expect(retryReport.context_ref).not.toEqual(gitOriginal.context_ref);
+    expect(retryReport.runtime.session_id).not.toBe(gitOriginal.runtime.session_id);
+    expect(retryReport.report.evidence[0].path).toBe('head/review-change.js');
+    expect(retryReport.report.evidence[0].quote).toBe("export const reviewed = 'head';");
+    const duplicate = await page.request.post(`${endpoint}/${gitFailure.job_id}/retry`, { data: {
+      snapshot_digest: gitOriginal.snapshot_ref.digest, context_digest: gitOriginal.context_ref.digest,
+    } });
+    expect(duplicate.status()).toBe(200);
+    expect((await duplicate.json()).created).toBe(false);
+    await page.reload();
+    await page.getByRole('button', { name: 'Review execution details', exact: true }).click();
+    details = page.getByRole('region', { name: 'Review execution details', exact: true });
+    retryReview = details.getByRole('article', { name: retried.job_id, exact: true });
+    await retryReview.getByText('Changed files · exact base and head', { exact: true }).click();
+    await expect(retryReview.getByText(gitOriginal.target.head_sha, { exact: true })).toBeVisible();
+    await retryReview.getByRole('button', { name: 'Open review report', exact: true }).click();
+    await retryReview.getByText('E1 · head/review-change.js:1–1', { exact: true }).click();
+    await expect(retryReview.locator('pre')).toHaveText("export const reviewed = 'head';");
+    await testInfo.attach('exact-git-source-new-context-retry', { body: await page.screenshot(), contentType: 'image/png' });
     const bad = drive(fixture, runId, 'malformed'); results.push(bad);
     const interrupted = drive(fixture, runId, 'save-failure'); results.push(interrupted);
     details = await panel(page, fixture);
@@ -118,7 +163,7 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     const revokedResponse = await revokedRefresh;
     expect(revokedResponse.status()).toBe(200);
     const revokedPayload = await revokedResponse.json();
-    expect(revokedPayload.reviews).toHaveLength(3);
+    expect(revokedPayload.reviews).toHaveLength(5);
     expect(revokedPayload.reviews.every((entry) => !entry.report_available)).toBe(true);
     await expect(details.getByRole('button', { name: 'Open review report' })).toHaveCount(0);
     const after = await snapshot(page, fixture, evidence);

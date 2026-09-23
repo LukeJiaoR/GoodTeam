@@ -1,4 +1,4 @@
-"""Task-scoped, read-only projection of protected Reviewer results.
+"""Task-scoped result reads and explicit retry of protected Reviewer failures.
 
 The original task registry selects jobs, not Worker directory listings, status
 JSON or a URL supplied by a model. No public report-write endpoint is provided.
@@ -40,12 +40,20 @@ def _jobs(workers, context):
 
 def _unavailable(job_id, snapshot, ref, context, code):
     request = snapshot["job_input"]["request"]
+    target = {"artifact_key": request.get("artifact_key", ""),
+              "artifact_version": request.get("artifact_version", ""),
+              "display_name": Path(request.get("artifact_path") or "").name}
+    if request.get("review_target") is not None:
+        from .review_sources import captured_git_target
+
+        try:
+            target, _sources = captured_git_target(snapshot)
+        except (SkillError, KeyError):
+            target = {"kind": "git_change", "display_name": "Unavailable source snapshot"}
     return {"schema_version": DETAIL_SCHEMA, "job_id": job_id, "task_skill_context": context,
             "snapshot_ref": ref, "status": "unavailable", "error_code": code, "report_available": False,
             "advisory": True, "judgment_verification": "not_independently_verified",
-            "target": {"artifact_key": request.get("artifact_key", ""),
-                       "artifact_version": request.get("artifact_version", ""),
-                       "display_name": Path(request.get("artifact_path") or "").name},
+            "target": target, "retry_available": False,
             "methods": [{key: item[key] for key in ("skill_id", "version_id", "package_digest", "activation")}
                         for item in snapshot["methods"]["items"]]}
 
@@ -85,6 +93,7 @@ def handle_review_get(workspace: Path, path: str):
     _key, _target, root = web._project_target_and_root(workspace, key)
     states = StateStore(workspace)
     state = states.read_project_current(key)
+    current_task = state is not None and state.run_id == run_id
     if state is None or state.run_id != run_id:
         state = next((item for _path, item in states.list_project_archived(key) if item.run_id == run_id), None)
     if state is None:
@@ -99,4 +108,59 @@ def handle_review_get(workspace: Path, path: str):
     except (SkillError, OSError) as exc:
         status, payload = 409, {"error": exc.code if isinstance(exc, SkillError) else "review_result_unavailable",
                                 "message": "Task-bound review evidence is unavailable; no report was accepted."}
+    if not current_task:
+        for item in payload.get("reviews", [payload]):
+            item["retry_available"] = False
     return status, {**payload, "project_key": key, "run_id": run_id}
+
+
+def handle_review_post(workspace: Path, path: str, request):
+    """Explicit current-task retry; no model-output ingestion or arbitrary inputs."""
+    match = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)/skill-reviews/(job-skill-[0-9a-f]{64})/retry", path)
+    if not match:
+        return None
+    from goodteam_os import web
+    from goodteam_os.reviewer_dispatch import _retry_idempotency_key
+    from goodteam_os.state import StateStore
+    from goodteam_os.workers import WorkerJobStore
+
+    key, run_id = web._decode_project_api_key(match[1]), web._decode_project_run_id(match[2])
+    from goodteam_os.workflow_mutations import WorkflowBusyError, workflow_guard
+
+    try:
+        with workflow_guard(workspace, key):
+            _key, _target, root = web._project_target_and_root(workspace, key)
+            state = StateStore(workspace).read_project_current(key)
+            if state is None or state.run_id != run_id:
+                return 409, {"error": "review_historical_readonly", "message": "Historical task reviews are read-only."}
+            try:
+                if not isinstance(request, dict) or set(request) != {"snapshot_digest", "context_digest"}:
+                    raise SkillError("review_retry_request", "Retry must identify the displayed original snapshot and context only.")
+                context = workflow_skill_context(state.task_skill_context, run_id=run_id, project_key=key)
+                if not context:
+                    return 404, {"error": "review_not_found", "message": "This task has no locked Reviewer."}
+                workers = WorkerJobStore(root)
+                selected = next((row for row in _jobs(workers, context) if row[0] == match[3]), None)
+                if selected is None:
+                    return 404, {"error": "review_not_found", "message": "This Reviewer does not belong to the selected task."}
+                identity, snapshot, ref = selected
+                result_store = ReviewResultStore(workers, identity)
+                detail = result_store.detail(expected_task_context=context)
+                if (request["snapshot_digest"] != ref["digest"] or request["context_digest"] != detail["context_ref"]["digest"]
+                        or not result_store.assert_retryable()):
+                    raise SkillError("review_retry_unconfirmed", "Reload the original failed review before retrying.")
+                expected = requests._metadata(identity, ref, snapshot)
+                attempt = int(expected.get("retry_attempt") or expected.get("attempt") or 1) + 1
+                # Reuses the original request, bytes, methods, runtime and new-session policy.
+                job, created = requests.create_skill_reviewer_retry(workers, expected, retry_attempt=attempt,
+                            idempotency_key=_retry_idempotency_key(expected, retry_attempt=attempt))
+                result = workers.run_job(job["id"])
+                return 200, {"project_key": key, "run_id": run_id, "original_job_id": identity,
+                             "job_id": job["id"], "created": created, "status": result["status"],
+                             "advisory": True, "approval_changed": False}
+            except (SkillError, OSError) as exc:
+                return 409, {"error": exc.code if isinstance(exc, SkillError) else "review_retry_unavailable",
+                             "message": "The original review could not be retried safely. No replacement inputs were used."}
+
+    except WorkflowBusyError:
+        return 409, {"error": "review_retry_busy", "message": "This task is busy. Reload its saved review before retrying."}

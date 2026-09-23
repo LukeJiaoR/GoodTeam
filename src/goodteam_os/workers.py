@@ -898,13 +898,14 @@ class WorkerJobStore:
         skill_subject: str = "",
         skill_loader_version: str = "goodteam.worker-metadata.v1",
         required_skill_ids: tuple[str, ...] = (),
+        review_target: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
             skill_request = locals().copy()
             from goodteam_os.skills.worker_requests import create_skill_worker_job
 
             return create_skill_worker_job(self, skill_request)[0]
-        if skill_subject or required_skill_ids or skill_loader_version != "goodteam.worker-metadata.v1":
+        if review_target is not None or skill_subject or required_skill_ids or skill_loader_version != "goodteam.worker-metadata.v1":
             raise ValueError("Skill Worker input requires an explicit task Skill context; legacy fallback is forbidden.")
         if idempotency_key:
             from goodteam_os.skills.worker_requests import reject_legacy_key_collision
