@@ -134,9 +134,10 @@ class ScriptedEngine:
             {"type": "item.completed", "item": {"id": "item_1", "type": "agent_message", "text": canonical_json(self.output_report)}},
             {"type": "turn.completed", "usage": {"input_tokens": 0, "output_tokens": 0}}]
         raw = ("\n".join(canonical_json(e) for e in events) + "\n").encode()
+        # CoreFoundation inserts __CF_USER_TEXT_ENCODING in native macOS children.
         body = ("import sys,os;from pathlib import Path\n"
             "text=sys.stdin.buffer.read()\nassert text\n"
-            "assert set(os.environ) <= {'PATH','LANG','LC_CTYPE'}\n"
+            "assert set(os.environ) <= {'PATH','LANG','LC_CTYPE','__CF_USER_TEXT_ENCODING'}\n"
             "assert Path(" + repr(str(method / "SKILL.md")) + ").read_bytes()==" + repr(resource) + "\n"
             "assert Path(" + repr(str(stage / ".runtime/guard.py")) + ").exists()\n"
             + self.output_body + "\nsys.stdout.buffer.write(" + repr(raw) + ")\n")
