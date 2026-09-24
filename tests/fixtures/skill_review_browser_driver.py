@@ -92,7 +92,7 @@ class BrowserFixtureRuntime:
 def main():
     root = owned_root()
     key, run_id, mode = sys.argv[1:]
-    if mode not in {"valid", "malformed", "save-failure", "revoke", "git-malformed", "git-retry", "cancel-wait"}:
+    if mode not in {"valid", "malformed", "save-failure", "revoke", "git-malformed", "git-retry", "cancel-wait", "codex-contract"}:
         raise RuntimeError("Unsupported fixed fixture action")
     workspace = root / "workspace"
     state = StateStore(workspace).read_project_current(key)
@@ -147,6 +147,32 @@ def main():
         idempotency_key="browser-review:" + run_id + ":" + mode, task_skill_context=state.task_skill_context,
         skill_subject="role:code_review", skill_loader_version=WORKER_METADATA_LOADER,
         **({"review_target": target} if target else {}))
+    if mode == "codex-contract":
+        # Test-only composition: actual Worker chooses the concrete adapter.
+        # Only daemon observations/attached executable are scripted; no provider,
+        # actual Docker or native Codex acceptance is implied by this fixture.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from test_codex_review_runtime import AdmissionFixture, ScriptedEngine, contract
+        from goodteam_os.skills import codex_container
+        from goodteam_os.skills.review_results import ReviewResultStore
+        selected = contract(model="fixture-only")
+        admission = AdmissionFixture(selected=selected)
+        fixture_report = {
+            "schema_version": "goodteam.code-review-report.v1", "summary": "Fixture review of the exact captured source; no independent test execution.",
+            "findings": [], "evidence": [{"id": "E1", "path": "candidate", "line_start": 1, "line_end": 1,
+                "quote": source.splitlines()[0], "observation": "Inspected the original source declaration."}],
+            "checks": [{"name": "Export declaration", "status": "checked", "evidence_ids": ["E1"],
+                        "detail": "Inspected the exact captured source in a model-free contract fixture."},
+                       {"name": "Application tests", "status": "not_run", "evidence_ids": [], "detail": "No application tests were run by the Reviewer."}]}
+        engine = ScriptedEngine(selected, output_report=fixture_report)
+        workers = WorkerJobStore(repo, codex_review_admission=admission)
+        with patch.object(codex_container, "DockerEngine", return_value=engine):
+            result = workers.run_job(job["id"])
+        detail = ReviewResultStore(workers, job["id"]).detail()
+        print(json.dumps({"job_id": job["id"], "result": result, "fixture_processes": engine.attaches,
+                          "provider_calls": 0, "native_codex": False, "actual_docker": False,
+                          "resource_reads": detail.get("resource_reads", [])}))
+        return
     runtime = BrowserFixtureRuntime(root, mode, source)
     from goodteam_os.skills import review_results
     original = review_results._replace

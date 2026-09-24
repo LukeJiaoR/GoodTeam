@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import os
 import subprocess
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from goodteam_os.models import _parse_simple_yaml
 from goodteam_os.workers import WorkerJobStore
+
+if TYPE_CHECKING:
+    from goodteam_os.skills.codex_runtime import CodexReviewAdmission
 
 
 def parse_dispatch_track_spec(spec: str, *, base_dir: Path | None = None) -> dict[str, object]:
@@ -123,6 +128,7 @@ def dispatch_tracks(
     projects_dir: Path | None = None,
     allow_unsafe: bool = False,
     logical_task_id: str = "",
+    codex_review_admission: CodexReviewAdmission | None = None,
 ) -> dict[str, object]:
     safety_kwargs: dict[str, object] = {"allow_unsafe": allow_unsafe}
     if projects_dir is not None:
@@ -130,6 +136,16 @@ def dispatch_tracks(
     safety = ensure_dispatch_project_root_is_safe(project_root, **safety_kwargs)
     if not safety["safe"]:
         raise ValueError(str(safety["reason"]))
+    # Validate trusted composition before recording a task. Neither track JSON
+    # nor a Skill may supply admission, and each execution thread retains it.
+    store = WorkerJobStore(project_root, **_review_runtime_kwargs(codex_review_admission))
+    if any(track.get("review_target") is not None for track in tracks) and verify_commands:
+        raise ValueError("Exact-source review cannot run post-review shell verification commands.")
+    if codex_review_admission is not None and any(
+        track.get("role") == "code_review" and track.get("adapter") == "codex" and not track.get("model")
+        for track in tracks
+    ):
+        raise ValueError("An admitted Codex Reviewer requires an explicit model before task creation.")
     constraints = _constraints_from_file(constraints_file)
     from goodteam_os.skills.models import content_digest
     from goodteam_os.skills.task_locks import TaskSkillIdentity
@@ -149,7 +165,6 @@ def dispatch_tracks(
                              "constraints_source": str(constraints_file) if constraints_file else "",
                              "research_report_source": str(research_report_file) if research_report_file else ""},
         )
-    store = WorkerJobStore(project_root)
     jobs_by_role = [
         _create_track_job(
             store,
@@ -167,7 +182,8 @@ def dispatch_tracks(
     max_workers = max(1, len(jobs_by_role))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_run_dispatched_job, project_root, job, dict(verify_commands or {})): str(job["role"])
+            executor.submit(_run_dispatched_job, project_root, job, dict(verify_commands or {}),
+                            **_review_runtime_kwargs(codex_review_admission)): str(job["role"])
             for job in jobs_by_role
         }
         for future in as_completed(futures):
@@ -179,6 +195,7 @@ def dispatch_tracks(
 
     jobs = [results_by_role.get(str(job["role"]), _exception_report(role=str(job["role"]), error=RuntimeError("missing result"))) for job in jobs_by_role]
     ok = [job for job in jobs if job.get("outcome") == "ok"]
+    reviews = [job for job in jobs if job.get("outcome") == "review_received"]
     needs_human = [job for job in jobs if job.get("outcome") == "needs_human"]
     file_to_roles: dict[str, set[str]] = defaultdict(set)
     for job in jobs:
@@ -197,10 +214,17 @@ def dispatch_tracks(
         "file_collisions": file_collisions,
         "jobs": jobs,
         "ok": ok,
+        "reviews": reviews,
         "needs_human": needs_human,
         "run_id": run_id,
         "project_root": str(project_root),
     }
+
+
+def _review_runtime_kwargs(admission):
+    # Keep default/legacy callers unchanged; this is only server-owned wiring,
+    # not a provider factory or permission inferred from CLI/track configuration.
+    return {} if admission is None else {"codex_review_admission": admission}
 
 
 def _create_track_job(
@@ -244,8 +268,11 @@ def _create_track_job(
     return job
 
 
-def _run_dispatched_job(project_root: Path, job: dict[str, Any], verify_commands: dict[str, str]) -> dict[str, object]:
-    store = WorkerJobStore(project_root)
+def _run_dispatched_job(
+    project_root: Path, job: dict[str, Any], verify_commands: dict[str, str], *,
+    codex_review_admission: CodexReviewAdmission | None = None,
+) -> dict[str, object]:
+    store = WorkerJobStore(project_root, **_review_runtime_kwargs(codex_review_admission))
     try:
         status = store.run_job(str(job["id"]))
     except Exception as exc:
@@ -259,6 +286,30 @@ def _run_dispatched_job(project_root: Path, job: dict[str, Any], verify_commands
             },
             verify={"passed": False, "skipped": True, "reason": "worker_failed"},
         )
+
+    if status.get("status") == "review_received":
+        from goodteam_os.skills.models import SkillError
+        from goodteam_os.skills.review_results import ReviewResultStore
+
+        try:
+            if job.get("role") != "code_review" or not job.get("task_skill_context"):
+                raise SkillError("review_identity_invalid", "A received review needs its original task identity.")
+            detail = ReviewResultStore(store, str(job["id"])).detail(
+                expected_task_context=job["task_skill_context"], include_report=True)
+            if (detail["snapshot_ref"] != job.get("skill_execution_snapshot_ref")
+                    or detail["status"] != "received" or not detail["report_available"]):
+                raise SkillError("review_result_unavailable", "No matching received report exists.")
+        except (SkillError, OSError) as exc:
+            code = exc.code if isinstance(exc, SkillError) else "review_result_unavailable"
+            return _job_report(project_root=project_root, job=job,
+                status={**status, "status": "failed", "skill_error_code": code,
+                        "summary": "The saved review could not be verified. No replacement report was used."},
+                verify={"passed": False, "skipped": True, "reason": code})
+        # Received is a successful *delivery*, not approval or a passed check.
+        # Return the validated immutable report, not a nonexistent result.md or
+        # unrelated dirty-worktree files. Never run a shell after this review.
+        return _job_report(project_root=project_root, job=job, status=status,
+            verify={"passed": None, "skipped": True, "reason": "advisory_review"}, review=detail)
 
     verify: dict[str, object] = {"passed": True, "skipped": True, "reason": "not_configured"}
     if str(status.get("status")) == "completed":
@@ -276,10 +327,12 @@ def _job_report(
     job: dict[str, Any],
     status: dict[str, Any],
     verify: dict[str, object],
+    review: dict[str, Any] | None = None,
 ) -> dict[str, object]:
+    locked_review = job.get("role") == "code_review" and bool(job.get("skill_execution_snapshot_ref"))
     worker_ok = str(status.get("status", "")) == "completed"
     verify_ok = bool(verify.get("passed", False))
-    outcome = "ok" if worker_ok and verify_ok else "needs_human"
+    outcome = "review_received" if review is not None else "ok" if worker_ok and verify_ok else "needs_human"
     job_root = project_root / ".goodteam" / "workers" / "jobs" / str(job["id"])
     return {
         **{key: job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref") if key in job},
@@ -292,9 +345,10 @@ def _job_report(
         "failure_class": str(status.get("failure_class", "")),
         "attempts": int(status.get("attempts", 0) or 0),
         "disposition": str(status.get("disposition", "")),
-        "result_path": str(job_root / "result.md"),
+        "result_path": "" if locked_review else str(job_root / "result.md"),
         "status_path": str(job_root / "status.json"),
-        "changed_files": changed_files(project_root),
+        "changed_files": [] if locked_review else changed_files(project_root),
+        **({"review": review, "approval_changed": False} if review is not None else {}),
         "memory_writeback": status.get("memory_writeback", {}),
         "verify": verify,
         "outcome": outcome,

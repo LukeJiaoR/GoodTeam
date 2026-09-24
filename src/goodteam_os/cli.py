@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from goodteam_os.dispatch import dispatch_tracks, parse_dispatch_track_spec, parse_dispatch_verify_spec
 from goodteam_os.execution import ExecutionAPI
@@ -24,6 +28,9 @@ from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_b
 from goodteam_os.telegram import poll_telegram_approvals
 from goodteam_os.web import serve, start_workflow
 from goodteam_os.workers import WorkerJobStore
+
+if TYPE_CHECKING:
+    from goodteam_os.skills.codex_runtime import CodexReviewAdmission
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -151,6 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--task-id", default="", help="Stable bounded direct-task identity for an explicit retry.")
     dispatch.add_argument("--review-base", default="", help="Exact base commit for one locked code_review track.")
     dispatch.add_argument("--review-head", default="", help="Exact head commit for one locked code_review track.")
+    dispatch.add_argument("--review-model", default="", help="Exact model for that Codex review; does not grant provider access.")
 
     memory_append = subparsers.add_parser("memory-append")
     memory_append.add_argument("--project-root", type=Path, required=True)
@@ -195,8 +203,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAdmission | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # Embedding/operator startup supplies a real authority as code, never a
+    # request flag, import path, package hook or persisted admission marker.
+    if codex_review_admission is not None and args.command != "dispatch":
+        raise ValueError("This Codex Reviewer composition is supported only by direct dispatch.")
     if args.command == "start":
         payload = start_workflow(
             workspace=args.workspace,
@@ -377,8 +389,15 @@ def main(argv: list[str] | None = None) -> int:
             if len(tracks) != 1 or tracks[0]["role"] != "code_review" or args.verify:
                 raise ValueError("Exact Git review requires one code_review track and no shell verification command.")
             tracks[0]["review_target"] = source_request({"kind": "git_change", "base_sha": args.review_base, "head_sha": args.review_head})
+        if args.review_model:
+            if (not args.review_base or not args.review_head or len(tracks) != 1
+                    or tracks[0]["role"] != "code_review" or tracks[0]["adapter"] != "codex"
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", args.review_model) is None):
+                raise ValueError("An explicit review model requires one exact-source Codex Reviewer track.")
+            tracks[0]["model"] = args.review_model
         verify_commands = dict(parse_dispatch_verify_spec(item) for item in args.verify)
         payload = dispatch_tracks(
+            **({"codex_review_admission": codex_review_admission} if codex_review_admission is not None else {}),
             **({"logical_task_id": args.task_id} if args.task_id else {}),
             project_root=args.project_root,
             tracks=tracks,

@@ -11,6 +11,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 import fcntl
 import os
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from .content import MAX_CONTEXT_BYTES, OBSERVED_STAGES, SkillContextProvider, _
 from .filesystem import directory, open_lock_file, regular_file, write_new
 from .models import SkillConflict, SkillError, content_digest, identifier
 from .review_capture import CapturedReviewTurn
+from .codex_reads import resource_witnesses, validate_witnesses
 from .review_protocol import locked_review_contract
 from .review_report import validate_report
 
@@ -94,6 +96,57 @@ class ReviewResultStore:
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
                 os.close(lock)
+
+    def preparation_pending(self, fd, snapshot, ref):
+        """A missing report attempt is not proof that provider acquisition never ran."""
+        intent = _read_optional(fd, "preparation.json")
+        if intent is None:
+            return False
+        context_id = intent.get("context_id")
+        if (not isinstance(context_id, str) or re.fullmatch(r"review-[0-9a-f]{32}", context_id) is None
+                or intent != self._preparation_intent(context_id, snapshot, ref)):
+            raise SkillError("review_result_identity", "Reviewer preparation differs from its original task snapshot.")
+        retired = _read_optional(fd, "preparation-retired-" + context_id + ".json")
+        expected = {"schema_version": "goodteam.review-preparation-retired.v1", "intent": intent}
+        if retired is not None and retired != expected:
+            raise SkillError("review_result_identity", "The preparation retirement does not match its exact context.")
+        return retired is None
+
+    def _preparation_intent(self, context_id, snapshot, ref):
+        return {"schema_version": "goodteam.review-preparation.v1", "job_id": self.job_id,
+                "context_id": context_id, "snapshot_ref": ref,
+                "job_input_digest": content_digest(_bytes(snapshot["job_input"]))}
+
+    def reserve_preparation(self, context_id):
+        """Durable, exclusive ownership BEFORE admission can reserve a provider route.
+
+        This is an intent, not a successful acquisition or admission receipt. A
+        crash at any point before confirmed retirement blocks another acquire.
+        """
+        if not isinstance(context_id, str) or re.fullmatch(r"review-[0-9a-f]{32}", context_id) is None:
+            raise SkillError("review_identity_invalid", "Preparation requires a fresh parent-owned context.")
+        operator, snapshot, ref, _expected = self._registered()
+        with self._store(operator, create=True) as fd:
+            if (_read_optional(fd, "attempt.json") is not None
+                    or self.preparation_pending(fd, snapshot, ref)):
+                raise SkillError("review_termination_unknown", "A previous Reviewer context has not confirmed retirement.")
+            _replace(fd, "preparation.json", self._preparation_intent(context_id, snapshot, ref))
+
+    def retire_preparation(self, context_id):
+        """Only the owning parent calls this AFTER unstarted route retirement.
+
+        A saved marker cannot itself retire a provider route. This narrow record
+        permits explicit replay of a conclusively unstarted/retired preparation.
+        Runtime attempts use their existing result/termination recovery instead.
+        """
+        operator, snapshot, ref, _expected = self._registered(verify_files=False)
+        with self._store(operator) as fd:
+            intent = self._preparation_intent(context_id, snapshot, ref)
+            if _read_optional(fd, "preparation.json") != intent or _read_optional(fd, "attempt.json") is not None:
+                raise SkillError("review_termination_unknown", "The preparation is no longer owned by this context.")
+            receipt = {"schema_version": "goodteam.review-preparation-retired.v1", "intent": intent}
+            _publish_immutable(fd, "preparation-retired-" + context_id + ".json", _bytes(receipt),
+                               code="review_preparation_conflict")
 
     def _target(self, snapshot):
         request = snapshot["job_input"]["request"]
@@ -233,8 +286,7 @@ class ReviewResultStore:
                 raise SkillConflict("review_already_started", "This Reviewer cannot be launched again; recover its existing outcome or explicitly retry the task.")
             _replace(fd, "state.json", {**state, "status": "running", "updated_at": _now()})
 
-    @staticmethod
-    def _validate_outcome(record, outcome):
+    def _validate_outcome(self, record, outcome):
         if (outcome.get("schema_version") != RESULT_SCHEMA
                 or outcome.get("binding_digest") != content_digest(_bytes(record))
                 or not isinstance(outcome.get("status"), str) or outcome.get("status") not in _TERMINAL
@@ -247,6 +299,9 @@ class ReviewResultStore:
                     or type(capture["event_count"]) is not int or capture["event_count"] < 4):
                 raise SkillError("review_result_corrupt", "The report has no parent-controlled terminal capture.")
             identifier(capture["transcript_digest"], "sha256:")
+            if "resource_reads" in outcome:
+                validate_witnesses(outcome["resource_reads"], capture=capture, record=record,
+                                   packages=requests._services(self.workers)[2].packages)
             raw = outcome.get("raw_report")
             if not isinstance(raw, str):
                 raise SkillError("review_result_corrupt", "The report payload is unavailable.")
@@ -281,12 +336,13 @@ class ReviewResultStore:
             if read_cancellation(fd, record) is not None:
                 raise SkillConflict("review_cancel_requested", "A cancelled attempt cannot accept a late successful report.")
             self._target(snapshot)  # Never receive a changed candidate as this task's current result.
+            witnesses = resource_witnesses(capture, record, requests._services(self.workers)[2].packages)
             previous = _read_optional(fd, "outcome.json")
             observation = {"transcript_digest": capture.transcript_digest, "thread_id": capture.thread_id,
                            "event_count": capture.event_count}
             if previous is not None:
                 if (previous.get("status") != "received" or previous.get("raw_report") != capture.report_bytes.decode("utf-8")
-                        or previous.get("capture") != observation):
+                        or previous.get("capture") != observation or previous.get("resource_reads", []) != witnesses):
                     raise SkillConflict("review_result_conflict", "This attempt already has a different immutable outcome.")
                 self._outcome(fd, record, previous)
             else:
@@ -296,6 +352,8 @@ class ReviewResultStore:
                 outcome = {"schema_version": RESULT_SCHEMA, "binding_digest": content_digest(_bytes(record)),
                            "status": "received", "updated_at": _now(), "capture": observation,
                            "raw_report": capture.report_bytes.decode("utf-8"), "report": report}
+                if witnesses:
+                    outcome["resource_reads"] = witnesses
                 self._outcome(fd, record, outcome)
         return self.detail()
 
@@ -441,6 +499,10 @@ class ReviewResultStore:
                     result.update(report_available=True, report_digest=content_digest(_bytes(report)),
                                   summary=report["summary"], finding_count=len(report["findings"]),
                                   unfinished_check_count=sum(item["status"] != "checked" for item in report["checks"]))
+                    reads = outcome.get("resource_reads", [])
+                    if reads:
+                        result["stages"]["resource_read_observed"] = "observed"
+                        result["resource_reads"] = deepcopy(reads)
                     if include_report:
                         result["report"] = report
                 else:

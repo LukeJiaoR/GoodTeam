@@ -29,6 +29,11 @@ class ClosedReviewRuntime:
 
 def selected_review_runtime(workers, snapshot):
     """Server composition only; never derived from job flags or user packages."""
+    if snapshot["job_input"]["request"]["adapter"] == "codex":
+        from .codex_runtime import selected_codex_runtime
+        runtime = selected_codex_runtime(workers)
+        if runtime is not None:
+            return runtime
     return ClosedReviewRuntime()
 
 
@@ -50,6 +55,13 @@ def _input(provider, context_ref, record):
             + "\n# Captured sources (logical names; files under sources/ for Git targets)\n"
             + canonical_json(record["sources"])
             + "\n# Result channel contract\n" + report_output_instructions(list(record["sources"])))
+    from .codex_contract import ADAPTER_VERSION
+    if record["runtime_session"]["adapter_version"] == ADAPTER_VERSION:
+        text += ("\n# Optional read witness format\n"
+                 "For a traceable resource read, use one non-login command: "
+                 "cat -- /review/methods/<skill_id>/<relative-path>. "
+                 "This describes a read channel, not a requirement to load every optional method. "
+                 "A command mention or a self-reported read is not a read witness.\n")
     encoded = text.encode("utf-8")
     if len(encoded) > provider.limits.max_input_bytes:
         raise SkillError("content_budget_exceeded", "The complete Reviewer prompt exceeds its limit; no input was truncated.")
@@ -159,10 +171,14 @@ def continue_review_worker(workers, job_id, snapshot, ref):
     try:
         with results._store(operator) as fd:
             existing = _read_optional(fd, "attempt.json")
+            pending = existing is None and results.preparation_pending(fd, snapshot, ref)
     except (SkillError, FileNotFoundError) as exc:
         if isinstance(exc, SkillError) and not isinstance(exc.__cause__, FileNotFoundError):
             raise
-        existing = None
+        existing, pending = None, False
+    if pending:
+        return _mirror(workers, job_id, snapshot, ref, status="failed",
+                       error_code="review_termination_unknown", runtime_status="recovery_required")
     if existing is not None:
         # Never silently reconnect or spend again after restart.
         try:
@@ -176,8 +192,10 @@ def continue_review_worker(workers, job_id, snapshot, ref):
         return None
     context_id = "review-" + uuid4().hex
     provider = SkillContextProvider(workers, job_id, authority=runtime)
-    begun = False
+    begun = reserved = False
     try:
+        results.reserve_preparation(context_id)
+        reserved = True
         context_ref = provider.prepare(context_id)
         results.begin(provider, context_ref)
         begun = True
@@ -203,6 +221,17 @@ def continue_review_worker(workers, job_id, snapshot, ref):
                        runtime_status=record["runtime_session"]["verification_kind"])
     except (SkillError, OSError) as exc:
         code = exc.code if isinstance(exc, SkillError) else "review_io_failed"
+        release_unstarted = getattr(runtime, "release_unstarted", None)
+        if release_unstarted is not None:
+            try:
+                release_unstarted(context_id)
+            except (SkillError, OSError):
+                code = "review_termination_unknown"
+        if reserved and not begun and code != "review_termination_unknown":
+            try:
+                results.retire_preparation(context_id)
+            except (SkillError, OSError):
+                code = "review_termination_unknown"
         if begun:
             # Never replace a durably received result with a projection/save error.
             try:
