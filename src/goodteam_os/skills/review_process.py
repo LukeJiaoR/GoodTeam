@@ -35,6 +35,11 @@ def _group_exists(pid: int) -> bool:
         return True
     except ProcessLookupError:
         return False
+    except PermissionError:
+        # macOS reports EPERM for an existing process group when probing it
+        # with signal 0. The group is therefore still present; keep waiting
+        # for the owned child/descendants to disappear.
+        return True
 
 
 def _terminate(process, *, grace=1.0):
