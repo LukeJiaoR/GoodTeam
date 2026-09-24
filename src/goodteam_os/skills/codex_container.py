@@ -7,11 +7,13 @@ provider route. Transport exit never substitutes for outer-container shutdown.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import pwd
 import re
 import subprocess
+import sys
 from urllib.parse import urlsplit
 
 from .codex_contract import CodexContract, PLATFORM, WORKDIR
@@ -29,14 +31,22 @@ INNER_ENV = ("-i", "PATH=/runtime/bin:/usr/bin:/bin", "HOME=/home/worker", "CODE
              "TMPDIR=/tmp", "LANG=C.UTF-8")
 
 
+def _local_engine():
+    if sys.platform == "darwin":
+        # Resolve the OS account, not HOME/DOCKER_HOST or the user's active context.
+        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        return Path("/Applications/Docker.app/Contents/Resources/bin/docker"), "unix://" + str(home / ".docker/run/docker.sock")
+    return Path("/usr/bin/docker"), "unix:///var/run/docker.sock"
+
+
 @dataclass(frozen=True)
 class DockerEngine:
-    executable: Path = Path("/usr/bin/docker")
-    socket: str = "unix:///var/run/docker.sock"
+    executable: Path = field(default_factory=lambda: _local_engine()[0])
+    socket: str = field(default_factory=lambda: _local_engine()[1])
 
     def __post_init__(self):
         # No environment-derived DOCKER_HOST/context or user-supplied remote daemon.
-        if self.executable != Path("/usr/bin/docker") or self.socket != "unix:///var/run/docker.sock":
+        if (self.executable, self.socket) != _local_engine():
             raise SkillError("codex_engine_invalid", "Only the explicitly selected local Docker engine is supported.")
 
     def command(self, config: Path, *args: str):

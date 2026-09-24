@@ -211,3 +211,40 @@ unimplemented and not registered by the stock CLI or managed service.** The
 internal composition seam is wired for direct dispatch only; Web workflow
 execution/retry composition is not claimed migrated. No CLI flag can replace
 the missing authority or its actual containment/request/spend validation.
+
+## Local host continuation
+
+The local engine now supports Linux's fixed `/usr/bin/docker` and
+`/var/run/docker.sock`, or macOS Docker Desktop's application binary and the
+OS account's `.docker/run/docker.sock`. It does not select a daemon through
+`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `HOME` or `PATH`. Each operation
+still uses the private empty Docker configuration and the existing container
+inspection, ownership and confirmed-removal checks.
+
+`scripts/codex-review/Dockerfile` builds the selected Linux ARM64 filesystem with
+the verified 0.155.1 runtime included in the image. Supply a clean build context
+containing only the verified package's `runtime/` tree, including its executable
+`codex-resources/bwrap`; build with `--platform=linux/arm64 --network=none
+--pull=false`. The final stage clears inherited image environment metadata and
+entrypoints. An ordinary Node image's `NODE_VERSION` and `YARN_VERSION` are
+rejected by the existing image policy. Preserve executable resource modes:
+removing bwrap's executable bit prevents the native sandbox from starting.
+
+On 2026-09-24, actual Docker Desktop 29.4.1 / Linux ARM64 checks ran against
+image `sha256:28413ea69cbdff0d36aeaaa5505495e94db3546eed82fffd518001cb29320f71`
+with the existing experimental seccomp candidate
+`sha256:73ff5e897ffba5261601f8254e05eda24ad8acbc946d6e652242efab5ac894b9`.
+The production container creation/inspection/cleanup code was exercised with
+three fixed no-model commands: guarded Codex help, native Codex sandbox reading
+exact sample source/resource bytes and rejecting writes, and termination of a
+`setsid` descendant that ignored SIGTERM. All three completed with confirmed
+container removal. Only generated inputs were mounted; the isolated internal
+network contained an inert sleep process, not a provider. Temporary containers
+and that network were removed. The derived image and local evidence are retained.
+
+These checks establish the tested local execution behavior. They do not establish
+provider-only routing, request/spend enforcement, native model-driven discovery
+or a real report. No provider credentials were read and no model was called.
+The concrete provider authority and normal startup registration still require
+the operator to identify the approved existing service and its management API;
+no provider API contract or permission is inferred from an installed container.
