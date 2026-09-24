@@ -11,6 +11,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 import fcntl
 import os
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -95,6 +96,57 @@ class ReviewResultStore:
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
                 os.close(lock)
+
+    def preparation_pending(self, fd, snapshot, ref):
+        """A missing report attempt is not proof that provider acquisition never ran."""
+        intent = _read_optional(fd, "preparation.json")
+        if intent is None:
+            return False
+        context_id = intent.get("context_id")
+        if (not isinstance(context_id, str) or re.fullmatch(r"review-[0-9a-f]{32}", context_id) is None
+                or intent != self._preparation_intent(context_id, snapshot, ref)):
+            raise SkillError("review_result_identity", "Reviewer preparation differs from its original task snapshot.")
+        retired = _read_optional(fd, "preparation-retired-" + context_id + ".json")
+        expected = {"schema_version": "goodteam.review-preparation-retired.v1", "intent": intent}
+        if retired is not None and retired != expected:
+            raise SkillError("review_result_identity", "The preparation retirement does not match its exact context.")
+        return retired is None
+
+    def _preparation_intent(self, context_id, snapshot, ref):
+        return {"schema_version": "goodteam.review-preparation.v1", "job_id": self.job_id,
+                "context_id": context_id, "snapshot_ref": ref,
+                "job_input_digest": content_digest(_bytes(snapshot["job_input"]))}
+
+    def reserve_preparation(self, context_id):
+        """Durable, exclusive ownership BEFORE admission can reserve a provider route.
+
+        This is an intent, not a successful acquisition or admission receipt. A
+        crash at any point before confirmed retirement blocks another acquire.
+        """
+        if not isinstance(context_id, str) or re.fullmatch(r"review-[0-9a-f]{32}", context_id) is None:
+            raise SkillError("review_identity_invalid", "Preparation requires a fresh parent-owned context.")
+        operator, snapshot, ref, _expected = self._registered()
+        with self._store(operator, create=True) as fd:
+            if (_read_optional(fd, "attempt.json") is not None
+                    or self.preparation_pending(fd, snapshot, ref)):
+                raise SkillError("review_termination_unknown", "A previous Reviewer context has not confirmed retirement.")
+            _replace(fd, "preparation.json", self._preparation_intent(context_id, snapshot, ref))
+
+    def retire_preparation(self, context_id):
+        """Only the owning parent calls this AFTER unstarted route retirement.
+
+        A saved marker cannot itself retire a provider route. This narrow record
+        permits explicit replay of a conclusively unstarted/retired preparation.
+        Runtime attempts use their existing result/termination recovery instead.
+        """
+        operator, snapshot, ref, _expected = self._registered(verify_files=False)
+        with self._store(operator) as fd:
+            intent = self._preparation_intent(context_id, snapshot, ref)
+            if _read_optional(fd, "preparation.json") != intent or _read_optional(fd, "attempt.json") is not None:
+                raise SkillError("review_termination_unknown", "The preparation is no longer owned by this context.")
+            receipt = {"schema_version": "goodteam.review-preparation-retired.v1", "intent": intent}
+            _publish_immutable(fd, "preparation-retired-" + context_id + ".json", _bytes(receipt),
+                               code="review_preparation_conflict")
 
     def _target(self, snapshot):
         request = snapshot["job_input"]["request"]

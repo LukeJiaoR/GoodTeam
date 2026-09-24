@@ -119,6 +119,7 @@ class PinnedCodexReviewRuntime:
         self.workers, self.admission = workers, admission
         self._leases: dict[str, tuple[str, CodexLease]] = {}
         self._entered: set[str] = set()
+        self._acquiring: set[str] = set()
 
     def authorize(self, snapshot, *, context_id, operation):
         if not isinstance(context_id, str) or re.fullmatch(r"review-[0-9a-f]{32}", context_id) is None:
@@ -133,6 +134,7 @@ class PinnedCodexReviewRuntime:
         if previous is None:
             if operation != "prepare":
                 raise SkillError("codex_context_missing", "No fresh admitted context exists for this operation.")
+            self._acquiring.add(context_id)
             lease = self.admission.acquire(deepcopy(snapshot), context_id=context_id)
             if not isinstance(lease, CodexLease):
                 raise SkillError("codex_admission_invalid", "Admission returned no exact Codex lease.")
@@ -227,6 +229,10 @@ class PinnedCodexReviewRuntime:
         # Preparation/begin can fail before execution() is entered. Do not leak a
         # reserved provider context in that branch. Entered envelopes retire it
         # before receive(), not after a successful result has been published.
+        if context_id in self._acquiring and context_id not in self._leases:
+            # A lost/invalid acquire reply does not prove that its external side
+            # effect failed. Without a lease we cannot confirm its retirement.
+            raise SkillError("review_termination_unknown", "Provider acquisition has no confirmed retirement.")
         if context_id in self._leases and context_id not in self._entered:
             _identity, lease = self._leases[context_id]
             self._entered.add(context_id)

@@ -72,6 +72,24 @@ changes approval, merge, deployment or memory-writeback state. It uses generic
   provider route or launching another process. Interrupted native containers
   are not automatically reattached; uncertain state remains blocked.
 
+## Preparation failure and recovery
+
+Reviewer ownership is now persisted before `CodexReviewAdmission.acquire`, not
+only before container creation or report preparation. A lost acquisition reply,
+unconfirmed unstarted-route retirement, or crash before `attempt.json` exists
+must preserve an unresolved context and prevent a second reservation. A fresh
+Worker object, default server construction, overlapping dispatch or a retry
+with another Worker ID cannot erase that uncertainty. No model is launched to
+"test" whether the earlier route has stopped.
+
+An explicit replay is possible after the owning parent successfully retires a
+conclusively unstarted lease. Its protected retirement receipt is bound to the
+exact preparation, snapshot and context; it is not a public admission flag and
+cannot itself retire an external provider route. Existing begun-attempt report,
+cancellation and recovery semantics are unchanged. Unresolved acquisition still
+requires actual operator/provider reconciliation; this change does not invent
+an authorized provider implementation or enable normal Web/CLI dispatch.
+
 ## Resource-read evidence
 
 The decoder requires paired native `command_execution` start/completed events

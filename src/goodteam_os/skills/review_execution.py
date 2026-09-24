@@ -171,10 +171,14 @@ def continue_review_worker(workers, job_id, snapshot, ref):
     try:
         with results._store(operator) as fd:
             existing = _read_optional(fd, "attempt.json")
+            pending = existing is None and results.preparation_pending(fd, snapshot, ref)
     except (SkillError, FileNotFoundError) as exc:
         if isinstance(exc, SkillError) and not isinstance(exc.__cause__, FileNotFoundError):
             raise
-        existing = None
+        existing, pending = None, False
+    if pending:
+        return _mirror(workers, job_id, snapshot, ref, status="failed",
+                       error_code="review_termination_unknown", runtime_status="recovery_required")
     if existing is not None:
         # Never silently reconnect or spend again after restart.
         try:
@@ -188,8 +192,10 @@ def continue_review_worker(workers, job_id, snapshot, ref):
         return None
     context_id = "review-" + uuid4().hex
     provider = SkillContextProvider(workers, job_id, authority=runtime)
-    begun = False
+    begun = reserved = False
     try:
+        results.reserve_preparation(context_id)
+        reserved = True
         context_ref = provider.prepare(context_id)
         results.begin(provider, context_ref)
         begun = True
@@ -219,6 +225,11 @@ def continue_review_worker(workers, job_id, snapshot, ref):
         if release_unstarted is not None:
             try:
                 release_unstarted(context_id)
+            except (SkillError, OSError):
+                code = "review_termination_unknown"
+        if reserved and not begun and code != "review_termination_unknown":
+            try:
+                results.retire_preparation(context_id)
             except (SkillError, OSError):
                 code = "review_termination_unknown"
         if begun:
