@@ -174,3 +174,40 @@ checks are not substituted for these missing observations.
 - [Pinned native roots](https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/ext/skills/src/host_roots.rs)
 - [Pinned extension discovery requirement](https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/ext/skills/src/extension.rs)
 - [Docker seccomp profile handling](https://docs.docker.com/engine/security/seccomp/)
+
+## Direct dispatch continuation
+
+The existing `dispatch` route now preserves a server-owned
+`CodexReviewAdmission` from `cli.main(..., codex_review_admission=authority)`
+through `dispatch_tracks` and its executor thread to `WorkerJobStore`. This is
+ordinary application code, not a replacement test dispatcher. The dependency
+is validated before task capture. It is not serialized into the task, loaded
+from a package/import path, or enabled by a CLI/JSON `verified` switch.
+
+For the single exact-source Codex track, `--review-model` records the explicit
+model together with `--review-base`, `--review-head` and `--task-id`. An admitted
+Codex dispatch without a model is rejected before task creation or acquisition.
+An explicit model selects no credentials and grants no provider permission.
+Exact-source dispatch also rejects post-review shell verification at the
+service boundary, not only in argparse's caller.
+
+A valid saved advisory report is returned inline as `jobs[].review`, after
+`ReviewResultStore.detail` revalidates its original task/snapshot/source binding.
+The job retains status/outcome `review_received` and appears in `reviews`, not
+in the legacy `ok` list. `all_ok` describes **dispatch delivery**, not review
+approval: a report containing findings may be delivered successfully. No gate,
+merge or deployment is changed. The verification result is `passed: null`,
+`skipped: true`, reason `advisory_review`; no shell/test pass is invented.
+Locked Reviewer results do not advertise a mutable `result.md` or attribute
+unrelated working-tree edits to a read-only review. Missing/corrupt receipts,
+invalid source evidence and uncertain cleanup remain unsuccessful deliveries.
+A repeated identical direct task recovers the saved report without acquiring a
+new provider context; changing the model requires a different task request.
+
+The new tests exercise the CLI parser and existing dispatch/Worker path with
+an explicitly scripted daemon and bounded Python child. They do not establish
+native Docker/Codex execution. **Production provider/host authority is still
+unimplemented and not registered by the stock CLI or managed service.** The
+internal composition seam is wired for direct dispatch only; Web workflow
+execution/retry composition is not claimed migrated. No CLI flag can replace
+the missing authority or its actual containment/request/spend validation.
