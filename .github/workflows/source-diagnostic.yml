@@ -43,9 +43,11 @@ jobs:
               ("manifest.txt", ["ls-tree", "-r", "HEAD"]),
           ):
               (output / filename).write_bytes(subprocess.check_output(["git", *args]))
+          digest = hashlib.sha256()
           with archive.open("rb") as stream:
-              digest = hashlib.file_digest(stream, "sha256").hexdigest()
-          (output / "sha256.txt").write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
+              for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                  digest.update(chunk)
+          (output / "sha256.txt").write_text(f"{digest.hexdigest()}  {archive.name}\n", encoding="utf-8")
           (output / "purpose.txt").write_text(
               "Tracked-source export only; no repository code, tests, or providers were executed.\n",
               encoding="utf-8",
