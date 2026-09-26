@@ -5,9 +5,81 @@ import subprocess
 import textwrap
 
 import pytest
+import yaml
 
 
 WORKFLOW = Path(".github/workflows/ci.yml")
+
+
+def _assert_read_only_runner_boundary(workflow):
+    permissions = workflow.get("permissions")
+    assert isinstance(permissions, dict), "Declare explicit read-only workflow permissions"
+    assert set(permissions.values()) <= {"read", "none"}, "No workflow write permissions on goodteam-ci"
+    assert "pull_request_target" not in workflow.get("on", {}), "No privileged PR trigger on goodteam-ci"
+    assert not re.search(
+        r"\$\{\{(?:(?!\}\}).)*\bsecrets\b", yaml.safe_dump(workflow), flags=re.DOTALL,
+    ), "No secret context on goodteam-ci"
+    assert workflow.get("jobs"), "A workflow must declare jobs"
+    for name, job in workflow["jobs"].items():
+        runner = job.get("runs-on")
+        assert isinstance(runner, list), f"{name}: use fixed goodteam-ci labels, not hosted or dynamic routing"
+        assert {label.lower() for label in runner} == {"self-hosted", "linux", "x64", "goodteam-ci"}, name
+        assert "uses" not in job, f"{name}: reusable workflow routing needs explicit review"
+        assert "environment" not in job, f"{name}: no GitHub Environment on goodteam-ci"
+        assert "secrets" not in job, f"{name}: no inherited secrets on goodteam-ci"
+        effective = job.get("permissions", permissions)
+        assert isinstance(effective, dict) and set(effective.values()) <= {"read", "none"}, name
+
+
+@pytest.mark.parametrize("path", sorted([*WORKFLOW.parent.glob("*.yml"), *WORKFLOW.parent.glob("*.yaml")]))
+def test_all_workflows_follow_runner_policy(path):
+    # BaseLoader keeps GitHub's `on` key as a string (YAML 1.1 treats it as True).
+    workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    if path.name == "openwiki-update.yml":
+        assert set(workflow["on"]) == {"workflow_dispatch"}
+        assert workflow["jobs"]
+        for job in workflow["jobs"].values():
+            assert job["runs-on"] == "ubuntu-latest", "Keep OpenWiki credentials off goodteam-ci"
+    else:
+        _assert_read_only_runner_boundary(workflow)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"runs-on": "ubuntu-latest"},
+        {"runs-on": "${{ inputs.runner }}"},
+        {"runs-on": ["self-hosted", "linux", "x64"]},
+        {"permissions": {"contents": "write"}},
+        {"permissions": "write-all"},
+        {"environment": "production"},
+        {"env": {"KEY": "${{ secrets.API_KEY }}"}},
+        {"env": {"KEY": "${{ secrets['API_KEY'] }}"}},
+        {"env": {"KEY": "${{ toJSON(secrets) }}"}},
+        {"env": {"KEY": "${{ secrets }}"}},
+        {"secrets": "inherit"},
+        {"uses": "./.github/workflows/other.yml"},
+    ],
+)
+def test_runner_policy_rejects_hosted_fallback_and_privilege_escalation(override):
+    workflow = {
+        "on": {"workflow_dispatch": {}},
+        "permissions": {"contents": "read"},
+        "jobs": {"diagnostic": {"runs-on": ["self-hosted", "linux", "x64", "goodteam-ci"]}},
+    }
+    _assert_read_only_runner_boundary(workflow)
+    workflow["jobs"]["diagnostic"].update(override)
+    with pytest.raises(AssertionError):
+        _assert_read_only_runner_boundary(workflow)
+
+
+@pytest.mark.parametrize("permissions", [None, "read-all", "write-all", {"contents": "write"}])
+def test_runner_policy_requires_explicit_read_only_workflow_permissions(permissions):
+    with pytest.raises(AssertionError):
+        _assert_read_only_runner_boundary({
+            "permissions": permissions,
+            "jobs": {"diagnostic": {"runs-on": ["self-hosted", "linux", "x64", "goodteam-ci"]}},
+        })
 
 
 def test_ci_is_pr_or_manual_only_with_read_only_permissions():

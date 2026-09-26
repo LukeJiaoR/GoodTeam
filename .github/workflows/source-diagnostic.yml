@@ -1,0 +1,64 @@
+name: Read-only source diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Repository branch, tag, or commit to archive (empty uses the workflow commit)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    # Run the reviewed workflow from the default branch, even when archiving a feature branch.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, linux, x64, goodteam-ci]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+
+      - name: Archive tracked source without executing repository code
+        id: capture
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+
+          output = Path(tempfile.mkdtemp(prefix="source-diagnostic-", dir=os.environ["RUNNER_TEMP"]))
+          archive = output / "tracked-source.tar"
+          subprocess.run(["git", "archive", "--format=tar", f"--output={archive}", "HEAD"], check=True)
+          for filename, args in (
+              ("head.txt", ["rev-parse", "HEAD"]),
+              ("tree.txt", ["rev-parse", "HEAD^{tree}"]),
+              ("manifest.txt", ["ls-tree", "-r", "HEAD"]),
+          ):
+              (output / filename).write_bytes(subprocess.check_output(["git", *args]))
+          digest = hashlib.sha256()
+          with archive.open("rb") as stream:
+              for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                  digest.update(chunk)
+          (output / "sha256.txt").write_text(f"{digest.hexdigest()}  {archive.name}\n", encoding="utf-8")
+          (output / "purpose.txt").write_text(
+              "Tracked-source export only; no repository code, tests, or providers were executed.\n",
+              encoding="utf-8",
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+              stream.write(f"path={output}\n")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.capture.outputs.path }}/
+          if-no-files-found: error
+          retention-days: 7
