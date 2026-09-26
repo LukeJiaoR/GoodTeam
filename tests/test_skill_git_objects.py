@@ -204,7 +204,28 @@ def test_resource_depth_limit_stops_before_descendant_blob_read():
     with pytest.raises(SkillError) as error:
         capture_git_package(source, objects, package_limits=PackageLimits(max_depth=1))
     assert error.value.code == "package_limit"
-    assert deep not in objects.reads and blob not in objects.reads
+    assert blob not in objects.reads
+
+
+@pytest.mark.parametrize("relative", ["empty", "nested/empty"])
+def test_empty_directory_at_depth_limit_matches_local_capture(tmp_path, relative):
+    objects = Objects()
+    parts = relative.split("/")
+    child = objects.tree([])
+    for name in reversed(parts[1:]):
+        child = objects.tree([("40000", name, child)])
+    root = objects.tree([("100644", "SKILL.md", objects.add("blob", MAIN)),
+                         ("40000", parts[0], child)])
+    source = SkillSource("git", URL, revision=objects.commit(root))
+    local = tmp_path / "review"
+    (local / relative).mkdir(parents=True)
+    (local / "SKILL.md").write_bytes(MAIN)
+    limits = PackageLimits(max_depth=len(parts))
+    package = capture_git_package(source, objects, package_limits=limits)
+    local_package = capture_package(local, limits=limits)
+    assert relative in package.directories
+    assert package.manifest == local_package.manifest
+    assert package.digest == local_package.digest
 
 
 def test_subdirectory_depth_limit_applies_before_object_access():

@@ -65,6 +65,7 @@ temporary bare repository with isolated HOME/config and no network. It compares
 the result with local package capture, including export-ignore attributes,
 license text and an executable script, then publishes and reads the original
 SKILL.md through SkillStore. It does not invoke the script or a model. Remaining
-tests mutate object bytes, remove objects, change commits and exercise the
+tests mutate object bytes, remove objects, change commits, compare empty
+directories at the depth boundary with local capture, and exercise the
 resource/type/path/budget failures. Production acquisition and browser evidence
 remain NOT RUN for this increment.

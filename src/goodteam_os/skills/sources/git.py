@@ -106,9 +106,9 @@ class _Capture:
         return entries
 
     def walk(self, oid, prefix="", depth=1):
-        if depth > self.package_limits.max_depth:
-            raise SkillError("package_limit", "Skill package paths are too deep.")
         for mode, name, child in self.tree(oid):
+            if depth > self.package_limits.max_depth:
+                raise SkillError("package_limit", "Skill package paths are too deep.")
             relative = prefix + name
             resource_path(relative)
             if len(self.files) + len(self.directories) >= self.package_limits.max_entries:
