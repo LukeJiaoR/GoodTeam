@@ -71,7 +71,7 @@ capturing review evidence. An empty input uses the workflow's own commit.
 
 ```bash
 gh workflow run source-diagnostic.yml --repo LukeJiaoR/GoodTeam --ref main \
-  -f source_ref=<commit-sha>
+  -f 'source_ref=<commit-sha>'
 ```
 
 The workflow accepts dispatches only from the default branch, checks out the
