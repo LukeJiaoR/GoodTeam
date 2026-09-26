@@ -18,6 +18,14 @@ from ..models import PackageLimits, SkillError, SkillSource, resource_path
 from ..package import PackageFile, SkillPackage, package_from_files
 
 
+# Git LFS still accepts its pre-release version aliases and leading whitespace.
+_LFS_POINTER_PREFIXES = (
+    "version https://git-lfs.github.com/spec/v1",
+    "version https://hawser.github.com/spec/v1",
+    "version http://git-media.io/v/2",
+)
+
+
 @dataclass(frozen=True)
 class GitObject:
     kind: str
@@ -126,7 +134,10 @@ class _Capture:
                 if relative == "SKILL.md":
                     maximum = min(maximum, self.package_limits.max_skill_bytes)
                 data = self.read(child, "blob", maximum)
-                if data.startswith(b"version https://git-lfs.github.com/spec/v1"):
+                # LFS only inspects the first 1024 bytes; decode that bounded header
+                # to recognize Unicode whitespace without changing resource bytes.
+                header = data[:1024].decode("utf-8", errors="replace").lstrip()
+                if header.startswith(_LFS_POINTER_PREFIXES):
                     raise SkillError("git_lfs_unsupported", "An LFS resource is a pointer; its required content has not been acquired.")
                 self.content_bytes += len(data)
                 self.files.append(PackageFile(relative, data, mode == b"100755"))

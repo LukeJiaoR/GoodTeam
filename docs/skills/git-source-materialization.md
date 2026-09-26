@@ -17,8 +17,9 @@ The returned value is the existing `SkillPackage`, suitable for the existing
 store publication contract. File bytes and executable flags are retained.
 Attributes are data: export-ignore, export-subst, filters, hooks, and scripts
 are not evaluated. A selected symbolic link, gitlink (submodule), or LFS pointer
-is rejected instead of silently omitting the required resource. Unselected
-subtrees are not read.
+is rejected instead of silently omitting the required resource. LFS detection
+includes the legacy `hawser` and `git-media` version aliases and leading
+whitespace accepted by Git LFS. Unselected subtrees are not read.
 
 Object count, examined tree entries, metadata bytes, path depth, resource count,
 and resource byte budgets bound traversal/materialization. Invalid UTF-8 names,

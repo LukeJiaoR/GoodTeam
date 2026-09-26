@@ -131,6 +131,21 @@ def test_unacquired_or_unsafe_resources_are_not_silently_omitted(mode, content, 
     assert error.value.code == code
 
 
+@pytest.mark.parametrize("version", [
+    "https://git-lfs.github.com/spec/v1",
+    "https://hawser.github.com/spec/v1",
+    "http://git-media.io/v/2",
+])
+@pytest.mark.parametrize("prefix", [b"", b"\r\n \t", "\u00a0".encode()])
+def test_lfs_version_aliases_cannot_be_published_as_resource_bytes(version, prefix, tmp_path):
+    pointer = prefix + f"version {version}\noid sha256:{'a' * 64}\nsize 12345\n".encode()
+    objects, source, _ = fixture(extras=[("100644", "asset.bin", pointer)])
+    store = SkillStore(tmp_path / "store", SkillScope("user", "operator"))
+    with pytest.raises(SkillError) as error:
+        store.publish(capture_git_package(source, objects), source, command_key="lfs-pointer")
+    assert error.value.code == "git_lfs_unsupported"
+
+
 @pytest.mark.parametrize("name", ["../escape", "/absolute", "a/b", "a\\b", ".", ".."])
 def test_invalid_tree_names_are_rejected(name):
     objects, source, _ = fixture(extras=[("100644", name, b"data")])
