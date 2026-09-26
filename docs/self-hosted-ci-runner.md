@@ -36,6 +36,59 @@ OpenWiki remains on `ubuntu-latest`. It is manual-only because it has provider
 secrets and repository/PR write permission, and those capabilities must never
 reach `goodteam-ci`.
 
+## Choosing a runner for new workflows
+
+These rules also apply to temporary workflows on feature or diagnostic branches:
+
+| Workload | Runner and permissions |
+| --- | --- |
+| Routine tests, tracked-source archives, read-only inspection, public dependency downloads | `[self-hosted, linux, x64, goodteam-ci]`; explicit read-only permissions, no hosted fallback |
+| OpenWiki | `ubuntu-latest`, manual-only; existing provider secrets and PR-write permissions stay here |
+| New tasks needing provider secrets, a GitHub Environment, repository writes, or deployment access | A separately reviewed isolated environment; do not use `goodteam-ci` |
+| Native ARM64 or Docker inspection | A matching separately provisioned environment; the existing x64 account cannot run these checks |
+
+No privileged self-hosted runner is currently provisioned. An additional label
+on the existing runner is not isolation. Provision and review a separate VM or
+an environment rebuilt after each job before migrating privileged work. Keep
+permissions explicit at workflow and job level; job overrides must not grant
+write access on `goodteam-ci`. Source-only checkout must set
+`persist-credentials: false` and must not execute code from the inspected ref.
+
+`tests/test_ci_workflow.py` checks every committed workflow for the fixed
+read-only runner boundary. OpenWiki is the only hosted exception. A future
+runner exception needs an explicit policy/test update alongside its isolation
+and provisioning evidence. These checks run in PR CI when workflow files change;
+they are not GitHub-side enforcement for arbitrary branch pushes. Agents must
+validate temporary workflows locally before pushing them and follow the same
+policy even when the branch will never become a PR.
+
+### Read-only source diagnostic
+
+Use **Read-only source diagnostic** instead of creating a temporary workflow
+just to export source. Dispatch the workflow from `main`; `source_ref` selects
+a branch, tag, or exact commit in this repository. Prefer an exact commit when
+capturing review evidence. An empty input uses the workflow's own commit.
+
+```bash
+gh workflow run source-diagnostic.yml --repo LukeJiaoR/GoodTeam --ref main \
+  -f source_ref=<commit-sha>
+```
+
+The workflow accepts dispatches only from the default branch, checks out the
+selected source without persisting credentials, and runs a fixed inline archive
+script. It does not install dependencies or execute repository scripts. Each run
+uses its own directory under `RUNNER_TEMP` and uploads a seven-day artifact:
+tracked-source tar, resolved commit/tree IDs, tracked-file manifest, SHA-256,
+and a statement of the export's scope. Untracked workspace files, `.git`, and
+runner caches are not included. This is source transport, not test or runtime
+acceptance evidence. It shares the single CI runner and may queue behind PR CI.
+
+Before pushing any new or temporary workflow, run:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest tests/test_ci_workflow.py tests/test_source_diagnostic.py -q
+```
+
 ## Shared-host capacity boundary
 
 `goodteam-ci-01` and `yuva-ci-01` are separate repository-scoped services and

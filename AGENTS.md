@@ -35,6 +35,20 @@ mutating smoke commands against an active real project workspace.
 Do not delete untracked local output directories such as `output/` unless the
 user explicitly confirms they are disposable.
 
+## CI Runner Selection
+
+Follow `docs/self-hosted-ci-runner.md` for every workflow, including temporary
+diagnostic workflows on feature branches. Read-only Linux x64 diagnostics use
+`[self-hosted, linux, x64, goodteam-ci]` with explicit read-only permissions.
+Reuse `.github/workflows/source-diagnostic.yml` for tracked-source exports.
+Do not add a GitHub-hosted fallback for these tasks.
+
+OpenWiki stays manual-only on GitHub-hosted runners. Provider secrets,
+GitHub Environments, and repository-write tokens must not enter `goodteam-ci`.
+Tasks requiring these capabilities need a separately reviewed, isolated runner
+environment; none is currently provisioned. The shared x64 runner also cannot
+provide native ARM64 or Docker diagnostics.
+
 <!-- OPENWIKI:START -->
 
 ## OpenWiki
