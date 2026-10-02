@@ -1,0 +1,58 @@
+import path from 'node:path';
+import process from 'node:process';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { test, expect } from './fixtures.js';
+
+test('default page starts a bounded native-shaped review and opens its durable report', async ({ page, fixture }, testInfo) => {
+  const child = spawn(process.env.GOODTEAM_E2E_PYTHON || '../.venv/bin/python', [
+    '../tests/fixtures/trusted_native_browser_server.py', path.resolve('dist'),
+  ], { env: { ...process.env, PYTHONPATH: path.resolve('../src'), PYTHONDONTWRITEBYTECODE: '1' } });
+  let output = '', errors = '';
+  child.stdout.on('data', data => { output += data; });
+  child.stderr.on('data', data => { errors += data; });
+  try {
+    await expect.poll(() => output.includes('\n') ? output : errors, { timeout: 15000 }).toContain('"url"');
+    const start = JSON.parse(output.split('\n')[0]);
+    expect(start.real_model_calls).toBe(0);
+    expect(start.native_codex).toBe(false);
+    const endpoint = `${start.url}/api/projects/DEMO/runs/${start.run_id}/skill-reviews`;
+    await page.goto(`${start.url}/projects/DEMO/work`);
+    await page.getByRole('button', { name: 'Review execution details', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'Review execution details', exact: true });
+    const response = page.waitForResponse(item => new URL(item.url()).pathname === '/api/reviewer-jobs/run');
+    await panel.getByRole('button', { name: 'Start review', exact: true }).click();
+    const invoked = await response;
+    expect(invoked.status(), await invoked.text()).toBe(200);
+    const result = await invoked.json();
+    expect(result.run_id).toBe(start.run_id);
+    expect(result.ran_count).toBe(1);
+    expect(result.results[0].status).toBe('review_received');
+    await expect(panel.getByText('Contract fixture · not live Runtime acceptance')).toBeVisible();
+    await expect(panel.getByText('Authorized sessions: 1. Maximum per session: 5s. No verified cost ceiling.')).toBeVisible();
+    await panel.getByRole('button', { name: 'Open review report', exact: true }).click();
+    await expect(panel.getByText('No findings reported')).toBeVisible();
+    const details = await (await page.request.get(endpoint)).json();
+    expect(details.reviews).toHaveLength(1);
+    expect(details.reviews[0].task_skill_context.task.kind).toBe('direct_task');
+    expect(details.reviews[0].runtime_boundaries.provider_binding_verified).toBe(false);
+    await testInfo.attach('native-shaped-page-review-report', { body: await page.screenshot(), contentType: 'image/png' });
+    await page.reload();
+    await page.getByRole('button', { name: 'Review execution details', exact: true }).click();
+    await panel.getByRole('button', { name: 'Open review report', exact: true }).click();
+    await expect(panel.getByText('No findings reported')).toBeVisible();
+    await expect(panel.getByRole('button', { name: 'Start review', exact: true })).toHaveCount(0);
+    expect(fixture.errors).toEqual([]);
+    await testInfo.attach('native-shaped-flow-evidence', { body: JSON.stringify({ ...start, result,
+      report_persisted: true, reopened: true, scope: details.reviews[0].task_skill_context.task,
+      boundaries: details.reviews[0].runtime_boundaries }, null, 2), contentType: 'application/json' });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const end = once(child, 'exit');
+      child.kill('SIGTERM');
+      const fallback = setTimeout(() => child.kill('SIGKILL'), 5000);
+      await end;
+      clearTimeout(fallback);
+    }
+  }
+});

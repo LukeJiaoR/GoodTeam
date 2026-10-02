@@ -423,9 +423,35 @@ def _run_queued_reviewer_jobs_for_current_run(
     roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
     for root in roots:
         store = WorkerJobStore(root, **runtime_kwargs)
+        jobs = store.list_jobs()
+        from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
+
+        admission = runtime_kwargs.get("codex_review_admission")
+        if isinstance(admission, TrustedCodexReviewAdmission) and not state.task_skill_context:
+            # Default workflows have no Skill lock. At the explicit guarded Run
+            # action, produce a separate task-bound review using the actual Team
+            # Worker/profile and artifact, leaving other workflow roles intact.
+            from goodteam_os.graph import worker_context
+            from goodteam_os.reviewer_dispatch import dispatch_reviewer_jobs_for_gate, reviewer_phase_for_approval
+            from goodteam_os.skills.models import SkillError
+
+            if reviewer_phase_for_approval(current_gate) != "implementation":
+                return 409, {"error": "trusted_codex_task_mismatch", "message": "Native self-use is limited to Code Review."}
+            try:
+                review_context = admission.capture_workflow_review(store, workspace=workspace, state=state)
+                jobs = dispatch_reviewer_jobs_for_gate(store=store, state=state, target=target, approval=current_gate,
+                    artifact_key=artifact_key, artifact_path=artifact_path, context=worker_context(state),
+                    code_review_context=review_context)
+                if (len(jobs) != 1 or jobs[0].get("adapter") != "codex"
+                        or jobs[0].get("model") != admission.policy["model"]):
+                    return 409, {"error": "trusted_codex_reviewer_selection",
+                                 "message": "Choose one Codex Reviewer profile with the privately authorized model."}
+            except (SkillError, OSError) as exc:
+                return 409, {"error": exc.code if isinstance(exc, SkillError) else "review_start_unavailable",
+                             "message": "The current task could not start its authorized native review."}
         result = run_queued_reviewer_jobs_for_gate(
             store=store,
-            jobs=store.list_jobs(),
+            jobs=jobs,
             run_id=state.run_id,
             approval=current_gate,
             artifact_key=artifact_key,
@@ -5883,10 +5909,12 @@ def build_project_list(workspace: Path) -> dict[str, object]:
 def handle_project_api_get(
     workspace: Path,
     path: str,
+    *, codex_review_admission: "CodexReviewAdmission | None" = None,
 ) -> tuple[int, dict[str, object]] | None:
     from goodteam_os.skills.review_api import handle_review_get
 
-    review_response = handle_review_get(workspace, path)
+    from goodteam_os.skills.codex_runtime import review_worker_kwargs
+    review_response = handle_review_get(workspace, path, **review_worker_kwargs(codex_review_admission))
     if review_response is not None:
         return review_response
     if path == "/api/skills":
@@ -6790,7 +6818,7 @@ def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexRe
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             try:
-                response = handle_project_api_get(workspace, urlparse(self.path).path)
+                response = handle_project_api_get(workspace, urlparse(self.path).path, **runtime_kwargs)
                 if response is None:
                     self.send_error(404)
                     return
@@ -8115,7 +8143,7 @@ def serve(
                 self._send_json(status, payload)
                 return
             try:
-                project_response = handle_project_api_get(workspace, parsed.path)
+                project_response = handle_project_api_get(workspace, parsed.path, **runtime_kwargs)
             except Exception as exc:
                 self._send_api_error(exc)
                 return

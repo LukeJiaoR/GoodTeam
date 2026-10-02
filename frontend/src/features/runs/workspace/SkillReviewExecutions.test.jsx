@@ -93,6 +93,57 @@ describe('Task-bound Skill review details', () => {
     expect(within(panel).getByText(/不会自动批准、合并或部署/)).toBeVisible();
     expect(await within(panel).findByText('合同测试夹具 · 不是真实 Runtime 验收')).toBeVisible();
   });
+  it.each(['local_cli', 'contract_fixture'])('shows native self-use limits without promoting %s to strict acceptance', async (verification) => {
+    const execution = { ...item, methods: [], runtime_verification: verification,
+      runtime_boundaries: { mode: 'trusted_self_use', context_limit: 1, deadline_seconds: 60,
+        provider_binding_verified: false, usd_limit: null, tool_absence_verified: false } };
+    requestJson.mockResolvedValue({ ...list, reviews: [execution] });
+    setup(); openPanel();
+    expect(await screen.findByText('Uses existing Codex permissions. This review grants no additional tools or actions.')).toBeVisible();
+    expect(screen.getByText('Authorized sessions: 1. Maximum per session: 60s. No verified cost ceiling.')).toBeVisible();
+    expect(screen.getByText(verification === 'local_cli' ? 'Existing Codex · trusted self-use review'
+      : 'Contract fixture · not live Runtime acceptance')).toBeVisible();
+  });
+});
+
+describe('Current task native review start', () => {
+  it('shows Start only for a server-authorized task and posts the displayed identity once', async () => {
+    let finish;
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [], start_available: true })
+      .mockReturnValueOnce(new Promise(done => { finish = done; }))
+      .mockResolvedValueOnce(list);
+    setup(); openPanel();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start review' }));
+    const busy = await screen.findByRole('button', { name: 'Reviewing…' });
+    expect(busy).toBeDisabled();
+    fireEvent.click(busy);
+    expect(requestJson).toHaveBeenCalledTimes(2);
+    const [url, options] = requestJson.mock.calls[1];
+    expect(url).toBe('/api/reviewer-jobs/run');
+    expect(JSON.parse(options.body)).toEqual({ project_key: 'DEMO', run_id: 'run' });
+    await act(async () => finish({ project_key: 'DEMO', run_id: 'run', ran_count: 1, results: [{ status: 'review_received' }] }));
+    expect(await screen.findByRole('button', { name: 'Open review report' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Start review' })).not.toBeInTheDocument();
+  });
+  it('does not offer a native start when the server has no matching private authority', async () => {
+    requestJson.mockResolvedValue({ ...list, reviews: [], start_available: false });
+    setup(); openPanel();
+    await screen.findByText('No locked Reviewer execution in this task.');
+    expect(screen.queryByRole('button', { name: 'Start review' })).not.toBeInTheDocument();
+  });
+  it('discards a late start response after switching tasks and never invents a report', async () => {
+    let finish;
+    requestJson.mockResolvedValueOnce({ ...list, reviews: [], start_available: true })
+      .mockReturnValueOnce(new Promise(done => { finish = done; }));
+    const view = setup(); openPanel();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start review' }));
+    const signal = requestJson.mock.calls[1][1].signal;
+    view.rerender(<SkillReviewExecutions projectKey="DEMO" runId="next" language="en" />);
+    expect(signal.aborted).toBe(true);
+    await act(async () => finish({ project_key: 'DEMO', run_id: 'run', ran_count: 1, results: [{ status: 'review_received' }] }));
+    expect(screen.queryByRole('button', { name: 'Open review report' })).not.toBeInTheDocument();
+    expect(requestJson).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('Locked-source retry', () => {

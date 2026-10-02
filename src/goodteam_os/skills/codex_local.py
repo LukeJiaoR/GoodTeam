@@ -381,6 +381,13 @@ class LocalCodexReviewRuntime:
         # stays spent even if preparation fails; restart cannot refund it.
         pass
 
+    def process_spec(self, root, lease):
+        command = [str(self.admission.codex), *EXEC_OPTIONS, "--model", lease.session.model,
+                   *_config_arguments(self.admission.selection), "-"]
+        return ReviewProcess(tuple(command), root / "cwd", {"PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8",
+                             "HOME": str(self.admission.home.parent), "CODEX_HOME": str(self.admission.home)},
+                             self.admission.policy["deadline_seconds"], MAX_INPUT, forbid_tools=True)
+
     @contextmanager
     def execution(self, record, provider, context_ref):
         from . import worker_requests as requests
@@ -410,14 +417,9 @@ class LocalCodexReviewRuntime:
         # The user's existing config can contain legacy metadata rejected by
         # `--strict-config`. Preserve it, pin its full digest, and validate the
         # effective native gates before any context allocation instead.
-        command = [str(self.admission.codex), *EXEC_OPTIONS, "--model", lease.session.model,
-                   *_config_arguments(self.admission.selection)]
-        command.append("-")
         check_cancellation(ReviewResultStore(self.workers, provider.job_id))
         self.check_current(provider, context_ref)
-        spec = ReviewProcess(tuple(command), root / "cwd", {"PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8",
-                             "HOME": str(self.admission.home.parent), "CODEX_HOME": str(self.admission.home)},
-                             self.admission.policy["deadline_seconds"], MAX_INPUT, forbid_tools=True)
+        spec = self.process_spec(root, lease)
         confirmed = True
         try:
             yield spec, prompt

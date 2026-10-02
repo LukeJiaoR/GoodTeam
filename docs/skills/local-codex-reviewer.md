@@ -7,6 +7,11 @@ A private startup policy, user-config digest and successful `features list` do
 not prove the native process's effective provider or complete MCP inventory.
 #440/#445 remain open.
 
+The independent [trusted native self-use path](trusted-native-reviewer.md)
+reuses the native CLI's existing managed authority for an explicitly authorized
+basic review. It does not use or reopen this candidate's configuration-binding
+gate, and it does not provide strict Skill acceptance.
+
 The candidate retains task/quota, parent transport, advisory report and
 cancellation/retry mechanics on the existing #445 pipeline. Positive tests use
 an explicit model-free `contract_fixture` authority. No policy JSON, package,

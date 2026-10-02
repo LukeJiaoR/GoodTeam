@@ -140,8 +140,9 @@ def dispatch_tracks(
     # nor a Skill may supply admission, and each execution thread retains it.
     store = WorkerJobStore(project_root, **_review_runtime_kwargs(codex_review_admission))
     from goodteam_os.skills.codex_local import LocalCodexReviewAdmission
+    from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
 
-    local_review = isinstance(codex_review_admission, LocalCodexReviewAdmission)
+    local_review = isinstance(codex_review_admission, (LocalCodexReviewAdmission, TrustedCodexReviewAdmission))
     if local_review and (len(tracks) != 1 or tracks[0].get("role") != "code_review"
                          or tracks[0].get("adapter") != "codex" or not tracks[0].get("review_target")):
         raise ValueError("Local exposure authorization requires one exact-source Codex Reviewer track.")

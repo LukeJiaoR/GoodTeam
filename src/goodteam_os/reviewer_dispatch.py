@@ -146,6 +146,7 @@ def dispatch_reviewer_jobs_for_gate(
     artifact_key: str,
     artifact_path: str,
     context: str,
+    code_review_context: dict | None = None,
 ) -> list[dict[str, Any]]:
     phase = reviewer_phase_for_approval(approval)
     if phase is None or not _parallel_enabled(target, phase):
@@ -195,7 +196,22 @@ def dispatch_reviewer_jobs_for_gate(
         }
         from goodteam_os.skills.task_start import workflow_job_fields
 
-        spec.update(workflow_job_fields(state, role=role, command_key=str(spec["idempotency_key"])))
+        fields = workflow_job_fields(state, role=role, command_key=str(spec["idempotency_key"]))
+        if code_review_context is not None:
+            from goodteam_os.skills.models import SkillError
+            from goodteam_os.skills.task_context import validate_task_skill_context
+            from goodteam_os.skills.worker_requests import WORKER_METADATA_LOADER
+
+            captured = validate_task_skill_context(code_review_context)
+            if (fields or role != "code_review" or captured["task"] != {
+                    "kind": "direct_task", "project_key": state.project_key, "logical_id": state.run_id}):
+                raise SkillError("snapshot_scope_mismatch", "A direct native review cannot replace a workflow capture or another subject.")
+            fields = {"task_skill_context": captured, "skill_subject": "role:code_review",
+                      "skill_loader_version": WORKER_METADATA_LOADER, "project_key": state.project_key}
+            # This explicit native review is a new operation; preserve any
+            # previously queued legacy job and never reuse its command key.
+            spec["idempotency_key"] = "native-review:" + str(spec["idempotency_key"])
+        spec.update(fields)
         if role == "code_review" and spec.get("task_skill_context"):
             from goodteam_os.skills.review_protocol import locked_review_contract, review_artifact_task
 
