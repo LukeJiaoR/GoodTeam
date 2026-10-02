@@ -1,8 +1,10 @@
 """Explicit self-use Codex execution, separate from verified Skill admission.
 
 Reuse the CLI's existing login in place. Never copy credentials, create a
-provider/proxy or claim a time/context bound is a request/spend ceiling. Only a
-method-free read-only Reviewer is supported. Personal-host containment and
+provider/proxy or claim a time/context bound is a request/spend ceiling. A
+method-free read-only Reviewer is designed here; production admission is closed
+until the complete effective native configuration can be bound to execution.
+Personal-host containment and
 remote request retirement are not independently verified by this adapter.
 """
 from __future__ import annotations
@@ -186,7 +188,8 @@ def inspect_local_codex(codex, home, model):
             "selection_digest": content_digest(_bytes(identity)), "model": model, "existing_login_present": True,
             "model_turns_started": 0, "provider_request_count": None,
             "strict_skill_binding": False, "provider_request_limit": None,
-            "usd_limit": None, "provider_retirement_supported": False, "native_feature_inspection": gates}
+            "usd_limit": None, "provider_retirement_supported": False, "native_feature_inspection": gates,
+            "admission_ready": False, "effective_config_binding": "unverified"}
 
 
 @dataclass(frozen=True)
@@ -196,12 +199,26 @@ class LocalLease:
 
 
 class LocalCodexReviewAdmission(CodexReviewAdmission):
-    """Trusted startup policy grants finite contexts, never strict Skill support.
+    """Candidate startup policy, closed without full native config binding.
 
     The policy is outside every Worker root and never accepted over HTTP. Its
     explicit unknown-cost acceptance is necessary; any requested request/USD
     hard ceiling is rejected. Context allocations survive restart and failures.
+    The production gate rejects before subprocesses or quota allocation. A
+    single user config digest and feature listing are not effective admission.
     """
+    verification_kind = "local_cli"
+
+    def _require_effective_configuration(self):
+        # Native 0.160.0 merges package/MDM/system/cloud/user/profile/project/
+        # runtime layers, then applies required provider definitions. An empty
+        # mcp_servers table also preserves inherited entries. `features list`
+        # neither attests provider/MCP inventory nor seals another exec
+        # process's configuration. Do not override managed requirements, guess
+        # that other layers are absent, or accept a policy JSON PASS witness.
+        raise SkillError("local_codex_effective_config_unverified",
+                         "Local execution is unavailable until its complete effective provider, MCP and configuration layers are bound to the native process.")
+
     def __init__(self, policy_path):
         self.path = Path(policy_path).absolute()
         self.policy_bytes = _private_file(self.path, maximum=32 * 1024)
@@ -232,6 +249,7 @@ class LocalCodexReviewAdmission(CodexReviewAdmission):
             raise SkillError("local_codex_policy_invalid", "The local policy has invalid task or host paths.") from exc
         if any(path.is_relative_to(self.root) for path in (self.path, self.home, self.codex)):
             raise SkillError("local_codex_policy_unsafe", "Worker storage cannot supply local authority, login or executable.")
+        self._require_effective_configuration()
         inspected = inspect_local_codex(self.codex, self.home, p["model"])
         if inspected["selection_digest"] != p["selection_digest"]:
             raise SkillError("local_codex_selection_changed", "The selected binary, provider, model or invocation policy changed.")
@@ -250,6 +268,7 @@ class LocalCodexReviewAdmission(CodexReviewAdmission):
         return LocalCodexReviewRuntime(workers, self)
 
     def _current(self, snapshot):
+        self._require_effective_configuration()
         p = self.policy
         if (time.time() >= p["expires_at"] or _private_file(self.path, maximum=32 * 1024) != self.policy_bytes):
             raise SkillError("local_codex_authorization_revoked", "The local exposure authorization expired or changed.")
@@ -319,7 +338,7 @@ class LocalCodexReviewAdmission(CodexReviewAdmission):
                       "usd_limit": None, "unknown_cost_accepted": True, "strict_skill_binding": False,
                       "provider_retirement_supported": False}
         session = ContentSession("codex", ADAPTER, VERSION, self.selection["binary_digest"], self.policy["model"],
-                                 self.digest, "local:" + context_id, json.dumps(boundaries, sort_keys=True), "local_cli")
+                                 self.digest, "local:" + context_id, json.dumps(boundaries, sort_keys=True), self.verification_kind)
         lease = LocalLease(session, binding["snapshot_digest"])
         self.leases[context_id] = lease
         return lease

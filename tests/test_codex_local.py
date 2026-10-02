@@ -23,6 +23,21 @@ from test_skill_review_results import SOURCE, channel
 from test_task_skill_entrypoints import bind, capture, method, ctx as ctx
 
 
+class FixtureLocalAdmission(LocalCodexReviewAdmission):
+    """Explicit model-free contract authority, never native config admission.
+
+    Production construction is closed. This test-only subclass exercises the
+    candidate's quota/capture/cancel mechanics with a clearly marked executable
+    and cannot accept the actual native binary or claim local_cli verification.
+    """
+    verification_kind = "contract_fixture"
+
+    def _require_effective_configuration(self):
+        with self.codex.open("rb") as stream:
+            assert stream.readline() == ("#!" + sys.executable + "\n").encode()
+            assert stream.readline() == b"# goodteam-model-free-local-config-fixture\n"
+
+
 def local_host(ctx, *, body="", output=None):
     home = ctx.root / "existing-login"
     home.mkdir(exist_ok=True)
@@ -35,7 +50,7 @@ def local_host(ctx, *, body="", output=None):
     executable = ctx.root / "fixture-codex"
     raw = output if output is not None else channel()
     gates = "".join(key + " stable false\n" for key in DISABLED_FEATURES) + "skip_host_skill_discovery stable true\n"
-    executable.write_text("#!" + sys.executable + "\nimport sys,os\n"
+    executable.write_text("#!" + sys.executable + "\n# goodteam-model-free-local-config-fixture\nimport sys,os\n"
                           "if '--version' in sys.argv:\n print('codex-cli 0.160.0');sys.exit(0)\n"
                           "if 'features' in sys.argv and 'list' in sys.argv:\n print(" + repr(gates) + ");sys.exit(0)\n"
                           "assert '--ephemeral' in sys.argv and '--strict-config' not in sys.argv\n"
@@ -81,6 +96,45 @@ def policy(ctx, host, context, **changes):
     return path
 
 
+@pytest.mark.parametrize("extra_layer", [
+    "managed_same_provider_alias", "required_provider_alias", "system_provider",
+    "profile_provider", "cloud_mcp", "project_mcp", "packaged_mcp", "unknown_future_layer",
+])
+def test_unbound_native_layers_and_drift_cannot_activate_production(ctx, monkeypatch, extra_layer):
+    """Adversarial layer fixtures are not a native-layer conformance witness.
+
+    User-config/feature metadata can stay green while another layer changes.
+    The production gate must reject that ambiguity, even before any metadata
+    subprocess/MCP transport, and must not consume a context on either check.
+    """
+    marker = ctx.root / "unauthorized-native-or-mcp-start"
+    host = local_host(ctx, body="open(" + repr(str(marker)) + ",'w').write('started')")
+    _job, context = ready(ctx)
+    path = policy(ctx, host, context)
+    candidate_digest = json.loads(path.read_text())["selection_digest"]
+    observed = inspect_local_codex(*host, "explicit-test-model")
+    assert observed["selection_digest"] == candidate_digest
+    assert observed["admission_ready"] is False and observed["effective_config_binding"] == "unverified"
+    user_bytes = (host[1] / "config.toml").read_bytes()
+    layer = ctx.root / "extra-native-layer.json"
+    layer.write_text(json.dumps({"type": extra_layer, "provider": "existing", "required_model_provider": "managed",
+                                "base_url": "https://other-provider.invalid/v1",
+                                "mcp_servers": {"inherited_unknown_server": {"command": "must-not-start"}}}))
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Unverified layered configuration cannot reach any native child or transport")
+    monkeypatch.setattr("goodteam_os.skills.codex_local.subprocess.run", forbidden)
+    for revision in (1, 2):
+        layer.write_text(layer.read_text().replace('other-provider', 'changed-provider') + "\n" * revision)
+        with pytest.raises(SkillError) as failure:
+            LocalCodexReviewAdmission(path)
+        assert failure.value.code == "local_codex_effective_config_unverified"
+        assert (host[1] / "config.toml").read_bytes() == user_bytes
+        assert json.loads(path.read_text())["selection_digest"] == candidate_digest
+        assert not marker.exists()
+        assert not (service.service_state_dir() / "codex-local-budgets").exists()
+        assert not (service.service_state_dir() / "codex-local-task-bindings").exists()
+
+
 def snapshot(ctx, job):
     from goodteam_os.skills.content import SkillContextProvider
     return SkillContextProvider(ctx.workers, job["id"])._validated()[3]
@@ -89,7 +143,7 @@ def snapshot(ctx, job):
 def test_worker_local_execution_reports_actual_boundaries_and_replays_without_new_context(ctx, monkeypatch):
     host = local_host(ctx)
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context))
+    admission = FixtureLocalAdmission(policy(ctx, host, context))
     workers = WorkerJobStore(ctx.repo, codex_review_admission=admission)
     monkeypatch.setenv("UNRELATED_CREDENTIAL", "do-not-inherit")
     monkeypatch.setenv("OPENAI_API_KEY", "do-not-change-native-login-selection")
@@ -98,7 +152,7 @@ def test_worker_local_execution_reports_actual_boundaries_and_replays_without_ne
     result = workers.run_job(job["id"])
     assert result["status"] == "review_received", result
     detail = ReviewResultStore(workers, job["id"]).detail(include_report=True)
-    assert detail["runtime_verification"] == "local_cli"
+    assert detail["runtime_verification"] == "contract_fixture"
     assert detail["runtime_boundaries"]["usd_limit"] is None
     assert detail["runtime_boundaries"]["provider_request_limit"] is None
     assert detail["runtime_boundaries"]["context_limit"] == 1
@@ -111,7 +165,7 @@ def test_worker_local_execution_reports_actual_boundaries_and_replays_without_ne
     assert not list(operator.rglob("auth.json"))
     assert "DO_NOT_COPY_OR_EXPOSE" not in json.dumps(detail)
     assert StateStore(ctx.workspace).read_project_current("DEMO") == before
-    fresh = LocalCodexReviewAdmission(admission.path)
+    fresh = FixtureLocalAdmission(admission.path)
     assert WorkerJobStore(ctx.repo, codex_review_admission=fresh).run_job(job["id"])["status"] == "review_received"
     assert fresh.leases == {}
 
@@ -119,7 +173,7 @@ def test_worker_local_execution_reports_actual_boundaries_and_replays_without_ne
 def test_local_startup_authority_runs_through_real_product_http_and_rejects_stale_run(ctx, monkeypatch):
     host = local_host(ctx)
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context))
+    admission = FixtureLocalAdmission(policy(ctx, host, context))
     before = StateStore(ctx.workspace).read_project_current("DEMO")
     with server_url(ctx, monkeypatch, "product", codex_review_admission=admission) as base:
         request = {"project_key": "DEMO", "run_id": "local-review", "approval": "security"}
@@ -131,7 +185,7 @@ def test_local_startup_authority_runs_through_real_product_http_and_rejects_stal
         assert post(base, "/api/reviewer-jobs/run", request)[1]["ran_count"] == 0
     assert len(admission.leases) == 1
     assert StateStore(ctx.workspace).read_project_current("DEMO") == before
-    assert ReviewResultStore(ctx.workers, job["id"]).detail()["runtime_verification"] == "local_cli"
+    assert ReviewResultStore(ctx.workers, job["id"]).detail()["runtime_verification"] == "contract_fixture"
 
 
 @pytest.mark.parametrize("changes,code", [
@@ -147,7 +201,7 @@ def test_policy_refuses_unknown_exposure_and_unenforceable_hard_ceilings(ctx, ch
     host = local_host(ctx)
     _job, context = ready(ctx)
     with pytest.raises(SkillError) as failure:
-        LocalCodexReviewAdmission(policy(ctx, host, context, **changes))
+        FixtureLocalAdmission(policy(ctx, host, context, **changes))
     assert failure.value.code == code
 
 
@@ -155,7 +209,7 @@ def test_local_authority_cannot_borrow_a_strict_skill_task_or_its_provider_conte
     host = local_host(ctx)
     bind(ctx, method(ctx, "USER_METHOD_MUST_NOT_RUN"), subject="role:code_review")
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context))
+    admission = FixtureLocalAdmission(policy(ctx, host, context))
     result = WorkerJobStore(ctx.repo, codex_review_admission=admission).run_job(job["id"])
     assert result["skill_error_code"] == "local_codex_skills_unsupported", result
     assert admission.leases == {}
@@ -179,7 +233,7 @@ def test_legacy_user_config_is_preserved_without_strict_config_or_secret_copy(ct
     original = (home / "config.toml").read_bytes()
     (home / "config.toml").write_bytes(b"disable_response_storage=true\n" + original)
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, (executable, home), context))
+    admission = FixtureLocalAdmission(policy(ctx, (executable, home), context))
     result = WorkerJobStore(ctx.repo, codex_review_admission=admission).run_job(job["id"])
     assert result["status"] == "review_received", result
     assert (home / "config.toml").read_bytes() == b"disable_response_storage=true\n" + original
@@ -190,7 +244,7 @@ def test_legacy_user_config_is_preserved_without_strict_config_or_secret_copy(ct
 def test_wrong_model_task_or_resumed_session_does_not_consume_authorized_context(ctx, field, value):
     host = local_host(ctx)
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context))
+    admission = FixtureLocalAdmission(policy(ctx, host, context))
     original = snapshot(ctx, job)
     changed = deepcopy(original)
     if field == "task":
@@ -206,7 +260,7 @@ def test_context_consumption_survives_restart_and_concurrent_authorities(ctx):
     host = local_host(ctx)
     job, context = ready(ctx)
     path = policy(ctx, host, context)
-    authorities = [LocalCodexReviewAdmission(path), LocalCodexReviewAdmission(path)]
+    authorities = [FixtureLocalAdmission(path), FixtureLocalAdmission(path)]
     original = snapshot(ctx, job)
     def acquire(index):
         try:
@@ -216,7 +270,7 @@ def test_context_consumption_survives_restart_and_concurrent_authorities(ctx):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(acquire, (0, 1)))
     assert results.count("local_codex_budget_exhausted") == 1
-    restarted = LocalCodexReviewAdmission(path)
+    restarted = FixtureLocalAdmission(path)
     with pytest.raises(SkillError, match="budget is exhausted"):
         restarted.acquire(original, context_id="review-" + "e" * 32)
 
@@ -226,7 +280,7 @@ def test_live_authority_change_fails_before_reuse(ctx, kind):
     host = local_host(ctx)
     job, context = ready(ctx)
     path = policy(ctx, host, context)
-    admission = LocalCodexReviewAdmission(path)
+    admission = FixtureLocalAdmission(path)
     original = snapshot(ctx, job)
     lease = admission.acquire(original, context_id="review-" + "a" * 32)
     if kind == "policy":
@@ -244,7 +298,7 @@ def test_live_authority_change_fails_before_reuse(ctx, kind):
 def test_timeout_is_terminal_and_cannot_automatically_spend_again(ctx):
     host = local_host(ctx, body="import time;time.sleep(5)")
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context, deadline_seconds=1))
+    admission = FixtureLocalAdmission(policy(ctx, host, context, deadline_seconds=1))
     workers = WorkerJobStore(ctx.repo, codex_review_admission=admission)
     result = workers.run_job(job["id"])
     assert result["skill_error_code"] == "review_timeout", result
@@ -253,18 +307,35 @@ def test_timeout_is_terminal_and_cannot_automatically_spend_again(ctx):
     assert len(admission.leases) == 1
 
 
-def test_cli_constructs_real_authority_from_explicit_startup_file_before_listening(ctx, monkeypatch):
+def test_cli_production_policy_fails_closed_before_native_process_or_listening(ctx, monkeypatch):
     host = local_host(ctx)
     _job, context = ready(ctx)
     path = policy(ctx, host, context)
     calls = []
     monkeypatch.setattr(cli, "serve", lambda **kwargs: calls.append(kwargs))
-    assert cli.main(["serve", "--workspace", str(ctx.workspace), "--local-codex-policy", str(path)]) == 0
-    assert isinstance(calls[0]["codex_review_admission"], LocalCodexReviewAdmission)
-    assert calls[0]["codex_review_admission"].leases == {}
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("An unbound production authority cannot start any native process")
+    monkeypatch.setattr("goodteam_os.skills.codex_local.subprocess.run", forbidden)
+    with pytest.raises(SkillError) as failure:
+        cli.main(["serve", "--workspace", str(ctx.workspace), "--local-codex-policy", str(path)])
+    assert failure.value.code == "local_codex_effective_config_unverified"
+    assert calls == []
+    assert not (service.service_state_dir() / "codex-local-budgets").exists()
+
+
+def test_cli_embedding_retains_explicit_model_free_fixture_authority(ctx, monkeypatch):
+    host = local_host(ctx)
+    _job, context = ready(ctx)
+    path = policy(ctx, host, context)
+    fixture = FixtureLocalAdmission(path)
+    calls = []
+    monkeypatch.setattr(cli, "serve", lambda **kwargs: calls.append(kwargs))
+    assert cli.main(["serve", "--workspace", str(ctx.workspace)], codex_review_admission=fixture) == 0
+    assert calls[0]["codex_review_admission"] is fixture
+    assert fixture.verification_kind == "contract_fixture" and fixture.leases == {}
     with pytest.raises(ValueError, match="one Reviewer"):
         cli.main(["serve", "--local-codex-policy", str(path)],
-                 codex_review_admission=LocalCodexReviewAdmission(path))
+                 codex_review_admission=FixtureLocalAdmission(path))
 
 
 def test_native_provider_bearer_stays_in_existing_configuration(ctx):
@@ -273,7 +344,7 @@ def test_native_provider_bearer_stays_in_existing_configuration(ctx):
     config.write_text(config.read_text() + 'experimental_bearer_token="DO_NOT_COPY_OR_EXPOSE"\n')
     job, context = ready(ctx)
     path = policy(ctx, host, context)
-    admission = LocalCodexReviewAdmission(path)
+    admission = FixtureLocalAdmission(path)
     result = WorkerJobStore(ctx.repo, codex_review_admission=admission).run_job(job["id"])
     assert result["status"] == "review_received", result
     assert "DO_NOT_COPY_OR_EXPOSE" not in path.read_text()
@@ -290,7 +361,7 @@ def test_custom_empty_is_still_blocked_instead_of_becoming_protocol_only(ctx):
           "expected_binding_revision": binding["binding_revision"]}], actor="user", surface="team_ui",
         command_key="unconfigured-custom-method", expected_revision=current["revision"])
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context))
+    admission = FixtureLocalAdmission(policy(ctx, host, context))
     result = WorkerJobStore(ctx.repo, codex_review_admission=admission).run_job(job["id"])
     assert result["skill_error_code"] == "methods_blocked"
     assert not admission.leases
@@ -302,7 +373,7 @@ def test_text_only_execution_rejects_tool_events_as_a_successful_report(ctx):
     raw = b"\n".join([*events[:2], json.dumps(event).encode(), *events[2:]]) + b"\n"
     host = local_host(ctx, output=raw)
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context))
+    admission = FixtureLocalAdmission(policy(ctx, host, context))
     workers = WorkerJobStore(ctx.repo, codex_review_admission=admission)
     result = workers.run_job(job["id"])
     assert result["skill_error_code"] == "local_codex_tool_observed", result
@@ -320,7 +391,7 @@ def test_retry_uses_original_sources_and_a_new_explicitly_budgeted_context(ctx, 
             + repr(bad) + ")\nsys.stdout.buffer.flush();sys.exit(0)\n")
     host = local_host(ctx, body=body)
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context, max_contexts=2))
+    admission = FixtureLocalAdmission(policy(ctx, host, context, max_contexts=2))
     workers = WorkerJobStore(ctx.repo, codex_review_admission=admission)
     result = workers.run_job(job["id"])
     assert result["status"] == "failed"
@@ -348,7 +419,7 @@ def test_local_cancel_reaps_real_child_without_refunding_context_or_claiming_rem
             + ").write_text(str(os.getpid()))\nwhile True: time.sleep(.01)\n")
     host = local_host(ctx, body=body)
     job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context, deadline_seconds=10))
+    admission = FixtureLocalAdmission(policy(ctx, host, context, deadline_seconds=10))
     workers = WorkerJobStore(ctx.repo, codex_review_admission=admission)
     with server_url(ctx, monkeypatch, "product", codex_review_admission=admission) as base:
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -366,7 +437,7 @@ def test_local_cancel_reaps_real_child_without_refunding_context_or_claiming_rem
             assert result["skill_error_code"] == "review_cancelled", result
             assert store.detail()["status"] == "cancelled"
             assert store.detail()["runtime_boundaries"]["provider_retirement_supported"] is False
-            fresh = LocalCodexReviewAdmission(admission.path)
+            fresh = FixtureLocalAdmission(admission.path)
             with pytest.raises(SkillError, match="budget is exhausted"):
                 fresh.acquire(snapshot(ctx, job), context_id="review-" + "d" * 32)
 
@@ -375,13 +446,13 @@ def test_renewed_authorization_cannot_change_an_old_tasks_provider_or_binary(ctx
     host = local_host(ctx)
     job, context = ready(ctx)
     path = policy(ctx, host, context)
-    admission = LocalCodexReviewAdmission(path)
+    admission = FixtureLocalAdmission(path)
     original = snapshot(ctx, job)
     admission.acquire(original, context_id="review-" + "a" * 32)
     config = host[1] / "config.toml"
     config.write_text(config.read_text().replace("provider.invalid", "other.invalid"))
     new_path = policy(ctx, host, context, authorization_id="explicit-second-authorization")
-    changed = LocalCodexReviewAdmission(new_path)
+    changed = FixtureLocalAdmission(new_path)
     with pytest.raises(SkillError) as failure:
         changed.acquire(original, context_id="review-" + "b" * 32)
     assert failure.value.code == "local_codex_task_runtime_changed"
@@ -391,7 +462,7 @@ def test_renewed_authorization_cannot_change_an_old_tasks_provider_or_binary(ctx
 def test_legacy_worker_cannot_ignore_a_composed_local_budget(ctx):
     host = local_host(ctx)
     _job, context = ready(ctx)
-    admission = LocalCodexReviewAdmission(policy(ctx, host, context))
+    admission = FixtureLocalAdmission(policy(ctx, host, context))
     workers = WorkerJobStore(ctx.repo, codex_review_admission=admission)
     job = workers.create_job(run_id="legacy-unrelated", role="implementation", adapter="codex", task="Unbound work", context="")
     result = workers.run_job(job["id"])
