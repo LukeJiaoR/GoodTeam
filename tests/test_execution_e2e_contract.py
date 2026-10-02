@@ -81,7 +81,7 @@ class FakeGitHubClient:
         return GitHubBinding(
             repo=repo,
             issue_number=issue_number or 0,
-            pr_number=230,
+            pr_number=296,
             branch_name=branch_name,
             execution_id=execution_id,
         )
@@ -119,7 +119,7 @@ class FakeGitHubClient:
             "number": pr_number,
             "merged": True,
             "merged_at": "2026-07-06T03:10:00Z",
-            "merge_commit_sha": "merge-sha-230",
+            "merge_commit_sha": "merge-sha-296",
             "merged_by": {"login": "LukeJiaoR"},
         }
 
@@ -169,7 +169,7 @@ def test_execution_lifecycle_gate_replays_without_duplicate_side_effects(tmp_pat
         "merge_completed",
     ]
     assert run["worker_job"]["status"] == "completed"
-    assert pr["binding"]["pr_number"] == 230
+    assert pr["binding"]["pr_number"] == 296
     assert ci["ci"]["state"] == "success"
     assert ci["ci"]["passed"] == 2
     assert reviews["reviews"] == {"reviews_recorded": 1, "comments_recorded": 1}
@@ -213,9 +213,9 @@ def test_execution_lifecycle_gate_replays_without_duplicate_side_effects(tmp_pat
         if event.payload.get("transition") == "merge_completed"
     )
     assert merge_event.event_type is LedgerEventType.COMPLETED
-    assert merge_event.payload["merge_commit_sha"] == "merge-sha-230"
+    assert merge_event.payload["merge_commit_sha"] == "merge-sha-296"
     assert merge_event.payload["merged_by"] == "LukeJiaoR"
-    assert ledger.read_run(execution_id).pr_number == 230
+    assert ledger.read_run(execution_id).pr_number == 296
 
     # Finalize through a fresh API instance: the gate covers persisted evidence,
     # the memory/ledger link, and repeat safety rather than a second full setup.
@@ -226,10 +226,10 @@ def test_execution_lifecycle_gate_replays_without_duplicate_side_effects(tmp_pat
     assert evidence["execution_id"] == execution_id
     assert evidence["task_id"] == second_replay["run"]["task_id"]
     assert evidence["issue"] == "LukeJiaoR/GoodTeam#230"
-    assert evidence["pr"] == "LukeJiaoR/GoodTeam#230"
+    assert evidence["pr"] == "LukeJiaoR/GoodTeam#296"
     assert evidence["ci_summary"]["state"] == "success"
     assert evidence["review_summary"] == {"reviews": 1, "comments": 1, "states": ["APPROVED"]}
-    assert evidence["merge_summary"]["merge_commit_sha"] == "merge-sha-230"
+    assert evidence["merge_summary"]["merge_commit_sha"] == "merge-sha-296"
     assert evidence["final_status"] == "completed"
     assert [event["event_id"] for event in evidence["events"]] == [
         event["event_id"] for event in second_replay["events"]
@@ -252,8 +252,8 @@ def test_execution_lifecycle_gate_replays_without_duplicate_side_effects(tmp_pat
     assert closure_events[0].event_id == finalized["ledger_event_id"]
     assert closure_events[0].event_type is LedgerEventType.STATUS_CHANGED
     assert closure_events[0].payload["memory_event_id"] == finalized["memory_event_id"]
-    assert closure_events[0].payload["pr_number"] == 230
-    assert closure_events[0].payload["merge_commit_sha"] == "merge-sha-230"
+    assert closure_events[0].payload["pr_number"] == 296
+    assert closure_events[0].payload["merge_commit_sha"] == "merge-sha-296"
     assert closure_events[0].payload["evidence_hash"]
 
 
@@ -265,7 +265,10 @@ def test_check_sync_is_idempotent_until_summary_changes(tmp_path, execution):
     first = api.observe_ci(execution_id)
     second = api.observe_ci(execution_id)
     client.checks = {
-        "check_runs": [{"name": "unit", "status": "completed", "conclusion": "failure"}]
+        "check_runs": [
+            {"name": "unit", "status": "completed", "conclusion": "failure"},
+            {"name": "lint", "status": "completed", "conclusion": "success"},
+        ]
     }
     third = api.observe_ci(execution_id)
 
