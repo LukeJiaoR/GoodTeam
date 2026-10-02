@@ -18,6 +18,24 @@ class FakeRequest:
         return BytesIO()
 
 
+def test_api_messages_route_isolates_explicit_run_ledger(tmp_path, monkeypatch):
+    from goodteam_os.messages import append_message
+
+    expected = append_message(
+        tmp_path, "REAL", "run-1", from_role="implementation", to=["qa"],
+        kind="ask", body="Message for the requested run.",
+    )
+    append_message(
+        tmp_path, "REAL", "run-2", from_role="implementation", to=["qa"],
+        kind="ask", body="A different run is not the requested ledger.",
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/messages?project=REAL&run=run-1")
+
+    assert 200 in handler.responses
+    assert json.loads(handler.wfile.getvalue().decode("utf-8"))["messages"] == [expected]
+
+
 def capture_get_handler(tmp_path, monkeypatch, *, frontend_dist=None):
     captured_handler_class = None
 

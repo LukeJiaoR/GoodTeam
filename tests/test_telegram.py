@@ -1461,6 +1461,30 @@ def test_gt_view_long_content_sends_chunks(tmp_path, monkeypatch):
 # /gt approve
 # ---------------------------------------------------------------------------
 
+def test_gt_approve_without_live_session_rejects_default_project_bait(tmp_path, monkeypatch):
+    from goodteam_os.web import current_approval_gate
+
+    write_project_state(tmp_path, next_node="await_prd_approval")
+    assert current_approval_gate(StateStore(tmp_path).read_project_current("CONTENTOPS")) == "prd"
+    decisions = []
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "test-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(
+        "goodteam_os.telegram.decide_approval",
+        lambda **kwargs: decisions.append(kwargs) or {"ok": True},
+    )
+
+    process_telegram_update(
+        telegram_text_update("/gt approve"),
+        workspace=tmp_path,
+        allowed_users=["111"],
+        processed_callbacks=set(),
+        project_key="CONTENTOPS",
+    )
+
+    assert decisions == []
+
+
 def test_gt_approve_reply_to_card_uses_exact_replied_session(tmp_path, monkeypatch):
     calls = []
     decisions = []

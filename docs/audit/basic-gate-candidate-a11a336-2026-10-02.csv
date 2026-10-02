@@ -761,3 +761,5 @@ tests/test_execution_ledger.py,test_partial_execution_replay_allows_missing_task
 tests/test_execution_ledger.py,test_malformed_event_file_fails_with_path_and_line_number,130,1,执行、PR、CI 与闭环身份
 tests/test_execution_path_claims.py,test_contract_path_scope_and_expected_artifacts_are_preferred,6,1,执行、PR、CI 与闭环身份
 tests/test_execution_path_claims.py,test_rejects_unsafe_absolute_parent_and_url_paths,153,1,执行、PR、CI 与闭环身份
+tests/test_api.py,test_api_messages_route_isolates_explicit_run_ledger,,1,两个真实 run 消息账本中，HTTP 请求 run-1 仅返回 run-1，不能混入 run-2；本批重写 test_api_messages_returns_messages_for_run，名称对应 PR 当前 head；本行不借用 main 的行号或原耗时
+tests/test_telegram.py,test_gt_approve_without_live_session_rejects_default_project_bait,,1,真实默认项目待批诱饵存在但无活动会话，decide_approval 调用次数必须为零；不保留帮助/拒绝措辞快照；本批重写 test_gt_approve_with_default_project_but_no_live_context_sends_clear_message，名称对应 PR 当前 head；本行不借用 main 的行号或原耗时
