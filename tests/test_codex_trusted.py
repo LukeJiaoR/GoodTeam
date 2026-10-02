@@ -137,6 +137,71 @@ def test_default_page_wrong_private_task_permission_does_not_launch_native(ctx, 
     assert admission.leases == {}
 
 
+@pytest.mark.parametrize("bad_selection", ["model", "empty_model", "adapter", "multiple_profiles"])
+def test_invalid_team_selection_publishes_nothing_and_correcting_it_can_start_the_same_review(ctx, monkeypatch, bad_selection):
+    host = native(ctx)
+    state, scope = default_page(ctx, monkeypatch)
+    admission = FixtureTrustedAdmission(policy(ctx, host, scope))
+    original_config = ctx.config.read_text()
+
+    def selection(key, **runtime):
+        team = ctx.service.team.read()
+        ctx.service.team.execute([{"kind": "change_worker_runtime", "worker_id": "code_review-a", **runtime}],
+            actor="user", surface="team_ui", command_key=key, expected_revision=team["revision"])
+
+    if bad_selection == "multiple_profiles":
+        ctx.config.write_text(original_config.replace("\n    - correctness-security\n",
+            "\n    - correctness-security\n    - architecture-maintainability\n"))
+    else:
+        selection("invalid-selection", **{"model": "not-authorized" if bad_selection == "model" else ""}
+            if bad_selection in {"model", "empty_model"} else {"provider": "fake"})
+    before_jobs = WorkerJobStore(ctx.repo).list_jobs()
+    with ctx.service.locks._locked() as fd:
+        before_registry = ctx.service.locks._registry(fd)
+    endpoint = "/api/projects/DEMO/runs/" + state.run_id + "/skill-reviews"
+    with server_url(ctx, monkeypatch, "product", codex_review_admission=admission) as base:
+        body = {"project_key": "DEMO", "run_id": state.run_id}
+        code, rejected = post(base, "/api/reviewer-jobs/run", body)
+        assert code == 409 and rejected["error"] == "trusted_codex_reviewer_selection", rejected
+        assert admission.leases == {} and WorkerJobStore(ctx.repo).list_jobs() == before_jobs
+        with ctx.service.locks._locked() as fd:
+            assert ctx.service.locks._registry(fd) == before_registry
+        page = get(base, endpoint)[1]
+        assert page["reviews"] == [] and page["start_available"] is True
+        ctx.config.write_text(original_config)
+        selection("corrected-selection", provider="codex", model="explicit-test-model")
+        code, started = post(base, "/api/reviewer-jobs/run", body)
+        assert code == 200 and started["results"][0]["status"] == "review_received", started
+        assert started["ran_count"] == 1 and len(admission.leases) == 1
+        assert len(get(base, endpoint)[1]["reviews"]) == 1
+
+
+@pytest.mark.parametrize("revocation", ["deleted", "permissions", "changed"])
+def test_revoked_private_policy_disables_start_but_saved_report_remains_readable(ctx, monkeypatch, revocation):
+    host = native(ctx)
+    state, scope = default_page(ctx, monkeypatch)
+    admission = FixtureTrustedAdmission(policy(ctx, host, scope))
+    endpoint = "/api/projects/DEMO/runs/" + state.run_id + "/skill-reviews"
+    with server_url(ctx, monkeypatch, "product", codex_review_admission=admission) as base:
+        body = {"project_key": "DEMO", "run_id": state.run_id}
+        assert post(base, "/api/reviewer-jobs/run", body)[1]["results"][0]["status"] == "review_received"
+        original = get(base, endpoint)[1]["reviews"][0]
+        if revocation == "deleted":
+            admission.path.unlink()
+        elif revocation == "permissions":
+            admission.path.chmod(0o644)
+        else:
+            admission.path.write_text("The authorization has been revoked.\n")
+        code, page = get(base, endpoint)
+        assert code == 200 and page["start_available"] is False, page
+        assert page["reviews"][0]["report_digest"] == original["report_digest"]
+        for suffix in ("", "/report"):
+            code, saved = get(base, endpoint + "/" + original["job_id"] + suffix)
+            assert code == 200 and saved["report_available"] is True, saved
+            assert saved["report_digest"] == original["report_digest"]
+        assert len(admission.leases) == 1
+
+
 def test_default_page_can_cancel_the_exact_native_attempt_while_run_holds_workflow_guard(ctx, monkeypatch):
     host = native(ctx, body="time.sleep(20)")
     state, scope = default_page(ctx, monkeypatch)

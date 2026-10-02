@@ -432,20 +432,22 @@ def _run_queued_reviewer_jobs_for_current_run(
             # action, produce a separate task-bound review using the actual Team
             # Worker/profile and artifact, leaving other workflow roles intact.
             from goodteam_os.graph import worker_context
-            from goodteam_os.reviewer_dispatch import dispatch_reviewer_jobs_for_gate, reviewer_phase_for_approval
+            from goodteam_os.reviewer_dispatch import dispatch_prepared_reviewer_jobs, reviewer_job_specs_for_gate, reviewer_phase_for_approval
             from goodteam_os.skills.models import SkillError
+            from goodteam_os.workers import _codex_model_name
 
             if reviewer_phase_for_approval(current_gate) != "implementation":
                 return 409, {"error": "trusted_codex_task_mismatch", "message": "Native self-use is limited to Code Review."}
             try:
-                review_context = admission.capture_workflow_review(store, workspace=workspace, state=state)
-                jobs = dispatch_reviewer_jobs_for_gate(store=store, state=state, target=target, approval=current_gate,
-                    artifact_key=artifact_key, artifact_path=artifact_path, context=worker_context(state),
-                    code_review_context=review_context)
-                if (len(jobs) != 1 or jobs[0].get("adapter") != "codex"
-                        or jobs[0].get("model") != admission.policy["model"]):
+                specs = reviewer_job_specs_for_gate(state=state, target=target, approval=current_gate,
+                    artifact_key=artifact_key, artifact_path=artifact_path, context=worker_context(state))
+                if (len(specs) != 1 or specs[0].get("adapter") != "codex" or not specs[0].get("model")
+                        or _codex_model_name(str(specs[0].get("model") or "")) != admission.policy["model"]):
                     return 409, {"error": "trusted_codex_reviewer_selection",
                                  "message": "Choose one Codex Reviewer profile with the privately authorized model."}
+                review_context = admission.capture_workflow_review(store, workspace=workspace, state=state)
+                jobs = dispatch_prepared_reviewer_jobs(store=store, state=state, specs=specs,
+                                                       code_review_context=review_context)
             except (SkillError, OSError) as exc:
                 return 409, {"error": exc.code if isinstance(exc, SkillError) else "review_start_unavailable",
                              "message": "The current task could not start its authorized native review."}

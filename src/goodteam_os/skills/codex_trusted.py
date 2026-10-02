@@ -170,9 +170,14 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
         """Display an already authorized default-task start; no grant or probe."""
         from dataclasses import asdict
         task = TaskSkillIdentity("direct_task", state.project_key, state.run_id)
-        return (not state.task_skill_context and Path(workers.project_root).absolute() == self.root
-                and asdict(task) == self.policy["task"] and time.time() < self.policy["expires_at"]
-                and _private_file(self.path, maximum=32768) == self.policy_bytes)
+        try:
+            return (not state.task_skill_context and Path(workers.project_root).absolute() == self.root
+                    and asdict(task) == self.policy["task"] and time.time() < self.policy["expires_at"]
+                    and _private_file(self.path, maximum=32768) == self.policy_bytes)
+        except (SkillError, OSError):
+            # Revocation closes new starts; an availability hint is not authority
+            # for reading an already registered immutable report.
+            return False
 
     def _current(self, snapshot):
         if time.time() >= self.policy["expires_at"] or _private_file(self.path, maximum=32768) != self.policy_bytes:

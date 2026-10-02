@@ -148,6 +148,22 @@ def dispatch_reviewer_jobs_for_gate(
     context: str,
     code_review_context: dict | None = None,
 ) -> list[dict[str, Any]]:
+    specs = reviewer_job_specs_for_gate(state=state, target=target, approval=approval,
+        artifact_key=artifact_key, artifact_path=artifact_path, context=context)
+    return dispatch_prepared_reviewer_jobs(store=store, state=state, specs=specs,
+                                           code_review_context=code_review_context)
+
+
+def reviewer_job_specs_for_gate(
+    *, state: object, target: Mapping[str, object] | None, approval: str,
+    artifact_key: str, artifact_path: str, context: str,
+) -> list[dict[str, Any]]:
+    """Resolve the actual Team/profile selection without capturing or publishing.
+
+    A bounded native caller validates these exact specs before any task lock or
+    job snapshot is created, then publishes the same selection without resolving
+    it again. Public HTTP requests cannot supply prepared specs.
+    """
     phase = reviewer_phase_for_approval(approval)
     if phase is None or not _parallel_enabled(target, phase):
         return []
@@ -178,7 +194,7 @@ def dispatch_reviewer_jobs_for_gate(
         artifact_path=artifact_path,
         artifact_version=artifact_version,
     )
-    results: list[dict[str, Any]] = []
+    specs: list[dict[str, Any]] = []
     for profile in profiles:
         spec = {**_reviewer_job_spec(
                 run_id=run_id,
@@ -194,6 +210,19 @@ def dispatch_reviewer_jobs_for_gate(
             ),
             **_worker_type_job_settings(target, resolution, role=role, adapter=profile.adapter),
         }
+        specs.append(spec)
+    return specs
+
+
+def dispatch_prepared_reviewer_jobs(
+    *, store: WorkerJobStore, state: object, specs: list[dict[str, Any]],
+    code_review_context: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Publish server-prepared specs after the caller's bounded-start checks."""
+    results: list[dict[str, Any]] = []
+    for prepared in specs:
+        spec = dict(prepared)
+        role = str(spec["role"])
         from goodteam_os.skills.task_start import workflow_job_fields
 
         fields = workflow_job_fields(state, role=role, command_key=str(spec["idempotency_key"]))
@@ -218,8 +247,8 @@ def dispatch_reviewer_jobs_for_gate(
             if locked_review_contract(store, spec["task_skill_context"]) is not None:
                 # Profiles still select reviewer identity/runtime. Their legacy
                 # methods and templates do not override user-bound Skills.
-                spec["task"] = review_artifact_task(approval=approval, artifact_key=artifact_key,
-                                                     artifact_path=artifact_path, artifact_version=artifact_version)
+                spec["task"] = review_artifact_task(approval=spec["approval"], artifact_key=spec["artifact_key"],
+                                                     artifact_path=spec["artifact_path"], artifact_version=spec["artifact_version"])
         job, _created = store.create_or_reuse_job(**spec)
         result = dict(job)
         result.setdefault("job_id", str(job.get("id", "")))
