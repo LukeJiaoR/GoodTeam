@@ -46,7 +46,9 @@ export const taskAssistantAction = (projectKey, body, options) => jsonPost(
   `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/actions`, body, options,
 );
 export const retryRun = (projectKey, options) => jsonPost('/api/retry', { project_key: projectKey }, options);
-export const terminateRun = (projectKey, options) => jsonPost('/api/terminate', { project_key: projectKey }, options);
+export const terminateRun = (projectKey, expectedRunId, options) => jsonPost('/api/terminate', {
+  project_key: projectKey, expected_run_id: expectedRunId,
+}, options);
 export const dispatchTrack = (body, options) => jsonPost('/api/dispatch-track', body, options);
 export const startSmoke = (body, options) => jsonPost('/api/smoke-run', body, options);
 export const startChangeIntent = (projectKey, approval, expectedTarget = {}, options) => jsonPost(

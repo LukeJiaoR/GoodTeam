@@ -135,7 +135,8 @@ from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACK
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
 from goodteam_os.workflow_mutations import (
-    begin_transition, finish_transition, recover_transition, replay_approval, serialized_workflow,
+    begin_transition, finish_transition, interrupt_transition, recover_transition, replay_approval,
+    serialized_workflow, workflow_guard,
 )
 
 PRD_REVIEW_ROLES = [
@@ -4803,30 +4804,46 @@ def worker_model_label(state: AgileDevState | None, start_context: dict[str, obj
     return DEFAULT_CODEX_MODEL
 
 
-@serialized_workflow
-def terminate_project_run(*, workspace: Path, project_key: str) -> dict[str, object]:
+def terminate_project_run(
+    *, workspace: Path, project_key: str, expected_run_id: str | None = None,
+) -> dict[str, object]:
     key = normalize_project_key(project_key)
-    state_store = StateStore(workspace)
-    state = state_store.read_project_current(key)
-    if state is None:
-        raise ValueError(f"No active run for project: {key}")
-    before_node = state.next_node
-    archive_path = state_store.archive_project_current(key, reason="cancelled")
-    append_action(
-        workspace,
-        run_id=state.run_id,
-        actor="human",
-        action="run_terminated",
-        project_key=key,
-        before_node=before_node,
-        after_node="cancelled",
-    )
-    return {
-        "terminated": True,
-        "project_key": key,
-        "run_id": state.run_id,
-        "archive_path": str(archive_path),
-    }
+    if expected_run_id is not None and (not isinstance(expected_run_id, str) or not expected_run_id.strip()):
+        raise ProjectApiError("run_binding_required", "Refresh and select the task to archive.", 400)
+    with workflow_guard(workspace, key):
+        state_store = StateStore(workspace)
+        state = state_store.read_project_current(key)
+        # Reject before recovery or writes: an old tab has no authority over a
+        # replacement run, including its interrupted transition evidence.
+        if expected_run_id is not None and (state is None or state.run_id != expected_run_id):
+            raise ProjectApiError(
+                "run_binding_mismatch", "The active task changed. Refresh before archiving it.", 409,
+                details={"expected_run_id": expected_run_id, "current_run_id": state.run_id if state else ""},
+                recovery=["refresh"],
+            )
+        if state is None:
+            raise ValueError(f"No active run for project: {key}")
+        before_node = state.next_node
+        try:
+            archive_path = state_store.archive_project_current(key, reason="cancelled")
+            append_action(
+                workspace,
+                run_id=state.run_id,
+                actor="human",
+                action="run_terminated",
+                project_key=key,
+                before_node=before_node,
+                after_node="cancelled",
+            )
+        except Exception:
+            interrupt_transition(workspace, key)
+            raise
+        return {
+            "terminated": True,
+            "project_key": key,
+            "run_id": state.run_id,
+            "archive_path": str(archive_path),
+        }
 
 
 def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
@@ -8610,9 +8627,13 @@ def serve(
                         expected_artifact_version=str(request.get("expected_artifact_version", "")),
                     )
                 elif normalized_path == "/terminate":
+                    expected_run_id = request.get("expected_run_id")
+                    if not isinstance(expected_run_id, str) or not expected_run_id.strip():
+                        raise ProjectApiError("run_binding_required", "Refresh and select the task to archive.", 400)
                     result = terminate_project_run(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
+                        expected_run_id=expected_run_id,
                     )
                 elif normalized_path == "/project-delete":
                     result = delete_project(

@@ -902,7 +902,54 @@ test('requires confirmation before the Task Assistant cancels a mission', async 
   expect(screen.getByText(/moves the current task to history/)).toBeVisible();
   expect(mocks.terminateRun).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: 'Archive current task' }));
-  expect(mocks.terminateRun).toHaveBeenCalledWith('DEMO');
+  expect(mocks.terminateRun).toHaveBeenCalledWith('DEMO', 'run-active');
+});
+
+test('pauses stale task actions while keeping Refresh and the last task visible', async () => {
+  const data = projectedWorkData();
+  const refresh = vi.fn();
+  mocks.useProjectState.mockReturnValue({ data, error: new Error('Task update failed'), refresh, status: 'stale' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const view = renderWorkPage('/projects/DEMO/work');
+
+  expect(screen.getByText('Task updates are unavailable. Actions are paused until you refresh successfully.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Archive current task' })).toBeDisabled();
+  expect(screen.getByRole('textbox', { name: 'Message', exact: true })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: 'Archive current task' }));
+  expect(mocks.terminateRun).not.toHaveBeenCalled();
+  const currentContext = screen.getByRole('region', { name: 'Current task and next step' });
+  await userEvent.click(within(currentContext).getByRole('button', { name: 'Refresh current state', exact: true }));
+  expect(refresh).toHaveBeenCalled();
+
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
+  view.rerender(<MemoryRouter initialEntries={['/projects/DEMO/work']}><Routes>
+    <Route element={<TranslationOutlet />}><Route path="/projects/:projectKey/work" element={<WorkPage />} /></Route>
+  </Routes></MemoryRouter>);
+  expect(screen.getByRole('button', { name: 'Archive current task' })).toBeEnabled();
+  expect(screen.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+});
+
+test('requires a new cancellation confirmation when a different task replaces the displayed run', async () => {
+  const data = projectedWorkData();
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const view = renderWorkPage('/projects/DEMO/work');
+  await userEvent.click(screen.getByRole('button', { name: 'Archive current task' }));
+  expect(screen.getByText(/moves the current task to history/)).toBeVisible();
+
+  const replacement = structuredClone(data);
+  replacement.state.run_id = 'replacement-run';
+  replacement.team_workspace.mission.run_id = 'replacement-run';
+  replacement.team_workspace.mission.id = 'replacement-run';
+  mocks.useProjectState.mockReturnValue({ data: replacement, error: null, refresh: vi.fn(), status: 'ready' });
+  view.rerender(<MemoryRouter initialEntries={['/projects/DEMO/work']}><Routes>
+    <Route element={<TranslationOutlet />}><Route path="/projects/:projectKey/work" element={<WorkPage />} /></Route>
+  </Routes></MemoryRouter>);
+  expect(screen.queryByText(/moves the current task to history/)).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Archive current task' }));
+  expect(mocks.terminateRun).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Archive current task' }));
+  expect(mocks.terminateRun).toHaveBeenCalledWith('DEMO', 'replacement-run');
 });
 
 test.each([false, true])('keeps project chat available while historical task activity and actions stay read-only (mobile=%s)', async (mobile) => {
