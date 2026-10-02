@@ -34,7 +34,7 @@ class CapturedReviewTurn:
     commands: tuple[CapturedCommand, ...] = ()
 
 
-def capture_final_turn(stdout: bytes, *, returncode: int) -> CapturedReviewTurn:
+def capture_final_turn(stdout: bytes, *, returncode: int, forbid_tools: bool = False) -> CapturedReviewTurn:
     """Accept one successful new-session turn after the parent reaped the CLI."""
     if type(returncode) is not int or returncode != 0:
         raise SkillError("review_process_failed", "The Reviewer process did not exit successfully.")
@@ -96,6 +96,8 @@ def capture_final_turn(stdout: bytes, *, returncode: int) -> CapturedReviewTurn:
             item = event.get("item")
             if not isinstance(item, dict) or not isinstance(item.get("type"), str):
                 raise SkillError("review_capture_json", "The Reviewer emitted an invalid item.")
+            if forbid_tools and item["type"] not in {"agent_message", "reasoning"}:
+                raise SkillError("local_codex_tool_observed", "A tool event violates the local text-only execution contract.")
             if item["type"] == "command_execution":
                 identity, command = item.get("id"), item.get("command")
                 if (not isinstance(identity, str) or not identity or len(identity) > 128

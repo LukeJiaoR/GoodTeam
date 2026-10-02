@@ -470,6 +470,9 @@ class ReviewResultStore:
                       "stages": {key: "unobserved" for key in OBSERVED_STAGES},
                       "status": state["status"], "updated_at": state["updated_at"], "retry_available": False,
                       "advisory": True, "judgment_verification": "not_independently_verified", "report_available": False}
+            if record["runtime_session"]["verification_kind"] == "local_cli":
+                # Original parent-owned limits, never current config or model prose.
+                result["runtime_boundaries"] = _decode(record["runtime_session"]["evidence_ref"].encode())
             for stage in ("materialized", "catalog_presented", "content_delivered"):
                 observed = _read_optional(fd, "observed-" + stage + ".json")
                 if observed is not None:

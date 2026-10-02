@@ -139,6 +139,12 @@ def dispatch_tracks(
     # Validate trusted composition before recording a task. Neither track JSON
     # nor a Skill may supply admission, and each execution thread retains it.
     store = WorkerJobStore(project_root, **_review_runtime_kwargs(codex_review_admission))
+    from goodteam_os.skills.codex_local import LocalCodexReviewAdmission
+
+    local_review = isinstance(codex_review_admission, LocalCodexReviewAdmission)
+    if local_review and (len(tracks) != 1 or tracks[0].get("role") != "code_review"
+                         or tracks[0].get("adapter") != "codex" or not tracks[0].get("review_target")):
+        raise ValueError("Local exposure authorization requires one exact-source Codex Reviewer track.")
     if any(track.get("review_target") is not None for track in tracks) and verify_commands:
         raise ValueError("Exact-source review cannot run post-review shell verification commands.")
     if codex_review_admission is not None and any(
@@ -164,7 +170,10 @@ def dispatch_tracks(
             confirmed_input={"tracks": tracks, "constraints": constraints, "verify_commands": verify_commands or {},
                              "constraints_source": str(constraints_file) if constraints_file else "",
                              "research_report_source": str(research_report_file) if research_report_file else ""},
+            **({"subjects": ("role:code_review",), "protocol_only_review": True} if local_review else {}),
         )
+    if local_review and not context:
+        raise ValueError("Local execution requires a registered project and its captured task protocol.")
     jobs_by_role = [
         _create_track_job(
             store,
