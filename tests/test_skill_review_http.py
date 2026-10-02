@@ -17,9 +17,10 @@ from test_task_skill_entrypoints import bind, method, ctx as ctx
 
 
 @contextmanager
-def server_url(ctx, monkeypatch, handler):
+def server_url(ctx, monkeypatch, handler, *, codex_review_admission=None):
+    runtime_kwargs = {} if codex_review_admission is None else {"codex_review_admission": codex_review_admission}
     if handler == "contract":
-        server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(ctx.workspace))
+        server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(ctx.workspace, **runtime_kwargs))
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         thread.start()
     else:
@@ -37,6 +38,7 @@ def server_url(ctx, monkeypatch, handler):
         monkeypatch.setattr(web, "ThreadingHTTPServer", CapturingServer)
         thread = threading.Thread(target=web.serve, kwargs={
             "workspace": ctx.workspace, "host": "127.0.0.1", "port": 0, "frontend_dist": dist,
+            **runtime_kwargs,
         }, daemon=True)
         thread.start()
         server = servers.get(timeout=5)

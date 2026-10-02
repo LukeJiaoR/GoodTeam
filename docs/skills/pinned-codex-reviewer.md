@@ -204,13 +204,30 @@ invalid source evidence and uncertain cleanup remain unsuccessful deliveries.
 A repeated identical direct task recovers the saved report without acquiring a
 new provider context; changing the model requires a different task request.
 
-The new tests exercise the CLI parser and existing dispatch/Worker path with
-an explicitly scripted daemon and bounded Python child. They do not establish
-native Docker/Codex execution. **Production provider/host authority is still
-unimplemented and not registered by the stock CLI or managed service.** The
-internal composition seam is wired for direct dispatch only; Web workflow
-execution/retry composition is not claimed migrated. No CLI flag can replace
-the missing authority or its actual containment/request/spend validation.
+The tests exercise the CLI parser, dispatch/Worker path and real HTTP controls
+with an explicitly scripted daemon and bounded Python child. They do not
+establish native Docker/Codex execution. **Production provider/host authority is
+still unimplemented and not registered by the stock CLI or managed service.**
+
+Server-side embedding startup can supply an existing `CodexReviewAdmission` object
+to `cli.main(..., codex_review_admission=authority)` for `dispatch` or `serve`,
+or directly to `web.serve`/`build_dashboard_handler`. The Web instance carries
+that dependency to queued Reviewer run/retry and exact locked-source retry;
+each Worker still acquires and rechecks its own fresh context through the
+existing runtime. Server construction does not acquire a provider route.
+Retry keeps the original source, request, model and method versions. Reports
+remain advisory, with fixture provenance preserved and approvals unchanged.
+Automatic workflow execution and managed process restart/supervision do not yet
+compose this dependency. No object is retained in a process-global registry.
+
+This seam does not discover, construct or approve a provider. The current
+`providers` configuration describes readiness (`type`, `base_url`,
+`api_key_env`, `env_file`), not a reservation/revocation API. Completing #445
+requires the actual authorized service and its documented model, request and
+spend reservation/limit and context-retirement operations, alongside verified
+host containment. A Responses-compatible URL or API key alone does not supply
+that authority. No CLI/JSON `verified` switch, module path or Skill directive
+can replace it. Missing admission still blocks before external invocation.
 
 ## Local host continuation
 
