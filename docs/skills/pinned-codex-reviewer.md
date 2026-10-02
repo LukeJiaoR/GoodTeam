@@ -217,6 +217,10 @@ each Worker still acquires and rechecks its own fresh context through the
 existing runtime. Server construction does not acquire a provider route.
 Retry keeps the original source, request, model and method versions. Reports
 remain advisory, with fixture provenance preserved and approvals unchanged.
+Queued run/retry owns the existing project workflow guard from current-run
+validation through execution or retry creation. Concurrent termination/start
+cannot replace that run; busy requests are rejected. Cancellation stays outside
+the workflow guard so a running review can still be stopped.
 Automatic workflow execution and managed process restart/supervision do not yet
 compose this dependency. No object is retained in a process-global registry.
 

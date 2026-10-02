@@ -136,7 +136,8 @@ from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACK
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
 from goodteam_os.workflow_mutations import (
-    begin_transition, finish_transition, recover_transition, replay_approval, serialized_workflow,
+    WorkflowBusyError, begin_transition, finish_transition, interrupt_transition,
+    recover_transition, replay_approval, serialized_workflow, workflow_guard,
 )
 
 if TYPE_CHECKING:
@@ -378,7 +379,18 @@ def run_queued_reviewer_jobs_action(
     project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
     if not project_key:
         return 400, {"error": "project_key is required"}
-    state = resolve_dashboard_state(workspace, project_key=project_key)
+    try:
+        with workflow_guard(workspace, project_key):
+            return _run_queued_reviewer_jobs_for_current_run(workspace, request, project_key, runtime_kwargs)
+    except WorkflowBusyError as exc:
+        return 409, {"error": str(exc), "code": "workflow_busy"}
+
+
+def _run_queued_reviewer_jobs_for_current_run(
+    workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
+) -> tuple[int, dict[str, object]]:
+    # The caller owns the guard through execution. Recover without reacquiring it.
+    state = interrupt_transition(workspace, project_key)
     if state is None:
         return 404, {"error": f"Unknown project or no active run: {project_key}"}
 
@@ -451,7 +463,18 @@ def retry_failed_reviewer_jobs_action(
     project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
     if not project_key:
         return 400, {"error": "project_key is required"}
-    state = resolve_dashboard_state(workspace, project_key=project_key)
+    try:
+        with workflow_guard(workspace, project_key):
+            return _retry_failed_reviewer_jobs_for_current_run(workspace, request, project_key, runtime_kwargs)
+    except WorkflowBusyError as exc:
+        return 409, {"error": str(exc), "code": "workflow_busy"}
+
+
+def _retry_failed_reviewer_jobs_for_current_run(
+    workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
+) -> tuple[int, dict[str, object]]:
+    # The caller owns the guard through retry creation. No nested dashboard recovery.
+    state = interrupt_transition(workspace, project_key)
     if state is None:
         return 404, {"error": f"Unknown project or no active run: {project_key}"}
 
