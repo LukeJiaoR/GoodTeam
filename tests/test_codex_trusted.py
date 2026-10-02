@@ -202,6 +202,34 @@ def test_revoked_private_policy_disables_start_but_saved_report_remains_readable
         assert len(admission.leases) == 1
 
 
+def test_prefixed_team_model_is_canonical_in_snapshot_and_replay_after_bare_model_selection(ctx, monkeypatch):
+    host = native(ctx)
+    state, scope = default_page(ctx, monkeypatch)
+
+    def select(model, key):
+        team = ctx.service.team.read()
+        ctx.service.team.execute([{"kind": "change_worker_runtime", "worker_id": "code_review-a", "model": model}],
+            actor="user", surface="team_ui", command_key=key, expected_revision=team["revision"])
+
+    select("codex:explicit-test-model", "prefixed-native-selection")
+    admission = FixtureTrustedAdmission(policy(ctx, host, scope))
+    endpoint = "/api/projects/DEMO/runs/" + state.run_id + "/skill-reviews"
+    with server_url(ctx, monkeypatch, "product", codex_review_admission=admission) as base:
+        body = {"project_key": "DEMO", "run_id": state.run_id}
+        code, started = post(base, "/api/reviewer-jobs/run", body)
+        assert code == 200 and started["results"][0]["status"] == "review_received", started
+        item = get(base, endpoint)[1]["reviews"][0]
+        snapshot = admission_snapshot(ctx, {"id": item["job_id"]})
+        assert snapshot["job_input"]["request"]["model"] == "explicit-test-model"
+        assert item["runtime"]["model"] == "explicit-test-model"
+        code, report = get(base, endpoint + "/" + item["job_id"] + "/report")
+        assert code == 200 and report["report_available"]
+        select("explicit-test-model", "bare-native-selection")
+        code, replay = post(base, "/api/reviewer-jobs/run", body)
+        assert code == 200 and replay["ran_count"] == 0, replay
+        assert len(get(base, endpoint)[1]["reviews"]) == 1 and len(admission.leases) == 1
+
+
 def test_default_page_can_cancel_the_exact_native_attempt_while_run_holds_workflow_guard(ctx, monkeypatch):
     host = native(ctx, body="time.sleep(20)")
     state, scope = default_page(ctx, monkeypatch)

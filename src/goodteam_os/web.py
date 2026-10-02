@@ -441,8 +441,12 @@ def _run_queued_reviewer_jobs_for_current_run(
             try:
                 specs = reviewer_job_specs_for_gate(state=state, target=target, approval=current_gate,
                     artifact_key=artifact_key, artifact_path=artifact_path, context=worker_context(state))
+                if len(specs) == 1 and specs[0].get("adapter") == "codex" and specs[0].get("model"):
+                    # Skill publication preserves the request verbatim. Validate
+                    # and publish the same canonical model, not a prefix alias.
+                    specs[0]["model"] = _codex_model_name(str(specs[0]["model"]))
                 if (len(specs) != 1 or specs[0].get("adapter") != "codex" or not specs[0].get("model")
-                        or _codex_model_name(str(specs[0].get("model") or "")) != admission.policy["model"]):
+                        or specs[0]["model"] != admission.policy["model"]):
                     return 409, {"error": "trusted_codex_reviewer_selection",
                                  "message": "Choose one Codex Reviewer profile with the privately authorized model."}
                 review_context = admission.capture_workflow_review(store, workspace=workspace, state=state)
