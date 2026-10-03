@@ -352,11 +352,21 @@ def test_missing_native_children_interface_refuses_command_before_launch(lifecyc
     assert not launched.exists()
 
 
-def test_wrong_repository_registration_cannot_clean(lifecycle):
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig"])
+@pytest.mark.parametrize(("runner", "repository"), [
+    (cleanup.RUNNER, cleanup.REPOSITORY),
+    ("yuva-ci-01", cleanup.REPOSITORY),
+    (cleanup.RUNNER, "LukeJiaoR/ziwei"),
+])
+def test_registration_encoding_preserves_runner_and_repository_identity(lifecycle, encoding, runner, repository):
     registration = lifecycle.root / "actions-runner/.runner"
-    registration.write_text(json.dumps({"agentName": "yuva-ci-01", "gitHubUrl": "https://github.com/LukeJiaoR/ziwei"}))
-    with pytest.raises(ValueError, match="GoodTeam"):
-        cleanup.Lifecycle(lifecycle.root)
+    registration.write_text(json.dumps({"agentName": runner, "gitHubUrl": f"https://github.com/{repository}"}),
+                            encoding=encoding)
+    if (runner, repository) == (cleanup.RUNNER, cleanup.REPOSITORY):
+        assert cleanup.Lifecycle(lifecycle.root).policy == lifecycle.policy
+    else:
+        with pytest.raises(ValueError, match="Runner registration does not belong to GoodTeam"):
+            cleanup.Lifecycle(lifecycle.root)
 
 
 def test_hook_cli_binds_to_its_registered_worker_ancestor(lifecycle):

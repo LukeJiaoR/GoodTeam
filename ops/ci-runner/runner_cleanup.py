@@ -262,7 +262,7 @@ class Lifecycle:
         registration = self.root / "actions-runner/.runner"
         if not owned(registration):
             raise ValueError("Runner registration must be owned by this account")
-        runner = json.loads(registration.read_text())
+        runner = json.loads(registration.read_text(encoding="utf-8-sig"))
         if runner.get("agentName") != RUNNER or runner.get("gitHubUrl", "").rstrip("/") != (
             f"https://github.com/{REPOSITORY}"
         ):
