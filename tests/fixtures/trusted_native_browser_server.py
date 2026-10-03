@@ -6,6 +6,7 @@ The ordinary default gate producer and guarded page Run API perform the work.
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from goodteam_os import web
 from goodteam_os.project_registry import ProjectRegistry
 from goodteam_os.projects import write_project_config
 from goodteam_os.skills.task_service import ProjectTaskSkillService
+from goodteam_os.skills import review_process
 from goodteam_os.team_control_plane import ensure_team_state
 from goodteam_os.workers import WorkerJobStore
 
@@ -28,7 +30,8 @@ def main():
     if (not owned.name.startswith("goodteam-e2e-") or owned.parent != Path(tempfile.gettempdir()).resolve()
             or (owned / ".owner").read_text() != os.environ["GOODTEAM_E2E_OWNER"]):
         raise RuntimeError("Native-shaped browser fixture requires the owned isolated E2E root")
-    root = owned / "trusted-native-fixture"
+    cancellation_case = len(sys.argv) > 2 and sys.argv[2] == "cancel"
+    root = owned / ("trusted-native-cancel-fixture" if cancellation_case else "trusted-native-fixture")
     root.mkdir()
     workspace, repo = root / "workspace", root / "repo"
     repo.mkdir()
@@ -41,7 +44,25 @@ def main():
         service=ProjectTaskSkillService(workspace, "DEMO", worker_roots=(repo,)), workers=WorkerJobStore(repo))
     patch = pytest.MonkeyPatch()
     state, scope = default_page(ctx, patch)
-    authority = FixtureTrustedAdmission(policy(ctx, native(ctx), scope))
+    body = ('sys.stdout.write(\'{"type":"thread.started","thread_id":"01234567-89ab-cdef-0123-456789abcdef"}\\n'
+            '{"type":"turn.started"}\\n\');sys.stdout.flush()\ntime.sleep(20)') if cancellation_case else ""
+    authority = FixtureTrustedAdmission(policy(ctx, native(ctx, body=body), scope,
+                                               deadline_seconds=900 if cancellation_case else 5))
+    children, popen = [], review_process.subprocess.Popen
+
+    def own_child(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    def stop(_signal, _frame):
+        for child in children:
+            if child.poll() is None:
+                review_process._terminate(child)
+        raise SystemExit(0)
+
+    patch.setattr(review_process.subprocess, "Popen", own_child)
+    signal.signal(signal.SIGTERM, stop)
     original = web.ThreadingHTTPServer
 
     class Announce(original):

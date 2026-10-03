@@ -24,6 +24,7 @@ from .content import ContentSession, _bytes, _decode, _publish_immutable
 from .filesystem import directory, open_lock_file, write_new
 from .models import SkillError, content_digest
 from .review_process import ReviewProcess
+from .review_progress import MAX_REVIEW_SECONDS
 from .task_locks import TaskSkillIdentity
 
 ADAPTER = "goodteam.codex-trusted-review.v1"
@@ -64,7 +65,7 @@ def runtime_boundaries(reference):
     captured = _decode(reference.encode())
     if (set(captured) != {"mode", "contexts", "seconds"} or captured["mode"] != "trusted_self_use"
             or type(captured["contexts"]) is not int or not 1 <= captured["contexts"] <= 4
-            or type(captured["seconds"]) is not int or not 1 <= captured["seconds"] <= 120):
+            or type(captured["seconds"]) is not int or not 1 <= captured["seconds"] <= MAX_REVIEW_SECONDS):
         raise SkillError("trusted_codex_boundary_invalid", "Saved native exposure bounds are invalid.")
     return {"schema_version": "goodteam.codex-trusted-boundaries.v1", "mode": captured["mode"],
             "context_limit": captured["contexts"], "deadline_seconds": captured["seconds"],
@@ -96,7 +97,7 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
         if (set(p) != keys or p["schema_version"] != POLICY_SCHEMA
                 or not isinstance(p["authorization_id"], str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", p["authorization_id"]) is None
                 or type(p["max_contexts"]) is not int or not 1 <= p["max_contexts"] <= 4
-                or type(p["deadline_seconds"]) is not int or not 1 <= p["deadline_seconds"] <= 120
+                or type(p["deadline_seconds"]) is not int or not 1 <= p["deadline_seconds"] <= MAX_REVIEW_SECONDS
                 or type(p["expires_at"]) is not int or not time.time() < p["expires_at"] <= time.time() + 86400
                 or any(p[key] is not True for key in ("trusted_task_inputs", "accept_native_managed_configuration", "accept_unknown_cost"))
                 or not isinstance(p["model"], str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", p["model"]) is None):
@@ -254,4 +255,5 @@ class TrustedCodexReviewRuntime(LocalCodexReviewRuntime):
         return ReviewProcess(self.admission.command(), root / "cwd",
             {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "en_US.UTF-8",
              "HOME": pwd.getpwuid(os.getuid()).pw_dir, "CODEX_HOME": str(self.admission.home)},
-            self.admission.policy["deadline_seconds"], MAX_INPUT, forbid_tools=False)
+            self.admission.policy["deadline_seconds"], MAX_INPUT, forbid_tools=False,
+            deadline_ceiling_seconds=MAX_REVIEW_SECONDS)

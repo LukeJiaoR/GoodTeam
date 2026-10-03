@@ -320,6 +320,9 @@ def test_http_start_native_result_validation_persistence_and_page_report_read(ct
     ({"usd_limit": 1}, "trusted_codex_budget_unsupported"),
     ({"provider_request_limit": 1}, "trusted_codex_budget_unsupported"),
     ({"max_contexts": 0}, "trusted_codex_policy_invalid"),
+    ({"deadline_seconds": 0}, "trusted_codex_policy_invalid"),
+    ({"deadline_seconds": 3601}, "trusted_codex_policy_invalid"),
+    ({"deadline_seconds": True}, "trusted_codex_policy_invalid"),
     ({"expires_at": 1}, "trusted_codex_policy_invalid"),
 ])
 def test_private_exposure_policy_is_not_a_config_or_cost_verification_flag(ctx, change, code):
@@ -358,28 +361,64 @@ def admission_snapshot(ctx, job):
 
 
 def test_owned_native_cancel_uses_existing_report_lifecycle_without_remote_stop_claim(ctx, monkeypatch):
-    host = native(ctx, body="time.sleep(20)")
+    host = native(ctx, body='sys.stdout.write(\'{"type":"turn.started"}\\n\');sys.stdout.flush()\ntime.sleep(20)')
     job, context = ready(ctx)
-    admission = FixtureTrustedAdmission(policy(ctx, host, context))
+    admission = FixtureTrustedAdmission(policy(ctx, host, context, deadline_seconds=900))
     workers = WorkerJobStore(ctx.repo, codex_review_admission=admission)
     with server_url(ctx, monkeypatch, "product", codex_review_admission=admission) as base, ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(workers.run_job, job["id"])
-        expires = time.monotonic() + 3
+        expires = time.monotonic() + 5
         results = ReviewResultStore(ctx.workers, job["id"])
         while time.monotonic() < expires:
             try:
-                if results.detail()["status"] == "running":
+                if results.detail().get("process_progress", {}).get("phase") == "native_turn_started":
                     break
             except SkillError:
                 pass
             time.sleep(0.02)
         detail = results.detail()
+        assert detail["process_progress"]["phase"] == "native_turn_started"
+        assert detail["process_progress"]["deadline_seconds"] == 900
+        assert next(item for item in workers.list_jobs() if item["id"] == job["id"])["skill_runtime_status"] == "contract_fixture"
         body = {"snapshot_digest": detail["snapshot_ref"]["digest"], "context_digest": detail["context_ref"]["digest"]}
         assert post(base, "/api/projects/DEMO/runs/local-review/skill-reviews/" + job["id"] + "/cancel", body)[0] == 202
         assert future.result(4)["status"] == "failed"
     detail = results.detail()
     assert detail["status"] == "cancelled" and not detail["report_available"]
     assert detail["runtime_boundaries"]["provider_retirement_supported"] is False
+    assert detail["process_progress"]["termination_confirmed"] is True
+    assert detail["process_progress"]["error_code"] == "review_cancel_requested"
+
+
+def test_long_private_native_deadline_finishes_normally_and_remains_task_bound(ctx):
+    host = native(ctx)
+    job, context = ready(ctx)
+    admission = FixtureTrustedAdmission(policy(ctx, host, context, deadline_seconds=900))
+    workers = WorkerJobStore(ctx.repo, codex_review_admission=admission)
+    assert workers.run_job(job["id"])["status"] == "review_received"
+    results = ReviewResultStore(workers, job["id"])
+    detail = results.detail()
+    assert detail["runtime_boundaries"]["deadline_seconds"] == 900
+    assert detail["process_progress"]["phase"] == "native_turn_completed"
+    assert detail["process_progress"]["usage"] == {"input_tokens": 0, "output_tokens": 0}
+    assert detail["process_progress"]["termination_confirmed"] is True
+    assert detail["report_available"] and len(admission.leases) == 1
+
+
+def test_progress_deadline_cannot_override_original_native_policy(ctx):
+    from goodteam_os import service
+
+    host = native(ctx)
+    job, context = ready(ctx)
+    workers = WorkerJobStore(ctx.repo, codex_review_admission=FixtureTrustedAdmission(policy(ctx, host, context)))
+    assert workers.run_job(job["id"])["status"] == "review_received"
+    path = service.service_state_dir() / "skills" / "review-results" / job["id"] / "progress.json"
+    saved = json.loads(path.read_text())
+    saved["observation"]["deadline_seconds"] = 900
+    path.write_text(json.dumps(saved))
+    with pytest.raises(SkillError) as error:
+        ReviewResultStore(workers, job["id"]).detail()
+    assert error.value.code == "review_progress_invalid"
 
 
 def test_trusted_admission_cannot_enter_the_legacy_copyauth_or_retry_path(ctx):
