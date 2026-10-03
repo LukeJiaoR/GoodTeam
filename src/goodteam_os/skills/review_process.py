@@ -27,6 +27,7 @@ class ReviewProcess:
     environment: dict[str, str]
     deadline_seconds: float = 120
     max_input_bytes: int = 1024 * 1024
+    forbid_tools: bool = False
 
 
 def _group_exists(pid: int) -> bool:
@@ -79,6 +80,7 @@ def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Cal
             or type(spec.deadline_seconds) not in {int, float}
             or not math.isfinite(spec.deadline_seconds) or not 0 < spec.deadline_seconds <= 120
             or not isinstance(spec.environment, dict)
+            or type(spec.forbid_tools) is not bool
             or any(not isinstance(k, str) or not isinstance(v, str) for k, v in spec.environment.items())):
         raise SkillError("review_process_invalid", "Reviewer transport needs a bounded, server-owned process specification.")
     check_current()
@@ -143,7 +145,7 @@ def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Cal
             # Descendants can close inherited pipes then remain alive. Never accept such a turn.
             raise SkillError("review_descendants_running", "Reviewer descendants remained after its final output.")
         check_current()
-        return capture_final_turn(bytes(stdout), returncode=returncode)
+        return capture_final_turn(bytes(stdout), returncode=returncode, forbid_tools=spec.forbid_tools)
     finally:
         try:
             _terminate(process)

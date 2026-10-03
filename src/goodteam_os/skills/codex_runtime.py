@@ -16,6 +16,10 @@ import os
 import re
 from pathlib import Path
 import stat
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .codex_local import LocalLease
 
 from . import worker_requests as requests
 from .codex_contract import ADAPTER_VERSION, CODEX_BINARY_DIGEST, CODEX_VERSION, CodexContract
@@ -50,28 +54,34 @@ class CodexLease:
 class CodexReviewAdmission(ABC):
     """Internal host/provider authority; not user-installable Runtime config.
 
-    An implementation must independently establish the actual pinned binary and
+    A strict implementation must independently establish the actual pinned binary and
     image, native discovery inventory, enforced read/write and descendant
     isolation, provider-only egress and provider request/spend/model ceilings.
     It must bind those to the original snapshot and fresh context, recheck
     revocation and in-flight budget on every operation, and keep authentication
     outside the Worker. A method that just reads a PASS flag is not admission.
 
-    No production implementation is registered by this change. Contract tests
-    subclass this type but can only claim their explicit fixture provenance.
+    Strict admission remains absent by default. The separately composed local
+    CLI subclass returns a different lease and cannot activate bound methods or
+    claim this pinned envelope's verification. Contract tests retain fixture
+    provenance. Public requests cannot construct either authority.
     """
 
     @abstractmethod
-    def acquire(self, snapshot: dict, *, context_id: str) -> CodexLease:
+    def acquire(self, snapshot: dict, *, context_id: str) -> CodexLease | LocalLease:
         """Reserve an independently admitted fresh context; never launch/reuse a worker."""
 
     @abstractmethod
-    def check(self, lease: CodexLease, snapshot: dict, *, context_id: str, operation: str) -> None:
+    def check(self, lease: CodexLease | LocalLease, snapshot: dict, *, context_id: str, operation: str) -> None:
         """Revalidate actual host/provider permission; raise before an invalid operation."""
 
     @abstractmethod
-    def finish(self, lease: CodexLease, *, context_id: str, termination_confirmed: bool) -> None:
-        """Revoke this context's provider route; uncertain cleanup cannot release its reservation."""
+    def finish(self, lease: CodexLease | LocalLease, *, context_id: str, termination_confirmed: bool) -> None:
+        """Finish this lease; strict routes retire, local context consumption is never refunded."""
+
+    def runtime(self, workers):
+        """Compose the pinned envelope by default; local execution has its own lease."""
+        return PinnedCodexReviewRuntime(workers, self)
 
 
 def review_worker_kwargs(admission: CodexReviewAdmission | None) -> dict[str, CodexReviewAdmission]:
@@ -259,4 +269,4 @@ def selected_codex_runtime(workers):
     admission = getattr(workers, "_codex_review_admission", None)
     if admission is None:
         return None
-    return PinnedCodexReviewRuntime(workers, admission)
+    return admission.runtime(workers)

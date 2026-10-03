@@ -58,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--ready-token", default="", help=argparse.SUPPRESS)
     serve_command.add_argument("--heartbeat-file", type=Path, help=argparse.SUPPRESS)
     serve_command.add_argument("--heartbeat-token", default="", help=argparse.SUPPRESS)
+    serve_command.add_argument("--local-codex-policy", type=Path, help="Explicit task-bound local Reviewer exposure policy.")
 
     restart = subparsers.add_parser("restart", help="Restart the background GoodTeam server")
     restart.add_argument("--host", default="127.0.0.1")
@@ -159,6 +160,12 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--review-base", default="", help="Exact base commit for one locked code_review track.")
     dispatch.add_argument("--review-head", default="", help="Exact head commit for one locked code_review track.")
     dispatch.add_argument("--review-model", default="", help="Exact model for that Codex review; does not grant provider access.")
+    dispatch.add_argument("--local-codex-policy", type=Path, help="Explicit task-bound local Reviewer exposure policy.")
+
+    inspect_local = subparsers.add_parser("local-codex-inspect", help="Inspect existing Codex without calling a model")
+    inspect_local.add_argument("--codex", type=Path, required=True)
+    inspect_local.add_argument("--codex-home", type=Path, required=True)
+    inspect_local.add_argument("--model", required=True)
 
     memory_append = subparsers.add_parser("memory-append")
     memory_append.add_argument("--project-root", type=Path, required=True)
@@ -207,6 +214,18 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
     args = build_parser().parse_args(argv)
     # Embedding/operator startup supplies a real authority as code, never a
     # request flag, import path, package hook or persisted admission marker.
+    if args.command == "local-codex-inspect":
+        from goodteam_os.skills.codex_local import inspect_local_codex
+
+        print(json.dumps(inspect_local_codex(args.codex, args.codex_home, args.model), indent=2))
+        return 0
+    local_policy = getattr(args, "local_codex_policy", None)
+    if local_policy is not None:
+        if codex_review_admission is not None:
+            raise ValueError("Choose one Reviewer startup authority.")
+        from goodteam_os.skills.codex_local import LocalCodexReviewAdmission
+
+        codex_review_admission = LocalCodexReviewAdmission(local_policy)
     if codex_review_admission is not None and args.command not in {"dispatch", "serve"}:
         raise ValueError("This Codex Reviewer composition is supported only by direct dispatch and serve.")
     from goodteam_os.skills.codex_runtime import review_worker_kwargs

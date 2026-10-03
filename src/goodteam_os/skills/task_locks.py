@@ -267,7 +267,14 @@ class TaskSkillLockStore:
             diagnostics = []
             package_diagnostics = {}
             pinnable = []
-            if not effective:
+            from .review_protocol import is_review_contract
+
+            # The exact S6 protocol promises no review methodology. A default
+            # protocol-only Reviewer may therefore have zero methods. Custom
+            # empty selections and every other unresolved default stay blocked.
+            protocol_only = (subject == "role:code_review" and binding["mode"] == "default"
+                             and is_review_contract(contract))
+            if not effective and not protocol_only:
                 diagnostics.append({"code": "methods_unconfigured" if binding["mode"] == "custom" else "default_unresolved"})
             for item in effective:
                 try:
