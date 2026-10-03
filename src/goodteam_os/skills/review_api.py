@@ -8,12 +8,16 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 import re
+from typing import TYPE_CHECKING
 
 from . import worker_requests as requests
 from .models import SkillError
 from .review_results import DETAIL_SCHEMA, ReviewResultStore
 from .task_context import workflow_skill_context
 from .task_locks import SNAPSHOT_SCHEMA, TaskSkillIdentity
+
+if TYPE_CHECKING:
+    from .codex_runtime import CodexReviewAdmission
 
 
 def _jobs(workers, context):
@@ -123,7 +127,9 @@ def handle_review_get(workspace: Path, path: str):
     return status, {**payload, "project_key": key, "run_id": run_id}
 
 
-def handle_review_post(workspace: Path, path: str, request):
+def handle_review_post(
+    workspace: Path, path: str, request, *, codex_review_admission: CodexReviewAdmission | None = None,
+):
     """Exact current-task controls; no model-output ingestion or arbitrary inputs."""
     cancel = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)/skill-reviews/(job-skill-[0-9a-f]{64})/cancel", path)
     if cancel:
@@ -131,11 +137,14 @@ def handle_review_post(workspace: Path, path: str, request):
     match = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)/skill-reviews/(job-skill-[0-9a-f]{64})/retry", path)
     if not match:
         return None
+    from .codex_runtime import review_worker_kwargs
+
     from goodteam_os import web
     from goodteam_os.reviewer_dispatch import _retry_idempotency_key
     from goodteam_os.state import StateStore
     from goodteam_os.workers import WorkerJobStore
 
+    runtime_kwargs = review_worker_kwargs(codex_review_admission)
     key, run_id = web._decode_project_api_key(match[1]), web._decode_project_run_id(match[2])
     from goodteam_os.workflow_mutations import WorkflowBusyError, workflow_guard
 
@@ -151,7 +160,7 @@ def handle_review_post(workspace: Path, path: str, request):
                 context = workflow_skill_context(state.task_skill_context, run_id=run_id, project_key=key)
                 if not context:
                     return 404, {"error": "review_not_found", "message": "This task has no locked Reviewer."}
-                workers = WorkerJobStore(root)
+                workers = WorkerJobStore(root, **runtime_kwargs)
                 selected = next((row for row in _jobs(workers, context) if row[0] == match[3]), None)
                 if selected is None:
                     return 404, {"error": "review_not_found", "message": "This Reviewer does not belong to the selected task."}

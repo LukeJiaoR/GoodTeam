@@ -207,8 +207,11 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
     args = build_parser().parse_args(argv)
     # Embedding/operator startup supplies a real authority as code, never a
     # request flag, import path, package hook or persisted admission marker.
-    if codex_review_admission is not None and args.command != "dispatch":
-        raise ValueError("This Codex Reviewer composition is supported only by direct dispatch.")
+    if codex_review_admission is not None and args.command not in {"dispatch", "serve"}:
+        raise ValueError("This Codex Reviewer composition is supported only by direct dispatch and serve.")
+    from goodteam_os.skills.codex_runtime import review_worker_kwargs
+
+    runtime_kwargs = review_worker_kwargs(codex_review_admission)
     if args.command == "start":
         payload = start_workflow(
             workspace=args.workspace,
@@ -236,6 +239,7 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             ready_file=args.ready_file,
             ready_token=args.ready_token,
             heartbeat_callback=heartbeat,
+            **runtime_kwargs,
         )
         return 0
     if args.command == "supervise":

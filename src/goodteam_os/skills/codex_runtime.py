@@ -74,6 +74,19 @@ class CodexReviewAdmission(ABC):
         """Revoke this context's provider route; uncertain cleanup cannot release its reservation."""
 
 
+def review_worker_kwargs(admission: CodexReviewAdmission | None) -> dict[str, CodexReviewAdmission]:
+    """Carry a typed startup dependency without interpreting public configuration.
+
+    Validation is side-effect free: it does not acquire a route, inspect a
+    container, resolve credentials, or promote an authority's verification.
+    """
+    if admission is None:
+        return {}
+    if not isinstance(admission, CodexReviewAdmission):
+        raise ValueError("Codex Reviewer needs a control-plane admission authority, not configuration.")
+    return {"codex_review_admission": admission}
+
+
 def seal_input_tree(root: Path) -> str:
     """Make only freshly materialized, nonsecret inputs readable to container UID.
 

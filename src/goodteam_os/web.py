@@ -14,6 +14,7 @@ from datetime import datetime, UTC
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, quote, unquote_to_bytes, urlparse
 from urllib.request import urlopen
 from uuid import uuid4
@@ -135,8 +136,13 @@ from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACK
 from goodteam_os.workers import DEFAULT_CODEX_MODEL
 from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
 from goodteam_os.workflow_mutations import (
-    begin_transition, finish_transition, recover_transition, replay_approval, serialized_workflow,
+    WorkflowBusyError, begin_transition, finish_transition, interrupt_transition,
+    recover_transition, replay_approval, serialized_workflow, workflow_guard,
 )
+
+if TYPE_CHECKING:
+    from goodteam_os.skills.codex_runtime import CodexReviewAdmission
+
 
 PRD_REVIEW_ROLES = [
     "Product / Requirement",
@@ -364,11 +370,27 @@ def current_approval_gate(state: AgileDevState | None) -> str:
     return gate
 
 
-def run_queued_reviewer_jobs_action(workspace: Path, request: Mapping[str, object]) -> tuple[int, dict[str, object]]:
+def run_queued_reviewer_jobs_action(
+    workspace: Path, request: Mapping[str, object], *, codex_review_admission: "CodexReviewAdmission | None" = None,
+) -> tuple[int, dict[str, object]]:
+    from goodteam_os.skills.codex_runtime import review_worker_kwargs
+
+    runtime_kwargs = review_worker_kwargs(codex_review_admission)
     project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
     if not project_key:
         return 400, {"error": "project_key is required"}
-    state = resolve_dashboard_state(workspace, project_key=project_key)
+    try:
+        with workflow_guard(workspace, project_key):
+            return _run_queued_reviewer_jobs_for_current_run(workspace, request, project_key, runtime_kwargs)
+    except WorkflowBusyError as exc:
+        return 409, {"error": str(exc), "code": "workflow_busy"}
+
+
+def _run_queued_reviewer_jobs_for_current_run(
+    workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
+) -> tuple[int, dict[str, object]]:
+    # The caller owns the guard through execution. Recover without reacquiring it.
+    state = interrupt_transition(workspace, project_key)
     if state is None:
         return 404, {"error": f"Unknown project or no active run: {project_key}"}
 
@@ -400,7 +422,7 @@ def run_queued_reviewer_jobs_action(workspace: Path, request: Mapping[str, objec
     }
     roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
     for root in roots:
-        store = WorkerJobStore(root)
+        store = WorkerJobStore(root, **runtime_kwargs)
         result = run_queued_reviewer_jobs_for_gate(
             store=store,
             jobs=store.list_jobs(),
@@ -432,11 +454,27 @@ def run_queued_reviewer_jobs_action(workspace: Path, request: Mapping[str, objec
     }
 
 
-def retry_failed_reviewer_jobs_action(workspace: Path, request: Mapping[str, object]) -> tuple[int, dict[str, object]]:
+def retry_failed_reviewer_jobs_action(
+    workspace: Path, request: Mapping[str, object], *, codex_review_admission: "CodexReviewAdmission | None" = None,
+) -> tuple[int, dict[str, object]]:
+    from goodteam_os.skills.codex_runtime import review_worker_kwargs
+
+    runtime_kwargs = review_worker_kwargs(codex_review_admission)
     project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
     if not project_key:
         return 400, {"error": "project_key is required"}
-    state = resolve_dashboard_state(workspace, project_key=project_key)
+    try:
+        with workflow_guard(workspace, project_key):
+            return _retry_failed_reviewer_jobs_for_current_run(workspace, request, project_key, runtime_kwargs)
+    except WorkflowBusyError as exc:
+        return 409, {"error": str(exc), "code": "workflow_busy"}
+
+
+def _retry_failed_reviewer_jobs_for_current_run(
+    workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
+) -> tuple[int, dict[str, object]]:
+    # The caller owns the guard through retry creation. No nested dashboard recovery.
+    state = interrupt_transition(workspace, project_key)
     if state is None:
         return 404, {"error": f"Unknown project or no active run: {project_key}"}
 
@@ -471,7 +509,7 @@ def retry_failed_reviewer_jobs_action(workspace: Path, request: Mapping[str, obj
     }
     roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
     for root in roots:
-        store = WorkerJobStore(root)
+        store = WorkerJobStore(root, **runtime_kwargs)
         result = retry_failed_reviewer_jobs_for_gate(
             store=store,
             jobs=store.list_jobs(),
@@ -5966,10 +6004,13 @@ def handle_project_api_post(
     workspace: Path,
     path: str,
     request: dict[str, object],
+    *,
+    codex_review_admission: "CodexReviewAdmission | None" = None,
 ) -> tuple[int, dict[str, object]] | None:
+    from goodteam_os.skills.codex_runtime import review_worker_kwargs
     from goodteam_os.skills.review_api import handle_review_post
 
-    review_response = handle_review_post(workspace, path, request)
+    review_response = handle_review_post(workspace, path, request, **review_worker_kwargs(codex_review_admission))
     if review_response is not None:
         return review_response
     if path == "/api/settings":
@@ -6741,7 +6782,11 @@ def _persist_context_sources(project_config: Path, sources: list[dict[str, str]]
     project_config.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
 
 
-def build_dashboard_handler(workspace: Path):
+def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexReviewAdmission | None" = None):
+    from goodteam_os.skills.codex_runtime import review_worker_kwargs
+
+    runtime_kwargs = review_worker_kwargs(codex_review_admission)
+
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             try:
@@ -6806,7 +6851,7 @@ def build_dashboard_handler(workspace: Path):
                 if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
                     response = (
-                        handle_project_api_post(workspace, project_path, request)
+                        handle_project_api_post(workspace, project_path, request, **runtime_kwargs)
                         if is_project_path
                         else handle_skill_api_post(workspace, project_path, request)
                     )
@@ -8032,7 +8077,12 @@ def serve(
     ready_file: Path | None = None,
     ready_token: str = "",
     heartbeat_callback: Callable[[], None] | None = None,
+    *,
+    codex_review_admission: "CodexReviewAdmission | None" = None,
 ) -> None:
+    from goodteam_os.skills.codex_runtime import review_worker_kwargs
+
+    runtime_kwargs = review_worker_kwargs(codex_review_admission)
     if frontend_dist is not None:
         dist_dir = resolve_frontend_dist(environ={"GOODTEAM_FRONTEND_DIST": str(frontend_dist)})
         frontend_error: FrontendAssetsNotFound | None = None
@@ -8429,7 +8479,7 @@ def serve(
                 if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
                     project_response = (
-                        handle_project_api_post(workspace, project_path, request)
+                        handle_project_api_post(workspace, project_path, request, **runtime_kwargs)
                         if is_project_path
                         else handle_skill_api_post(workspace, project_path, request)
                     )
@@ -8572,11 +8622,11 @@ def serve(
                         note=str(request.get("note", "")),
                     )
                 elif normalized_path == "/reviewer-jobs/run":
-                    status, result = run_queued_reviewer_jobs_action(workspace, request)
+                    status, result = run_queued_reviewer_jobs_action(workspace, request, **runtime_kwargs)
                     self._send_json(status, result)
                     return
                 elif normalized_path == "/reviewer-jobs/retry":
-                    status, result = retry_failed_reviewer_jobs_action(workspace, request)
+                    status, result = retry_failed_reviewer_jobs_action(workspace, request, **runtime_kwargs)
                     self._send_json(status, result)
                     return
                 elif normalized_path == "/debate":
