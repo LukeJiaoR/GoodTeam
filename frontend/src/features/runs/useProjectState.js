@@ -6,6 +6,7 @@ const POLL_MS = 5_000;
 export default function useProjectState(projectKey, { api = runApi, poll = true } = {}) {
   const [snapshot, setSnapshot] = useState({ projectKey: '', data: null, error: null, status: 'loading' });
   const generation = useRef(0);
+  const pendingRequest = useRef(0);
   const activeProjectKey = useRef(projectKey);
   const apiRef = useRef(api);
   useLayoutEffect(() => {
@@ -21,6 +22,7 @@ export default function useProjectState(projectKey, { api = runApi, poll = true 
     const requestProjectKey = projectKey;
     if (requestProjectKey !== activeProjectKey.current) return null;
     const requestGeneration = ++generation.current;
+    pendingRequest.current = requestGeneration;
     if (!quiet) {
       setSnapshot((current) => {
         const sameProject = current.projectKey === requestProjectKey;
@@ -55,6 +57,8 @@ export default function useProjectState(projectKey, { api = runApi, poll = true 
         };
       });
       return null;
+    } finally {
+      if (pendingRequest.current === requestGeneration) pendingRequest.current = 0;
     }
   }, [projectKey]);
 
@@ -77,7 +81,9 @@ export default function useProjectState(projectKey, { api = runApi, poll = true 
     if (!poll || (!data?.active_run && !taskAssistantConversation) || globalThis.document?.hidden) return undefined;
     const controller = new AbortController();
     const timer = globalThis.setInterval(() => {
-      if (!globalThis.document?.hidden) void refresh({ signal: controller.signal, quiet: true });
+      if (!globalThis.document?.hidden && !pendingRequest.current) {
+        void refresh({ signal: controller.signal, quiet: true });
+      }
     }, POLL_MS);
     return () => {
       globalThis.clearInterval(timer);
