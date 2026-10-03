@@ -1136,6 +1136,7 @@ export const zhCN = {
   'work.actions.empty': '当前尚未记录运行操作。',
   'work.actions.terminateScope': '终止“{{runTitle}}”。这会停止 GoodTeam 编排，但不会删除目标代码库。',
   'work.actions.terminate': '终止此运行',
+  'work.context.staleActions': '暂时无法获取任务更新。成功刷新后才能继续操作。',
   'work.history.selector': '选择运行',
   'work.history.currentMissionOption': '当前 · {{title}}',
   'work.history.selectPrevious': '选择一个历史运行',

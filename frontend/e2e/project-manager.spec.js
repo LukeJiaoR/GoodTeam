@@ -27,7 +27,7 @@ test('project Manager keeps chatting across tasks and saves future work without 
   await expect(page.getByRole('button', { name: 'Prepare this draft', exact: true })).toBeDisabled();
 
   // Termination is exercised through the real API in the fixture-owned workspace.
-  const stopped = await page.request.post('/api/terminate', { data: { project_key: fixture.key } });
+  const stopped = await page.request.post('/api/terminate', { data: { project_key: fixture.key, expected_run_id: firstRun } });
   expect(stopped.ok(), await stopped.text()).toBe(true);
   await page.reload();
   await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();

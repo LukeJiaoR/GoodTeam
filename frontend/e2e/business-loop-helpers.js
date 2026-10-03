@@ -81,8 +81,11 @@ export async function prepareFirstTask(page, fixture, evidence) {
 }
 
 export async function expectGate(page, key, gate) {
-  await expect.poll(async () => (await workState(page, key)).state?.next_node).toBe(`await_${gate}_approval`);
-  const data = await workState(page, key);
+  let data;
+  await expect.poll(async () => {
+    data = await workState(page, key);
+    return data.state?.next_node;
+  }).toBe(`await_${gate}_approval`);
   expect(data.state.blockers).toEqual([]);
   expect(data.approval_reviews.filter((review) => review.is_actionable).map((review) => review.approval)).toEqual([gate]);
   return data;

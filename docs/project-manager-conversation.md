@@ -77,6 +77,35 @@ start's reconciliation remains allowed; a different active run blocks startup.
 This adds future-work collection, not parallel execution or mid-Worker steering.
 Builtin/fake responses are recorded snapshots, not real-model capability evidence.
 
+## Archiving the displayed task (#417)
+
+`POST /api/terminate` (and `/terminate`) requires `project_key` and a nonempty
+`expected_run_id` from the displayed active task. Missing or malformed bindings
+return HTTP 400 `run_binding_required`. A different or absent active run returns
+HTTP 409 `run_binding_mismatch`, with a refresh recovery action. Validation and
+archiving share the existing project workflow lock; rejected requests do not
+change the replacement run, its pending transition, archives or action ledger.
+The trusted Python helper retains its existing unbound calling convention.
+Older HTTP callers must send the run binding. A successful archive retains the
+existing orchestration-stop semantics; it does not delete the repository or
+establish that an external Worker process has stopped.
+
+Work sends the displayed run identity and resets its archive confirmation when
+the active run changes. A rejected archive refreshes task state and history.
+When state updates fail, the last visible task and evidence stay readable, while
+the Work controls (including conversation input) pause until a successful refresh.
+The existing current-context Refresh and error recovery remain available outside
+that disabled scope. Open mutation panels are hidden while state is stale.
+This is a freshness guard, not a new client-side permissions or workflow model.
+
+Regression coverage is in `tests/test_task_cancellation_http.py`, Work page unit
+tests and `frontend/e2e/task-cancellation.spec.js`. The real product HTTP checks
+use isolated task state and no Workers or models. Browser checks use the existing
+fake-Worker fixture: an old tab cannot archive a second task started through the
+project conversation, and an explicitly malformed poll pauses actions until a
+real refresh. These checks do not close the real-model acceptance issues or prove
+the persistent-goal execution loop in #439.
+
 ## Implementation and verification
 
 - `assistant_workspace.py` and `conversation_projection.py`: read projections.

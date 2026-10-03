@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
@@ -2478,7 +2479,22 @@ def build_team_events_payload(workspace: Path, project_key: str) -> dict[str, ob
     }
 
 
+_project_config_paths_in_work_state: ContextVar[dict[tuple[Path, str], Path] | None] = ContextVar(
+    "project_config_paths_in_work_state", default=None,
+)
+
+
 def build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
+    # Reuse only path resolution within this projection. Config contents stay
+    # live, and subsequent requests/mutations perform their own lookup.
+    token = _project_config_paths_in_work_state.set({})
+    try:
+        return _build_project_work_state(workspace, project_key)
+    finally:
+        _project_config_paths_in_work_state.reset(token)
+
+
+def _build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
     from goodteam_os.delivery_outcomes import build_delivery_summary
 
     project_config = _project_config_for_key(workspace, project_key)
@@ -4803,30 +4819,46 @@ def refresh_state_role_models(state: AgileDevState, project_config: Path | None)
     return role_models
 
 
-@serialized_workflow
-def terminate_project_run(*, workspace: Path, project_key: str) -> dict[str, object]:
+def terminate_project_run(
+    *, workspace: Path, project_key: str, expected_run_id: str | None = None,
+) -> dict[str, object]:
     key = normalize_project_key(project_key)
-    state_store = StateStore(workspace)
-    state = state_store.read_project_current(key)
-    if state is None:
-        raise ValueError(f"No active run for project: {key}")
-    before_node = state.next_node
-    archive_path = state_store.archive_project_current(key, reason="cancelled")
-    append_action(
-        workspace,
-        run_id=state.run_id,
-        actor="human",
-        action="run_terminated",
-        project_key=key,
-        before_node=before_node,
-        after_node="cancelled",
-    )
-    return {
-        "terminated": True,
-        "project_key": key,
-        "run_id": state.run_id,
-        "archive_path": str(archive_path),
-    }
+    if expected_run_id is not None and (not isinstance(expected_run_id, str) or not expected_run_id.strip()):
+        raise ProjectApiError("run_binding_required", "Refresh and select the task to archive.", 400)
+    with workflow_guard(workspace, key):
+        state_store = StateStore(workspace)
+        state = state_store.read_project_current(key)
+        # Reject before recovery or writes: an old tab has no authority over a
+        # replacement run, including its interrupted transition evidence.
+        if expected_run_id is not None and (state is None or state.run_id != expected_run_id):
+            raise ProjectApiError(
+                "run_binding_mismatch", "The active task changed. Refresh before archiving it.", 409,
+                details={"expected_run_id": expected_run_id, "current_run_id": state.run_id if state else ""},
+                recovery=["refresh"],
+            )
+        if state is None:
+            raise ValueError(f"No active run for project: {key}")
+        before_node = state.next_node
+        try:
+            archive_path = state_store.archive_project_current(key, reason="cancelled")
+            append_action(
+                workspace,
+                run_id=state.run_id,
+                actor="human",
+                action="run_terminated",
+                project_key=key,
+                before_node=before_node,
+                after_node="cancelled",
+            )
+        except Exception:
+            interrupt_transition(workspace, key)
+            raise
+        return {
+            "terminated": True,
+            "project_key": key,
+            "run_id": state.run_id,
+            "archive_path": str(archive_path),
+        }
 
 
 def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
@@ -5527,12 +5559,20 @@ def build_project_overview_items(workspace: Path, model_config: Path = Path("mod
 
 def _project_config_for_key(workspace: Path, project_key: str) -> Path:
     key = normalize_project_key(project_key)
+    paths = _project_config_paths_in_work_state.get()
+    cache_key = (workspace, key)
+    if paths is not None and cache_key in paths:
+        return paths[cache_key]
     for config_path in discover_project_configs(workspace):
         target = load_project_target(config_path)
         if normalize_project_key(str(target.get("key", config_path.stem))) == key:
+            if paths is not None:
+                paths[cache_key] = config_path
             return config_path
     fallback = workspace / "projects" / f"{key.lower()}.local.yaml"
     if fallback.is_file():
+        if paths is not None:
+            paths[cache_key] = fallback
         return fallback
     raise ValueError(f"No local project config found for project: {key}")
 
@@ -8024,9 +8064,13 @@ def serve(
                         expected_artifact_version=str(request.get("expected_artifact_version", "")),
                     )
                 elif normalized_path == "/terminate":
+                    expected_run_id = request.get("expected_run_id")
+                    if not isinstance(expected_run_id, str) or not expected_run_id.strip():
+                        raise ProjectApiError("run_binding_required", "Refresh and select the task to archive.", 400)
                     result = terminate_project_run(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
+                        expected_run_id=expected_run_id,
                     )
                 elif normalized_path == "/project-delete":
                     result = delete_project(

@@ -1136,6 +1136,7 @@ export const en = {
   'work.actions.empty': 'No run actions have been recorded yet.',
   'work.actions.terminateScope': 'Terminate “{{runTitle}}”. This stops GoodTeam orchestration; it does not delete the target repository.',
   'work.actions.terminate': 'Terminate this run',
+  'work.context.staleActions': 'Task updates are unavailable. Actions are paused until you refresh successfully.',
   'work.history.selector': 'Select run',
   'work.history.currentMissionOption': 'Current · {{title}}',
   'work.history.selectPrevious': 'Select a previous run',

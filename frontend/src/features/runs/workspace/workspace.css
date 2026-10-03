@@ -601,6 +601,10 @@
   background: transparent;
 }
 
+.work-interaction-scope {
+  display: contents;
+}
+
 .work-workspace-shell .product-work-page__identity {
   position: absolute;
   width: 1px;

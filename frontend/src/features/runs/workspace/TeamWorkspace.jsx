@@ -323,6 +323,7 @@ function TeamWorkspace({
   busy,
   data,
   error,
+  interactionsDisabled = false,
   inspectorContent,
   language,
   onCloseInspector,
@@ -545,7 +546,7 @@ function TeamWorkspace({
           projectScoped={projectAssistant?.schema_version === 'project_assistant.v1'}
           navigation={taskNavigation}
           controls={!readOnly && (workspace.capabilities || []).some((item) => item.action === 'cancel_mission')
-            ? <TaskRunControls busy={busy} canCancel onTerminate={onTerminate} t={t} /> : null}
+            ? <TaskRunControls key={mission?.run_id || mission?.id} busy={busy} canCancel onTerminate={onTerminate} t={t} /> : null}
           actors={(workspace.execution_actors || []).filter((actor) => actor.role !== 'orchestrator')}
           reducedMotion={reducedMotion}
           reviews={<SkillReviewExecutions projectKey={projectKey} runId={mission?.run_id} language={language} />}
@@ -572,7 +573,7 @@ function TeamWorkspace({
           t={t}
         /> : null}
       </div>
-      {taskForModal ? (
+      {taskForModal && !interactionsDisabled ? (
         <WorkTaskDetailDialog
           language={language}
           onOpenReview={onOpenReview ? (approval) => { closeTaskModal(); onOpenReview(approval); } : undefined}
