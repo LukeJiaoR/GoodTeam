@@ -160,9 +160,10 @@ and legacy home pip/npm/Playwright caches are never adopted or automatically
 deleted. Recursive removal refuses foreign owners, filesystem boundaries, and
 mounts, and uses Python's symlink-safe deletion. In-use checks inspect fds, cwd,
 executables, mapped files, and surviving job children's temp/cache environment
-paths; checks are refreshed at deletion. Native Actions Runner owns orphan
-process cleanup after the completion hook, so still-running children are
-retained for a later safe boundary. If a process cannot be inspected, cleanup fails closed;
+paths; checks are refreshed at deletion. Guarded commands reap their own
+descendants before returning. Native Actions Runner still owns orphan cleanup
+for unguarded actions after the completion hook; resources referenced by those
+processes are retained for a later safe boundary. If a process cannot be inspected, cleanup fails closed;
 it cannot prove that the resource is idle. Completion failures/timeouts emit a
 warning and do not replace the original job result. Recovery needs another job
 boundary; there is no timer or idle-host janitor.
@@ -172,9 +173,23 @@ boundary; there is no timer or idle-host janitor.
 The start hook blocks new jobs below **8 GiB free or 15% free** on the dedicated
 runner home's filesystem. The CI workflow also wraps dependency installs,
 environment creation, builds, tests, and browser downloads with the `run`
-command. It checks before spawning and every five seconds, stops only its own
-new command process group on low disk, and exits 75. SIGINT/SIGTERM forwarding
-also cleans that command group; ordinary command failure codes are preserved.
+command. It checks before spawning and every five seconds and exits 75 on low
+disk. Each workflow entry uses `exec`, so the step PID that Actions signals is
+the helper PID. Environment/path setup precedes that final `exec`; a failed
+environment install still fails the step. SIGINT/SIGTERM immediately wake the
+monitor rather than waiting for the next disk poll.
+
+The fresh helper is a Linux child subreaper and creates one command child. Its
+cleanup reads only its own descendant tree through `/proc/<pid>/task/*/children`,
+validates parent relationships and PID/start-time/boot identity before signaling each owned PID, and
+reaps adopted descendants. This includes Playwright's detached webServer
+session and orphaned/double-forked children after an early command exit. It
+refuses to start in a process that already has children or lacks the readable
+native children interface; it never turns a missing listing into an empty tree.
+No host-wide process kill scan is used. Cleanup gives TERM one second, then
+KILL/reaping one second, including on ordinary command failure. It fails visibly
+if owned descendants cannot exit in that window. Ordinary failure codes and
+SIGINT/SIGTERM codes are preserved when cleanup succeeds.
 Alerts appear as Actions error/warning annotations and in the step summary.
 
 Cache capacity is enforced at boundaries, so a running install can temporarily
@@ -232,6 +247,13 @@ the whole provisioner to apply this patch. A fresh provision installs the new
 files automatically. [GitHub's hook documentation](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts)
 requires a runner restart after `.env` changes. Both shell hooks have a
 120-second timeout because Actions does not provide a hook timeout.
+
+The runner kernel must support `PR_SET_CHILD_SUBREAPER` and provide readable
+`/proc/<pid>/task/<tid>/children` (check the deployment shell's own
+`/proc/$$/task/$$/children` before rollout). Both are tested before launching a
+guarded command. Local sandbox verification emulates only the omitted children
+listing with actual PID/PPID metadata; kernel adoption, identities, signals,
+Playwright-created sessions, port closure, and reaping are exercised directly.
 
 Post-install acceptance must observe `Set up runner` and `Complete runner`,
 one success/failure/cancellation, retained upload evidence, marked temp

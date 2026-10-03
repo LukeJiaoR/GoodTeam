@@ -12,14 +12,47 @@ import sys
 import time
 
 import pytest
+import yaml
 
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Dedicated runner lifecycle uses Linux /proc")
-HELPER = Path("ops/ci-runner/runner_cleanup.py").resolve()
+HELPER = Path(__file__).resolve().parents[1] / "ops/ci-runner/runner_cleanup.py"
 spec = importlib.util.spec_from_file_location("ci_runner_cleanup", HELPER)
 cleanup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cleanup)
 PROC_REFERENCES = cleanup.references
+NATIVE_CHILDREN = Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children").exists()
+CHILD_PROCESSES = cleanup.child_processes
+
+
+def sandbox_children(parent):
+    # Test-only compatibility for the sandbox's omitted /proc children files.
+    # Kernel subreaper adoption, process identities, signals and reaping stay real.
+    children = set()
+    for path in Path("/proc").iterdir():
+        if not path.name.isdigit():
+            continue
+        try:
+            if cleanup.process_identity(int(path.name))[1] == parent:
+                children.add(int(path.name))
+        except FileNotFoundError:
+            pass
+    return children
+
+
+def command_cli(lifecycle):
+    bootstrap = (
+        "import importlib.util, sys; "
+        f"spec = importlib.util.spec_from_file_location('cleanup', {str(HELPER)!r}); "
+        "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+    )
+    if not NATIVE_CHILDREN:
+        bootstrap += (
+            f"test_spec = importlib.util.spec_from_file_location('fixture', {str(Path(__file__).resolve())!r}); "
+            "fixture = importlib.util.module_from_spec(test_spec); test_spec.loader.exec_module(fixture); "
+            "module.child_processes = fixture.sandbox_children; "
+        )
+    return [sys.executable, "-c", bootstrap + "sys.exit(module.main())", "--root", str(lifecycle.root)]
 
 
 @pytest.fixture
@@ -41,6 +74,8 @@ def lifecycle(tmp_path, monkeypatch):
     # real fd/cwd/maps reads for our fixture process; production scans all PIDs.
     read_references = cleanup.references
     monkeypatch.setattr(cleanup, "references", lambda: read_references([Path(f"/proc/{os.getpid()}")]))
+    if not NATIVE_CHILDREN:
+        monkeypatch.setattr(cleanup, "child_processes", sandbox_children)
     instance = cleanup.Lifecycle(root)
     instance.initialize()
     return instance
@@ -61,24 +96,50 @@ def test_success_failure_and_cancel_keep_evidence_and_remove_owned_temp(lifecycl
     evidence.write_text("test evidence")
     unknown = lifecycle.root / "actions-runner/_work/_temp/unknown"
     unknown.mkdir(parents=True)
-    payload = [sys.executable, "-c", f"raise SystemExit({result})"]
-    command = [sys.executable, str(HELPER), "--root", str(lifecycle.root), "run", "--"]
+    ready = temporary / "ready"
+    payload = [sys.executable, "-c", (
+        "from pathlib import Path; import os, subprocess, sys; "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True); "
+        f"Path({str(ready)!r}).write_text(str(os.getppid()) + ' ' + str(os.getpid()) + ' ' + str(child.pid)); "
+        f"raise SystemExit({result})"
+    )]
+    command = [*command_cli(lifecycle), "run", "--"]
     if result in (signal.SIGINT, signal.SIGTERM):
-        ready = temporary / "ready"
+        policy = lifecycle.root / "hooks/cleanup-policy.json"
+        policy.write_text(json.dumps({"min_free_bytes": 1, "min_free_percent": 1, "disk_check_seconds": 5}))
         payload = [sys.executable, "-c", (
             "from pathlib import Path; import os, subprocess, sys, time; "
-            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
-            f"Path({str(ready)!r}).write_text(str(os.getpid()) + ' ' + str(child.pid)); time.sleep(60)"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True); "
+            f"Path({str(ready)!r}).write_text(str(os.getppid()) + ' ' + str(os.getpid()) + ' ' + str(child.pid)); "
+            "time.sleep(60)"
         )]
         unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
-        process = subprocess.Popen([*command, *payload])
+        script = lifecycle.root / "step.sh"
+        # Execute the actual multi-command workflow step through the same Bash
+        # options as Actions. A fixture replaces only the venv tool and runner root.
+        workflow = yaml.load(Path(".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+        step = next(s for s in workflow["jobs"]["browser"]["steps"]
+                    if s.get("name") == "Create isolated browser backend environment")
+        fixture_bin = lifecycle.root / "bin"
+        fixture_bin.mkdir()
+        tool = fixture_bin / "python3.12"
+        tool.write_text(f"#!{sys.executable}\n" + payload[2] + "\n")
+        tool.chmod(0o700)
+        script.write_text(step["run"].replace("python3 ops/ci-runner/runner_cleanup.py run --",
+                                             shlex.join(command), 1))
+        process = subprocess.Popen(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", str(script)],
+                                   env={**os.environ, **env, "PATH": f"{fixture_bin}:{os.environ['PATH']}",
+                                        "GITHUB_PATH": str(lifecycle.root / "github-path")})
         try:
             deadline = time.monotonic() + 5
             while not ready.exists() and time.monotonic() < deadline:
                 time.sleep(0.02)
             assert ready.exists()
+            assert int(ready.read_text().split()[0]) == process.pid  # exec preserves the runner's target PID.
+            started = time.monotonic()
             process.send_signal(result)
-            assert process.wait(timeout=5) == 128 + result
+            assert process.wait(timeout=2.5) == 128 + result
+            assert time.monotonic() - started < 2.5
             for pid in ready.read_text().split():
                 status = Path(f"/proc/{pid}/stat")
                 assert not status.exists() or status.read_text().rsplit(")", 1)[1].split()[0] == "Z"
@@ -87,10 +148,18 @@ def test_success_failure_and_cancel_keep_evidence_and_remove_owned_temp(lifecycl
             if process.poll() is None:
                 process.kill()
                 process.wait()
+            if ready.exists():
+                for pid in ready.read_text().split():
+                    try:
+                        os.kill(int(pid), signal.SIGKILL)  # Only this fixture's recorded processes.
+                    except ProcessLookupError:
+                        pass
             unrelated.terminate()
             unrelated.wait(timeout=5)
     else:
         assert subprocess.run([*command, *payload], timeout=5).returncode == result
+        assert ready.exists()
+        assert all(not Path(f"/proc/{pid}").exists() for pid in ready.read_text().split())
     assert lifecycle.finish() == 0
     assert not temporary.exists()
     assert evidence.read_text() == "test evidence"
@@ -181,22 +250,46 @@ def test_cache_cap_and_retention_never_expire_current_or_unknown_logs(lifecycle)
     assert recent.exists() and unknown.exists()
 
 
-def test_low_disk_refuses_launch_and_stops_only_new_command_group(lifecycle, monkeypatch):
+def test_low_disk_refuses_launch_and_stops_only_new_command_tree(lifecycle, monkeypatch):
     launched = lifecycle.root / "launched"
     command = [sys.executable, "-c", (
-        f"from pathlib import Path; import os, time; Path({str(launched)!r}).write_text(str(os.getpid())); time.sleep(60)"
+        "from pathlib import Path; import json, os, subprocess, sys, time; "
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'], start_new_session=True); "
+        f"Path({str(launched)!r}).write_text(json.dumps([os.getpid(), child.pid])); time.sleep(60)"
     )]
     monkeypatch.setattr(lifecycle, "disk_ok", lambda: False)
     assert lifecycle.run(command) == 75
     assert not launched.exists()
     observations = iter([True, True, False])
     monkeypatch.setattr(lifecycle, "disk_ok", lambda: next(observations))
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+    try:
+        with pytest.raises(ValueError, match="dedicated helper process"):
+            lifecycle.run(command)
+        assert unrelated.poll() is None  # No adoption or signaling of an existing job's children.
+        assert not launched.exists()
+    finally:
+        unrelated.terminate()
+        unrelated.wait(timeout=5)
+    observations = iter([True, True, False])
+    monkeypatch.setattr(lifecycle, "disk_ok", lambda: next(observations))
     assert lifecycle.run(command) == 75
     assert launched.exists()
-    assert not Path(f"/proc/{launched.read_text()}").exists()
+    assert all(not Path(f"/proc/{pid}").exists() for pid in json.loads(launched.read_text()))
     monkeypatch.setattr(cleanup.shutil, "disk_usage", lambda root: type("Disk", (), {"total": 100, "free": 0})())
     assert not cleanup.Lifecycle(lifecycle.root).disk_ok()
     assert "Low disk" in Path(os.environ["GITHUB_STEP_SUMMARY"]).read_text()
+
+
+def test_missing_native_children_interface_refuses_command_before_launch(lifecycle, monkeypatch):
+    if NATIVE_CHILDREN:
+        pytest.skip("This sandbox preflight regression requires the omitted native children interface")
+    monkeypatch.setattr(cleanup, "child_processes", CHILD_PROCESSES)
+    launched = lifecycle.root / "must-not-launch"
+    with pytest.raises(ValueError, match="children interface"):
+        lifecycle.run([sys.executable, "-c", f"from pathlib import Path; Path({str(launched)!r}).touch()"])
+    assert not launched.exists()
 
 
 def test_wrong_repository_registration_cannot_clean(lifecycle):

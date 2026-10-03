@@ -68,10 +68,10 @@ jobs:
             exit 1
           fi
           job_temp="${GOODTEAM_CI_JOB_TEMP:-$RUNNER_TEMP}"
-          python3 ops/ci-runner/runner_cleanup.py run -- python3.12 -m venv "$job_temp/goodteam-venv"
           echo "$job_temp/goodteam-venv/bin" >> "$GITHUB_PATH"
+          exec python3 ops/ci-runner/runner_cleanup.py run -- python3.12 -m venv "$job_temp/goodteam-venv"
 
-      - run: python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
+      - run: exec python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
 
       - name: Run focused backend tests
         if: needs.classify.outputs.backend == 'focused'
@@ -84,13 +84,13 @@ jobs:
             exit 1
           fi
           read -r -a targets <<< "$TEST_TARGETS"
-          PYTHONPATH=src python3 ops/ci-runner/runner_cleanup.py run -- python -m pytest "${targets[@]}" -q
+          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run -- python -m pytest "${targets[@]}" -q
 
       - name: Run full backend tests
         if: needs.classify.outputs.backend == 'full'
         # The required browser job already ran recovery with dedicated evidence.
         run: >-
-          PYTHONPATH=src python3 ops/ci-runner/runner_cleanup.py run --
+          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run --
           python -m pytest tests --ignore=tests/test_workflow_http_recovery.py -q
 
       - run: ruff check src/goodteam_os/ tests/ scripts/ci/ ops/ci-runner/runner_cleanup.py
@@ -114,17 +114,17 @@ jobs:
         shell: bash
         run: |
           job_temp="${GOODTEAM_CI_JOB_TEMP:-$RUNNER_TEMP}"
-          python3 ops/ci-runner/runner_cleanup.py run -- python3.12 -m venv "$job_temp/goodteam-e2e-venv"
           echo "$job_temp/goodteam-e2e-venv/bin" >> "$GITHUB_PATH"
           echo "GOODTEAM_E2E_PYTHON=$job_temp/goodteam-e2e-venv/bin/python" >> "$GITHUB_ENV"
+          exec python3 ops/ci-runner/runner_cleanup.py run -- python3.12 -m venv "$job_temp/goodteam-e2e-venv"
 
-      - run: python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
+      - run: exec python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
 
       - name: Verify HTTP crash and timeout recovery
         run: |
           evidence="${GOODTEAM_CI_EVIDENCE:-$RUNNER_TEMP}/goodteam-http-recovery"
           mkdir -p "$evidence"
-          PYTHONPATH=src python3 ops/ci-runner/runner_cleanup.py run -- \
+          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run -- \
             python -m pytest tests/test_workflow_http_recovery.py -q \
             --basetemp="$evidence/workspaces" --junitxml="$evidence/results.xml"
 
@@ -142,17 +142,17 @@ jobs:
         with:
           node-version: "20"
 
-      - run: python3 ../ops/ci-runner/runner_cleanup.py run -- npm ci
+      - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm ci
         working-directory: frontend
 
-      - run: python3 ../ops/ci-runner/runner_cleanup.py run -- npm run build
+      - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run build
         working-directory: frontend
 
-      - run: python3 ../ops/ci-runner/runner_cleanup.py run -- npx playwright install chromium
+      - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npx playwright install chromium
         working-directory: frontend
 
       - name: Verify isolated business loop
-        run: python3 ../ops/ci-runner/runner_cleanup.py run -- npm run test:e2e
+        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run test:e2e
         working-directory: frontend
 
       - name: Upload browser evidence
@@ -168,12 +168,12 @@ jobs:
 
       - name: Run frontend unit tests
         if: needs.classify.outputs.frontend != 'none'
-        run: python3 ../ops/ci-runner/runner_cleanup.py run -- npm test
+        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm test
         working-directory: frontend
 
       - name: Lint frontend
         if: needs.classify.outputs.frontend != 'none'
-        run: python3 ../ops/ci-runner/runner_cleanup.py run -- npm run lint
+        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run lint
         working-directory: frontend
 
   gate:

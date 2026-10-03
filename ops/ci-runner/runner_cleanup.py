@@ -2,6 +2,8 @@
 """Bounded lifecycle for this repository's single, unprivileged Linux runner."""
 
 import argparse
+from contextlib import contextmanager
+import ctypes
 import fcntl
 import json
 import os
@@ -12,6 +14,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -159,6 +162,97 @@ def remove_owned(path, used):
 
 def size(path):
     return sum(p.lstat().st_size for p in path.rglob("*") if p.is_file() and not p.is_symlink())
+
+
+def child_processes(pid):
+    # Read only this process's task children, never enumerate host processes.
+    children = set()
+    try:
+        for task in Path(f"/proc/{pid}/task").iterdir():
+            try:
+                children.update(int(p) for p in (task / "children").read_text().split())
+            except FileNotFoundError:
+                if task.is_dir() and pid == os.getpid():
+                    raise ValueError("Linux /proc task children interface is required before launching a command")
+            except PermissionError:
+                if pid == os.getpid():
+                    raise
+                # The known child still counts as owned. Stopping it reparents
+                # its descendants to our readable subreaper tree.
+                pass
+    except FileNotFoundError:
+        if pid == os.getpid():
+            raise ValueError("Linux /proc task children interface is required before launching a command")
+    except PermissionError:
+        if pid == os.getpid():
+            raise
+    return children
+
+
+@contextmanager
+def command_reaper():
+    libc = ctypes.CDLL(None, use_errno=True)
+    previous = ctypes.c_int()
+    if libc.prctl(37, ctypes.byref(previous), 0, 0, 0) < 0:  # PR_GET_CHILD_SUBREAPER
+        raise OSError(ctypes.get_errno(), "Cannot read command subreaper state")
+    if child_processes(os.getpid()):
+        raise ValueError("Command tracking requires a dedicated helper process with no existing children")
+    if libc.prctl(36, ctypes.c_ulong(1), 0, 0, 0) < 0:  # PR_SET_CHILD_SUBREAPER
+        raise OSError(ctypes.get_errno(), "Cannot enable command subreaper")
+    try:
+        yield
+    finally:
+        libc.prctl(36, ctypes.c_ulong(previous.value), 0, 0, 0)
+
+
+def command_members():
+    # The helper creates exactly one new child. The subreaper keeps its orphaned
+    # descendants here even after setsid/double-fork or the command's early exit.
+    members = {}
+    helper_identity, _ = process_identity(os.getpid())
+    pending = [(pid, helper_identity) for pid in child_processes(os.getpid())]
+    while pending:
+        pid, parent_identity = pending.pop()
+        if pid in members:
+            continue
+        try:
+            identity, parent = process_identity(pid)
+            if parent != parent_identity["pid"] or not alive(parent_identity):
+                continue  # Reparenting is found on the next scan; PID reuse is not ownership.
+            members[pid] = identity
+            pending.extend((descendant, identity) for descendant in child_processes(pid))
+        except FileNotFoundError:
+            pass
+    return members
+
+
+def stop_command(child):
+    # TERM gets one second; KILL/reaping gets one second. This stays inside the
+    # runner's 2.5-second TERM window and does not depend on runner orphan cleanup.
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        deadline = time.monotonic() + 1
+        signaled = set()
+        while True:
+            child.poll()  # Let Popen preserve/reap the top-level command status.
+            members = command_members()
+            for pid, identity in reversed(list(members.items())):
+                try:
+                    if pid != child.pid:
+                        try:
+                            os.waitpid(pid, os.WNOHANG)  # Reap only confirmed, adopted descendants.
+                        except ChildProcessError:
+                            pass  # It still has a live parent in this command's tree.
+                    if process_identity(pid)[0] == identity and (pid, identity["start"]) not in signaled:
+                        os.kill(pid, signum)
+                        signaled.add((pid, identity["start"]))
+                except (ProcessLookupError, FileNotFoundError):
+                    pass
+            if not command_members():
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+    raise ValueError("Owned command descendants did not exit within the bounded cleanup window")
 
 
 class Lifecycle:
@@ -309,39 +403,33 @@ class Lifecycle:
         if not command or not self.disk_ok():
             return 75
         interrupted = []
-        previous = {s: signal.signal(s, lambda signum, frame: interrupted.append(signum))
-                    for s in (signal.SIGINT, signal.SIGTERM)}
-        child = None
-        try:
-            child = subprocess.Popen(command, start_new_session=True)
-            while child.poll() is None:
-                if interrupted or not self.disk_ok():
-                    return 128 + interrupted[0] if interrupted else 75
+        wake = threading.Event()
+
+        def wake_up(signum, frame):
+            if signum != signal.SIGCHLD:
+                interrupted.append(signum)
+            wake.set()
+
+        with command_reaper():
+            previous = {s: signal.signal(s, wake_up) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD)}
+            child = None
+            try:
+                child = subprocess.Popen(command, start_new_session=True)
+                while child.poll() is None:
+                    if interrupted or not self.disk_ok():
+                        return 128 + interrupted[0] if interrupted else 75
+                    wake.wait(timeout=self.policy["disk_check_seconds"])
+                    wake.clear()
+                if interrupted:
+                    return 128 + interrupted[0]
+                return child.returncode if child.returncode >= 0 else 128 - child.returncode
+            finally:
                 try:
-                    child.wait(timeout=self.policy["disk_check_seconds"])
-                except subprocess.TimeoutExpired:
-                    pass
-            if interrupted:
-                return 128 + interrupted[0]
-            return child.returncode if child.returncode >= 0 else 128 - child.returncode
-        finally:
-            if child is not None:
-                # This wrapper created the group; it never signals an existing host process.
-                try:
-                    os.killpg(child.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                try:
-                    child.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    pass
-                try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                child.wait()
-            for signum, handler in previous.items():
-                signal.signal(signum, handler)
+                    if child is not None:
+                        stop_command(child)
+                finally:
+                    for signum, handler in previous.items():
+                        signal.signal(signum, handler)
 
 
 def main():
