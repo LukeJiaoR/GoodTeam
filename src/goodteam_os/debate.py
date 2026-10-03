@@ -2,14 +2,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import append_message, read_messages
 from goodteam_os.workers import WorkerJobStore
 
 
 DispatchFn = Callable[..., list[str]]
 MAX_DEBATE_ROUNDS = 5
-VOTE_VALUES = ("approve", "reject", "abstain")
 
 
 def run_gate_debate(
@@ -268,96 +266,6 @@ def default_debate_dispatch(
     return dispatch
 
 
-def record_gate_decision(
-    workspace: Path,
-    project_key: str,
-    run_id: str,
-    gate: str,
-    *,
-    decision: str,
-    by_role: str,
-    memory_store: RoleMemoryStore | None = None,
-) -> dict:
-    decision_message = append_message(
-        workspace,
-        project_key,
-        run_id,
-        from_role=by_role,
-        to=["broadcast"],
-        kind="assert",
-        gate=gate,
-        body=f"DECISION: {decision}",
-    )
-    if memory_store is None:
-        return decision_message
-
-    challenger_count = sum(
-        1
-        for message in read_messages(workspace, project_key, run_id, gate=gate)
-        if str(message.get("kind", "")) in {"ask", "reject"}
-    )
-    text = f"Gate {gate} decision: {decision}. Challenger messages: {challenger_count}."
-    source = f"messages/{run_id}.jsonl#{decision_message['id']}"
-    try:
-        memory_store.append_memory_event(by_role, horizon="mid-term", text=text, source=source)
-    except Exception:
-        pass
-    return decision_message
-
-
-def record_gate_vote(
-    workspace: Path,
-    project_key: str,
-    run_id: str,
-    gate: str,
-    *,
-    role: str,
-    vote: str,
-) -> dict:
-    vote_value = str(vote).strip().lower()
-    if vote_value not in VOTE_VALUES:
-        raise ValueError(f"Unknown gate vote: {vote}")
-    return append_message(
-        workspace,
-        project_key,
-        run_id,
-        from_role=role,
-        to=["broadcast"],
-        kind="assert",
-        gate=gate,
-        body=f"VOTE:{vote_value}",
-    )
-
-
-def gate_quorum_status(
-    workspace: Path,
-    project_key: str,
-    run_id: str,
-    gate: str,
-    *,
-    quorum_roles: list[str],
-    threshold: int,
-) -> dict:
-    roles = _unique_texts(quorum_roles)
-    latest_votes: dict[str, str] = {}
-    for message in read_messages(workspace, project_key, run_id, gate=gate):
-        role = str(message.get("from_role", "")).strip()
-        if role not in roles:
-            continue
-        vote = _message_vote(message)
-        if vote:
-            latest_votes[role] = vote
-
-    tally = {vote: 0 for vote in VOTE_VALUES}
-    for vote in latest_votes.values():
-        tally[vote] += 1
-    return {
-        "tally": tally,
-        "met": tally["approve"] >= int(threshold),
-        "outstanding": [role for role in roles if role not in latest_votes],
-    }
-
-
 def _clamped_rounds(rounds: int) -> int:
     return max(1, min(int(rounds), MAX_DEBATE_ROUNDS))
 
@@ -366,28 +274,6 @@ def _text_items(items: list[str]) -> list[str]:
     if not isinstance(items, list):
         raise ValueError("Debate dispatch must return a list of texts.")
     return [str(item).strip() for item in items if str(item).strip()]
-
-
-def _unique_texts(items: list[str]) -> list[str]:
-    unique = []
-    seen = set()
-    for item in items:
-        text = str(item).strip()
-        if text and text not in seen:
-            unique.append(text)
-            seen.add(text)
-    return unique
-
-
-def _message_vote(message: dict) -> str:
-    if str(message.get("kind", "")) != "assert":
-        return ""
-    body = str(message.get("body", "")).strip()
-    prefix = "VOTE:"
-    if not body.upper().startswith(prefix):
-        return ""
-    vote = body[len(prefix) :].strip().lower()
-    return vote if vote in VOTE_VALUES else ""
 
 
 def _prefixed_kind(text: str, *, allowed: tuple[str, ...], default: str) -> tuple[str, str]:

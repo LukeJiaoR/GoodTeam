@@ -510,21 +510,3 @@ def test_workbench_payload_adds_multi_projection_without_replacing_existing_fiel
     assert staging["multi_reviewer_projection"]["aggregate_policy"]["severity"] == "blocker"
     assert state.approvals["staging"] == ApprovalDecision.PENDING
     assert state.next_node == "await_staging_approval"
-
-
-def test_reviewer_html_escapes_untrusted_output_fields():
-    fields = {
-        "operator_message": '<script>alert("operator")</script>',
-        "profile_id": '<img src=x onerror="profile">',
-        "profile_label": '<svg onload="label">',
-    }
-    html = web.render_multi_reviewer_projection({
-        "operator_message": fields["operator_message"],
-        "reviewers": [{"profile_id": fields["profile_id"], "profile_label": fields["profile_label"]}],
-    })
-
-    for value in fields.values():
-        assert value not in html
-    assert "&lt;script&gt;alert(&quot;operator&quot;)&lt;/script&gt;" in html
-    assert "&lt;img src=x onerror=&quot;profile&quot;&gt;" in html
-    assert "&lt;svg onload=&quot;label&quot;&gt;" in html

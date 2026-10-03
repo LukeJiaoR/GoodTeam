@@ -1,6 +1,5 @@
-import pytest
 
-from goodteam_os.debate import gate_quorum_status, record_gate_vote, run_gate_debate
+from goodteam_os.debate import run_gate_debate
 from goodteam_os.messages import append_message, read_messages
 
 
@@ -145,124 +144,15 @@ def test_run_gate_debate_rounds_are_capped(tmp_path):
     assert len(debate) == 10
 
 
-def test_record_gate_vote_appends_validated_vote_message(tmp_path):
-    vote = record_gate_vote(
-        tmp_path,
-        "CONTENTOPS",
-        "run-1",
-        "rfc",
-        role="security",
-        vote="approve",
-    )
-
-    assert vote["kind"] == "assert"
-    assert vote["body"] == "VOTE:approve"
-    assert vote["gate"] == "rfc"
-    assert vote["from_role"] == "security"
-    assert vote["to"] == ["broadcast"]
-    assert read_messages(tmp_path, "CONTENTOPS", "run-1", gate="rfc") == [vote]
-
-    with pytest.raises(ValueError):
-        record_gate_vote(
-            tmp_path,
-            "CONTENTOPS",
-            "run-1",
-            "rfc",
-            role="security",
-            vote="maybe",
+def test_same_role_and_body_messages_persist_per_gate(tmp_path):
+    messages = [
+        append_message(
+            tmp_path, "CONTENTOPS", "run-1", from_role="security", to=["architect"],
+            kind="assert", gate=gate, body="The reviewed change needs no further action.",
         )
+        for gate in ("rfc", "prd")
+    ]
 
-
-def test_gate_quorum_status_tallies_latest_votes_and_outstanding_roles(tmp_path):
-    record_gate_vote(tmp_path, "CONTENTOPS", "run-1", "rfc", role="architect", vote="reject")
-    record_gate_vote(tmp_path, "CONTENTOPS", "run-1", "rfc", role="security", vote="approve")
-    record_gate_vote(tmp_path, "CONTENTOPS", "run-1", "rfc", role="architect", vote="approve")
-    record_gate_vote(tmp_path, "CONTENTOPS", "run-1", "rfc", role="product", vote="abstain")
-    record_gate_vote(tmp_path, "CONTENTOPS", "run-1", "prd", role="support", vote="approve")
-    append_message(
-        tmp_path,
-        "CONTENTOPS",
-        "run-1",
-        from_role="observer",
-        to=["broadcast"],
-        kind="assert",
-        gate="rfc",
-        body="VOTE:approve",
-    )
-
-    status = gate_quorum_status(
-        tmp_path,
-        "CONTENTOPS",
-        "run-1",
-        "rfc",
-        quorum_roles=["architect", "security", "product", "support"],
-        threshold=2,
-    )
-
-    assert status == {
-        "tally": {"approve": 2, "reject": 0, "abstain": 1},
-        "met": True,
-        "outstanding": ["support"],
-    }
-
-    unmet = gate_quorum_status(
-        tmp_path,
-        "CONTENTOPS",
-        "run-1",
-        "rfc",
-        quorum_roles=["architect", "security", "product", "support"],
-        threshold=3,
-    )
-
-    assert unmet["met"] is False
-
-
-def test_gate_votes_with_same_role_and_value_persist_per_gate(tmp_path):
-    rfc_vote = record_gate_vote(
-        tmp_path,
-        "CONTENTOPS",
-        "run-1",
-        "rfc",
-        role="security",
-        vote="approve",
-    )
-    prd_vote = record_gate_vote(
-        tmp_path,
-        "CONTENTOPS",
-        "run-1",
-        "prd",
-        role="security",
-        vote="approve",
-    )
-
-    assert rfc_vote["id"] != prd_vote["id"]
-    assert read_messages(tmp_path, "CONTENTOPS", "run-1", gate="rfc") == [rfc_vote]
-    assert read_messages(tmp_path, "CONTENTOPS", "run-1", gate="prd") == [prd_vote]
-
-    rfc_status = gate_quorum_status(
-        tmp_path,
-        "CONTENTOPS",
-        "run-1",
-        "rfc",
-        quorum_roles=["security"],
-        threshold=1,
-    )
-    prd_status = gate_quorum_status(
-        tmp_path,
-        "CONTENTOPS",
-        "run-1",
-        "prd",
-        quorum_roles=["security"],
-        threshold=1,
-    )
-
-    assert rfc_status == {
-        "tally": {"approve": 1, "reject": 0, "abstain": 0},
-        "met": True,
-        "outstanding": [],
-    }
-    assert prd_status == {
-        "tally": {"approve": 1, "reject": 0, "abstain": 0},
-        "met": True,
-        "outstanding": [],
-    }
+    assert messages[0]["id"] != messages[1]["id"]
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1", gate="rfc") == [messages[0]]
+    assert read_messages(tmp_path, "CONTENTOPS", "run-1", gate="prd") == [messages[1]]
