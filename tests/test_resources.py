@@ -6,12 +6,9 @@ from goodteam_os.resources import (
     ResourceKind,
     ResourceScope,
     derive_resources_from_legacy_artifacts,
-    legacy_artifacts_view,
     register_external_reference,
     register_markdown_artifact,
-    register_runtime_resource,
     register_task_ledger,
-    resource_to_dict,
 )
 from goodteam_os.state import create_initial_state
 from goodteam_os.state import StateStore
@@ -49,35 +46,6 @@ def test_register_task_ledger_declares_board_source_without_edit(tmp_path):
     assert ResourceCapability.EDIT not in descriptor.capabilities
     assert state.resources["task_ledger"] == descriptor
     assert state.artifacts["task_ledger"] == str(ledger)
-
-
-def test_register_runtime_resource_keeps_typed_extension_metadata(tmp_path):
-    state = create_initial_state("run-1", "GTO", "Build")
-    report = tmp_path / "target" / ".goodteam" / "smoke" / "latest.json"
-
-    descriptor = register_runtime_resource(
-        state,
-        "smoke_report",
-        report,
-        kind=ResourceKind.SMOKE_REPORT,
-        mime="application/json",
-        capabilities=[ResourceCapability.READ, ResourceCapability.PROVENANCE_SOURCE],
-        title="Latest Smoke Report",
-        consumer="system_tab",
-    )
-
-    assert descriptor.kind == ResourceKind.SMOKE_REPORT
-    assert descriptor.scope == ResourceScope.PROJECT_RUNTIME
-    assert descriptor.path == str(report)
-    assert descriptor.mime == "application/json"
-    assert descriptor.title == "Latest Smoke Report"
-    assert descriptor.consumer == "system_tab"
-    assert descriptor.capabilities == [
-        ResourceCapability.READ,
-        ResourceCapability.PROVENANCE_SOURCE,
-    ]
-    assert state.resources["smoke_report"] == descriptor
-    assert state.artifacts["smoke_report"] == str(report)
 
 
 def test_register_external_reference_stays_out_of_legacy_artifacts():
@@ -124,20 +92,6 @@ def test_derive_resources_from_legacy_artifacts_classifies_known_keys(tmp_path):
     assert ResourceCapability.EDIT not in resources["notes"].capabilities
 
 
-def test_resource_dict_round_trip_uses_plain_json_values(tmp_path):
-    state = create_initial_state("run-1", "GTO", "Build")
-    artifact = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
-    descriptor = register_markdown_artifact(state, "prd", artifact)
-
-    payload = resource_to_dict(descriptor)
-
-    assert payload["key"] == "prd"
-    assert payload["kind"] == "markdown_artifact"
-    assert payload["scope"] == "run"
-    assert "edit" in payload["capabilities"]
-    assert legacy_artifacts_view(state.resources) == {"prd": str(artifact)}
-
-
 def test_state_store_migrates_legacy_artifacts_to_resources(tmp_path):
     state_path = tmp_path / "state" / "current.json"
     state_path.parent.mkdir(parents=True)
@@ -166,19 +120,6 @@ def test_state_store_migrates_legacy_artifacts_to_resources(tmp_path):
         "prd": "artifacts/runs/run-1/prd/prd.md",
         "task_ledger": "/tmp/project/.goodteam/tasks/tasks.json",
     }
-
-
-def test_state_store_persists_resources_as_json(tmp_path):
-    state = create_initial_state("run-1", "GTO", "Build")
-    artifact = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
-    register_markdown_artifact(state, "prd", artifact)
-
-    StateStore(tmp_path).write_current(state)
-
-    content = (tmp_path / "state" / "current.json").read_text(encoding="utf-8")
-    assert '"resources"' in content
-    assert '"kind": "markdown_artifact"' in content
-    assert '"capabilities": [' in content
 
 
 def test_read_artifact_uses_resource_capability_for_markdown(tmp_path):

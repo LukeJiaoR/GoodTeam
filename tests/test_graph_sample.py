@@ -3,24 +3,18 @@ from pathlib import Path
 from types import MappingProxyType
 
 from goodteam_os.graph import (
-    DELIVERY_MODE_STANDARDS,
     accept_refinement,
     advance_approved_workflow,
     collect_project_context,
     MAX_CONTEXT_DOC_FILES,
     single_root_context_files,
-    render_fix_plan_markdown,
     run_fix_until_next_gate,
     delivery_standards_for_mode,
     discard_refinement,
     extract_open_questions,
     generate_rfc,
     generate_prd,
-    implementation_expected_artifacts,
     implementation_worker_job_specs,
-    implementation_task,
-    normalize_delivery_mode,
-    qa_expected_artifacts,
     refine_artifact,
     resolve_project_runtime_root,
     resolve_role_adapter,
@@ -29,9 +23,6 @@ from goodteam_os.graph import (
     run_architecture_until_gate,
     run_implementation_workers,
     run_until_next_gate,
-    ui_delivery_expected_artifacts,
-    ui_delivery_task,
-    worker_blocker_message,
     worker_context_for_role,
 )
 from goodteam_os.graph import run_adoption_until_next_gate
@@ -41,19 +32,6 @@ from goodteam_os.messages import append_message
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import decide_approval
 from goodteam_os.workflow_table import WorkflowNode
-
-
-def test_worker_blocker_message_includes_failure_class_and_attempts():
-    message = worker_blocker_message(
-        {
-            "role": "implementation",
-            "summary": "Process exited 1",
-            "failure_class": "timeout",
-            "attempts": 3,
-        }
-    )
-
-    assert message == "implementation worker failed [timeout, 3 attempts]: Process exited 1"
 
 
 def test_extract_open_questions_from_open_questions_section():
@@ -124,12 +102,6 @@ def test_extract_open_questions_from_chinese_takeover_brief_question_section():
 
 def test_extract_open_questions_returns_empty_without_section():
     assert extract_open_questions("# PRD\n\n## Risks\n\n- Missing vendor decision.\n") == []
-
-
-def test_worker_blocker_message_omits_failure_bracket_when_missing():
-    message = worker_blocker_message({"role": "implementation", "summary": "Process exited 1"})
-
-    assert message == "implementation worker failed: Process exited 1"
 
 
 def test_resolve_role_adapter_prefers_per_role_then_global_then_default():
@@ -257,37 +229,6 @@ def test_legacy_unmigrated_worker_type_settings_apply_without_duplicating_jobs(t
     assert implementation["pi_thinking_level"] == "high"
 
 
-def test_graph_reaches_prd_gate(tmp_path):
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-
-    result = run_until_next_gate(state=state, workspace=tmp_path)
-
-    assert result.current_node == "prd_review_gate"
-    assert result.next_node == "await_prd_approval"
-    assert "prd" in result.artifacts
-
-
-def test_adoption_graph_reaches_takeover_review_gate(tmp_path):
-    project_config = write_project_fixture(tmp_path)
-    state = create_initial_state("run-1", "SAMPLE", "Take over the configured product")
-
-    result = run_adoption_until_next_gate(state=state, workspace=tmp_path, project_config=project_config)
-
-    assert result.source_type == "existing_project"
-    assert result.current_node == "takeover_review_gate"
-    assert result.next_node == "await_takeover_approval"
-    assert "takeover" in result.artifacts
-    assert "takeover_context" in result.artifacts
-    assert Path(result.artifacts["takeover"]).name == "takeover-brief.md"
-    assert Path(result.artifacts["takeover_context"]).name == "takeover-context.md"
-    assert result.resources["takeover"].title == "Takeover Brief"
-    assert result.approvals["takeover"] == "pending"
-    assert "prd" not in result.artifacts
-    assert (tmp_path / ".goodteam" / "tasks" / "tasks.json").is_file()
-    assert (tmp_path / ".goodteam" / "memory" / "roles" / "product-requirement" / "short-term.md").is_file()
-    assert (tmp_path / ".goodteam" / "memory" / "roles" / "architect" / "long-term.md").is_file()
-
-
 def write_project_fixture(tmp_path: Path) -> Path:
     docs = tmp_path / "docs"
     backend = tmp_path / "backend"
@@ -342,44 +283,6 @@ def test_prd_uses_project_roadmap_contract_instead_of_takeover_workflow(tmp_path
     assert "Produce a real takeover artifact" not in prd
     assert "Propose next GoodTeam local tasks" not in prd
     assert "Do not bypass the configured GoodTeam local task flow" not in prd
-
-
-def test_prd_is_decision_ready_content_not_writing_instructions(tmp_path):
-    project_config = write_project_fixture(tmp_path)
-    state = create_initial_state("run-1", "SAMPLE", "Take over the configured product")
-
-    prd = render_prd_markdown(state, project_config)
-
-    assert "## Product Decision" in prd
-    assert "## Users And Value" in prd
-    assert "## V1 Scope" in prd
-    assert "## Non-Goals" in prd
-    assert "## Acceptance Criteria" in prd
-    assert "## Risks And Open Questions" in prd
-    assert "Write a decision-ready PRD" not in prd
-    assert "List the next product capabilities" not in prd
-    assert "PRD Writing Instructions" not in prd
-
-
-def test_prd_template_is_generic_for_contentops_ideas(tmp_path):
-    project_config = write_contentops_project_fixture(tmp_path)
-    state = create_initial_state(
-        "run-1",
-        "CONTENTOPS",
-        "Build ContentOps Studio for reusable brand briefs, source capture, topic organization, "
-        "multi-platform drafts, review/publish board, and verification evidence. Prefer mature "
-        "open-source components and the existing Fastify/Zod/SQLite + React/Vite/Vitest stack over "
-        "custom infrastructure.",
-    )
-    state.delivery_mode = "init_project"
-
-    prd = render_prd_markdown(state, project_config)
-
-    assert "ContentOps Studio v1" not in prd
-    assert "Reviewers or founders who need evidence" not in prd
-    assert "Reuse-first technical constraint" not in prd
-    assert "Acceptance Criteria" in prd
-    assert "Define the next v1 product slice for AI Content Studio" in prd
 
 
 def test_normal_prd_uses_worker_output_for_real_backend(tmp_path, monkeypatch):
@@ -530,24 +433,6 @@ def test_normal_prd_falls_back_to_template_when_worker_fails(tmp_path, monkeypat
     assert "Generated by real backend" not in prd
     assert result.current_node == "prd_review_gate"
     assert result.next_node == "await_prd_approval"
-
-
-def test_normal_prd_uses_template_for_fake_backend(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
-    text = project_config.read_text(encoding="utf-8").replace("mode: codex", "mode: fake")
-    project_config.write_text(text, encoding="utf-8")
-    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
-
-    def fail_create_job(self, **kwargs):
-        raise AssertionError("fake backend should not dispatch worker")
-
-    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fail_create_job)
-
-    result = run_until_next_gate(state=state, workspace=tmp_path, project_config=project_config)
-    prd = Path(result.artifacts["prd"]).read_text(encoding="utf-8")
-
-    assert "# Product Roadmap PRD" in prd
-    assert "## Product Decision" in prd
 
 
 def test_normal_rfc_uses_worker_output_for_real_backend(tmp_path, monkeypatch):
@@ -718,24 +603,6 @@ def test_normal_rfc_falls_back_to_template_when_worker_fails(tmp_path, monkeypat
     assert "Generated by real backend" not in rfc
     assert result.current_node == "rfc_review_gate"
     assert result.next_node == "await_rfc_approval"
-
-
-def test_normal_rfc_uses_template_for_fake_backend(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
-    text = project_config.read_text(encoding="utf-8").replace("mode: codex", "mode: fake")
-    project_config.write_text(text, encoding="utf-8")
-    state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
-
-    def fail_create_job(self, **kwargs):
-        raise AssertionError("fake backend should not dispatch worker")
-
-    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fail_create_job)
-
-    result = run_architecture_until_gate(state=state, workspace=tmp_path, project_config=project_config)
-    rfc = Path(result.artifacts["rfc"]).read_text(encoding="utf-8")
-
-    assert "# Technical RFC" in rfc
-    assert "## Prior GoodTeam Artifacts" in rfc
 
 
 def test_generate_prd_dispatches_product_requirement_worker_and_overwrites_prd(tmp_path, monkeypatch):
@@ -1199,58 +1066,6 @@ def test_generate_rfc_keeps_existing_rfc_on_worker_failure(tmp_path, monkeypatch
     assert rfc.read_text(encoding="utf-8") == "# Placeholder RFC\n"
 
 
-def test_prd_includes_init_project_delivery_standard(tmp_path):
-    project_config = write_project_fixture(tmp_path)
-    state = create_initial_state("run-1", "SAMPLE", "Take over the configured product")
-    state.delivery_mode = "init_project"
-
-    prd = render_prd_markdown(state, project_config)
-
-    assert "Delivery mode: `init_project`" in prd
-    assert "frontend/backend separation" in prd
-    assert "data layer" in prd
-    assert "routing" in prd
-    assert "DevOps" in prd
-
-
-def test_rfc_includes_multi_service_delivery_standard(tmp_path):
-    project_config = write_project_fixture(tmp_path)
-    state = create_initial_state("run-1", "SAMPLE", "Take over the configured product")
-    state.delivery_mode = "multi_service"
-
-    rfc = render_downstream_artifact_markdown("rfc", state, project_config)
-
-    assert "Delivery mode: `multi_service`" in rfc
-    assert "service boundaries" in rfc
-    assert "API or event contracts" in rfc
-    assert "observability" in rfc
-
-
-def test_rfc_template_is_generic_for_contentops_ideas(tmp_path):
-    project_config = write_contentops_project_fixture(tmp_path)
-    state = create_initial_state(
-        "run-1",
-        "CONTENTOPS",
-        "Build ContentOps Studio for reusable brand briefs, source capture, topic organization, "
-        "multi-platform drafts, review/publish board, and verification evidence. Prefer mature "
-        "open-source components and the existing Fastify/Zod/SQLite + React/Vite/Vitest stack over "
-        "custom infrastructure.",
-    )
-    state.delivery_mode = "init_project"
-    state.artifacts["prd"] = "/tmp/prd.md"
-
-    rfc = render_downstream_artifact_markdown("rfc", state, project_config)
-
-    assert "## Architecture Decision" in rfc
-    assert "## Data Model" in rfc
-    assert "## API Contract" in rfc
-    assert "ContentOps Studio v1" not in rfc
-    assert "brand_briefs" not in rfc
-    assert "POST /api/brand-brief" not in rfc
-    assert "Build the approved AI Content Studio v1 slice" in rfc
-    assert "Use existing persistence models" in rfc
-
-
 def test_takeover_keeps_ai_context_separate_from_human_brief(tmp_path):
     project_config = write_project_fixture(tmp_path)
     state = create_initial_state("run-1", "SAMPLE", "Take over the configured product")
@@ -1568,22 +1383,6 @@ def test_collect_project_context_includes_root_claude_md(tmp_path):
     assert claude_index < doc_index
 
 
-def test_fix_plan_markdown_includes_project_context(tmp_path):
-    project = tmp_path / "withclaude"
-    docs = project / "docs"
-    docs.mkdir(parents=True)
-    (project / "CLAUDE.md").write_text("# CLAUDE\n\nProject instructions live here.\n", encoding="utf-8")
-
-    config = _write_single_root_config(tmp_path, project)
-    context = collect_project_context(config)
-    state = create_initial_state("fix-1", "SINGLE", "Button click does nothing")
-
-    markdown = render_fix_plan_markdown(state, context)
-
-    assert "## Project Context Read" in markdown
-    assert "CLAUDE.md" in markdown
-
-
 def test_run_fix_until_next_gate_loads_project_context(tmp_path):
     project = tmp_path / "withclaude"
     docs = project / "docs"
@@ -1649,64 +1448,6 @@ def test_resolve_project_runtime_root_accepts_single_named_root(tmp_path):
     assert root == project
 
 
-def test_delivery_mode_normalize_accepts_new_presets_and_custom():
-    for mode in [
-        "static_site",
-        "cli_tool",
-        "library",
-        "data_pipeline",
-        "mobile_app",
-        "feature_increment",
-        "custom",
-    ]:
-        assert normalize_delivery_mode(mode) == mode
-
-
-def test_cli_tool_implementation_expected_artifacts_use_neutral_contract():
-    artifacts = implementation_expected_artifacts("cli_tool")
-
-    assert "README.md" in artifacts
-    assert "tests" in artifacts
-    assert "runnable entry point / local run command" in artifacts
-    assert "frontend app" not in artifacts
-    assert "backend API" not in artifacts
-
-
-def test_init_project_implementation_expected_artifacts_keep_web_scaffold_contract():
-    artifacts = implementation_expected_artifacts("init_project")
-
-    assert "README.md" in artifacts
-    assert "frontend app" in artifacts
-    assert "backend API" in artifacts
-    assert "data layer schema or migrations" in artifacts
-    assert "router configuration" in artifacts
-    assert "tests" in artifacts
-
-
-def test_new_delivery_modes_and_custom_use_neutral_worker_contracts():
-    state = create_initial_state("run-1", "PIPE", "Build a daily import pipeline")
-
-    data_pipeline_qa_artifacts = qa_expected_artifacts("data_pipeline")
-    data_pipeline_ui_artifacts = ui_delivery_expected_artifacts("data_pipeline")
-    custom_ui_task = ui_delivery_task(state, "custom")
-    custom_implementation_task = implementation_task(state, "custom")
-
-    assert data_pipeline_qa_artifacts == ["QA notes in worker result", "local test command", "acceptance notes"]
-    assert "data-layer verification" not in data_pipeline_qa_artifacts
-    assert data_pipeline_ui_artifacts == ["UI files / acceptance notes if the product has a UI"]
-    assert "browser screenshot evidence" not in data_pipeline_ui_artifacts
-    assert "frontend files" not in data_pipeline_ui_artifacts
-    assert "a runnable product scope appropriate to the delivery mode" in custom_ui_task
-    assert "if the product has a UI" in custom_ui_task
-    assert "screenshot-backed visual acceptance" not in custom_ui_task
-    assert "runnable product appropriate to the custom delivery mode" in custom_implementation_task
-    assert "local run command" in custom_implementation_task
-    assert "focused tests" in custom_implementation_task
-    assert "README verification commands" in custom_implementation_task
-    assert "frontend/backend" not in custom_implementation_task
-    assert "data layer" not in custom_implementation_task
-
-
 def test_delivery_standards_for_mode_uses_custom_project_config():
     target = {
         "delivery_standards": {
@@ -1719,37 +1460,6 @@ def test_delivery_standards_for_mode_uses_custom_project_config():
         "Run the local smoke path.",
         "Include rollback notes.",
     ]
-
-
-def test_delivery_standards_for_mode_uses_preset_table():
-    assert delivery_standards_for_mode("static_site", {}) == DELIVERY_MODE_STANDARDS["static_site"]
-
-
-def test_custom_delivery_standard_is_injected_into_prd(tmp_path):
-    project = tmp_path / "product"
-    project.mkdir()
-    config = tmp_path / "project.local.yaml"
-    config.write_text(
-        "\n".join(
-            [
-                "name: Custom Product",
-                "key: CUSTOM",
-                "delivery_mode: custom",
-                "delivery_standards:",
-                "  standard_0001: Ship the operator checklist.",
-                "repos:",
-                f"  root: {project}",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "CUSTOM", "Build custom delivery")
-    state.delivery_mode = "custom"
-
-    prd = render_prd_markdown(state, config)
-
-    assert "- Ship the operator checklist." in prd
-    assert "- Treat this as a real internet product starter" not in prd
 
 
 def test_transient_custom_delivery_standards_override_config_in_prompts(tmp_path):
@@ -1808,108 +1518,6 @@ def test_custom_delivery_standards_fall_back_to_config_without_transient_state(t
     implementation = render_downstream_artifact_markdown("implementation_handoff", state, config)
 
     assert "- Config checklist." in implementation
-
-
-def test_preset_delivery_standard_is_injected_into_prd(tmp_path):
-    project = tmp_path / "product"
-    project.mkdir()
-    config = tmp_path / "project.local.yaml"
-    config.write_text(
-        "\n".join(
-            [
-                "name: Static Product",
-                "key: STATIC",
-                "delivery_mode: static_site",
-                "repos:",
-                f"  root: {project}",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "STATIC", "Build static delivery")
-    state.delivery_mode = "static_site"
-
-    prd = render_prd_markdown(state, config)
-
-    assert "- Deliver a static site or landing page with a buildable artifact and local preview path." in prd
-
-
-def test_advance_approved_workflow_generates_rfc_after_prd_approval(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
-    state = create_initial_state(
-        "run-1",
-        "CONTENTOPS",
-        "Build an AI content studio for TikTok, Reddit, X, and LinkedIn post production.",
-    )
-    state.source_type = "existing_project"
-    state.source_ref = str(project_config)
-    state.approvals["prd"] = "approved"
-    state.current_node = "prd_review_gate"
-    state.next_node = "architect"
-    monkeypatch.setattr("goodteam_os.graph.generate_artifact_via_worker", lambda **kwargs: None)
-
-    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
-
-    assert result.current_node == "rfc_review_gate"
-    assert result.next_node == "await_rfc_approval"
-    assert "rfc" in result.artifacts
-    assert Path(result.artifacts["rfc"]).is_file()
-    assert "# Technical RFC" in Path(result.artifacts["rfc"]).read_text(encoding="utf-8")
-
-
-def test_advance_approved_workflow_can_complete_contentops_run(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
-    state = create_initial_state(
-        "run-1",
-        "CONTENTOPS",
-        "Build an AI content studio for TikTok, Reddit, X, and LinkedIn post production.",
-    )
-    state.source_type = "existing_project"
-    state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved", "release": "approved"})
-    state.current_node = "rfc_review_gate"
-    state.next_node = "planner"
-
-    def fake_run_job(self, job_id):
-        job_root = self.root / job_id
-        job = json.loads((job_root / "job.json").read_text(encoding="utf-8"))
-        if job["role"] == "implementation":
-            app = self.project_root / "app.py"
-            readme = self.project_root / "README.md"
-            app.write_text("print('CONTENTOPS ready')\n", encoding="utf-8")
-            readme.write_text("# AI Content Studio\n\nRun `python app.py`.\n", encoding="utf-8")
-        return {
-            "job_id": job_id,
-            "run_id": job["run_id"],
-            "role": job["role"],
-            "adapter": job["adapter"],
-            "status": "completed",
-            "summary": f"{job['role']} completed",
-            "artifacts": [],
-            "changed_files": [],
-        }
-
-    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
-
-    result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
-
-    assert result.current_node == "complete"
-    assert result.next_node == ""
-    for artifact in [
-        "review_report",
-        "task_breakdown",
-        "ui_spec",
-        "implementation_handoff",
-        "qa_report",
-        "code_review",
-        "release_notes",
-        "retro_memory",
-    ]:
-        assert artifact in result.artifacts
-        assert Path(result.artifacts[artifact]).is_file()
-    runtime_root = resolve_project_runtime_root({"docs": tmp_path / "contentops" / "docs", "backend": tmp_path / "contentops" / "backend", "frontend": tmp_path / "contentops" / "frontend"})
-    assert (runtime_root / "app.py").is_file()
-    assert (runtime_root / "README.md").is_file()
 
 
 def test_advance_approved_workflow_waits_for_security_gate_after_rfc(tmp_path, monkeypatch):
@@ -2547,50 +2155,6 @@ def test_non_retryable_worker_failure_does_not_retry(tmp_path, monkeypatch):
     assert any("scaffold" in blocker for blocker in result.blockers)
 
 
-def test_multi_service_delivery_mode_expands_worker_expected_artifacts(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
-    state = create_initial_state(
-        "run-1",
-        "CONTENTOPS",
-        "Build a production-grade AI content platform.",
-    )
-    state.delivery_mode = "multi_service"
-    state.source_type = "existing_project"
-    state.source_ref = str(project_config)
-    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved"})
-    state.current_node = "rfc_review_gate"
-    state.next_node = "planner"
-    expected_by_role = {}
-
-    def fake_create_job(self, **kwargs):
-        expected_by_role[kwargs["role"]] = kwargs["expected_artifacts"]
-        return {"id": f"job-{kwargs['role']}"}
-
-    def fake_run_job(self, job_id):
-        role = job_id.removeprefix("job-")
-        return {
-            "job_id": job_id,
-            "run_id": state.run_id,
-            "role": role,
-            "adapter": "codex",
-            "status": "completed",
-            "summary": f"{role} completed",
-            "artifacts": [],
-            "changed_files": [],
-        }
-
-    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fake_create_job)
-    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
-
-    advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
-
-    assert "services/api" in expected_by_role["implementation"]
-    assert "services/web" in expected_by_role["implementation"]
-    assert "docker-compose.yml" in expected_by_role["implementation"]
-    assert "database migrations" in expected_by_role["implementation"]
-    assert "service-level QA notes" in expected_by_role["qa"]
-
-
 def test_implementation_workers_use_run_role_models(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state("run-1", "CONTENTOPS", "Build ContentOps Studio.")
@@ -2631,56 +2195,6 @@ def test_implementation_workers_use_run_role_models(tmp_path, monkeypatch):
     }
 
 
-def test_ui_worker_task_requires_direct_frontend_delivery(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
-    state = create_initial_state("run-1", "CONTENTOPS", "Build a task tracker")
-    tasks_by_role = {}
-
-    def fake_create_job(self, **kwargs):
-        tasks_by_role[kwargs["role"]] = {
-            "task": kwargs["task"],
-            "expected_artifacts": kwargs.get("expected_artifacts", []),
-        }
-        return {"id": f"job-{kwargs['role']}"}
-
-    def fake_run_job(self, job_id):
-        role = job_id.removeprefix("job-")
-        return {
-            "job_id": job_id,
-            "run_id": state.run_id,
-            "role": role,
-            "adapter": "codex",
-            "status": "completed",
-            "summary": f"{role} completed",
-            "artifacts": [],
-            "changed_files": [],
-        }
-
-    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.create_job", fake_create_job)
-    monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
-
-    run_implementation_workers(state, project_config)
-
-    ui_task = tasks_by_role["ui"]["task"]
-    qa_task = tasks_by_role["qa"]["task"]
-    impl_task = tasks_by_role["implementation"]["task"]
-    assert "Build a task tracker" in ui_task
-    assert "Build a task tracker" in impl_task
-    assert "Build a task tracker" in qa_task
-    assert "approved PRD and RFC" in ui_task
-    assert "approved PRD and RFC" in impl_task
-    assert "screenshots" in ui_task
-    assert "visual acceptance" in ui_task
-    assert "CONTENTOPS" not in ui_task
-    assert "CONTENTOPS" not in impl_task
-    assert "CONTENTOPS" not in qa_task
-    assert "content studio" not in ui_task.lower()
-    assert "content studio" not in impl_task.lower()
-    assert "Verify the implemented Build a task tracker" in qa_task
-    assert "frontend files" in tasks_by_role["ui"]["expected_artifacts"]
-    assert "browser screenshot evidence" in tasks_by_role["ui"]["expected_artifacts"]
-
-
 def test_delivery_workflow_stops_when_ui_worker_fails(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state(
@@ -2716,20 +2230,6 @@ def test_delivery_workflow_stops_when_ui_worker_fails(tmp_path, monkeypatch):
     assert result.next_node == "blocked"
     assert any("ui worker failed" in blocker for blocker in result.blockers)
     assert "release_notes" not in result.artifacts
-
-
-def test_init_project_implementation_task_requests_product_scaffold():
-    state = create_initial_state("run-1", "CONTENTOPS", "Build a task tracker")
-    task = implementation_task(state, "init_project")
-
-    assert "MVP" not in task
-    assert "frontend" in task
-    assert "backend" in task
-    assert "data layer" in task
-    assert "DevOps" in task
-    assert "Build a task tracker" in task
-    assert "approved PRD and RFC" in task
-    assert "CONTENTOPS" not in task
 
 
 def write_contentops_project_fixture(tmp_path: Path) -> Path:

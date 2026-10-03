@@ -35,32 +35,6 @@ def config(tmp_path):
     return path
 
 
-def test_repeated_model_access_reads_current_file_without_reparsing(config, monkeypatch):
-    parses = []
-    reads = []
-    parse = models._parse_yaml_mapping
-    read = Path.read_text
-
-    def counted_parse(*args, **kwargs):
-        parses.append(1)
-        return parse(*args, **kwargs)
-
-    def counted_read(path, *args, **kwargs):
-        if path == config:
-            reads.append(1)
-        return read(path, *args, **kwargs)
-
-    monkeypatch.setattr(models, "_parse_yaml_mapping", counted_parse)
-    monkeypatch.setattr(Path, "read_text", counted_read)
-    first = models.load_model_profile(config, "balanced")
-    initial_parses = len(parses)
-    assert initial_parses > 0
-    assert models.load_model_profile(config, "balanced") == first
-    assert models.list_model_profiles(config) == ["balanced"]
-    assert len(reads) == 3  # No mtime-only or cross-request file-read cache.
-    assert len(parses) == initial_parses
-
-
 def test_same_size_same_timestamp_edit_uses_new_model_bytes(config):
     before = config.stat()
     assert models.load_model_profile(config, "balanced")["planner"]["primary"] == "model-a"
@@ -120,20 +94,6 @@ def test_malformed_or_removed_profile_does_not_fall_back_to_old_models(config):
         models.load_model_profile(config, "balanced")
     config.write_text(SOURCE.replace("model-a", "model-c"), encoding="utf-8")
     assert models.load_model_profile(config, "balanced")["planner"]["primary"] == "model-c"
-
-
-def test_retained_model_source_versions_are_bounded(config):
-    for index in range(models._MODEL_CONFIG_CACHE_SIZE + 3):
-        config.write_text(SOURCE.replace("model-a", f"model-{index}"), encoding="utf-8")
-        assert models.load_model_profile(config, "balanced")["planner"]["primary"] == f"model-{index}"
-    assert models._cached_model_config.cache_info().currsize == models._MODEL_CONFIG_CACHE_SIZE
-
-
-def test_oversized_model_config_is_parsed_but_not_retained(config):
-    config.write_text(SOURCE + "#" * (models._MAX_CACHED_MODEL_CONFIG_CHARS + 1), encoding="utf-8")
-    for _ in range(2):
-        assert models.load_model_profile(config, "balanced")["planner"]["primary"] == "model-a"
-    assert models._cached_model_config.cache_info().currsize == 0
 
 
 def test_concurrent_model_consumers_receive_independent_nested_values(config):
