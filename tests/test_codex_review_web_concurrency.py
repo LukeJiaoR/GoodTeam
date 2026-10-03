@@ -57,7 +57,7 @@ def test_http_selection_keeps_run_current_until_review_or_retry_finishes(ctx, mo
             reviewing = pool.submit(post, base, path, body)
             try:
                 assert selected.wait(timeout=5)
-                termination = post(base, "/api/terminate", {"project_key": "DEMO"})
+                termination = post(base, "/api/terminate", {"project_key": "DEMO", "expected_run_id": before.run_id})
                 replacement = start_next(base, ctx)
                 assert_busy(termination)
                 assert_busy(replacement)
@@ -70,7 +70,7 @@ def test_http_selection_keeps_run_current_until_review_or_retry_finishes(ctx, mo
         assert len(admission.acquires) == (1 if count == "ran_count" else 0)
         assert StateStore(ctx.workspace).read_project_current("DEMO") == before
         # The guard must release on completion; both mutation and a later run work.
-        assert post(base, "/api/terminate", {"project_key": "DEMO"})[0] == 200
+        assert post(base, "/api/terminate", {"project_key": "DEMO", "expected_run_id": before.run_id})[0] == 200
         code, replacement = start_next(base, ctx)
         assert code == 200 and replacement["run_id"] != before.run_id, replacement
         jobs = ctx.workers.list_jobs()
@@ -98,7 +98,7 @@ def test_http_termination_wins_before_old_review_acquisition_or_retry_creation(c
     monkeypatch.setattr(StateStore, "archive_project_current", paused)
     with server_url(ctx, monkeypatch, "product", codex_review_admission=admission) as base:
         with ThreadPoolExecutor(max_workers=1) as pool:
-            termination = pool.submit(post, base, "/api/terminate", {"project_key": "DEMO"})
+            termination = pool.submit(post, base, "/api/terminate", {"project_key": "DEMO", "expected_run_id": body["run_id"]})
             try:
                 assert terminating.wait(timeout=5)
                 code, refused = post(base, path, body)
@@ -138,7 +138,7 @@ def test_http_run_holds_current_run_guard_through_admission(ctx, monkeypatch):
             })
             try:
                 assert acquiring.wait(timeout=5)
-                assert_busy(post(base, "/api/terminate", {"project_key": "DEMO"}))
+                assert_busy(post(base, "/api/terminate", {"project_key": "DEMO", "expected_run_id": job["run_id"]}))
                 assert_busy(start_next(base, ctx))
             finally:
                 release.set()
@@ -146,7 +146,7 @@ def test_http_run_holds_current_run_guard_through_admission(ctx, monkeypatch):
         assert code == 200 and result["results"][0]["status"] == "review_received", result
         assert result["results"][0]["job_id"] == job["id"]
         assert admission.finishes == [(admission.acquires[0], True)] and engine.removed
-        assert post(base, "/api/terminate", {"project_key": "DEMO"})[0] == 200
+        assert post(base, "/api/terminate", {"project_key": "DEMO", "expected_run_id": job["run_id"]})[0] == 200
 
 
 def test_http_review_recovers_abandoned_transition_without_reentering_guard(ctx, monkeypatch, action):
@@ -163,4 +163,4 @@ def test_http_review_recovers_abandoned_transition_without_reentering_guard(ctx,
         assert code == 409 and "not currently actionable" in refused["error"], refused
         assert states.read_project_current("DEMO").pending_transition["status"] == "interrupted"
         assert admission.acquires == [] and ctx.workers.list_jobs() == jobs
-        assert post(base, "/api/terminate", {"project_key": "DEMO"})[0] == 200
+        assert post(base, "/api/terminate", {"project_key": "DEMO", "expected_run_id": state.run_id})[0] == 200
