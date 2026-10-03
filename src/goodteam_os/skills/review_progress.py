@@ -83,6 +83,8 @@ class ProcessProgress:
                 if not isinstance(event, dict):
                     continue
                 kind = event.get("type")
+                if not isinstance(kind, str):
+                    continue  # The strict final capture owns malformed-event rejection.
                 if kind == "thread.started":
                     identity = event.get("thread_id")
                     if isinstance(identity, str) and re.fullmatch(THREAD_ID, identity):
