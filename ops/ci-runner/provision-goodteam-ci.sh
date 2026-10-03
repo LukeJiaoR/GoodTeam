@@ -37,10 +37,12 @@ if [[ ! -d /data ]] || [[ "$(findmnt -no FSTYPE /data)" != "ext4" ]]; then
   echo "A dedicated ext4 /data filesystem is required." >&2
   exit 1
 fi
-if [[ ! -f "${SCRIPT_DIR}/job-boundary-cleanup.sh" ]]; then
-  echo "job-boundary-cleanup.sh must be beside this script." >&2
-  exit 1
-fi
+for helper in job-boundary-cleanup.sh job-completed-cleanup.sh runner_cleanup.py; do
+  if [[ ! -f "${SCRIPT_DIR}/${helper}" ]]; then
+    echo "${helper} must be beside this script." >&2
+    exit 1
+  fi
+done
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install --yes \
   build-essential ca-certificates curl git jq libbz2-dev libffi-dev \
@@ -90,8 +92,10 @@ fi
 
 install --directory --owner "$RUNNER_USER" --group "$RUNNER_USER" --mode 0750 "$RUNNER_DIR"
 install --directory --owner "$RUNNER_USER" --group "$RUNNER_USER" --mode 0750 "${RUNNER_HOME}/hooks"
-install --owner "$RUNNER_USER" --group "$RUNNER_USER" --mode 0750 \
-  "${SCRIPT_DIR}/job-boundary-cleanup.sh" "${RUNNER_HOME}/hooks/job-boundary-cleanup.sh"
+for helper in job-boundary-cleanup.sh job-completed-cleanup.sh runner_cleanup.py; do
+  install --owner root --group "$RUNNER_USER" --mode 0750 \
+    "${SCRIPT_DIR}/${helper}" "${RUNNER_HOME}/hooks/${helper}"
+done
 
 archive_path="$(mktemp)"
 trap 'rm -f "$archive_path"' EXIT
@@ -116,7 +120,7 @@ fi
 
 install --owner "$RUNNER_USER" --group "$RUNNER_USER" --mode 0600 /dev/null "${RUNNER_DIR}/.env"
 echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=${RUNNER_HOME}/hooks/job-boundary-cleanup.sh" > "${RUNNER_DIR}/.env"
-echo "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=${RUNNER_HOME}/hooks/job-boundary-cleanup.sh" >> "${RUNNER_DIR}/.env"
+echo "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=${RUNNER_HOME}/hooks/job-completed-cleanup.sh" >> "${RUNNER_DIR}/.env"
 
 runuser -u "$RUNNER_USER" -- env \
   HOME="$RUNNER_HOME" \

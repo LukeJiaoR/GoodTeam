@@ -126,10 +126,141 @@ or install system packages. The browser suite refuses an existing server, uses
 a fresh workspace/registry/port, runs every case once without automatic
 retries, and uploads report/state/trace evidence for 14 days.
 
-The start/completion hook removes only the current runner's job-temp children
-and expires pip/npm cache files unused for 30 days. `actions/checkout` cleans
-the repository workspace before checkout. Review `/data` usage weekly; do not
-delete unscoped files or prune the host's Docker resources.
+The lifecycle implementation in `ops/ci-runner/runner_cleanup.py` replaces the
+old broad `RUNNER_TEMP` sweep and the home-cache `find -delete` calls. **Existing
+runners require the hook update below; merging the PR does not install it.**
+Until that update, CI retains its `RUNNER_TEMP` fallback and the old installed
+hook. The checked-out command guard already works without hook installation.
+
+### Resource ownership and recovery
+
+Both hooks validate the dedicated account's runner registration (`agentName`
+and repository URL), reject symlinked roots, and serialize through a nonblocking
+lock. The start hook creates `/data/goodteam-ci/.ci-lifecycle/jobs/<random-id>/`
+with a repository/runner/UID marker and the worker PID, Linux process start time,
+boot ID, run ID, attempt, and job name. It exports job-local `TMPDIR`, Python
+environment paths, evidence paths, and dependency-cache paths via `GITHUB_ENV`.
+The Playwright fixture already honors `TMPDIR` through `os.tmpdir()` and removes
+its own workspace on normal server shutdown.
+
+| Resource | Reclamation owner and policy |
+| --- | --- |
+| Marked job `tmp/`: virtual environments, Python/Node temp files, browser workspace | Completion hook after workflow artifact uploads, regardless of result. Active references prevent deletion. |
+| Missed marked job temporary resources after worker/host termination | Next start/completion boundary, after 24 hours, matching worker no longer exists, and no process references the directory. A recorded completion permits earlier retry once the worker exits. PID reuse and reboot are distinguished. |
+| HTTP recovery evidence in marked job `evidence/` | Preserve locally for 14 days, including when upload fails. GitHub artifact retention remains 14 days. |
+| Browser HTML/JSON reports, traces, screenshots in the checkout | Existing `always()` artifact upload owns durable retention (14 days); `actions/checkout` owns workspace cleanup. These are outside the helper's deletion scope. |
+| Marked pip/npm/Playwright caches | Regenerable downloads only; aggregate 4 GiB boundary cap, oldest whole cache evicted first; each cache generation expires after 30 days. Whole-cache eviction avoids partial browser/package formats. Live jobs/references prevent eviction. |
+| GoodTeam runner `_diag/Runner_*-utc.log` and `Worker_*-utc.log` | Registered GoodTeam runner path, matching generated filename and UID only. Closed logs expire after 14 days; 512 MiB budget warns if protected/unknown logs still exceed it. |
+| Runner's own `RUNNER_TEMP`, tracked-source export, action internals | [Actions Runner's native temp manager](https://github.com/actions/runner/blob/v2.337.0/src/Runner.Worker/TempDirectoryManager.cs); the custom hook does not sweep this directory. |
+| Checkout dependencies/build outputs and Actions Node tool cache | Checkout and Actions own these; this helper does not delete them. |
+| Containers, networks, volumes, business databases, other services | GoodTeam CI creates none and has no Docker access. This helper makes no Docker calls and does not claim to reclaim these resources. |
+
+Markers must have been created by this lifecycle; existing unknown directories
+and legacy home pip/npm/Playwright caches are never adopted or automatically
+deleted. Recursive removal refuses foreign owners, filesystem boundaries, and
+mounts, and uses Python's symlink-safe deletion. In-use checks inspect fds, cwd,
+executables, mapped files, and surviving job children's temp/cache environment
+paths; checks are refreshed at deletion. Guarded commands reap their own
+descendants before returning. Native Actions Runner still owns orphan cleanup
+for unguarded actions after the completion hook; resources referenced by those
+processes are retained for a later safe boundary. If a process cannot be inspected, cleanup fails closed;
+it cannot prove that the resource is idle. Completion failures/timeouts emit a
+warning and do not replace the original job result. Recovery needs another job
+boundary; there is no timer or idle-host janitor.
+
+### Capacity and evidence retention
+
+The start hook blocks new jobs below **8 GiB free or 15% free** on the dedicated
+runner home's filesystem. The CI workflow also wraps dependency installs,
+environment creation, builds, tests, and browser downloads with the `run`
+command. It checks before spawning and every five seconds and exits 75 on low
+disk. Each workflow entry uses `exec`, so the step PID that Actions signals is
+the helper PID. Environment/path setup precedes that final `exec`; a failed
+environment install still fails the step. SIGINT/SIGTERM handlers only record a
+lock-free flag; the monitor checks it every 50 milliseconds independently of
+the five-second disk poll. No Event/Condition lock is acquired in a handler.
+
+The fresh helper is a Linux child subreaper and creates one command child. Its
+cleanup reads only its own descendant tree through `/proc/<pid>/task/*/children`,
+validates parent relationships and PID/start-time/boot identity before signaling each owned PID, and
+reaps adopted descendants. This includes Playwright's detached webServer
+session and orphaned/double-forked children after an early command exit. It
+refuses to start in a process that already has children or lacks the readable
+native children interface; it never turns a missing listing into an empty tree.
+No host-wide process kill scan is used. Cleanup gives TERM one second, then
+KILL/reaping one second, including on ordinary command failure. It fails visibly
+if owned descendants cannot exit in that window. Ordinary failure codes and
+SIGINT/SIGTERM codes are preserved when cleanup succeeds.
+Alerts appear as Actions error/warning annotations and in the step summary.
+
+Cache capacity is enforced at boundaries, so a running install can temporarily
+exceed 4 GiB. The disk guard bounds continued allocation, with a five-second
+observation window; it is not a filesystem quota. Recent or open evidence is
+never evicted to meet a budget. Local job evidence has a 1 GiB warning budget,
+and recent runner logs have a 512 MiB warning budget; their minimum retention
+takes priority. If those budgets or protected caches cannot be reclaimed, an
+annotation identifies it and the disk threshold prevents further exhaustion.
+Uploads themselves, checkout/setup-node/action preparation, and other host
+services are outside the command monitor. The start hook runs before workflow
+steps but after Actions' own action preparation.
+
+Defaults are configurable with the dedicated runner's
+`/data/goodteam-ci/hooks/cleanup-policy.json`. Use only known keys with positive
+integer values; byte values are bytes and day/hour values are durations:
+
+```json
+{
+  "cache_max_bytes": 4294967296,
+  "cache_keep_days": 30,
+  "evidence_keep_days": 14,
+  "evidence_max_bytes": 1073741824,
+  "logs_keep_days": 14,
+  "logs_max_bytes": 536870912,
+  "stale_temp_hours": 24,
+  "min_free_bytes": 8589934592,
+  "min_free_percent": 15,
+  "disk_check_seconds": 5
+}
+```
+
+Keep the policy readable by `goodteam-ci`, without credentials. Evidence/log
+limits intentionally alert instead of overriding retention. Review `/data`
+usage weekly; no system, Docker, or volume prune is part of this lifecycle.
+
+### Updating an existing GoodTeam runner (separate deployment)
+
+After independent review and merge, install the three reviewed files
+`job-boundary-cleanup.sh`, `job-completed-cleanup.sh`, and `runner_cleanup.py`
+from `ops/ci-runner/` into `/data/goodteam-ci/hooks/`, root-owned with group
+`goodteam-ci` and mode 0750. Confirm **GoodTeam's runner is idle** first. Preserve
+the existing `.env` and every unrelated entry, and update only these two values:
+
+```text
+ACTIONS_RUNNER_HOOK_JOB_STARTED=/data/goodteam-ci/hooks/job-boundary-cleanup.sh
+ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/data/goodteam-ci/hooks/job-completed-cleanup.sh
+```
+
+Restart only `actions.runner.LukeJiaoR-GoodTeam.goodteam-ci-01.service` during
+that separately authorized deployment. No re-registration, token, YUVA service
+restart, shared slice change, Docker group, or package installation is needed.
+The provisioner's existing-service path does not upgrade hooks; do not rerun
+the whole provisioner to apply this patch. A fresh provision installs the new
+files automatically. [GitHub's hook documentation](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts)
+requires a runner restart after `.env` changes. Both shell hooks have a
+120-second timeout because Actions does not provide a hook timeout.
+
+The runner kernel must support `PR_SET_CHILD_SUBREAPER` and provide readable
+`/proc/<pid>/task/<tid>/children` (check the deployment shell's own
+`/proc/$$/task/$$/children` before rollout). Both are tested before launching a
+guarded command. Local sandbox verification emulates only the omitted children
+listing with actual PID/PPID metadata; kernel adoption, identities, signals,
+Playwright-created sessions, port closure, and reaping are exercised directly.
+
+Post-install acceptance must observe `Set up runner` and `Complete runner`,
+one success/failure/cancellation, retained upload evidence, marked temp
+reclamation, and disk/cache usage on the actual GoodTeam runner. These are
+deployment checks, not claims from isolated local validation. This code task
+does not perform host cleanup or change existing runner jobs/configuration.
 
 ## Provisioning and operations
 
