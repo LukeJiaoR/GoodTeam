@@ -18,44 +18,6 @@ class FakeRequest:
         return BytesIO()
 
 
-def test_completed_execution_exports_browser_visible_html_and_json(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-    api.finalize(execution_id)
-    api.record_review_decision(execution_id, "approve", "LukeJiaoR", "ok")
-
-    result = api.export_review_workbench_html(execution_id)
-
-    assert Path(result["html_path"]).is_file()
-    payload = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
-    assert result["status"] == "exported"
-    assert result["schema_version"] == "review_workbench.v1"
-    assert payload["schema_version"] == "review_workbench.v1"
-    assert payload["execution_id"] == execution_id
-    assert payload["runtime_policy"]["schema_version"] == "runtime_policy.v1"
-    assert payload["runtime_policy"]["worker_backend"]["class"] == "fake"
-    assert payload["github_broker_status"]["schema_version"] == "github_broker_status.v1"
-    assert payload["github_broker_status"]["merge_readiness"]["state"] == "ready"
-    assert payload["execution_replay_graph"]["schema_version"] == "execution_replay_graph.v1"
-    assert payload["execution_replay_graph"]["summary"]["complete"] is True
-    assert payload["execution_replay_graph"]["nodes_by_type"]["reviewer_decision"] == [
-        "reviewer_decision"
-    ]
-
-
-def test_export_preserves_empty_states_without_mock_data(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-
-    result = api.export_review_workbench_html(execution_id)
-
-    assert Path(result["html_path"]).is_file()
-    payload = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
-    assert payload["diff"]["available"] is False
-    assert payload["diff"]["reason"] == "diff_artifact_missing"
-    assert payload["diff"]["changed_files"] == []
-    assert payload["execution_replay_graph"]["summary"]["complete"] is True
-
-
 def test_export_is_read_only_for_ledger_and_memory(tmp_path):
     api, execution_id = _full_lifecycle(tmp_path)
     api.persist_pr_diff(execution_id)

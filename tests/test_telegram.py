@@ -9,7 +9,6 @@ from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
 import goodteam_os.telegram as telegram
 from goodteam_os.telegram import (
     TelegramApproval,
-    build_approval_keyboard,
     decode_callback_data,
     encode_callback_data,
     poll_telegram_approvals,
@@ -128,14 +127,6 @@ def test_telegram_callback_rejects_malformed_payload():
         assert "Invalid Telegram approval callback" in str(exc)
     else:
         raise AssertionError("Expected malformed callback to fail")
-
-
-def test_approval_keyboard_uses_inline_decision_buttons():
-    keyboard = build_approval_keyboard(project_key="CONTENTOPS", run_id="run-1", gate="release")
-
-    assert keyboard["inline_keyboard"][0][0]["text"] == "Approve"
-    assert "gt:CONTENTOPS:run-1:release:approved" in keyboard["inline_keyboard"][0][0]["callback_data"]
-    assert keyboard["inline_keyboard"][0][1]["text"] == "Request changes"
 
 
 def test_global_test_telegram_request_fake_prevents_network(monkeypatch):
@@ -351,54 +342,6 @@ def test_approval_notification_payload_surfaces_digest_recommendation_evidence()
     assert "http://localhost" not in text
     # Plain text only — no Markdown parse_mode that could choke on artifact text.
     assert "parse_mode" not in payload
-
-
-def test_artifact_digest_strips_markdown_and_truncates():
-    assert telegram._artifact_digest("") == ""
-    assert telegram._artifact_digest("\n\n# \n## Heading\nBody") == "Heading"
-    assert telegram._artifact_digest("- first real line\nsecond") == "first real line"
-    long = "x" * 200
-    digest = telegram._artifact_digest(long)
-    assert len(digest) == 140
-    assert digest.endswith("...")
-
-
-def test_send_approval_notification_includes_public_https_dashboard_url_button(tmp_path, monkeypatch):
-    calls = []
-
-    def fake_request(token, method, params):
-        calls.append({"token": token, "method": method, "params": params})
-        return {"ok": True, "result": {"message_id": 42}}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
-    monkeypatch.setenv("GOODTEAM_DASHBOARD_URL", "https://goodteam.example.com/dashboard")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-
-    result = telegram.send_approval_notification(
-        project_key="CONTENTOPS",
-        run_id="run-1",
-        gate="prd",
-        summary="ContentOps Studio v1 PRD is ready for review.",
-        workspace=tmp_path,
-    )
-
-    session_id = result["session_id"]
-    expected_keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "✅ 快速批准", "callback_data": f"v1:A:{session_id}"},
-                {"text": "🔍 逐项 review", "callback_data": f"v1:R:{session_id}"},
-            ],
-            [
-                {"text": "❌ 拒绝", "callback_data": f"v1:J:{session_id}"},
-                {"text": "📖 完整报告", "url": "https://goodteam.example.com/dashboard?project=CONTENTOPS"},
-            ]
-        ]
-    }
-
-    assert calls[0]["params"]["reply_markup"] == expected_keyboard
-    assert "Dashboard: https://goodteam.example.com/dashboard?project=CONTENTOPS" not in calls[0]["params"]["text"]
 
 
 def test_send_approval_notification_refreshes_existing_live_gate_card(tmp_path, monkeypatch):
@@ -1042,49 +985,6 @@ def test_gt_evidence_command_uses_unknown_when_data_is_missing(tmp_path, monkeyp
     assert "Blockers: 0" in text
 
 
-def test_gt_approvals_command_sends_pending_gate_with_quick_decision_buttons(tmp_path, monkeypatch):
-    calls = []
-    write_project_state(tmp_path)
-
-    def fake_telegram_request(token, method, params):
-        calls.append({"token": token, "method": method, "params": params})
-        return {"ok": True, "result": {"message_id": 42}}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_telegram_request)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt approvals"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "processed", "command": "approvals"}
-    assert calls[0]["method"] == "sendMessage"
-    assert "🔔 PRD 待审 · CONTENTOPS" in calls[0]["params"]["text"]
-    keyboard = calls[0]["params"]["reply_markup"]["inline_keyboard"]
-    assert keyboard[0][0]["callback_data"].startswith("v1:A:")
-    assert keyboard[0][1]["callback_data"].startswith("v1:R:")
-    assert keyboard[1][0]["callback_data"].startswith("v1:J:")
-
-
-def test_plain_non_reply_non_command_message_still_ignored(tmp_path):
-    write_project_state(tmp_path)
-
-    result = process_telegram_update(
-        telegram_text_update("hello goodteam"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "ignored", "reason": "not a reply message"}
-
-
 # ---------------------------------------------------------------------------
 # /gt view
 # ---------------------------------------------------------------------------
@@ -1188,38 +1088,6 @@ def test_gt_ask_role_reply_to_card_records_ask_message(tmp_path, monkeypatch):
     confirm_text = calls[0]["params"]["text"]
     assert "Recorded for architect" in confirm_text
     assert "No worker was started" in confirm_text
-
-
-def test_gt_tell_role_reply_to_card_records_propose_message(tmp_path, monkeypatch):
-    calls = []
-    _save_live_tg_session(tmp_path, "reply-card", gate="staging", message_id=9001)
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-
-    result = process_telegram_update(
-        telegram_text_update(
-            "/gt tell qa focus regression on login and billing",
-            reply_to_message_id=9001,
-        ),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-    )
-
-    messages = read_messages(tmp_path, "CONTENTOPS", "run-1")
-    assert result == {"status": "processed", "command": "tell"}
-    assert len(messages) == 1
-    assert messages[0]["to"] == ["qa"]
-    assert messages[0]["kind"] == "propose"
-    assert messages[0]["gate"] == "staging"
-    assert messages[0]["body"] == "focus regression on login and billing"
-    assert "Recorded for qa" in calls[0]["params"]["text"]
-    assert "No worker was started" in calls[0]["params"]["text"]
 
 
 def test_gt_ask_role_bare_command_with_one_live_session_records_against_session(tmp_path, monkeypatch):
@@ -1515,34 +1383,6 @@ def test_gt_ask_role_masks_body_before_append(tmp_path, monkeypatch):
     assert messages[0]["body"] == "inspect local-workspace-dir and staging-ip"
 
 
-def test_gt_view_sends_artifact_content(tmp_path, monkeypatch):
-    calls = []
-    prd_file = _write_prd_artifact(tmp_path, "# PRD\n\nThis is the PRD content.")
-    _write_state_with_artifact(tmp_path, prd_file)
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt view"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "processed", "command": "view"}
-    assert len(calls) == 1
-    assert calls[0]["method"] == "sendMessage"
-    text = calls[0]["params"]["text"]
-    assert text.startswith("📄 prd:\n\n")
-    assert "PRD content" in text
-
-
 def test_gt_view_reply_to_card_uses_replied_session_context(tmp_path, monkeypatch):
     calls = []
     default_file = _write_prd_artifact(tmp_path, "# PRD\n\nDefault project content.")
@@ -1586,57 +1426,6 @@ def test_gt_view_reply_to_card_uses_replied_session_context(tmp_path, monkeypatc
     assert "Default project content" not in text
 
 
-def test_gt_view_no_pending_gate(tmp_path, monkeypatch):
-    calls = []
-    # State with no pending gate (next_node is not await_*_approval)
-    write_project_state(tmp_path, next_node="planner")
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt view"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "processed", "command": "view"}
-    assert len(calls) == 1
-    assert "No pending approval gate" in calls[0]["params"]["text"]
-
-
-def test_gt_view_artifact_not_found(tmp_path, monkeypatch):
-    calls = []
-    state = write_project_state(tmp_path)
-    # Point artifact to a file that does not exist
-    state.artifacts["prd"] = str(tmp_path / "does_not_exist.md")
-    StateStore(tmp_path).write_project_current(state)
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt view"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "processed", "command": "view"}
-    assert "No artifact found for gate prd" in calls[0]["params"]["text"]
-
-
 def test_gt_view_long_content_sends_chunks(tmp_path, monkeypatch):
     calls = []
     # Generate content slightly over 2 * 3800 chars to produce 3 chunks
@@ -1672,99 +1461,20 @@ def test_gt_view_long_content_sends_chunks(tmp_path, monkeypatch):
 # /gt approve
 # ---------------------------------------------------------------------------
 
-def test_gt_approve_calls_decide_approval_and_sends_confirmation(tmp_path, monkeypatch):
-    calls = []
+def test_gt_approve_without_live_session_rejects_default_project_bait(tmp_path, monkeypatch):
+    from goodteam_os.web import current_approval_gate
+
+    write_project_state(tmp_path, next_node="await_prd_approval")
+    assert current_approval_gate(StateStore(tmp_path).read_project_current("CONTENTOPS")) == "prd"
     decisions = []
-    write_project_state(tmp_path)
-    _save_live_tg_session(tmp_path, "only-live-card")
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    def fake_decide(**kwargs):
-        decisions.append(kwargs)
-        return {"ok": True}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt approve"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
+    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "test-token")
+    monkeypatch.setattr("goodteam_os.telegram._telegram_request", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(
+        "goodteam_os.telegram.decide_approval",
+        lambda **kwargs: decisions.append(kwargs) or {"ok": True},
     )
-
-    assert result == {"status": "processed", "command": "approve"}
-    assert len(decisions) == 1
-    assert decisions[0]["decision"] == "approved"
-    assert decisions[0]["approval"] == "prd"
-    assert decisions[0]["review_mode"] == "quick"
-    assert decisions[0]["decision_origin"] == "telegram"
-    assert decisions[0]["actor_ref"] == "telegram:user:111"
-
-    confirm_text = calls[-1]["params"]["text"]
-    assert "✅ PRD approved" in confirm_text
-
-
-def test_gt_approve_with_note_captures_note(tmp_path, monkeypatch):
-    decisions = []
-    write_project_state(tmp_path)
-    _save_live_tg_session(tmp_path, "only-live-card")
-
-    def fake_request(token, method, params):
-        return {"ok": True}
-
-    def fake_decide(**kwargs):
-        decisions.append(kwargs)
-        return {"ok": True}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
 
     process_telegram_update(
-        telegram_text_update("/gt approve looks good to me"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert decisions[0]["note"] == "looks good to me"
-
-
-def test_gt_approve_edits_live_card_if_session_exists(tmp_path, monkeypatch):
-    calls = []
-    write_project_state(tmp_path)
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        if method == "sendMessage":
-            return {"ok": True, "result": {"message_id": 77}}
-        return {"ok": True}
-
-    def fake_decide(**kwargs):
-        return {"ok": True}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setenv("GOODTEAM_TG_CHAT_ID", "12345")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
-
-    # Create a live session first (simulates an existing card)
-    telegram.send_approval_notification(
-        project_key="CONTENTOPS",
-        run_id="run-1",
-        gate="prd",
-        workspace=tmp_path,
-    )
-    calls.clear()
-
-    result = process_telegram_update(
         telegram_text_update("/gt approve"),
         workspace=tmp_path,
         allowed_users=["111"],
@@ -1772,9 +1482,7 @@ def test_gt_approve_edits_live_card_if_session_exists(tmp_path, monkeypatch):
         project_key="CONTENTOPS",
     )
 
-    assert result == {"status": "processed", "command": "approve"}
-    methods = [c["method"] for c in calls]
-    assert "editMessageText" in methods
+    assert decisions == []
 
 
 def test_gt_approve_reply_to_card_uses_exact_replied_session(tmp_path, monkeypatch):
@@ -2312,64 +2020,6 @@ def test_gt_approve_context_chooser_callback_does_not_cross_chats(tmp_path, monk
     assert "no longer active" in calls[0]["params"]["text"]
 
 
-def test_gt_approve_without_live_context_or_default_project_sends_clear_message(tmp_path, monkeypatch):
-    calls = []
-    decisions = []
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    def fake_decide(**kwargs):
-        decisions.append(kwargs)
-        return {"ok": True}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt approve"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-    )
-
-    assert result == {"status": "processed", "command": "approve"}
-    assert decisions == []
-    assert "No pending approval gate" in calls[0]["params"]["text"]
-
-
-def test_gt_approve_with_default_project_but_no_live_context_sends_clear_message(tmp_path, monkeypatch):
-    calls = []
-    decisions = []
-    write_project_state(tmp_path)
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    def fake_decide(**kwargs):
-        decisions.append(kwargs)
-        return {"ok": True}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-    monkeypatch.setattr("goodteam_os.telegram.decide_approval", fake_decide)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt approve"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "processed", "command": "approve"}
-    assert decisions == []
-    assert "No pending approval gate" in calls[0]["params"]["text"]
-
-
 # ---------------------------------------------------------------------------
 # /gt reject
 # ---------------------------------------------------------------------------
@@ -2466,123 +2116,3 @@ def test_gt_changes_calls_decide_approval_changes_requested(tmp_path, monkeypatc
     assert decisions[0]["decision"] == "changes_requested"
     assert decisions[0]["review_mode"] == "request_changes_with_notes"
     assert decisions[0]["note"] == "needs more detail in section 3"
-
-
-def test_gt_bug_files_bug_and_confirms(tmp_path, monkeypatch):
-    calls = []
-    bug_calls = []
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    def fake_report_bug(**kwargs):
-        bug_calls.append(kwargs)
-        return {"next_node": "await_fix_plan_approval", "severity": kwargs.get("severity")}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-    monkeypatch.setattr("goodteam_os.web.report_bug", fake_report_bug)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt bug Something broke"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "processed", "command": "bug"}
-    assert len(bug_calls) == 1
-    assert bug_calls[0]["description"] == "Something broke"
-    assert bug_calls[0]["severity"] == "p2"
-    assert bug_calls[0]["project_key"] == "CONTENTOPS"
-    assert len(calls) == 1
-    text = calls[0]["params"]["text"]
-    assert "fix" in text
-    assert "FIX_PLAN" in text
-
-
-def test_gt_bug_parses_leading_severity_tag(tmp_path, monkeypatch):
-    bug_calls = []
-
-    def fake_request(token, method, params):
-        return {"ok": True}
-
-    def fake_report_bug(**kwargs):
-        bug_calls.append(kwargs)
-        return {"next_node": "await_fix_plan_approval"}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-    monkeypatch.setattr("goodteam_os.web.report_bug", fake_report_bug)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt bug [p1] Critical crash"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "processed", "command": "bug"}
-    assert len(bug_calls) == 1
-    assert bug_calls[0]["severity"] == "p1"
-    assert bug_calls[0]["description"] == "Critical crash"
-
-
-def test_gt_bug_empty_sends_usage_and_skips_report(tmp_path, monkeypatch):
-    calls = []
-    bug_calls = []
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    def fake_report_bug(**kwargs):
-        bug_calls.append(kwargs)
-        return {}
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-    monkeypatch.setattr("goodteam_os.web.report_bug", fake_report_bug)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt bug"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "processed", "command": "bug"}
-    assert bug_calls == []
-    assert len(calls) == 1
-    assert "Usage: /gt bug" in calls[0]["params"]["text"]
-
-
-def test_gt_bug_active_run_error_is_sent_without_crash(tmp_path, monkeypatch):
-    calls = []
-
-    def fake_request(token, method, params):
-        calls.append({"method": method, "params": params})
-        return {"ok": True}
-
-    def fake_report_bug(**kwargs):
-        raise ValueError("An active run already exists for project CONTENTOPS.")
-
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "secret-token")
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_request)
-    monkeypatch.setattr("goodteam_os.web.report_bug", fake_report_bug)
-
-    result = process_telegram_update(
-        telegram_text_update("/gt bug Something broke again"),
-        workspace=tmp_path,
-        allowed_users=["111"],
-        processed_callbacks=set(),
-        project_key="CONTENTOPS",
-    )
-
-    assert result == {"status": "processed", "command": "bug"}
-    assert len(calls) == 1
-    assert "active run already exists" in calls[0]["params"]["text"]

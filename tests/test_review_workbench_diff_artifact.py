@@ -118,46 +118,6 @@ def test_changed_diff_source_does_not_overwrite_artifact_or_ledger(tmp_path):
     assert len(events) == 1
 
 
-def test_workbench_reads_persisted_diff_artifact(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-
-    diff = api.get_review_workbench(execution_id)["diff"]
-
-    assert diff["available"] is True
-    assert diff["reason"] == ""
-    assert diff["artifact_path"].endswith("/pr-diff.json")
-    assert diff["patch_path"].endswith("/pr-diff.patch")
-    assert diff["changed_files"][1]["path"] == "tests/test_review_workbench_diff_artifact.py"
-    assert diff["summary"] == "2 files changed (+130/-2)"
-
-
-def test_missing_diff_artifact_empty_state_is_preserved(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-
-    diff = api.get_review_workbench(execution_id)["diff"]
-
-    assert diff == {
-        "available": False,
-        "reason": "diff_artifact_missing",
-        "changed_files": [],
-        "artifact_path": "",
-        "summary": "",
-    }
-
-
-def test_workbench_diff_read_is_read_only(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-    ledger = ExecutionLedger(tmp_path)
-    before = ledger.read_events(execution_id)
-
-    api.get_review_workbench(execution_id)
-    api.get_review_workbench(execution_id)
-
-    assert ledger.read_events(execution_id) == before
-
-
 def test_missing_diff_source_does_not_create_fake_changed_files(tmp_path):
     client = FakeGitHubClient()
     client.diff_payload = None

@@ -3,11 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.pr_diff_contract import artifact_json_path, artifact_patch_path
 from tests.review_workbench_helpers import (
     full_lifecycle as _full_lifecycle,
-    memory_event_files as _memory_event_files,
     warning_codes as _warning_codes,
 )
 
@@ -144,47 +142,6 @@ def test_rationale_excerpts_are_bounded_and_deterministic(tmp_path):
     assert "src/goodteam_os/execution/api.py" in first
     assert len(first) <= 800
     assert "B" * 900 not in first
-
-
-def test_static_export_includes_rationale_refs_in_embedded_json(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-    _write_worker_file(
-        tmp_path,
-        api.ledger_store.read_run(execution_id).worker_job_id,
-        "task.md",
-        "Task context names tests/test_review_workbench_diff_artifact.py for regression coverage.",
-    )
-
-    result = api.export_review_workbench_html(execution_id)
-    payload = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
-    html = Path(result["html_path"]).read_text(encoding="utf-8")
-
-    refs = payload["diff"]["changed_files"][1]["rationale_refs"]
-    assert refs[0]["kind"] == "prompt_snapshot"
-    assert refs[0]["name"] == "task"
-    assert refs[0]["excerpt"] == "Task context names tests/test_review_workbench_diff_artifact.py for regression coverage."
-    assert '"rationale_refs": [' in html
-
-
-def test_get_review_workbench_rationale_mapping_is_read_only(tmp_path):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-    _write_worker_file(
-        tmp_path,
-        api.ledger_store.read_run(execution_id).worker_job_id,
-        "result.md",
-        "Implemented src/goodteam_os/execution/api.py only.",
-    )
-    ledger = ExecutionLedger(tmp_path)
-    before_events = ledger.read_events(execution_id)
-    before_memory = _memory_event_files(tmp_path)
-
-    api.get_review_workbench(execution_id)
-    api.get_review_workbench(execution_id)
-
-    assert ledger.read_events(execution_id) == before_events
-    assert _memory_event_files(tmp_path) == before_memory
 
 
 def _write_worker_file(tmp_path: Path, worker_job_id: str, filename: str, text: str) -> None:

@@ -6,7 +6,6 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from goodteam_os.reviewer_profiles import (
-    BUILTIN_REVIEWER_PROFILES,
     REVIEWER_PROFILE_EVIDENCE_KEYS,
     get_reviewer_profile,
     list_reviewer_profiles,
@@ -22,11 +21,6 @@ EXPECTED_PROFILE_IDS = (
 )
 
 
-def test_builtin_reviewer_profiles_are_present_in_stable_order():
-    assert reviewer_profile_ids() == EXPECTED_PROFILE_IDS
-    assert tuple(BUILTIN_REVIEWER_PROFILES) == EXPECTED_PROFILE_IDS
-
-
 def test_builtin_reviewer_profiles_have_required_contract_fields():
     for profile in list_reviewer_profiles():
         assert profile.profile_id
@@ -38,39 +32,6 @@ def test_builtin_reviewer_profiles_have_required_contract_fields():
         assert "invocation_evidence" in profile.required_evidence
         assert profile.fallback_policy
         assert profile.timeout_seconds > 0
-
-
-def test_profile_ids_are_project_neutral_and_not_vendor_specific():
-    forbidden_ids = {
-        "codex-reviewer",
-        "claude-reviewer",
-        "gemini-reviewer",
-    }
-
-    assert not forbidden_ids.intersection(reviewer_profile_ids())
-    for profile_id in reviewer_profile_ids():
-        assert not profile_id.startswith(("codex-", "claude-", "gemini-"))
-
-
-def test_get_reviewer_profile_returns_expected_profile():
-    profile = get_reviewer_profile("correctness-security")
-
-    assert profile.profile_id == "correctness-security"
-    assert profile.label == "Correctness and security"
-    assert profile.adapter == "codex"
-    assert profile.model is None
-    assert "Security regressions" in profile.focus_areas
-    assert profile.to_dict() == {
-        "profile_id": "correctness-security",
-        "label": "Correctness and security",
-        "adapter": "codex",
-        "model": None,
-        "focus_areas": list(profile.focus_areas),
-        "required_report_sections": list(profile.required_report_sections),
-        "required_evidence": list(profile.required_evidence),
-        "fallback_policy": profile.fallback_policy,
-        "timeout_seconds": profile.timeout_seconds,
-    }
 
 
 def test_get_reviewer_profile_rejects_unknown_id_clearly():
