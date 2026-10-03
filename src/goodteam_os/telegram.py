@@ -1642,29 +1642,6 @@ def decode_callback_data(value: str) -> TelegramApproval:
     )
 
 
-def build_approval_keyboard(*, project_key: str, run_id: str, gate: str) -> dict[str, object]:
-    return {
-        "inline_keyboard": [
-            [
-                {
-                    "text": "Approve",
-                    "callback_data": encode_callback_data(TelegramApproval(project_key, run_id, gate, "approved")),
-                },
-                {
-                    "text": "Request changes",
-                    "callback_data": encode_callback_data(TelegramApproval(project_key, run_id, gate, "changes_requested")),
-                },
-            ],
-            [
-                {
-                    "text": "Reject",
-                    "callback_data": encode_callback_data(TelegramApproval(project_key, run_id, gate, "rejected")),
-                }
-            ],
-        ]
-    }
-
-
 def _artifact_digest(content: str) -> str:
     """Return the first meaningful line of an artifact, stripped of markdown noise.
 

@@ -101,10 +101,6 @@ def _parse_yaml_source(source: str) -> dict[str, object]:
     return parsed
 
 
-def _read_yaml_lines(path: Path) -> list[YamlLine]:
-    return _yaml_source_lines(path.read_text(encoding="utf-8"))
-
-
 def _yaml_source_lines(source: str) -> list[YamlLine]:
     lines: list[YamlLine] = []
     for raw_line in source.splitlines():
