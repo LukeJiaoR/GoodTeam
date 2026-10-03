@@ -9,6 +9,10 @@ const words = {
     advisory: 'Advisory only. Receiving a report does not independently confirm its judgment or approve, merge, or deploy anything.',
     target: 'Review target', method: 'Locked method version', open: 'Open review report', close: 'Close review report',
     fixture: 'Contract fixture · not live Runtime acceptance', runtime: 'Runtime verification',
+    native: 'Existing Codex · trusted self-use review',
+    nativePermissions: 'Uses existing Codex permissions. This review grants no additional tools or actions.',
+    nativeBudget: 'Authorized sessions: {count}. Maximum per session: {seconds}s. No verified cost ceiling.',
+    start: 'Start review', starting: 'Reviewing…', startFailed: 'The review did not complete. Refresh to inspect the saved result.',
     received: 'Report received', prepared: 'Prepared', running: 'Running', stopping: 'Stopping · termination unconfirmed',
     failed: 'Failed', invalid: 'Invalid report', cancelled: 'Cancelled', interrupted: 'Interrupted',
     recovery_required: 'Saved outcome requires recovery', states: 'Observed delivery stages',
@@ -28,6 +32,10 @@ const words = {
     advisory: '仅供参考。报告被接收不代表判断已获独立证实，也不会自动批准、合并或部署。',
     target: '审查对象', method: '锁定的方法版本', open: '打开审查报告', close: '关闭审查报告',
     fixture: '合同测试夹具 · 不是真实 Runtime 验收', runtime: 'Runtime 验证状态',
+    native: '现有 Codex · 自用审查',
+    nativePermissions: '沿用本机 Codex 权限。本次审查不授予额外工具或操作权限。',
+    nativeBudget: '已授权会话 {count} 次，每次最多 {seconds} 秒；费用上限未确认。',
+    start: '开始审查', starting: '正在审查…', startFailed: '审查未完成，请刷新查看已保存的结果。',
     received: '报告已接收', prepared: '已准备', running: '执行中', stopping: '正在停止 · 尚未确认终止',
     failed: '执行失败', invalid: '报告无效', cancelled: '已取消', interrupted: '已中断',
     recovery_required: '已有结果等待恢复', states: '可观察的交付阶段',
@@ -177,11 +185,16 @@ function ReviewPanel({ projectKey, runId, language }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState(null);
   const [error, setError] = useState(false);
+  const [startAvailable, setStartAvailable] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState(false);
   const controller = useRef(null);
-  useEffect(() => () => controller.current?.abort(), []);
+  const startController = useRef(null);
+  useEffect(() => () => { controller.current?.abort(); startController.current?.abort(); }, []);
   const load = async () => {
     controller.current?.abort();
     setItems(null); // Also unmount/abort every previously displayed report.
+    setStartAvailable(false);
     setError(false);
     const request = new AbortController();
     controller.current = request;
@@ -195,8 +208,29 @@ function ReviewPanel({ projectKey, runId, language }) {
         throw new Error('review_scope_mismatch');
       }
       setItems(payload.reviews);
+      setStartAvailable(payload.start_available === true);
     } catch {
       if (!request.signal.aborted) setError(true);
+    }
+  };
+  const start = async () => {
+    if (starting || !startAvailable) return;
+    const request = new AbortController();
+    startController.current = request;
+    setStarting(true); setStartError(false);
+    try {
+      const result = await requestJson('/api/reviewer-jobs/run', {
+        method: 'POST', signal: request.signal, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_key: projectKey, run_id: runId }),
+      });
+      if (request.signal.aborted) return;
+      if (!matchesScope(result, projectKey, runId) || result.ran_count !== 1
+        || result.results?.[0]?.status !== 'review_received') setStartError(true);
+      await load();
+    } catch {
+      if (!request.signal.aborted) setStartError(true);
+    } finally {
+      if (!request.signal.aborted) setStarting(false);
     }
   };
   const toggle = () => {
@@ -211,14 +245,20 @@ function ReviewPanel({ projectKey, runId, language }) {
     {open ? <section aria-label={w.title}>
       <p className="skill-review-advisory">{w.advisory}</p>
       <button type="button" onClick={load}>{w.refresh}</button>
+      {startAvailable || starting ? <button type="button" onClick={start} disabled={starting}>{starting ? w.starting : w.start}</button> : null}
+      {startError ? <p role="alert">{w.startFailed}</p> : null}
       {error ? <p role="alert">{w.unavailable}</p> : items === null ? <p role="status">{w.loading}</p> : null}
       {items?.length === 0 ? <p>{w.empty}</p> : null}
       {items?.map((item) => <article key={`${item.job_id}:${item.report_digest || item.status}`} aria-label={item.job_id}>
         <h3>{w[item.status] || w.unavailable}</h3>
         {item.error_code ? <p role="status"><code>{item.error_code}</code></p> : null}
         <dl><dt>{w.target}</dt><dd>{item.target?.display_name || item.target?.artifact_key}<code>{item.target?.artifact_version}</code></dd>
-          <dt>{w.runtime}</dt><dd>{item.runtime_verification === 'contract_fixture' ? w.fixture : item.runtime_verification || w.unverified}</dd>
+          <dt>{w.runtime}</dt><dd>{item.runtime_verification === 'contract_fixture' ? w.fixture : item.runtime_verification === 'local_cli' ? w.native : item.runtime_verification || w.unverified}</dd>
         </dl>
+        {item.runtime_boundaries?.mode === 'trusted_self_use' ? <div>
+          <p>{w.nativePermissions}</p>
+          <p>{w.nativeBudget.replace('{count}', item.runtime_boundaries.context_limit).replace('{seconds}', item.runtime_boundaries.deadline_seconds)}</p>
+        </div> : null}
         {item.target?.kind === 'git_change' ? <details><summary>{w.files}</summary>
           <dl><dt>{w.base}</dt><dd><code>{item.target.base_sha}</code></dd>
             <dt>{w.head}</dt><dd><code>{item.target.head_sha}</code></dd></dl>

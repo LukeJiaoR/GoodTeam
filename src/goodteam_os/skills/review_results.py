@@ -471,10 +471,15 @@ class ReviewResultStore:
                       "status": state["status"], "updated_at": state["updated_at"], "retry_available": False,
                       "advisory": True, "judgment_verification": "not_independently_verified", "report_available": False}
             from .codex_local import ADAPTER as LOCAL_ADAPTER
+            from .codex_trusted import ADAPTER as TRUSTED_ADAPTER
 
-            if record["runtime_session"]["adapter_version"] == LOCAL_ADAPTER:
+            if record["runtime_session"]["adapter_version"] in {LOCAL_ADAPTER, TRUSTED_ADAPTER}:
                 # Original parent-owned limits, never current config or model prose.
-                result["runtime_boundaries"] = _decode(record["runtime_session"]["evidence_ref"].encode())
+                if record["runtime_session"]["adapter_version"] == TRUSTED_ADAPTER:
+                    from .codex_trusted import runtime_boundaries
+                    result["runtime_boundaries"] = runtime_boundaries(record["runtime_session"]["evidence_ref"])
+                else:
+                    result["runtime_boundaries"] = _decode(record["runtime_session"]["evidence_ref"].encode())
             for stage in ("materialized", "catalog_presented", "content_delivered"):
                 observed = _read_optional(fd, "observed-" + stage + ".json")
                 if observed is not None:

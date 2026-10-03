@@ -1152,8 +1152,9 @@ class WorkerJobStore:
 
         reject_legacy_task_downgrade(self, job)
         from goodteam_os.skills.codex_local import LocalCodexReviewAdmission
+        from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
 
-        if isinstance(self._codex_review_admission, LocalCodexReviewAdmission):
+        if isinstance(self._codex_review_admission, (LocalCodexReviewAdmission, TrustedCodexReviewAdmission)):
             return self._write_status(job_root, job, "failed", "Local execution requires its captured task protocol.",
                 extra={"error_code": "local_codex_task_capture_required", "invocation_evidence": {
                     "kind": "unavailable", "adapter": str(job["adapter"]), "provider": "none",
