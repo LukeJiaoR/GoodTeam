@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
@@ -2478,7 +2479,22 @@ def build_team_events_payload(workspace: Path, project_key: str) -> dict[str, ob
     }
 
 
+_project_config_paths_in_work_state: ContextVar[dict[tuple[Path, str], Path] | None] = ContextVar(
+    "project_config_paths_in_work_state", default=None,
+)
+
+
 def build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
+    # Reuse only path resolution within this projection. Config contents stay
+    # live, and subsequent requests/mutations perform their own lookup.
+    token = _project_config_paths_in_work_state.set({})
+    try:
+        return _build_project_work_state(workspace, project_key)
+    finally:
+        _project_config_paths_in_work_state.reset(token)
+
+
+def _build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
     from goodteam_os.delivery_outcomes import build_delivery_summary
 
     project_config = _project_config_for_key(workspace, project_key)
@@ -5543,12 +5559,20 @@ def build_project_overview_items(workspace: Path, model_config: Path = Path("mod
 
 def _project_config_for_key(workspace: Path, project_key: str) -> Path:
     key = normalize_project_key(project_key)
+    paths = _project_config_paths_in_work_state.get()
+    cache_key = (workspace, key)
+    if paths is not None and cache_key in paths:
+        return paths[cache_key]
     for config_path in discover_project_configs(workspace):
         target = load_project_target(config_path)
         if normalize_project_key(str(target.get("key", config_path.stem))) == key:
+            if paths is not None:
+                paths[cache_key] = config_path
             return config_path
     fallback = workspace / "projects" / f"{key.lower()}.local.yaml"
     if fallback.is_file():
+        if paths is not None:
+            paths[cache_key] = fallback
         return fallback
     raise ValueError(f"No local project config found for project: {key}")
 

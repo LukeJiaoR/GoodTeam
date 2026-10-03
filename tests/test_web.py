@@ -632,6 +632,45 @@ def test_project_state_exposes_task_assistant_before_first_workflow(tmp_path: Pa
     assert payload["team_workspace"]["manager_timeline"][0]["event"] == "welcome_existing_project"
 
 
+@pytest.mark.parametrize("projection_fails", [False, True])
+def test_project_state_resolves_replaced_config_after_each_request(tmp_path: Path, monkeypatch, projection_fails) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_context_project(tmp_path, project_root, key="TEAM")
+    if projection_fails:
+        def interrupted_projection(**kwargs):
+            raise RuntimeError("interrupted state projection")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(web, "build_team_workspace", interrupted_projection)
+            with pytest.raises(RuntimeError, match="interrupted state projection"):
+                web.build_project_work_state(tmp_path, "TEAM")
+    else:
+        assert web.build_project_work_state(tmp_path, "TEAM")["start_context"]["project_config"] == str(config)
+
+    replacement = config.with_name("replacement.local.yaml")
+    replacement.write_text(config.read_text().replace("Context Project", "Replacement Project"))
+    config.unlink()
+    # A subsequent mutation/helper lookup must also see the current binding.
+    assert web._project_config_for_key(tmp_path, "TEAM") == replacement
+    current = web.build_project_work_state(tmp_path, "TEAM")["start_context"]
+    assert current["project_config"] == str(replacement)
+    assert current["project_name"] == "Replacement Project"
+
+
+def test_project_state_keeps_same_project_keys_bound_to_their_workspace(tmp_path: Path) -> None:
+    for name in ("first", "second", "first"):
+        workspace = tmp_path / name
+        target = workspace / "target"
+        if not workspace.exists():
+            target.mkdir(parents=True)
+            config = _write_context_project(workspace, target, key="TEAM")
+            config.write_text(config.read_text().replace("Context Project", f"Project {name}"))
+        current = web.build_project_work_state(workspace, "TEAM")["start_context"]
+        assert current["project_name"] == f"Project {name}"
+        assert current["project_config"] == str(workspace / "projects/team.local.yaml")
+
+
 def test_task_assistant_message_api_uses_project_bound_service(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / "target"
     project_root.mkdir()
