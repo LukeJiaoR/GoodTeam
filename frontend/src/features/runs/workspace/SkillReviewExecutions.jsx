@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { requestJson } from '../../../lib/api/client';
 import './skillReviewExecutions.css';
 
@@ -191,10 +191,13 @@ function ReviewPanel({ projectKey, runId, language }) {
   const controller = useRef(null);
   const startController = useRef(null);
   useEffect(() => () => { controller.current?.abort(); startController.current?.abort(); }, []);
-  const load = async () => {
+  const load = useCallback(async ({ quiet = false } = {}) => {
+    if (quiet && controller.current) return; // Do not starve a slow GET by aborting it every poll.
     controller.current?.abort();
-    setItems(null); // Also unmount/abort every previously displayed report.
-    setStartAvailable(false);
+    if (!quiet) {
+      setItems(null); // Also unmount/abort every previously displayed report.
+      setStartAvailable(false);
+    }
     setError(false);
     const request = new AbortController();
     controller.current = request;
@@ -210,9 +213,17 @@ function ReviewPanel({ projectKey, runId, language }) {
       setItems(payload.reviews);
       setStartAvailable(payload.start_available === true);
     } catch {
-      if (!request.signal.aborted) setError(true);
+      if (!request.signal.aborted) { setError(true); setItems(null); setStartAvailable(false); }
+    } finally {
+      if (controller.current === request) controller.current = null;
     }
-  };
+  }, [projectKey, runId]);
+  const active = starting || items?.some(item => ['prepared', 'running', 'stopping'].includes(item.status));
+  useEffect(() => {
+    if (!open || !active) return undefined;
+    const timer = setInterval(() => { void load({ quiet: true }); }, 2000);
+    return () => clearInterval(timer);
+  }, [open, active, load]);
   const start = async () => {
     if (starting || !startAvailable) return;
     const request = new AbortController();
@@ -252,6 +263,14 @@ function ReviewPanel({ projectKey, runId, language }) {
       {items?.map((item) => <article key={`${item.job_id}:${item.report_digest || item.status}`} aria-label={item.job_id}>
         <h3>{w[item.status] || w.unavailable}</h3>
         {item.error_code ? <p role="status"><code>{item.error_code}</code></p> : null}
+        {item.process_progress ? <div aria-label={locale === 'zh' ? '实际进程进度' : 'Observed process progress'}>
+          <p role="status">{locale === 'zh' ? '父进程观察到的阶段' : 'Parent-observed phase'}: {item.process_progress.phase}</p>
+          <p>{Math.floor(item.process_progress.elapsed_seconds)}s / {item.process_progress.deadline_seconds}s</p>
+          {item.process_progress.thread_id ? <code>{item.process_progress.thread_id}</code> : null}
+          {item.process_progress.usage ? <p>Tokens: {item.process_progress.usage.input_tokens ?? '?'} / {item.process_progress.usage.output_tokens ?? '?'}</p> : null}
+          {item.process_progress.diagnostic_classes?.length ? <p>{item.process_progress.diagnostic_classes.join(', ')}</p> : null}
+          {item.process_progress.termination_confirmed ? <p>{locale === 'zh' ? '本机进程已停止；上游请求状态未确认。' : 'Local process stopped; upstream request status unconfirmed.'}</p> : null}
+        </div> : null}
         <dl><dt>{w.target}</dt><dd>{item.target?.display_name || item.target?.artifact_key}<code>{item.target?.artifact_version}</code></dd>
           <dt>{w.runtime}</dt><dd>{item.runtime_verification === 'contract_fixture' ? w.fixture : item.runtime_verification === 'local_cli' ? w.native : item.runtime_verification || w.unverified}</dd>
         </dl>

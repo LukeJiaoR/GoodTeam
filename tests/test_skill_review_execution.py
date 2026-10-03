@@ -110,6 +110,21 @@ def test_malformed_zero_exit_through_worker_produces_no_report(ctx, monkeypatch)
     assert response["execution"]["status"] == "invalid"
 
 
+def test_nonstring_event_type_ends_as_invalid_capture_instead_of_sticking_running(ctx, monkeypatch):
+    job, *_ = ready_job(ctx)
+    runtime = ProcessFixture(ctx.root, b'{"type":[]}\n' + channel())
+    monkeypatch.setattr(review_execution, "selected_review_runtime", lambda *_: runtime)
+    result = ctx.workers.run_job(job["id"])
+    assert result["status"] == "failed"
+    assert result["skill_error_code"] == "review_capture_json"
+    detail = ReviewResultStore(ctx.workers, job["id"]).detail()
+    assert detail["status"] == "invalid" and not detail["report_available"]
+    assert detail["process_progress"]["termination_confirmed"] is True
+    assert detail["process_progress"]["error_code"] == "review_capture_json"
+    assert ctx.workers.run_job(job["id"])["status"] == "failed"
+    assert runtime.executions == 1
+
+
 def test_task_http_path_is_readonly_bound_and_survives_reload(ctx, monkeypatch):
     from goodteam_os.web import handle_project_api_get
 
@@ -144,9 +159,22 @@ def test_worker_timeout_is_terminal_not_a_report_or_retry(ctx, monkeypatch):
     result = ctx.workers.run_job(job["id"])
     assert time.monotonic() - start < 3
     assert result["skill_error_code"] == "review_timeout"
+    assert result["skill_runtime_status"] == "contract_fixture"
+    assert ReviewResultStore(ctx.workers, job["id"]).detail()["process_progress"]["termination_confirmed"] is True
     assert not task_review_details(ctx.workers, context)[1]["reviews"][0]["report_available"]
     ctx.workers.run_job(job["id"])
     assert runtime.executions == 1
+
+
+def test_transport_rejection_before_launch_remains_blocked_without_native_progress(ctx, monkeypatch):
+    job, *_ = ready_job(ctx)
+    runtime = ProcessFixture(ctx.root, deadline=900)  # Regular fixture transport has not selected a long bound.
+    monkeypatch.setattr(review_execution, "selected_review_runtime", lambda *_: runtime)
+    result = ctx.workers.run_job(job["id"])
+    assert result["skill_error_code"] == "review_process_invalid"
+    assert result["skill_runtime_status"] == "blocked"
+    detail = ReviewResultStore(ctx.workers, job["id"]).detail()
+    assert "process_progress" not in detail and not detail["report_available"]
 
 
 def test_unterminated_or_missing_result_never_reinvokes_on_worker_restart(ctx, monkeypatch):

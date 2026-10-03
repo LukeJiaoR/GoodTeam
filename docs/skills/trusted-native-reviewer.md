@@ -28,7 +28,7 @@ fields (placeholder paths/model must be replaced by the operator):
   "codex_home": "/absolute/original/native/home",
   "model": "explicit-existing-model",
   "max_contexts": 1,
-  "deadline_seconds": 60,
+  "deadline_seconds": 900,
   "expires_at": 0,
   "trusted_task_inputs": true,
   "accept_native_managed_configuration": true,
@@ -38,7 +38,12 @@ fields (placeholder paths/model must be replaced by the operator):
 }
 ```
 
-Set `expires_at` to a future Unix timestamp within 24 hours. Permission is bound
+Set `expires_at` to a future Unix timestamp within 24 hours.
+Choose a finite `deadline_seconds` from 1 to 3600. The example permits 900 seconds
+for a full review, without promising completion within that time. This is a local task
+deadline, not a provider request or dollar cap. Native managed restrictions still
+apply; the policy cannot relax them. The strict local candidate retains its own
+120-second bound. Permission is bound
 to the exact registered project root, current run, native executable/home and
 requested model. Contexts are consumed durably before execution and are never
 refunded on failure, cancellation or restart. The page uses the actual selected
@@ -68,3 +73,10 @@ create a production policy from this example. A previous trial's spent context
 is not authorization for another call. The isolated HTTP/browser tests use a
 labelled native-shaped subprocess and synthetic login files: their reports are
 model-free product-path evidence, not proof that a real model invocation succeeds.
+
+While a review runs, the open panel polls its registered execution and shows
+parent-observed CLI phase, elapsed time, safe diagnostic categories and any
+native thread/usage events received. Progress is provisional, never a successful
+report or proof of remote retirement. Cancel remains available while Start is
+pending. Timeout/cancel retains progress and confirms only the owned local
+process group stopped; incomplete JSON is never repaired into a report.
