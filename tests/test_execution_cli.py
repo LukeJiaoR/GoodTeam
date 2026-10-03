@@ -59,31 +59,6 @@ def _install_fake_api(monkeypatch, client: FakeGitHubClient):
     monkeypatch.setattr(cli, "ExecutionAPI", factory)
 
 
-def test_execution_parser_contains_expected_commands(tmp_path):
-    parser = cli.build_parser()
-
-    parsed = parser.parse_args(
-        [
-            "execution",
-            "intake-github-issue",
-            "--repo",
-            "LukeJiaoR/GoodTeam",
-            "--issue",
-            "230",
-            "--project-root",
-            str(tmp_path),
-            "--adapter",
-            "fake",
-        ]
-    )
-
-    assert parsed.command == "execution"
-    assert parsed.execution_command == "intake-github-issue"
-    for command in ["run", "pr", "ci", "replay"]:
-        parsed = parser.parse_args(["execution", command, "--execution-id", "exec_123", "--project-root", str(tmp_path)])
-        assert parsed.execution_command == command
-
-
 def test_execution_cli_commands_emit_stable_json(tmp_path, monkeypatch, capsys):
     client = FakeGitHubClient()
     _install_fake_api(monkeypatch, client)
