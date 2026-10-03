@@ -64,7 +64,7 @@ class ContentSession:
             bounded_text(value)
         identifier(self.binary_digest, "sha256:")
         identifier(self.config_digest, "sha256:")
-        if self.verification_kind not in {"contract_fixture", "verified_runtime"}:
+        if self.verification_kind not in {"contract_fixture", "verified_runtime", "local_cli"}:
             raise SkillError("runtime_unverified", "Unknown Runtime verification provenance.")
 
 
@@ -167,6 +167,8 @@ class SkillContextProvider:
         original = snapshot["job_input"]["request"]
         if session.adapter != original["adapter"] or session.model != original["model"]:
             raise SkillError("runtime_identity_changed", "Runtime differs from the original task request.")
+        if session.verification_kind == "local_cli" and (snapshot["methods"]["items"] or snapshot["required_skill_ids"]):
+            raise SkillError("local_codex_skills_unsupported", "Local CLI permission does not establish strict Skill isolation.")
         return asdict(session)
 
     @contextmanager

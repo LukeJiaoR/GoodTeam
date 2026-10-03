@@ -561,7 +561,8 @@ def _workflow_outcomes(
                 "dependencies": dependencies,
                 "unmet_dependencies": unmet,
                 "acceptance_criteria": [_text(item) for item in _list(task.get("acceptance_criteria"))],
-                "attempt_count": len(matching_jobs),
+                "attempt_count": len(_execution_attempts(matching_jobs)),
+                "queued_count": sum(_text(job.get("status")) == "queued" for job in matching_jobs),
                 "current_attempt_id": current_attempt_id,
                 "review_state": _text(review.get("decision")) if review else "",
                 "review_target_type": "review" if review else "",
@@ -630,7 +631,8 @@ def _workflow_actors(
                     if current_attempt
                     else ""
                 ),
-                "attempt_count": len(task_jobs),
+                "attempt_count": len(_execution_attempts(task_jobs)),
+                "queued_count": sum(_text(job.get("status")) == "queued" for job in task_jobs),
                 "current_attempt_id": _text(current_attempt.get("id")) if current_attempt else "",
                 "source": "worker_job" if current_attempt else "task_role",
                 "updated_at": _text(task.get("updated_at")),
@@ -656,7 +658,8 @@ def _workflow_actors(
                 "dependency_task_title": "",
                 "status_reason": _task_status_reason(state, ()),
                 "attempt": _text(current_attempt.get("retry_attempt") or current_attempt.get("attempt")),
-                "attempt_count": len(role_jobs),
+                "attempt_count": len(_execution_attempts(role_jobs)),
+                "queued_count": sum(_text(job.get("status")) == "queued" for job in role_jobs),
                 "current_attempt_id": _text(current_attempt.get("id")),
                 "source": "unbound_worker_job",
                 "updated_at": _updated_at(current_attempt),
@@ -957,6 +960,11 @@ def _is_retry_attempt(job: Mapping[str, object]) -> bool:
         or _text(job.get("retry_of_idempotency_key"))
         or _integer(job.get("attempt")) > 1
     )
+
+
+def _execution_attempts(jobs):
+    """Exclude queued selections from logical Worker attempts, not provider requests."""
+    return [job for job in jobs if _text(job.get("status")) not in {"queued", "ready", "pending"}]
 
 
 def _authoritative_worker_attempt(
@@ -1709,7 +1717,7 @@ def _workflow_attempt_timeline_items(
         for index, job in enumerate(raw_jobs):
             job_id = _text(job.get("id")) or f"anonymous:{index}:{_updated_at(job)}"
             unique.setdefault(job_id, job)
-        jobs = sorted(unique.values(), key=lambda job: (_updated_at(job), _text(job.get("id"))))
+        jobs = sorted(_execution_attempts(unique.values()), key=lambda job: (_updated_at(job), _text(job.get("id"))))
         if len(jobs) < 2:
             continue
         latest = jobs[-1]
@@ -1744,6 +1752,8 @@ def _workflow_attempt_timeline_items(
                 "content": "",
                 "details": {
                     "attempt_count": len(jobs),
+                    "queued_count": sum(_text(job.get("status")) == "queued" for job in unique.values()),
+                    "retry_count": len(jobs) - 1,
                     "attempt_identity": identity,
                     "task_id": label if identity.startswith("task:") else "",
                     "role": _text(latest.get("role")),

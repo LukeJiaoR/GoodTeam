@@ -387,6 +387,39 @@ class ReviewResultStore:
                 self._outcome(fd, record, outcome)
         return {"status": status, "error_code": code}
 
+    def observe_progress(self, observation: dict) -> None:
+        from .review_progress import validate_progress
+        from copy import deepcopy
+
+        observation = deepcopy(validate_progress(observation))
+        operator, snapshot, ref, expected = self._registered(verify_files=False)
+        with self._store(operator) as fd:
+            record, state = _read_optional(fd, "attempt.json"), _read_optional(fd, "state.json")
+            if record is None:
+                raise SkillError("review_attempt_missing", "Process progress needs its registered attempt.")
+            self._check_record(record, snapshot, ref, expected)
+            self._check_state(state, record)
+            self._check_progress_boundary(record, observation)
+            if state["status"] not in {"running", "stopping"}:
+                raise SkillError("review_progress_stopped", "A terminal attempt cannot receive new progress.")
+            _replace(fd, "progress.json", {"schema_version": "goodteam.review-process-progress.v1",
+                "binding_digest": state["binding_digest"], "origin": "parent", "observation": observation})
+
+    @staticmethod
+    def _check_progress_boundary(record, observation):
+        from .codex_local import ADAPTER as LOCAL_ADAPTER
+        from .codex_trusted import ADAPTER as TRUSTED_ADAPTER, runtime_boundaries
+
+        session = record["runtime_session"]
+        if session["adapter_version"] == TRUSTED_ADAPTER:
+            seconds = runtime_boundaries(session["evidence_ref"])["deadline_seconds"]
+        elif session["adapter_version"] == LOCAL_ADAPTER:
+            seconds = _decode(session["evidence_ref"].encode())["deadline_seconds"]
+        else:
+            return  # Model-free authorities can specify their own finite transport bound.
+        if observation["deadline_seconds"] != seconds:
+            raise SkillError("review_progress_invalid", "Process progress differs from its original task deadline.")
+
     def mark_stopping(self) -> None:
         operator, _snapshot, _ref, _expected = self._registered(verify_files=False)
         with self._store(operator) as fd:
@@ -470,6 +503,25 @@ class ReviewResultStore:
                       "stages": {key: "unobserved" for key in OBSERVED_STAGES},
                       "status": state["status"], "updated_at": state["updated_at"], "retry_available": False,
                       "advisory": True, "judgment_verification": "not_independently_verified", "report_available": False}
+            progress = _read_optional(fd, "progress.json")
+            if progress is not None:
+                from .review_progress import validate_progress
+                if (set(progress) != {"schema_version", "binding_digest", "origin", "observation"}
+                        or progress["schema_version"] != "goodteam.review-process-progress.v1"
+                        or progress["origin"] != "parent" or progress["binding_digest"] != state["binding_digest"]):
+                    raise SkillError("review_result_corrupt", "Process progress belongs to a different attempt.")
+                result["process_progress"] = validate_progress(progress["observation"])
+                self._check_progress_boundary(record, result["process_progress"])
+            from .codex_local import ADAPTER as LOCAL_ADAPTER
+            from .codex_trusted import ADAPTER as TRUSTED_ADAPTER
+
+            if record["runtime_session"]["adapter_version"] in {LOCAL_ADAPTER, TRUSTED_ADAPTER}:
+                # Original parent-owned limits, never current config or model prose.
+                if record["runtime_session"]["adapter_version"] == TRUSTED_ADAPTER:
+                    from .codex_trusted import runtime_boundaries
+                    result["runtime_boundaries"] = runtime_boundaries(record["runtime_session"]["evidence_ref"])
+                else:
+                    result["runtime_boundaries"] = _decode(record["runtime_session"]["evidence_ref"].encode())
             for stage in ("materialized", "catalog_presented", "content_delivered"):
                 observed = _read_optional(fd, "observed-" + stage + ".json")
                 if observed is not None:

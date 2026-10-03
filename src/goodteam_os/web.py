@@ -133,7 +133,6 @@ from goodteam_os.workflow_table import (
     workflow_execution_plan_v2,
 )
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, WorkerJobStore, discover_installed_agents
-from goodteam_os.workers import DEFAULT_CODEX_MODEL
 from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
 from goodteam_os.workflow_mutations import (
     WorkflowBusyError, begin_transition, finish_transition, interrupt_transition,
@@ -423,9 +422,41 @@ def _run_queued_reviewer_jobs_for_current_run(
     roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
     for root in roots:
         store = WorkerJobStore(root, **runtime_kwargs)
+        jobs = store.list_jobs()
+        from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
+
+        admission = runtime_kwargs.get("codex_review_admission")
+        if isinstance(admission, TrustedCodexReviewAdmission) and not state.task_skill_context:
+            # Default workflows have no Skill lock. At the explicit guarded Run
+            # action, produce a separate task-bound review using the actual Team
+            # Worker/profile and artifact, leaving other workflow roles intact.
+            from goodteam_os.graph import worker_context
+            from goodteam_os.reviewer_dispatch import dispatch_prepared_reviewer_jobs, reviewer_job_specs_for_gate, reviewer_phase_for_approval
+            from goodteam_os.skills.models import SkillError
+            from goodteam_os.workers import _codex_model_name
+
+            if reviewer_phase_for_approval(current_gate) != "implementation":
+                return 409, {"error": "trusted_codex_task_mismatch", "message": "Native self-use is limited to Code Review."}
+            try:
+                specs = reviewer_job_specs_for_gate(state=state, target=target, approval=current_gate,
+                    artifact_key=artifact_key, artifact_path=artifact_path, context=worker_context(state))
+                if len(specs) == 1 and specs[0].get("adapter") == "codex" and specs[0].get("model"):
+                    # Skill publication preserves the request verbatim. Validate
+                    # and publish the same canonical model, not a prefix alias.
+                    specs[0]["model"] = _codex_model_name(str(specs[0]["model"]))
+                if (len(specs) != 1 or specs[0].get("adapter") != "codex" or not specs[0].get("model")
+                        or specs[0]["model"] != admission.policy["model"]):
+                    return 409, {"error": "trusted_codex_reviewer_selection",
+                                 "message": "Choose one Codex Reviewer profile with the privately authorized model."}
+                review_context = admission.capture_workflow_review(store, workspace=workspace, state=state)
+                jobs = dispatch_prepared_reviewer_jobs(store=store, state=state, specs=specs,
+                                                       code_review_context=review_context)
+            except (SkillError, OSError) as exc:
+                return 409, {"error": exc.code if isinstance(exc, SkillError) else "review_start_unavailable",
+                             "message": "The current task could not start its authorized native review."}
         result = run_queued_reviewer_jobs_for_gate(
             store=store,
-            jobs=store.list_jobs(),
+            jobs=jobs,
             run_id=state.run_id,
             approval=current_gate,
             artifact_key=artifact_key,
@@ -3298,44 +3329,6 @@ def is_active_run(state: AgileDevState | None) -> bool:
     return state is not None and bool(state.next_node) and state.next_node != "rejected"
 
 
-_DASHBOARD_STEPPER_PRESENTATION: dict[str, tuple[dict[str, str], ...]] = {
-    "takeover": (
-        {"label": "Intake", "node": "takeover_review_gate", "approval": "takeover"},
-        {"label": "Research", "node": "research", "artifact": "research_report"},
-    ),
-    "product_requirement": ({"label": "PRD", "node": "product_requirement", "artifact": "prd", "approval": "prd"},),
-    "prd": (),
-    "architect": ({"label": "RFC", "node": "architect", "artifact": "rfc"},),
-    "rfc": ({"label": "Arch Rev", "node": "rfc_review_gate", "approval": "rfc"},),
-    "security": (
-        {"label": "Security", "node": "security_review_gate", "approval": "security", "artifact": "rfc"},
-    ),
-    "planner": (
-        {"label": "Planning", "node": "planner", "artifact": "task_breakdown"},
-        {"label": "UI Design", "node": "ui", "artifact": "ui_spec"},
-        {"label": "Impl", "node": "implementation", "artifact": "implementation_handoff"},
-        {"label": "QA", "node": "qa", "artifact": "qa_report"},
-        {"label": "Code Review", "node": "code_review", "artifact": "code_review"},
-        {"label": "Staging", "node": "staging", "approval": "staging", "artifact": "staging_report"},
-    ),
-    "staging": (),
-    "release": ({"label": "Release", "node": "release", "approval": "release", "artifact": "release_notes"},),
-    "retro_memory": ({"label": "Retro", "node": "retro_memory", "artifact": "retro_memory"},),
-}
-
-
-def _dashboard_stepper_table_order() -> list[str]:
-    return ["takeover", *workflow_execution_plan(WORKFLOW_NODES, gate_transitions=GATE_TRANSITIONS).order]
-
-
-def _dashboard_stepper_steps() -> list[dict[str, str]]:
-    steps: list[dict[str, str]] = []
-    for identifier in _dashboard_stepper_table_order():
-        for step in _DASHBOARD_STEPPER_PRESENTATION.get(identifier, ()):
-            steps.append(dict(step))
-    return steps
-
-
 def _latest_archived_run_summary(workspace: Path, project_key: str) -> dict[str, str]:
     key = normalize_project_key(project_key)
     archive_dir = StateStore(workspace).project_state_dir(key) / "archived"
@@ -3500,25 +3493,6 @@ def build_project_run_detail(
             workspace, state=state, jobs=worker_jobs, historical_reason=str(summary.get("reason", "")),
         ),
     }
-
-
-def _dashboard_stepper_node_sequence(steps: list[dict[str, str]]) -> dict[str, int]:
-    sequence: dict[str, int] = {}
-    for index, step in enumerate(steps, start=1):
-        sequence[step["node"]] = index
-        approval = step.get("approval")
-        if approval:
-            sequence[f"await_{approval}_approval"] = index
-    for gate, transition in GATE_TRANSITIONS.items():
-        await_state = f"await_{gate}_approval"
-        if await_state in sequence:
-            continue
-        if gate in sequence:
-            sequence[await_state] = sequence[gate]
-        elif transition.on_approved_next in sequence:
-            sequence[await_state] = sequence[transition.on_approved_next]
-    sequence["complete"] = len(steps) + 1
-    return sequence
 
 
 def _normalize_start_delivery_standards(value: list[str] | str) -> list[str]:
@@ -4829,18 +4803,6 @@ def refresh_state_role_models(state: AgileDevState, project_config: Path | None)
     return role_models
 
 
-def worker_model_label(state: AgileDevState | None, start_context: dict[str, object] | None = None) -> str:
-    if state is not None:
-        model = str(dict(state.role_models.get("implementation", {})).get("primary", "")).strip()
-        if model:
-            return model.removeprefix("codex:")
-    overrides = dict((start_context or {}).get("role_model_overrides", {}) or {})
-    model = str(overrides.get("implementation", "") or overrides.get("frontend", "") or overrides.get("backend", "") or "").strip()
-    if model:
-        return model.removeprefix("codex:")
-    return DEFAULT_CODEX_MODEL
-
-
 def terminate_project_run(
     *, workspace: Path, project_key: str, expected_run_id: str | None = None,
 ) -> dict[str, object]:
@@ -5028,18 +4990,6 @@ def build_workflow_steps(state: AgileDevState | None) -> list[dict[str, str]]:
     return steps
 
 
-def read_artifact_preview(path: str, max_chars: int = ARTIFACT_PREVIEW_MAX_CHARS) -> str:
-    if not path:
-        return ""
-    artifact_path = Path(path)
-    if not artifact_path.is_file():
-        return ""
-    content = artifact_path.read_text(encoding="utf-8")
-    if len(content) <= max_chars:
-        return content
-    return content[:max_chars] + "\n\n[Preview truncated]"
-
-
 def _review_artifact_snapshot(path: str, max_chars: int = ARTIFACT_PREVIEW_MAX_CHARS) -> tuple[str, str, bool]:
     artifact = Path(path).expanduser() if path else None
     if artifact is None or not artifact.is_file():
@@ -5052,79 +5002,6 @@ def _review_artifact_snapshot(path: str, max_chars: int = ARTIFACT_PREVIEW_MAX_C
     truncated = len(content) > max_chars
     preview = content[:max_chars] + "\n\n[Preview truncated]" if truncated else content
     return preview, f"sha256:{hashlib.sha256(raw_content).hexdigest()}", truncated
-
-
-def _slug_heading(value: str) -> str:
-    slug = "".join(char.lower() if char.isalnum() else "-" for char in value.strip())
-    return "-".join(part for part in slug.split("-") if part) or "section"
-
-
-def _render_inline_markdown(value: str) -> str:
-    text = escape(value)
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
-    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
-    text = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", text)
-    return text
-
-
-def render_markdown_preview(markdown: str) -> str:
-    lines = markdown.splitlines()
-    blocks: list[str] = []
-    paragraph: list[str] = []
-    list_items: list[str] = []
-    code_lines: list[str] = []
-    in_code = False
-
-    def flush_paragraph() -> None:
-        if paragraph:
-            blocks.append(f"<p>{_render_inline_markdown(' '.join(paragraph))}</p>")
-            paragraph.clear()
-
-    def flush_list() -> None:
-        if list_items:
-            blocks.append("<ul>" + "".join(f"<li>{item}</li>" for item in list_items) + "</ul>")
-            list_items.clear()
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            flush_paragraph()
-            flush_list()
-            if in_code:
-                blocks.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
-                code_lines.clear()
-                in_code = False
-            else:
-                in_code = True
-            continue
-        if in_code:
-            code_lines.append(line)
-            continue
-        if not stripped:
-            flush_paragraph()
-            flush_list()
-            continue
-        heading = re.match(r"^(#{1,3})\s+(.+)$", stripped)
-        if heading:
-            flush_paragraph()
-            flush_list()
-            level = len(heading.group(1))
-            title = heading.group(2).strip()
-            blocks.append(f'<h{level} id="{_slug_heading(title)}">{_render_inline_markdown(title)}</h{level}>')
-            continue
-        list_item = re.match(r"^[-*]\s+(.+)$", stripped)
-        if list_item:
-            flush_paragraph()
-            list_items.append(_render_inline_markdown(list_item.group(1)))
-            continue
-        flush_list()
-        paragraph.append(stripped)
-
-    if in_code:
-        blocks.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
-    flush_paragraph()
-    flush_list()
-    return "\n".join(blocks)
 
 
 def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key: str = "") -> tuple[AgileDevState, Path]:
@@ -5168,19 +5045,6 @@ def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key
     if not path.is_file():
         raise ValueError(f"Artifact file does not exist: {artifact_key}")
     return state, path
-
-
-def render_file_path(path: str, artifact_key: str = "") -> str:
-    if not path or not path.strip():
-        return '<span class="empty-path">none</span>'
-    p = Path(path)
-    art_attr = f' data-artifact="{escape(artifact_key)}"' if artifact_key else ''
-    return f"""
-    <span class="file-path-chip" data-path="{escape(path)}"{art_attr}>
-      <code>{escape(p.name)}</code>
-      <span class="file-path-tooltip">{escape(path)}</span>
-    </span>
-    """
 
 
 def build_resource_items(state: AgileDevState | None) -> list[dict[str, object]]:
@@ -5899,10 +5763,12 @@ def build_project_list(workspace: Path) -> dict[str, object]:
 def handle_project_api_get(
     workspace: Path,
     path: str,
+    *, codex_review_admission: "CodexReviewAdmission | None" = None,
 ) -> tuple[int, dict[str, object]] | None:
     from goodteam_os.skills.review_api import handle_review_get
 
-    review_response = handle_review_get(workspace, path)
+    from goodteam_os.skills.codex_runtime import review_worker_kwargs
+    review_response = handle_review_get(workspace, path, **review_worker_kwargs(codex_review_admission))
     if review_response is not None:
         return review_response
     if path == "/api/skills":
@@ -6806,7 +6672,7 @@ def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexRe
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             try:
-                response = handle_project_api_get(workspace, urlparse(self.path).path)
+                response = handle_project_api_get(workspace, urlparse(self.path).path, **runtime_kwargs)
                 if response is None:
                     self.send_error(404)
                     return
@@ -7375,388 +7241,6 @@ def normalize_delivery_mode(value: str) -> str:
     return mode
 
 
-def render_delivery_mode_options(selected_delivery_mode: str) -> str:
-    labels = {
-        "mvp": "MVP / validation slice",
-        "init_project": "Init project / production starter",
-        "multi_service": "Multi-service product",
-        "static_site": "Static site / landing",
-        "cli_tool": "CLI tool",
-        "library": "Library / SDK",
-        "data_pipeline": "Data pipeline",
-        "mobile_app": "Mobile app",
-        "feature_increment": "Feature increment",
-        "custom": "Custom",
-    }
-    selected = normalize_delivery_mode(selected_delivery_mode)
-    return "\n".join(
-        f'<option value="{mode}"{" selected" if mode == selected else ""}>{escape(labels.get(mode, mode))}</option>'
-        for mode in DELIVERY_MODES
-    )
-
-
-def render_review_roles(review_roles: list[str]) -> str:
-    if not review_roles:
-        return ""
-    items = "".join(f"<li>{escape(role)}</li>" for role in review_roles)
-    return f'<div class="review-roles"><span>Review roles</span><ul>{items}</ul></div>'
-
-
-def render_reviewer_provenance(provenance: object) -> str:
-    if not isinstance(provenance, dict):
-        return ""
-    reviewer = provenance.get("reviewer", {})
-    badge = provenance.get("badge", {})
-    invocation = provenance.get("invocation", {})
-    evidence = provenance.get("evidence_handles", {})
-    reviewer = reviewer if isinstance(reviewer, dict) else {}
-    badge = badge if isinstance(badge, dict) else {}
-    invocation = invocation if isinstance(invocation, dict) else {}
-    evidence = evidence if isinstance(evidence, dict) else {}
-    badge_kind = str(badge.get("kind", "missing") or "missing")
-    focus = reviewer.get("focus_areas", [])
-    handles = _reviewer_evidence_handle_labels(evidence)
-    return f"""
-      <div class="reviewer-provenance">
-        <div class="reviewer-provenance-top">
-          <span class="provenance-badge provenance-{escape(badge_kind)}">{escape(str(badge.get("label", "missing evidence")))}</span>
-          <span>{escape(str(reviewer.get("label", "") or reviewer.get("profile_id", "") or "Reviewer provenance"))}</span>
-        </div>
-        <dl class="role-meta provenance-meta">
-          <dt>Provider</dt><dd>{escape(str(badge.get("provider", "unknown")))}</dd>
-          <dt>Adapter</dt><dd>{escape(str(badge.get("adapter", "unknown")))}</dd>
-          <dt>Status</dt><dd>{escape(str(invocation.get("status", "missing")))}</dd>
-          <dt>Advisory</dt><dd>{escape(str(provenance.get("operator_message", "")))}</dd>
-        </dl>
-        {render_inline_list("Focus", list(focus) if isinstance(focus, list) else [])}
-        {render_inline_list("Evidence handles", handles, code=True)}
-      </div>
-    """
-
-
-def render_review_evidence_policy(policy: object) -> str:
-    if not isinstance(policy, dict):
-        return ""
-    evidence = policy.get("evidence", {})
-    evidence = evidence if isinstance(evidence, dict) else {}
-    severity = str(policy.get("severity", "warning") or "warning").lower()
-    state = str(policy.get("state", "missing_evidence") or "missing_evidence")
-    rationale = str(policy.get("rationale", "") or "")
-    badge_kind = str(evidence.get("badge_kind", "missing") or "missing")
-    adapter = str(evidence.get("adapter", "unknown") or "unknown")
-    provider = str(evidence.get("provider", "unknown") or "unknown")
-    invocation_status = str(evidence.get("invocation_status", "missing") or "missing")
-    external = str(evidence.get("external_invocation", False))
-    command = str(evidence.get("command_available", None))
-    return f"""
-      <div class="review-evidence-policy">
-        <div class="review-evidence-policy-top">
-          <span class="policy-badge policy-{escape(severity)}">{escape(severity.upper())}</span>
-          <span>{escape(state)}</span>
-        </div>
-        <p>{escape(rationale)}</p>
-        <dl class="role-meta provenance-meta">
-          <dt>Evidence</dt><dd>{escape(badge_kind)}</dd>
-          <dt>Adapter</dt><dd>{escape(adapter)}</dd>
-          <dt>Provider</dt><dd>{escape(provider)}</dd>
-          <dt>Invocation</dt><dd>{escape(invocation_status)}</dd>
-          <dt>External</dt><dd>{escape(external)}</dd>
-          <dt>Command</dt><dd>{escape(command)}</dd>
-          <dt>Authority</dt><dd>Human operator decides. This policy does not automatically approve or reject.</dd>
-        </dl>
-      </div>
-    """
-
-
-def render_reviewer_dispatch_diagnostics(diagnostics: object) -> str:
-    if not isinstance(diagnostics, Mapping):
-        return ""
-    warnings = [str(item) for item in diagnostics.get("warnings", []) if str(item)]
-    errors = [str(item) for item in diagnostics.get("errors", []) if str(item)]
-    phases = diagnostics.get("phases", {})
-    phases = phases if isinstance(phases, Mapping) else {}
-    queued = diagnostics.get("queued_reviewer_jobs", {})
-    queued = queued if isinstance(queued, Mapping) else {}
-    failed = diagnostics.get("failed_reviewer_jobs", {})
-    failed = failed if isinstance(failed, Mapping) else {}
-    badge_kind = "error" if errors else "warning" if warnings else "ok"
-    phase_rows = "\n".join(
-        _render_reviewer_dispatch_phase(phase, data)
-        for phase, data in phases.items()
-        if isinstance(data, Mapping)
-    )
-    if not phase_rows:
-        phase_rows = '<div class="empty-state">No reviewer dispatch phases configured.</div>'
-    job_labels = [
-        f"total: {queued.get('total', 0)}",
-        *_count_labels(queued.get("by_gate", {}), prefix="gate"),
-        *_count_labels(queued.get("by_profile", {}), prefix="profile"),
-    ]
-    failed_job_labels = [
-        f"total: {failed.get('total', 0)}",
-        *_count_labels(failed.get("by_gate", {}), prefix="gate"),
-        *_count_labels(failed.get("by_profile", {}), prefix="profile"),
-    ]
-    return f"""
-      <section class="card reviewer-dispatch-diagnostics">
-        <div class="review-evidence-policy-top">
-          <span>Reviewer dispatch diagnostics</span>
-          <span class="policy-badge policy-{escape(badge_kind)}">{escape(badge_kind.upper())}</span>
-        </div>
-        <dl class="role-meta provenance-meta">
-          <dt>Mode</dt><dd>{escape(str(diagnostics.get("mode", "single") or "single"))}</dd>
-          <dt>Parallel requested</dt><dd>{escape(str(diagnostics.get("parallel_requested", False)))}</dd>
-          <dt>Parallel enabled</dt><dd>{escape(str(diagnostics.get("parallel_enabled", False)))}</dd>
-          <dt>Advisory</dt><dd>{escape(str(diagnostics.get("advisory_only", True)))}</dd>
-          <dt>Authority</dt><dd>{escape(str(diagnostics.get("operator_message", "")))}</dd>
-        </dl>
-        {render_inline_list("Warnings", warnings)}
-        {render_inline_list("Errors", errors)}
-        {render_inline_list("Queued reviewer jobs", job_labels, code=True)}
-        {render_inline_list("Failed reviewer jobs", failed_job_labels, code=True)}
-        <div class="multi-reviewer-cards">
-          {phase_rows}
-        </div>
-      </section>
-    """
-
-
-def _render_reviewer_dispatch_phase(phase: object, data: Mapping[str, object]) -> str:
-    profiles = data.get("configured_profiles", [])
-    profile_labels = [str(profile) for profile in profiles] if isinstance(profiles, list) else []
-    return f"""
-      <article class="multi-reviewer-card">
-        <div class="reviewer-provenance-top">
-          <span>{escape(str(phase).upper())}</span>
-          <span>{escape(str(data.get("dispatch_mode", "") or "default"))}</span>
-        </div>
-        <dl class="role-meta provenance-meta">
-          <dt>Dispatch mode</dt><dd>{escape(str(data.get("dispatch_mode", "") or "default single"))}</dd>
-          <dt>Profile count</dt><dd>{escape(str(data.get("profile_count", 0)))}</dd>
-        </dl>
-        {render_inline_list("Configured profiles", profile_labels, code=True)}
-      </article>
-    """
-
-
-def _count_labels(value: object, *, prefix: str) -> list[str]:
-    if not isinstance(value, Mapping):
-        return []
-    return [f"{prefix} {key}: {count}" for key, count in sorted(value.items())]
-
-
-def render_multi_reviewer_projection(projection: Mapping[str, object] | None) -> str:
-    if not isinstance(projection, Mapping):
-        return ""
-    aggregate = projection.get("aggregate_policy", {})
-    aggregate = aggregate if isinstance(aggregate, Mapping) else {}
-    state_counts = aggregate.get("state_counts", {})
-    state_counts = state_counts if isinstance(state_counts, Mapping) else {}
-    reviewers = projection.get("reviewers", [])
-    reviewer_items = reviewers if isinstance(reviewers, list) else []
-    severity = str(aggregate.get("severity", "ok") or "ok").lower()
-    operator_message = str(projection.get("operator_message", "") or "")
-    state_count_labels = [f"{state}: {count}" for state, count in state_counts.items()]
-    reviewer_cards = "\n".join(
-        _render_multi_reviewer_card(reviewer)
-        for reviewer in reviewer_items
-        if isinstance(reviewer, Mapping)
-    )
-    if not reviewer_cards:
-        reviewer_cards = '<div class="empty-state">No reviewer evidence available.</div>'
-    return f"""
-      <div class="multi-reviewer-projection">
-        <div class="review-evidence-policy-top">
-          <span>Multi-reviewer evidence</span>
-          <span class="policy-badge policy-{escape(severity)}">{escape(severity.upper())}</span>
-        </div>
-        <dl class="role-meta provenance-meta">
-          <dt>Aggregate severity</dt><dd>{escape(severity.upper())}</dd>
-          <dt>Authority</dt><dd>Reviewer evidence remains advisory. Human operator decides.</dd>
-          <dt>Override</dt><dd>{escape(str(aggregate.get("can_human_override", True)))}</dd>
-          <dt>Advisory</dt><dd>{escape(str(aggregate.get("advisory_only", True)))}</dd>
-        </dl>
-        {render_inline_list("State counts", state_count_labels)}
-        {f'<p>{escape(operator_message)}</p>' if operator_message else ''}
-        <div class="multi-reviewer-cards">
-          {reviewer_cards}
-        </div>
-      </div>
-    """
-
-
-def _render_multi_reviewer_card(reviewer: Mapping[str, object]) -> str:
-    policy = reviewer.get("policy", {})
-    provenance = reviewer.get("provenance", {})
-    status = reviewer.get("status", {})
-    evidence = reviewer.get("evidence_handles", {})
-    policy = policy if isinstance(policy, Mapping) else {}
-    provenance = provenance if isinstance(provenance, Mapping) else {}
-    status = status if isinstance(status, Mapping) else {}
-    evidence = evidence if isinstance(evidence, Mapping) else {}
-    badge = provenance.get("badge", {})
-    invocation = provenance.get("invocation", {})
-    badge = badge if isinstance(badge, Mapping) else {}
-    invocation = invocation if isinstance(invocation, Mapping) else {}
-    evidence_payload = policy.get("evidence", {})
-    evidence_payload = evidence_payload if isinstance(evidence_payload, Mapping) else {}
-    previous_failures = reviewer.get("previous_failures", [])
-    previous_failure_items = previous_failures if isinstance(previous_failures, list) else []
-    severity = str(policy.get("severity", "warning") or "warning").lower()
-    state = str(policy.get("state", "missing_evidence") or "missing_evidence")
-    profile_id = str(reviewer.get("profile_id", "") or "")
-    profile_label = str(reviewer.get("profile_label", "") or profile_id or "Reviewer")
-    badge_kind = str(badge.get("kind", evidence_payload.get("badge_kind", "missing")) or "missing")
-    badge_label = _multi_reviewer_evidence_label(badge_kind)
-    handles = _reviewer_evidence_handle_labels(dict(evidence))
-    previous_failure_labels = [
-        _previous_failure_label(item)
-        for item in previous_failure_items
-        if isinstance(item, Mapping)
-    ]
-    return f"""
-      <article class="multi-reviewer-card">
-        <div class="reviewer-provenance-top">
-          <span class="policy-badge policy-{escape(severity)}">{escape(severity.upper())}</span>
-          <span>{escape(profile_label)}</span>
-        </div>
-        <dl class="role-meta provenance-meta">
-          <dt>profile_id</dt><dd>{escape(profile_id or "unmatched")}</dd>
-          <dt>Order</dt><dd>{escape(str(reviewer.get("order", "")))}</dd>
-          <dt>Match</dt><dd>{escape(str(reviewer.get("match_kind", "missing") or "missing"))}</dd>
-          <dt>Policy state</dt><dd>{escape(state)}</dd>
-          <dt>Policy severity</dt><dd>{escape(severity)}</dd>
-          <dt>Evidence</dt><dd>{escape(badge_label)}</dd>
-          <dt>Badge kind</dt><dd>{escape(badge_kind)}</dd>
-          <dt>Adapter</dt><dd>{escape(str(badge.get("adapter", evidence_payload.get("adapter", status.get("adapter", "unknown"))) or "unknown"))}</dd>
-          <dt>Provider</dt><dd>{escape(str(badge.get("provider", evidence_payload.get("provider", "unknown")) or "unknown"))}</dd>
-          <dt>Invocation</dt><dd>{escape(str(invocation.get("status", evidence_payload.get("invocation_status", status.get("status", "missing"))) or "missing"))}</dd>
-        </dl>
-        {render_inline_list("Evidence handles", handles, code=True)}
-        {render_inline_list("Previous failures", previous_failure_labels, code=True)}
-      </article>
-    """
-
-
-def _multi_reviewer_evidence_label(kind: str) -> str:
-    labels = {
-        "missing": "Missing evidence",
-        "fallback": "Fallback evidence",
-        "failed": "Failed invocation",
-        "provider": "Provider-backed evidence",
-        "builtin": "Non-provider evidence",
-        "manual": "Non-provider evidence",
-    }
-    return labels.get(str(kind).lower(), str(kind) or "Missing evidence")
-
-
-def _reviewer_evidence_handle_labels(evidence: dict[object, object]) -> list[str]:
-    labels = [
-        f"{key}: {value}"
-        for key, value in (
-            ("result", evidence.get("result_path", "")),
-            ("stdout", evidence.get("stdout_path", "")),
-            ("stderr", evidence.get("stderr_path", "")),
-        )
-        if str(value).strip()
-    ]
-    changed_files = evidence.get("changed_files", [])
-    if isinstance(changed_files, list):
-        labels.extend(f"changed: {path}" for path in changed_files if str(path).strip())
-    return labels
-
-
-def _previous_failure_label(failure: Mapping[str, object]) -> str:
-    job_id = str(failure.get("job_id", "") or "unknown")
-    summary = str(failure.get("summary", "") or "").strip()
-    retry_attempt = str(failure.get("retry_attempt", "") or "").strip()
-    updated_at = str(failure.get("updated_at", "") or "").strip()
-    parts = [job_id]
-    if retry_attempt:
-        parts.append(f"attempt {retry_attempt}")
-    if updated_at:
-        parts.append(updated_at)
-    if summary:
-        parts.append(summary)
-    return " | ".join(parts)
-
-
-def render_failed_reviewer_jobs(jobs: object) -> str:
-    job_items = jobs if isinstance(jobs, list) else []
-    labels = [
-        _failed_reviewer_job_label(job)
-        for job in job_items
-        if isinstance(job, Mapping)
-    ]
-    return render_inline_list("Failed reviewer jobs", labels, code=True)
-
-
-def _failed_reviewer_job_label(job: Mapping[str, object]) -> str:
-    parts = [
-        f"profile: {job.get('profile_id', '')}",
-        f"gate: {_job_display_value(job, 'gate') or _job_display_value(job, 'approval')}",
-        f"version: {job.get('artifact_version', '')}",
-        f"job: {job.get('id', '') or job.get('job_id', '')}",
-    ]
-    summary = str(job.get("summary", "") or "").strip()
-    result_path = str(job.get("result_path", "") or "").strip()
-    original_job = str(job.get("original_failed_job_id", "") or "").strip()
-    retry_attempt = str(job.get("retry_attempt", "") or job.get("attempt", "") or "").strip()
-    if retry_attempt:
-        parts.append(f"attempt: {retry_attempt}")
-    if original_job:
-        parts.append(f"original: {original_job}")
-    if summary:
-        parts.append(f"error: {summary}")
-    if result_path:
-        parts.append(f"result: {result_path}")
-    return " | ".join(str(part) for part in parts if str(part).strip())
-
-
-def _job_display_value(job: Mapping[str, object], key: str) -> str:
-    return str(job.get(key, "") or "").strip()
-
-
-def render_task_cards(tasks: list[dict[str, object]]) -> str:
-    if not tasks:
-        return '<div class="empty-state">No tasks in this lane.</div>'
-    return "\n".join(
-        f"""
-        <article class="task-card task-{escape(str(task.get("priority", "")))}">
-          <div class="role-topline">
-            <h4>{escape(str(task.get("id", "")))} {escape(str(task.get("title", "")))}</h4>
-            <span class="role-status">{escape(str(task.get("priority", "")))}</span>
-          </div>
-          <p>{escape(str(task.get("description", "")))}</p>
-          <dl class="role-meta">
-            <dt>Role</dt><dd>{escape(str(task.get("role", "")))}</dd>
-            <dt>Status</dt><dd>{escape(str(task.get("status", "")))}</dd>
-          </dl>
-          {render_inline_list("Acceptance", list(task.get("acceptance_criteria", [])))}
-          {render_inline_list("Artifacts", list(task.get("artifact_refs", [])), code=True)}
-        </article>
-        """
-        for task in tasks
-    )
-
-
-def render_inline_list(label: str, values: list[object], *, code: bool = False) -> str:
-    clean = [str(value) for value in values if str(value).strip()]
-    if not clean:
-        return ""
-    items = "".join(
-        f"<li>{f'<code>{escape(value)}</code>' if code else escape(value)}</li>"
-        for value in clean
-    )
-    return f'<div class="task-list"><span>{escape(label)}</span><ul>{items}</ul></div>'
-
-
-def build_worker_job_items(project_root: Path | None) -> list[dict[str, str]]:
-    if project_root is None:
-        return []
-    return _serialize_worker_job_items(WorkerJobStore(project_root).list_jobs())
-
-
 def _serialize_worker_job_items(worker_jobs: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
     from goodteam_os.skills.worker_requests import public_skill_job_fields
 
@@ -7938,126 +7422,6 @@ def build_memory_event_detail(project_root: Path | None, event_id: str) -> dict[
     }
 
 
-PROJECT_OVERVIEW_CSS = """:root {
-  color-scheme: light;
-  --bg: #f7f7f7;
-  --panel-2: #f1f1f1;
-  --ink: #17211d;
-  --muted: #777;
-  --line: #e5e5e5;
-  --accent: #3d8b00;
-  --accent-soft: #e8f9d9;
-  --error: #ff4b4b;
-  --error-dark: #b03030;
-  --error-bg: #ffe0e0;
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  min-height: 100vh;
-  background: var(--bg);
-  color: var(--ink);
-  font: 13px/1.5 "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-.top-bar {
-  height: 64px;
-  padding: 0 28px;
-  display: flex;
-  align-items: center;
-  background: #fff;
-  border-bottom: 1px solid var(--line);
-}
-.logo { display: flex; align-items: center; }
-.logo-box {
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  border-radius: 9px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 18px;
-  font-weight: 900;
-}
-.logo-text { margin-left: 9px; font-size: 17px; font-weight: 900; }
-main { width: min(920px, calc(100% - 32px)); margin: 48px auto; }
-.button {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 8px 14px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: #fff;
-  color: var(--ink);
-  font-weight: 800;
-  text-decoration: none;
-}
-.button.primary { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.button:hover { filter: brightness(0.97); }
-.empty-state {
-  padding: 24px;
-  border: 2px dashed var(--line);
-  border-radius: 12px;
-  background: var(--panel-2);
-  color: var(--muted);
-  text-align: center;
-  font-weight: 700;
-}
-@media (max-width: 780px) {
-  .top-bar { padding: 0 16px; }
-  main { margin-top: 28px; }
-}"""
-
-def render_unknown_project_error(project_key: str, message: str) -> str:
-    safe_project_key = escape(project_key.strip() or "unknown")
-    safe_message = escape(message)
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GoodTeam Projects · Project not found</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
-  <style>
-{PROJECT_OVERVIEW_CSS}
-  </style>
-</head>
-<body>
-  <div class="top-bar">
-    <div class="logo">
-      <div class="logo-box">G</div>
-      <span class="logo-text">GoodTeam</span>
-      <span style="color: var(--line); margin: 0 8px;">|</span>
-      <span style="font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Projects Control Room</span>
-    </div>
-  </div>
-  <main>
-    <div class="alert" style="background: var(--error-bg); border-color: var(--error); box-shadow: 0 2px 0 var(--error-dark); margin-bottom: 20px; display: flex; gap: 16px; border: 2px solid var(--error); border-radius: 16px; padding: 18px 22px;">
-      <div class="alert-body" style="flex: 1;">
-        <div class="alert-title" style="color: var(--error-dark); font-weight: 900; font-size: 16px; margin-bottom: 4px;">Project not found</div>
-        <div class="alert-desc" style="font-size: 13px; color: var(--ink); font-weight: 600; margin-bottom: 12px;">
-          GoodTeam could not find a local project config for <strong>{safe_project_key}</strong>.
-          {safe_message}
-        </div>
-        <div class="alert-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
-          <a class="button primary" href="/">Back to GoodTeam Projects</a>
-          <a class="button" href="/?project=">Open project overview</a>
-        </div>
-      </div>
-    </div>
-    <section class="projects">
-      <div class="empty-state">
-        Check the project key in the URL, or create a project config from the overview screen.
-      </div>
-    </section>
-  </main>
-</body>
-</html>"""
-
-
 def render_frontend_assets_diagnostic(workspace: Path, error: FrontendAssetsNotFound) -> str:
     return f"""<!doctype html>
 <html lang="en">
@@ -8131,7 +7495,7 @@ def serve(
                 self._send_json(status, payload)
                 return
             try:
-                project_response = handle_project_api_get(workspace, parsed.path)
+                project_response = handle_project_api_get(workspace, parsed.path, **runtime_kwargs)
             except Exception as exc:
                 self._send_api_error(exc)
                 return

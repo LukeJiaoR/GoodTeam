@@ -39,6 +39,7 @@ function timelineCopy(item, t) {
       decision: details.decision ? statusText(details.decision, t) : '',
       gate: details.gate ? reviewGateName(details.gate, t) : '',
       attemptCount: details.attempt_count || 0,
+      retryCount: details.retry_count ?? Math.max(0, (details.attempt_count || 0) - 1),
       taskCount: details.task_count || 0,
     },
   );

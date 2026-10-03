@@ -341,6 +341,7 @@ def test_planned_task_without_worker_attempt_projects_once_as_waiting() -> None:
             "status_reason": "waiting_for_dependencies",
             "attempt": "",
             "attempt_count": 0,
+            "queued_count": 0,
             "current_attempt_id": "",
             "source": "task_role",
             "updated_at": "2026-08-30T10:00:00Z",
@@ -957,8 +958,33 @@ def test_retry_history_compresses_replayed_attempts_and_preserves_provenance() -
     retry_items = [item for item in projection["manager_timeline"] if item["event"] == "work_retry_converged"]
     assert len(retry_items) == 1
     assert retry_items[0]["details"]["attempt_count"] == 2
+    assert retry_items[0]["details"]["retry_count"] == 1
     assert retry_items[0]["refs"] == ["job-blocked", "job-completed"]
     assert projection["manager_timeline"][-1]["event"] == "mission_completed"
+
+
+def test_queued_selection_and_one_failed_review_are_one_attempt_without_a_retry():
+    task = _workflow_task("DEMO-1", "Native review", "reviewer")
+    jobs = [_workflow_job("legacy-selection", "queued", "2026-08-30T10:01:00Z", role="reviewer"),
+            _workflow_job("native-attempt", "failed", "2026-08-30T10:02:00Z", role="reviewer")]
+    projection = _workflow_identity_projection([task], jobs)
+    assert projection["outcome_tasks"][0]["attempt_count"] == 1
+    assert projection["outcome_tasks"][0]["queued_count"] == 1
+    assert projection["execution_actors"][0]["attempt_count"] == 1
+    assert not any(item["event"].startswith("work_retry") for item in projection["manager_timeline"])
+
+
+def test_real_retry_count_excludes_queued_rows_and_preserves_attempt_ids():
+    task = _workflow_task("DEMO-1", "Native review", "implementation")
+    jobs = [_workflow_job("legacy-selection", "queued", "2026-08-30T10:01:00Z", role="implementation"),
+            _workflow_job("first", "failed", "2026-08-30T10:02:00Z", role="implementation"),
+            _workflow_job("second", "failed", "2026-08-30T10:03:00Z", role="implementation")]
+    projection = _workflow_identity_projection([task], jobs)
+    retry = next(item for item in projection["manager_timeline"] if item["event"] == "work_retry_blocked")
+    assert retry["details"]["attempt_count"] == 2
+    assert retry["details"]["retry_count"] == 1
+    assert retry["details"]["queued_count"] == 1
+    assert retry["refs"] == ["first", "second"]
 
 
 def test_review_blocker_fix_and_revised_review_form_one_semantic_update() -> None:

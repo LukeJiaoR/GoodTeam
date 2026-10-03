@@ -1039,7 +1039,7 @@ export const en = {
   'work.manager.events.deliverable_ready': '{{artifact}} is ready.',
   'work.manager.events.work_retried': 'I sent the blocked work through a focused retry.',
   'work.manager.events.work_retry_converged': 'The work needed {{attemptCount}} attempts and then completed.',
-  'work.manager.events.work_retry_blocked': 'The work was retried {{attemptCount}} times and remains blocked.',
+  'work.manager.events.work_retry_blocked': 'The work was retried {{retryCount}} times and remains blocked.',
   'work.manager.events.work_retry_in_progress': 'The team is continuing a retry after {{attemptCount}} recorded attempts.',
   'work.manager.events.work_retry_ambiguous': 'The durable attempt history is ambiguous, so I am not presenting it as a successful retry.',
   'work.manager.events.review_blocker_resolved': 'Independent review found a blocker; the revised result passed after {{attemptCount}} review attempts.',

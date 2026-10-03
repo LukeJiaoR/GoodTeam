@@ -1039,7 +1039,7 @@ export const zhCN = {
   'work.manager.events.deliverable_ready': '{{artifact}} 已就绪。',
   'work.manager.events.work_retried': '我已对受阻工作发起针对性重试。',
   'work.manager.events.work_retry_converged': '这项工作经过 {{attemptCount}} 次尝试后完成。',
-  'work.manager.events.work_retry_blocked': '这项工作已重试 {{attemptCount}} 次，目前仍然受阻。',
+  'work.manager.events.work_retry_blocked': '这项工作已重试 {{retryCount}} 次，目前仍然受阻。',
   'work.manager.events.work_retry_in_progress': '团队正在继续重试，已记录 {{attemptCount}} 次尝试。',
   'work.manager.events.work_retry_ambiguous': '持久化尝试记录存在歧义，因此我不会将其表述为重试成功。',
   'work.manager.events.review_blocker_resolved': '独立审查发现了一个阻塞；修订结果在 {{attemptCount}} 次审查尝试后通过。',

@@ -35,9 +35,7 @@ from goodteam_os.web import (
     create_local_project_config,
     delete_project,
     read_artifact,
-    read_artifact_preview,
     read_open_questions,
-    render_markdown_preview,
     retry_blocked_workflow,
     terminate_project_run,
     save_artifact,
@@ -2570,24 +2568,6 @@ def test_build_provenance_refs_parses_manifest_and_masks_paths(tmp_path):
 
     snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
     assert snapshot["provenance_refs"] == refs
-
-
-def test_read_artifact_preview_truncates_long_content(tmp_path):
-    artifact = tmp_path / "long.md"
-    artifact.write_text("a" * 20, encoding="utf-8")
-
-    preview = read_artifact_preview(str(artifact), max_chars=5)
-
-    assert preview == "aaaaa\n\n[Preview truncated]"
-
-
-def test_markdown_preview_escapes_script_content():
-    html = render_markdown_preview(
-        "# PRD\n\nReview **bold** text.\n\n- One\n- Two\n\n```html\n<script>alert(1)</script>\n```"
-    )
-
-    assert "<pre><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></pre>" in html
-    assert "<script>" not in html
 
 
 def test_read_artifact_reads_current_run_artifact(tmp_path):

@@ -20,6 +20,15 @@ if TYPE_CHECKING:
     from .codex_runtime import CodexReviewAdmission
 
 
+def _review_context(workers, workspace, state):
+    context = workflow_skill_context(state.task_skill_context, run_id=state.run_id, project_key=state.project_key)
+    if context:
+        return context
+    from .codex_trusted import saved_workflow_review_context
+
+    return saved_workflow_review_context(workers, workspace=workspace, state=state)
+
+
 def _jobs(workers, context):
     root, _operator, locks, _availability = requests._services(workers)
     lock = locks.read(context["task_lock_ref"], task=TaskSkillIdentity(**context["task"]))
@@ -92,7 +101,7 @@ def task_review_details(workers, context, *, job_id=None, include_report=False):
     return 200, {"schema_version": "goodteam.task-reviews.v1", "task_skill_context": context, "reviews": items}
 
 
-def handle_review_get(workspace: Path, path: str):
+def handle_review_get(workspace: Path, path: str, *, codex_review_admission: CodexReviewAdmission | None = None):
     match = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)/skill-reviews(?:/(job-skill-[0-9a-f]{64})(/report)?)?", path)
     if not match:
         return None
@@ -111,12 +120,21 @@ def handle_review_get(workspace: Path, path: str):
     if state is None:
         return 404, {"error": "run_not_found", "message": "The selected task does not belong to this project."}
     try:
-        context = workflow_skill_context(state.task_skill_context, run_id=run_id, project_key=key)
+        workers = WorkerJobStore(root)
+        context = _review_context(workers, workspace, state)
+        from goodteam_os.reviewer_dispatch import reviewer_phase_for_approval
+        from .codex_trusted import TrustedCodexReviewAdmission
+        start_available = (current_task and isinstance(codex_review_admission, TrustedCodexReviewAdmission)
+                           and reviewer_phase_for_approval(web.current_approval_gate(state)) == "implementation"
+                           and codex_review_admission.page_start_available(workers, state=state))
         if not context:
             if match[3]:
                 return 404, {"error": "review_not_found", "message": "This task has no locked Reviewer report."}
-            return 200, {"schema_version": "goodteam.task-reviews.v1", "project_key": key, "run_id": run_id, "reviews": []}
-        status, payload = task_review_details(WorkerJobStore(root), context, job_id=match[3], include_report=bool(match[4]))
+            return 200, {"schema_version": "goodteam.task-reviews.v1", "project_key": key, "run_id": run_id,
+                         "reviews": [], "start_available": start_available}
+        status, payload = task_review_details(workers, context, job_id=match[3], include_report=bool(match[4]))
+        if not match[3]:
+            payload["start_available"] = start_available and not payload.get("reviews")
     except (SkillError, OSError) as exc:
         status, payload = 409, {"error": exc.code if isinstance(exc, SkillError) else "review_result_unavailable",
                                 "message": "Task-bound review evidence is unavailable; no report was accepted."}
@@ -157,10 +175,10 @@ def handle_review_post(
             try:
                 if not isinstance(request, dict) or set(request) != {"snapshot_digest", "context_digest"}:
                     raise SkillError("review_retry_request", "Retry must identify the displayed original snapshot and context only.")
-                context = workflow_skill_context(state.task_skill_context, run_id=run_id, project_key=key)
+                workers = WorkerJobStore(root, **runtime_kwargs)
+                context = _review_context(workers, workspace, state)
                 if not context:
                     return 404, {"error": "review_not_found", "message": "This task has no locked Reviewer."}
-                workers = WorkerJobStore(root, **runtime_kwargs)
                 selected = next((row for row in _jobs(workers, context) if row[0] == match[3]), None)
                 if selected is None:
                     return 404, {"error": "review_not_found", "message": "This Reviewer does not belong to the selected task."}
@@ -200,16 +218,16 @@ def _handle_cancel(workspace, match, request):
         state = StateStore(workspace).read_project_current(key)
         if state is None or state.run_id != run_id:
             raise SkillError("review_historical_readonly", "Historical task reviews are read-only.")
-        context = workflow_skill_context(state.task_skill_context, run_id=run_id, project_key=key)
+        workers = WorkerJobStore(root)
+        context = _review_context(workers, workspace, state)
         if not context:
             return 404, {"error": "review_not_found", "message": "This task has no locked Reviewer."}
-        workers = WorkerJobStore(root)
         if not any(row[0] == match[3] for row in _jobs(workers, context)):
             return 404, {"error": "review_not_found", "message": "This Reviewer does not belong to the selected task."}
 
         def check_task():
             current = StateStore(workspace).read_project_current(key)
-            if (current is None or current.run_id != run_id or current.task_skill_context != context):
+            if (current is None or current.run_id != run_id or _review_context(workers, workspace, current) != context):
                 raise SkillError("review_historical_readonly", "The selected task changed before cancellation admission.")
             _key, _target, current_root = web._project_target_and_root(workspace, key)
             if current_root != root:

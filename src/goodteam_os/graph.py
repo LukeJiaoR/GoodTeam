@@ -560,45 +560,6 @@ def summarize_context_path(path: Path, content: str) -> str:
     return summarize_context_file(content)
 
 
-def select_takeover_context(
-    context: list[dict[str, str]],
-    *,
-    limit: int = 10,
-) -> list[dict[str, str]]:
-    purpose_priority = {
-        "CI workflow": 120,
-        "Deployment manifest": 120,
-        "Container build definition": 120,
-        "Project-local GoodTeam memory": 100,
-        "GoodTeam project understanding": 95,
-        "Top-level project README": 90,
-        "Project instructions / agent guidance": 85,
-        "Project manifest or dependency file": 85,
-        "Shallow project directory overview": 5,
-    }
-    delivery_terms = (
-        "deploy",
-        "release",
-        "launch",
-        "production",
-        "architecture",
-        "progress",
-        "上线",
-        "部署",
-        "发布",
-        "架构",
-        "进度",
-    )
-    ranked = []
-    for index, item in enumerate(context):
-        path_text = item["path"].lower()
-        relevance = sum(8 for term in delivery_terms if term in path_text)
-        score = purpose_priority.get(item["purpose"], 20) + relevance
-        ranked.append((score, index, item))
-    ranked.sort(key=lambda row: (-row[0], row[1]))
-    return [item for _, _, item in ranked[:limit]]
-
-
 def render_prd_markdown(
     state: AgileDevState,
     project_config: Path | None = None,

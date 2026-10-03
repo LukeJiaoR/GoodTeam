@@ -19,6 +19,7 @@ def capture_task_start(
     *, workspace: Path, project_key: str, worker_root: Path,
     task: TaskSkillIdentity, command_key: str, confirmed_input: dict[str, Any],
     subjects: tuple[str, ...] | None = None, expected_team_revision: int | None = None,
+    protocol_only_review: bool = False,
 ) -> dict[str, Any]:
     """Capture only at an authorized bounded start; replay saved confirmation.
 
@@ -32,6 +33,8 @@ def capture_task_start(
 
     if task.project_key != project_key:
         raise SkillError("snapshot_scope_mismatch", "Task start belongs to another project.")
+    if type(protocol_only_review) is not bool or (protocol_only_review and subjects != ("role:code_review",)):
+        raise SkillError("task_scope_unknown", "Protocol-only capture requires the single explicit Reviewer subject.")
     if expected_team_revision is not None and (type(expected_team_revision) is not int or expected_team_revision < 0):
         raise SkillError("invalid_revision", "Task confirmation requires a valid Team revision.")
     if not isinstance(confirmed_input, dict):
@@ -82,7 +85,7 @@ def capture_task_start(
         )))
         if not selected or len(selected) != len(set(selected)) or any(subject not in bindings for subject in selected):
             raise SkillError("binding_subject_unknown", "The task needs an explicit known subject inventory.")
-        if not any(bindings[subject]["mode"] == "custom" for subject in selected):
+        if not protocol_only_review and not any(bindings[subject]["mode"] == "custom" for subject in selected):
             # Explicit pre-Skill compatibility. No custom-empty/default switch is
             # inferred here; already captured tasks took the receipt path above.
             return {}
