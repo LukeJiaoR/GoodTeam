@@ -176,8 +176,9 @@ environment creation, builds, tests, and browser downloads with the `run`
 command. It checks before spawning and every five seconds and exits 75 on low
 disk. Each workflow entry uses `exec`, so the step PID that Actions signals is
 the helper PID. Environment/path setup precedes that final `exec`; a failed
-environment install still fails the step. SIGINT/SIGTERM immediately wake the
-monitor rather than waiting for the next disk poll.
+environment install still fails the step. SIGINT/SIGTERM handlers only record a
+lock-free flag; the monitor checks it every 50 milliseconds independently of
+the five-second disk poll. No Event/Condition lock is acquired in a handler.
 
 The fresh helper is a Linux child subreaper and creates one command child. Its
 cleanup reads only its own descendant tree through `/proc/<pid>/task/*/children`,

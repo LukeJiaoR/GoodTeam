@@ -166,6 +166,66 @@ def test_success_failure_and_cancel_keep_evidence_and_remove_owned_temp(lifecycl
     assert unknown.is_dir()
 
 
+def test_cancel_while_event_lock_is_held_does_not_deadlock(lifecycle):
+    ready = lifecycle.root / "command-pids"
+    cancelled = lifecycle.root / "signal-delivered"
+    command = command_cli(lifecycle)
+    # The old monitor reaches Event.clear with its own non-reentrant lock held.
+    # The replacement monitor receives the same signal/held lock at its sleep boundary.
+    injection = f"""
+import faulthandler, threading
+event = threading.Event()
+original_sleep = module.time.sleep
+def cancel_under_lock():
+    with event._cond:
+        module.Path({str(cancelled)!r}).write_text(str(module.time.monotonic()))
+        module.os.kill(module.os.getpid(), module.signal.SIGTERM)
+def wait(timeout=None):
+    while not module.Path({str(ready)!r}).exists():
+        original_sleep(0.01)
+def pause(duration):
+    if module.Path({str(ready)!r}).exists() and not module.Path({str(cancelled)!r}).exists():
+        cancel_under_lock()
+    original_sleep(duration)
+event.wait = wait
+event.clear = cancel_under_lock
+threading.Event = lambda: event
+module.time.sleep = pause
+faulthandler.dump_traceback_later(1.5)
+"""
+    command[2] = command[2].replace("sys.exit(module.main())", injection + "\nsys.exit(module.main())")
+    payload = [sys.executable, "-c", (
+        "from pathlib import Path; import json, os, signal, subprocess, sys, time; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True); "
+        f"Path({str(ready)!r}).write_text(json.dumps([os.getpid(), child.pid])); time.sleep(60)"
+    )]
+    process = subprocess.Popen([*command, "run", "--", *payload], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True)
+    identities = []
+    try:
+        deadline = time.monotonic() + 3
+        while not cancelled.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert cancelled.exists()
+        identities = [cleanup.process_identity(pid)[0] for pid in json.loads(ready.read_text())]
+        try:
+            _, stderr = process.communicate(timeout=3)
+        except subprocess.TimeoutExpired as error:
+            trace = (error.stderr or b"").decode()
+            pytest.fail(f"Cancellation deadlocked while Event lock was held:\n{trace}")
+        assert process.returncode == 143, stderr
+        assert time.monotonic() - float(cancelled.read_text()) < 2.5
+        assert all(not Path(f"/proc/{identity['pid']}").exists() for identity in identities)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        for identity in identities:
+            if cleanup.alive(identity):
+                os.kill(identity["pid"], signal.SIGKILL)  # Only recorded fixture descendants.
+
+
 def test_recovery_requires_expiry_dead_worker_and_no_open_handles(lifecycle, monkeypatch):
     env, temporary = job_environment(lifecycle)
     job = temporary.parent

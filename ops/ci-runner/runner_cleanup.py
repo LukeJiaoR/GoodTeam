@@ -14,7 +14,6 @@ import signal
 import stat
 import subprocess
 import sys
-import threading
 import time
 import uuid
 
@@ -402,26 +401,32 @@ class Lifecycle:
     def run(self, command):
         if not command or not self.disk_ok():
             return 75
-        interrupted = []
-        wake = threading.Event()
+        interrupted = 0
 
-        def wake_up(signum, frame):
-            if signum != signal.SIGCHLD:
-                interrupted.append(signum)
-            wake.set()
+        def interrupt(signum, frame):
+            nonlocal interrupted
+            # A Python signal handler can interrupt a held lock. Only record a
+            # scalar here; never call Event/Condition or another locking API.
+            if not interrupted:
+                interrupted = signum
 
         with command_reaper():
-            previous = {s: signal.signal(s, wake_up) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD)}
+            previous = {s: signal.signal(s, interrupt) for s in (signal.SIGINT, signal.SIGTERM)}
             child = None
             try:
                 child = subprocess.Popen(command, start_new_session=True)
+                next_disk_check = 0
                 while child.poll() is None:
-                    if interrupted or not self.disk_ok():
-                        return 128 + interrupted[0] if interrupted else 75
-                    wake.wait(timeout=self.policy["disk_check_seconds"])
-                    wake.clear()
+                    if interrupted:
+                        return 128 + interrupted
+                    now = time.monotonic()
+                    if now >= next_disk_check:
+                        if not self.disk_ok():
+                            return 75
+                        next_disk_check = now + self.policy["disk_check_seconds"]
+                    time.sleep(0.05)  # Bound cancellation latency without signal-handler locks.
                 if interrupted:
-                    return 128 + interrupted[0]
+                    return 128 + interrupted
                 return child.returncode if child.returncode >= 0 else 128 - child.returncode
             finally:
                 try:
