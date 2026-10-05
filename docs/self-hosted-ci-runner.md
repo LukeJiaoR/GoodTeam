@@ -77,7 +77,7 @@ gh workflow run source-diagnostic.yml --repo LukeJiaoR/GoodTeam --ref main \
 The workflow accepts dispatches only from the default branch, checks out the
 selected source without persisting credentials, and runs a fixed inline archive
 script. It does not install dependencies or execute repository scripts. Each run
-uses its own directory under `RUNNER_TEMP` and uploads a seven-day artifact:
+uses its own directory under `RUNNER_TEMP` and uploads a one-day artifact:
 tracked-source tar, resolved commit/tree IDs, tracked-file manifest, SHA-256,
 and a statement of the export's scope. Untracked workspace files, `.git`, and
 runner caches are not included. This is source transport, not test or runtime
@@ -124,7 +124,21 @@ Playwright version to download Chromium into the unprivileged runner cache.
 Chromium system libraries must be available on the host; CI does not run sudo
 or install system packages. The browser suite refuses an existing server, uses
 a fresh workspace/registry/port, runs every case once without automatic
-retries, and uploads report/state/trace evidence for 14 days.
+retries, and uploads report/state/trace evidence. These temporary artifacts are
+retained for 1 day on success or 3 days after failure/cancellation, using the job
+status at upload time. The source diagnostic upload runs only on success and
+retains its artifact for 1 day.
+
+This is the uploading job's current status, not the final workflow result. A
+later step or another job may fail after an artifact has been uploaded with a
+1-day lifetime. The policy applies to new uploads; existing artifacts keep their
+recorded expiry dates. Workflow runs, job logs, and check history are unchanged.
+
+Keep concise review/acceptance summaries, version information, and reproduction
+steps in the repository when they need to outlive these temporary artifacts.
+Cross-project evidence may live in private Google Docs/Sheets with a link from
+the summary. Keep large screenshots, videos, raw logs, and all credentials out of
+Git; do not migrate old evidence as part of this policy.
 
 The lifecycle implementation in `ops/ci-runner/runner_cleanup.py` replaces the
 old broad `RUNNER_TEMP` sweep and the home-cache `find -delete` calls. **Existing
@@ -147,8 +161,8 @@ its own workspace on normal server shutdown.
 | --- | --- |
 | Marked job `tmp/`: virtual environments, Python/Node temp files, browser workspace | Completion hook after workflow artifact uploads, regardless of result. Active references prevent deletion. |
 | Missed marked job temporary resources after worker/host termination | Next start/completion boundary, after 24 hours, matching worker no longer exists, and no process references the directory. A recorded completion permits earlier retry once the worker exits. PID reuse and reboot are distinguished. |
-| HTTP recovery evidence in marked job `evidence/` | Preserve locally for 14 days, including when upload fails. GitHub artifact retention remains 14 days. |
-| Browser HTML/JSON reports, traces, screenshots in the checkout | Existing `always()` artifact upload owns durable retention (14 days); `actions/checkout` owns workspace cleanup. These are outside the helper's deletion scope. |
+| HTTP recovery evidence in marked job `evidence/` | Preserve locally for 14 days, including when upload fails. GitHub artifact retention follows the 1-day success / 3-day failure or cancellation policy above. |
+| Browser HTML/JSON reports, traces, screenshots in the checkout | Existing `always()` artifact upload owns temporary evidence retention (1 or 3 days, as above); `actions/checkout` owns workspace cleanup. These are outside the helper's deletion scope. |
 | Marked pip/npm/Playwright caches | Regenerable downloads only; aggregate 4 GiB boundary cap, oldest whole cache evicted first; each cache generation expires after 30 days. Whole-cache eviction avoids partial browser/package formats. Live jobs/references prevent eviction. |
 | GoodTeam runner `_diag/Runner_*-utc.log` and `Worker_*-utc.log` | Registered GoodTeam runner path, matching generated filename and UID only. Closed logs expire after 14 days; 512 MiB budget warns if protected/unknown logs still exceed it. |
 | Runner's own `RUNNER_TEMP`, tracked-source export, action internals | [Actions Runner's native temp manager](https://github.com/actions/runner/blob/v2.337.0/src/Runner.Worker/TempDirectoryManager.cs); the custom hook does not sweep this directory. |

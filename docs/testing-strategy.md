@@ -358,8 +358,9 @@ both requests until both have arrived; it never replaces an API response.
 
 Workspaces, registry and Operator state all use temporary paths. CI uploads
 `http-recovery-<run>-<attempt>` with JUnit results, server logs, current state,
-approval logs and fake Worker evidence for 14 days. Playwright retains its
-separate browser artifact with concurrency state snapshots.
+approval logs and fake Worker evidence for 1 day on success or 3 days after
+failure/cancellation, using the job status at upload time. Playwright retains its
+separate browser artifact with concurrency state snapshots under the same policy.
 
 These cases verify the recorded interruption boundaries and explicit retry
 contract. They do not promise exactly-once external side effects after an

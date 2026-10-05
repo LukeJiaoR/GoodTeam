@@ -61,4 +61,4 @@ jobs:
           name: source-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.capture.outputs.path }}/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
