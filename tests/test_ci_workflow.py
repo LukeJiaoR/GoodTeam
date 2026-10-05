@@ -71,6 +71,8 @@ def _assert_ci_candidate_boundary(workflow):
         assert "actions/checkout@" not in yaml.safe_dump(job), name
 
     assert jobs["mark-candidate"]["if"] == "needs.prepare.outputs.mode == 'candidate'"
+    assert "always()" in jobs["browser"]["if"]
+    assert "needs.classify.result == 'success'" in jobs["browser"]["if"]
     assert "needs.prepare.outputs.mode == 'candidate'" in jobs["record-candidate"]["if"]
 
 
