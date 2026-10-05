@@ -5,7 +5,7 @@ Owner: repository maintainers
 
 ## Decision and security boundary
 
-Routine pull-request CI uses one repository-scoped Linux x64 runner:
+Heavy exact-SHA candidate CI uses one repository-scoped Linux x64 runner. Pull-request control-plane checks are metadata-only and run on GitHub-hosted Linux:
 
 | Property | Value |
 | --- | --- |
@@ -19,17 +19,18 @@ Routine pull-request CI uses one repository-scoped Linux x64 runner:
 
 The label is a workload class, not a machine identity. The runner is registered
 only to `LukeJiaoR/GoodTeam`. Its account and home contain no provider,
-production, deployment, repository-write, or OpenWiki credentials. Routine CI
-has only `contents: read`, does not select a GitHub Environment, and has no
-automatic GitHub-hosted fallback.
+production, deployment, repository-write, or OpenWiki credentials. Candidate
+execution jobs override the token to `contents: read`, do not select a GitHub
+Environment, and have no hosted fallback.
 
-The first self-hosted job accepts a pull request only when its head repository
-is the current repository. Browser acceptance depends on that guarded job;
-frontend checks share the browser job's install/build, the backend waits for
-that job, and
-the always-running gate repeats the same-repository guard. A fork PR therefore
-cannot schedule code on this persistent host; a maintainer must first put the
-reviewed patch on a same-repository branch. The workflow does not use
+Heavy PR code no longer reaches the persistent runner automatically after the
+candidate-gate activation marker is present on the PR base. An agent or
+maintainer dispatches the reviewed `main` workflow with an exact candidate SHA;
+only that manual candidate run schedules browser/backend code on `goodteam-ci`.
+The hosted preparation/result jobs may read or write only the candidate commit
+status. The PR-side `CI / gate` reads that exact-head status and does not
+checkout or execute PR code. Any new commit therefore invalidates the prior
+candidate evidence automatically. The workflow does not use
 `pull_request_target`.
 
 OpenWiki remains on `ubuntu-latest`. It is manual-only because it has provider
@@ -42,7 +43,8 @@ These rules also apply to temporary workflows on feature or diagnostic branches:
 
 | Workload | Runner and permissions |
 | --- | --- |
-| Routine tests, tracked-source archives, read-only inspection, public dependency downloads | `[self-hosted, linux, x64, goodteam-ci]`; explicit read-only permissions, no hosted fallback |
+| Exact-SHA candidate tests, tracked-source archives, read-only inspection, public dependency downloads | `[self-hosted, linux, x64, goodteam-ci]`; explicit read-only permissions, no hosted fallback |
+| Candidate metadata preparation/status gate | `ubuntu-latest`; no checkout, no secrets, status read/write only where explicitly required |
 | OpenWiki | `ubuntu-latest`, manual-only; existing provider secrets and PR-write permissions stay here |
 | New tasks needing provider secrets, a GitHub Environment, repository writes, or deployment access | A separately reviewed isolated environment; do not use `goodteam-ci` |
 | Native ARM64 or Docker inspection | A matching separately provisioned environment; the existing x64 account cannot run these checks |
@@ -55,12 +57,15 @@ write access on `goodteam-ci`. Source-only checkout must set
 `persist-credentials: false` and must not execute code from the inspected ref.
 
 `tests/test_ci_workflow.py` checks every committed workflow for the fixed
-read-only runner boundary. OpenWiki is the only hosted exception. A future
-runner exception needs an explicit policy/test update alongside its isolation
-and provisioning evidence. These checks run in PR CI when workflow files change;
-they are not GitHub-side enforcement for arbitrary branch pushes. Agents must
-validate temporary workflows locally before pushing them and follow the same
-policy even when the branch will never become a PR.
+runner boundary. `ci.yml` has a reviewed hosted metadata control plane
+(`prepare`, candidate status writer, and `CI / gate`) while candidate code
+execution remains on `goodteam-ci`; OpenWiki remains the credential-bearing
+hosted exception. A future runner exception needs an explicit policy/test update
+alongside its isolation and provisioning evidence. These checks run in candidate
+CI when workflow files change; they are not GitHub-side enforcement for
+arbitrary branch pushes. Agents must validate temporary workflows locally before
+pushing them and follow the same policy even when the branch will never become a
+PR.
 
 ### Read-only source diagnostic
 
