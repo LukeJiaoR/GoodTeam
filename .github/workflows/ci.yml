@@ -37,6 +37,10 @@ jobs:
             const { owner, repo } = context.repo;
             if (context.eventName === "workflow_dispatch") {
               const target = process.env.TARGET_SHA;
+              if (context.ref !== "refs/heads/main") {
+                core.setFailed("Candidate CI must be dispatched from the reviewed main workflow definition");
+                return;
+              }
               if (!/^[0-9a-f]{40}$/u.test(target)) {
                 core.setFailed("target_sha must be an exact lowercase 40-character commit SHA");
                 return;
