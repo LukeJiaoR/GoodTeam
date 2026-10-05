@@ -114,7 +114,10 @@ jobs:
       always() &&
       needs.prepare.result == 'success' &&
       (
-        needs.prepare.outputs.mode == 'legacy' ||
+        (
+          needs.prepare.outputs.mode == 'legacy' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        ) ||
         (needs.prepare.outputs.mode == 'candidate' && needs.mark-candidate.result == 'success')
       )
     runs-on: [self-hosted, linux, x64, goodteam-ci]
