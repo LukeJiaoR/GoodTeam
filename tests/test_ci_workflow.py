@@ -36,9 +36,11 @@ def _assert_ci_candidate_boundary(workflow):
     assert "pull_request_target" not in workflow.get("on", {})
     dumped = yaml.safe_dump(workflow)
     assert not re.search(r"\$\{\{(?:(?!\}\}).)*\bsecrets\b", dumped, flags=re.DOTALL)
-    assert "environment" not in dumped
 
     jobs = workflow["jobs"]
+    for name, job in jobs.items():
+        assert "environment" not in job, name
+        assert "secrets" not in job, name
     assert set(jobs) == {
         "prepare",
         "mark-candidate",
