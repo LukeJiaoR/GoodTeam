@@ -36,13 +36,14 @@ Do not spend heavy remote CI on every development push. While iterating, run the
 focused local checks required by `docs/testing-strategy.md`. When the branch is
 ready to become a pull request candidate:
 
-1. Require a clean working tree and record `git rev-parse HEAD`.
+1. Sync with the current `main`, require a clean working tree, and record `git rev-parse HEAD`. The candidate must contain the current `main` HEAD.
 2. Run the reviewed default-branch workflow against that exact SHA:
    `gh workflow run ci.yml --repo LukeJiaoR/GoodTeam --ref main -f "target_sha=<40-char-sha>"`.
 3. Wait for the run to succeed and for commit status
    `merge-candidate/validated` to be green.
 4. Only then open/update the PR. Any new commit invalidates the old evidence;
-   validate the new SHA before merge.
+   validate the new SHA before merge. If `main` advances, sync the new base and
+   validate the resulting SHA again.
 
 The PR-side `CI / gate` is the authority for whether the current exact head is
 eligible to merge. Never copy a status from an older SHA or bypass the gate
