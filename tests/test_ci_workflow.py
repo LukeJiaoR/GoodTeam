@@ -31,11 +31,54 @@ def _assert_read_only_runner_boundary(workflow):
         assert isinstance(effective, dict) and set(effective.values()) <= {"read", "none"}, name
 
 
+def _assert_ci_candidate_boundary(workflow):
+    assert workflow.get("permissions") == {"contents": "read"}
+    assert "pull_request_target" not in workflow.get("on", {})
+    dumped = yaml.safe_dump(workflow)
+    assert not re.search(r"\$\{\{(?:(?!\}\}).)*\bsecrets\b", dumped, flags=re.DOTALL)
+    assert "environment" not in dumped
+
+    jobs = workflow["jobs"]
+    assert set(jobs) == {
+        "prepare",
+        "mark-candidate",
+        "classify",
+        "browser",
+        "backend",
+        "gate",
+        "record-candidate",
+    }
+
+    for name in ("classify", "browser", "backend"):
+        job = jobs[name]
+        assert job["runs-on"] == ["self-hosted", "linux", "x64", "goodteam-ci"]
+        assert job.get("permissions") == {"contents": "read"}
+        assert "uses" not in job
+        assert "secrets" not in job
+
+    expected_hosted_permissions = {
+        "prepare": {"contents": "read"},
+        "mark-candidate": {"contents": "read", "statuses": "write"},
+        "gate": {"contents": "read", "statuses": "read"},
+        "record-candidate": {"contents": "read", "statuses": "write"},
+    }
+    for name, permissions in expected_hosted_permissions.items():
+        job = jobs[name]
+        assert job["runs-on"] == "ubuntu-latest"
+        assert job.get("permissions") == permissions
+        assert "actions/checkout@" not in yaml.safe_dump(job), name
+
+    assert jobs["mark-candidate"]["if"] == "needs.prepare.outputs.mode == 'candidate'"
+    assert "needs.prepare.outputs.mode == 'candidate'" in jobs["record-candidate"]["if"]
+
+
 @pytest.mark.parametrize("path", sorted([*WORKFLOW.parent.glob("*.yml"), *WORKFLOW.parent.glob("*.yaml")]))
 def test_all_workflows_follow_runner_policy(path):
     # BaseLoader keeps GitHub's `on` key as a string (YAML 1.1 treats it as True).
     workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    if path.name == "openwiki-update.yml":
+    if path.name == "ci.yml":
+        _assert_ci_candidate_boundary(workflow)
+    elif path.name == "openwiki-update.yml":
         assert set(workflow["on"]) == {"workflow_dispatch"}
         assert workflow["jobs"]
         for job in workflow["jobs"].values():
@@ -82,7 +125,7 @@ def test_runner_policy_requires_explicit_read_only_workflow_permissions(permissi
         })
 
 
-def test_ci_is_pr_or_manual_only_with_read_only_permissions():
+def test_ci_is_pr_or_manual_only_with_candidate_input():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     trigger = workflow.split("permissions:", 1)[0]
 
@@ -90,24 +133,26 @@ def test_ci_is_pr_or_manual_only_with_read_only_permissions():
     assert "  workflow_dispatch:" in trigger
     assert "  push:" not in trigger
     assert "branches:" not in trigger  # Stacked PRs also need pre-merge checks.
+    assert "target_sha:" in trigger
+    assert "Exact 40-character commit SHA" in trigger
     assert "permissions:\n  contents: read" in workflow
+    assert ".github/ci/candidate-gate-v1" in workflow
+    assert "merge-candidate/validated" in workflow
+    assert 'context.ref !== "refs/heads/main"' in workflow
 
 
-def test_every_job_keeps_the_self_hosted_runner_security_boundary():
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    jobs = re.split(r"^  [a-z_]+:\n", workflow.split("\njobs:\n", 1)[1], flags=re.MULTILINE)[1:]
-    guard = (
-        "github.event_name != 'pull_request' "
-        "|| github.event.pull_request.head.repo.full_name == github.repository"
-    )
+def test_ci_separates_hosted_metadata_control_from_self_hosted_candidate_execution():
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    _assert_ci_candidate_boundary(workflow)
 
-    assert jobs
-    for job in jobs:
-        assert "runs-on: [self-hosted, linux, x64, goodteam-ci]" in job
-        assert guard in job.split("steps:", 1)[0]
-    assert "pull_request_target:" not in workflow
-    assert "secrets." not in workflow
-    assert "environment:" not in workflow
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "ref: ${{ needs.prepare.outputs.target_sha }}" in text
+    assert 'test "$(git rev-parse HEAD)" = "$TARGET_SHA"' in text
+    assert 'git merge-base origin/main "$TARGET_SHA"' in text
+    assert "persist-credentials: false" in text
+    assert "pull_request_target:" not in text
+    assert "secrets." not in text
+    assert "environment:" not in text
 
 
 @pytest.mark.parametrize(
