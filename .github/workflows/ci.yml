@@ -46,6 +46,16 @@ jobs:
                 return;
               }
               await github.rest.repos.getCommit({ owner, repo, ref: target });
+              const main = await github.rest.repos.getBranch({ owner, repo, branch: "main" });
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner,
+                repo,
+                basehead: main.data.commit.sha + "..." + target,
+              });
+              if (comparison.data.merge_base_commit.sha !== main.data.commit.sha) {
+                core.setFailed("target_sha must include the current main HEAD before candidate validation");
+                return;
+              }
               core.setOutput("mode", "candidate");
               core.setOutput("target_sha", target);
               core.setOutput("base_sha", "");
@@ -329,6 +339,16 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
+            const baseSha = context.payload.pull_request.base.sha;
+            const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              owner,
+              repo,
+              basehead: baseSha + "..." + process.env.TARGET_SHA,
+            });
+            if (comparison.data.merge_base_commit.sha !== baseSha) {
+              core.setFailed("PR head does not include the current base SHA; update the branch and revalidate the new head.");
+              return;
+            }
             const statuses = await github.paginate(
               github.rest.repos.listCommitStatusesForRef,
               { owner, repo, ref: process.env.TARGET_SHA, per_page: 100 },
