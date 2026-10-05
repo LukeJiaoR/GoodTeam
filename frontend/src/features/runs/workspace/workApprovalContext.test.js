@@ -6,7 +6,7 @@ function input() {
   return {
     projectKey: 'A', gate: 'rfc',
     brief: {
-      schema_version: 'manager_approval_brief.v1',
+      schema_version: 'manager_approval_brief.v1', approval: 'rfc',
       approval_target: {
         run_id: 'run-1', target_type: 'review', target_id: 'rfc',
         artifact_key: 'rfc', artifact_version: 'sha256:abc', task_id: 'task-1',
@@ -64,4 +64,25 @@ test('project, run, artifact, and new evidence each invalidate an old reason', (
     assert.notEqual(workApprovalContext(value).key, baseline);
   }
   assert.equal(workApprovalContext(input()).key, baseline);
+});
+
+
+test('rejects the producer missing-version marker and a contradictory brief gate', () => {
+  const missing = input(); missing.brief.approval_target.artifact_version = 'missing';
+  assert.equal(workApprovalContext(missing), null);
+  const mismatch = input(); mismatch.brief.approval = 'security';
+  assert.equal(workApprovalContext(mismatch), null);
+  const absent = input(); delete absent.brief.approval;
+  assert.equal(workApprovalContext(absent), null);
+});
+
+test('key order alone does not discard a reason but evidence order remains meaningful', () => {
+  const value = input();
+  value.brief.evidence.push({ kind: 'ci', status: 'not_run' });
+  const reordered = input();
+  reordered.brief = Object.fromEntries(Object.entries(value.brief).reverse());
+  reordered.brief.approval_target = Object.fromEntries(Object.entries(value.brief.approval_target).reverse());
+  assert.equal(workApprovalContext(reordered).key, workApprovalContext(value).key);
+  reordered.brief.evidence = [...value.brief.evidence].reverse();
+  assert.notEqual(workApprovalContext(reordered).key, workApprovalContext(value).key);
 });
