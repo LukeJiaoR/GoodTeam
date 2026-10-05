@@ -304,6 +304,8 @@ export default function ReviewPage({ embedded = false, selectedReviewId = '', ex
   const approveDisabled = status !== 'ready' || Boolean(busy)
     || !artifactFull
     || !artifactVersion
+    || artifactVersion === 'missing'
+    || !selected?.artifact
     || !artifactDraft.runId
     || artifactDraft.conflict
     || artifactDraft.pendingReadback

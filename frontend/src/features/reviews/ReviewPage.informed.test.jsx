@@ -79,3 +79,18 @@ test('a failed approval preserves the typed reason for an explicit retry', async
   fireEvent.click(screen.getByRole('button', { name: /Confirm manual continuation/ }));
   await waitFor(() => expect(mocks.decideReview).toHaveBeenCalledTimes(2));
 });
+
+for (const missing of ['version', 'artifact']) {
+  test(`a missing ${missing} cannot be approved by supplying an informed reason`, async () => {
+    if (missing === 'version') mocks.data.approval_reviews[0].artifact_version = 'missing';
+    else mocks.data.approval_reviews[0].artifact = '';
+    renderReview();
+    const input = await screen.findByRole('textbox', { name: t('work.informedApproval.reason') });
+    fireEvent.change(input, { target: { value: 'I accept this gap.' } });
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+    const button = screen.getByRole('button', { name: /Confirm manual continuation/ });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(mocks.decideReview).not.toHaveBeenCalled();
+  });
+}
