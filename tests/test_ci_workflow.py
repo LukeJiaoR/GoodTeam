@@ -139,6 +139,9 @@ def test_ci_is_pr_or_manual_only_with_candidate_input():
     assert ".github/ci/candidate-gate-v1" in workflow
     assert "merge-candidate/validated" in workflow
     assert 'context.ref !== "refs/heads/main"' in workflow
+    assert "compareCommitsWithBasehead" in workflow
+    assert "target_sha must include the current main HEAD" in workflow
+    assert "PR head does not include the current base SHA" in workflow
 
 
 def test_ci_separates_hosted_metadata_control_from_self_hosted_candidate_execution():
