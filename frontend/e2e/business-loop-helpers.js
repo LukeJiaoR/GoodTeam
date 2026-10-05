@@ -118,5 +118,5 @@ export async function requestRevision(page, fixture, evidence) {
   expect(revised.state.change_requests.security).toBe(note);
   expect(revised.state.change_requests.rfc).toBe(note);
   expect(decisions(revised).at(-1)).toMatchObject({ gate: 'security', decision: 'changes_requested', note });
-  await expect(page.getByRole('button', { name: 'Approve and continue', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Confirm manual continuation', exact: true })).toBeDisabled();
 }
