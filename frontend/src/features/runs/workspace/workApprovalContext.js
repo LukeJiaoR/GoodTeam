@@ -1,14 +1,8 @@
+import { approvalConfirmationKey, requiresInformedApproval } from '../../../lib/reviews/approvalConfirmation.js';
+
 // This is a UI confirmation contract, not permission to bypass a server gate.
 export function requiresInformedWorkApproval(brief) {
-  return brief?.recommendation?.verdict !== 'approve';
-}
-
-function confirmationKey(value) {
-  return JSON.stringify(value, (_key, item) => (
-    item && typeof item === 'object' && !Array.isArray(item)
-      ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]]))
-      : item
-  ));
+  return requiresInformedApproval(brief?.recommendation);
 }
 
 export function workApprovalContext({ brief, gate, projectKey }) {
@@ -23,7 +17,7 @@ export function workApprovalContext({ brief, gate, projectKey }) {
   return {
     // Include the displayed evidence, not only the artifact version: a revised
     // recommendation for the same artifact requires a new informed decision.
-    key: confirmationKey([projectKey, gate, brief]),
+    key: approvalConfirmationKey([projectKey, gate, brief]),
     target: { ...target },
     requiresReason: requiresInformedWorkApproval(brief),
   };

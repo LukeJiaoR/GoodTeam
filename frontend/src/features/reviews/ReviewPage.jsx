@@ -5,6 +5,7 @@ import MarkdownToc from '../../components/MarkdownToc';
 import Button from '../../components/ui/Button';
 import WorkspacePanel from '../../components/ui/WorkspacePanel';
 import DecisionActions from '../../components/DecisionActions';
+import { approvalConfirmationKey, canConfirmApproval, requiresInformedApproval } from '../../lib/reviews/approvalConfirmation';
 import EvidenceSummary from '../../components/EvidenceSummary';
 import MarkdownView from '../../components/ui/MarkdownView';
 import ProductError from '../../components/ui/ProductError';
@@ -213,7 +214,7 @@ function DecisionResult({ decisionNote, projectKey, onReturn, t }) {
   );
 }
 
-function Inspector({ onReturn, answers, approveDisabled, artifactConflict, artifactReady, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onReloadArtifact, onRequestChanges, onRetryError, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
+function Inspector({ onReturn, answers, decisionContextKey, approveDisabled, artifactConflict, artifactReady, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onReloadArtifact, onRequestChanges, onRetryError, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
   const evidence = asObject(review.evidence_snapshot);
   const provenance = asObject(review.reviewer_provenance);
   const recommendation = asObject(review.recommendation);
@@ -242,6 +243,8 @@ function Inspector({ onReturn, answers, approveDisabled, artifactConflict, artif
       {review.is_actionable ? (
         <DecisionActions
           approveDisabled={approveDisabled}
+          decisionContextKey={decisionContextKey}
+          informedApproval={requiresInformedApproval(recommendation)}
           busy={busy}
           onDecision={onDecision}
           onRequestChanges={onRequestChanges}
@@ -298,7 +301,7 @@ export default function ReviewPage({ embedded = false, selectedReviewId = '', ex
   const [decisionNote, setDecisionNote] = useState(null);
   const [submittedCount, setSubmittedCount] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const approveDisabled = Boolean(busy)
+  const approveDisabled = status !== 'ready' || Boolean(busy)
     || !artifactFull
     || !artifactVersion
     || !artifactDraft.runId
@@ -440,7 +443,12 @@ export default function ReviewPage({ embedded = false, selectedReviewId = '', ex
     }
   };
   const decide = async (decision, note) => {
-    if (decision === 'approved' && approveDisabled) return;
+    if (!selected?.is_actionable || status !== 'ready' || busy) return;
+    if (decision === 'approved' && !canConfirmApproval({
+      disabled: approveDisabled,
+      requiresReason: requiresInformedApproval(asObject(selected.recommendation)),
+      note,
+    })) return;
     const expectedApproval = {
       run_id: artifactDraft.runId || '',
       target_type: 'review',
@@ -518,6 +526,11 @@ export default function ReviewPage({ embedded = false, selectedReviewId = '', ex
             <ArtifactPanel key={`${projectKey}:${runId}:${selected.approval}`} baseline={baseline} canEdit={artifactFull} review={selected} value={content} onChange={artifactDraft.setContent} t={t} />
             <Inspector onReturn={embedded ? requestClose : undefined} answers={answers} approveDisabled={approveDisabled} artifactConflict={artifactDraft.conflict} artifactReady={artifactFull && Boolean(artifactVersion && artifactRunId)} busy={busy} decisionNote={decisionNote} error={displayedError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} submittedCount={submittedCount} t={t}
               projectKey={projectKey}
+              decisionContextKey={approvalConfirmationKey([
+                projectKey, artifactDraft.runId, selected.approval, selected.artifact, artifactVersion,
+                asObject(selected.recommendation), asObject(selected.evidence_snapshot),
+                asObject(selected.reviewer_provenance), selected.multi_reviewer_projection,
+              ])}
               onSave={save}
               onRefine={refine}
               onReloadArtifact={artifactDraft.reload}

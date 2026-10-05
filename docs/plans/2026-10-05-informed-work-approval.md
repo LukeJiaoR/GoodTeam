@@ -1,71 +1,93 @@
-# Informed Work approval: bounded #416 increment
+# Informed Work and Review approval: #416 / T01
 
-## Scope
+## Execution relationship
 
-This implements the outstanding TaskAttention quick-approval finding in #416,
-under the real-product acceptance work in #411. It is not a claim that either
-issue is complete. #418/#419 are not advanced by this patch.
+#411 selects real work and records the baseline, #416 fixes trustworthy decisions,
+#418 follows with verifiable delivery, and #419 verification accompanies every
+increment. Results go back to #411. Closing #411 is not an implementation
+prerequisite. The persistent-Goal product target and independent acceptance in
+#439 remain intact.
 
-Only the server's explicit `approve` recommendation keeps the existing quick
-path. Every other or absent recommendation uses a manual-continuation label,
-shows the full existing evidence/risks brief, and requires a typed nonempty
-reason. An absent/mismatched versioned target cannot become an unbound approval.
-The producer's literal `missing` version is rejected, and the brief's approval
-gate must agree with the action and target gate.
+The T01 task contract and source baseline are recorded in
+[#411 comment 5994449697](https://github.com/LukeJiaoR/GoodTeam/issues/411#issuecomment-5994449697).
+The baseline is main `3b889b7485f8554ed27e2f5a1b0e487331bd2a49`; this increment
+continues PR #486 from `b5879ecce74773c4fbbc010e0fa57bfc1d17f978`, without creating
+a duplicate implementation PR. A source baseline is not a completed real run.
 
-The reason and target remain inputs to the existing `onDecide` and approval API;
-this patch does not create review evidence, change reviewer provenance, change
-strict policy, or introduce a different ledger write. The server's action list
-still determines whether any approval control exists.
+## Scope and implementation
 
-The confirmation is remounted when project, run, artifact, or displayed evidence
-changes. An unchanged payload keeps the draft reason even if object keys arrive
-in a different order. Array order and actual evidence changes remain meaningful.
-An in-flight request has a synchronous click/keyboard lock; failure retains the
-reason for an explicit retry. A late response from an old confirmation cannot
-change the new draft.
+Work and ReviewPage (including the embedded document panel) now use the same
+explicit-positive-versus-incomplete recommendation semantics. Only an explicit
+`approve` keeps the normal approval action. Every other/absent recommendation
+uses manual continuation and requires an operator reason; Review does not offer
+canned pass/test snippets for this choice. The existing evidence and risks remain
+the basis for the decision, not Markdown keyword matching.
 
-## Verification
+Review's button and Ctrl/Cmd+Enter share the same validation and synchronous
+submission lock. The page handler also refuses blank informed approval, stale
+page state, and non-actionable reviews. Existing full-artifact loading, unsaved
+edits, version conflicts, and readback guards are preserved. The existing
+run/target/artifact fields and typed note go through reviewApi; no backend
+permission, ledger write, reviewer result or provenance is synthesized.
 
-Risk: Tier 4 browser approval path, with the existing Tier 3 approval/binding
-contract preserved. Review the actual CI head; do not infer a pass from test
-source or earlier runs.
+The decision draft is keyed to project/run/gate/artifact version and displayed
+recommendation/evidence/provenance. Reordered object keys do not erase a draft;
+actual context changes do. Failures retain the reason for an explicit retry.
+Request-changes feedback, including whitespace, remains unmodified and still
+uses the existing Manager handoff. An empty change-discussion draft is allowed;
+it is not permission for an empty manual approval.
 
-Local command actually run after the first source-review corrections:
+Work retains its existing exact-target validation, including the producer's
+`missing` sentinel rejection and matching brief/action/target gates. Its key and
+recommendation helpers now delegate to the shared confirmation module.
+
+## Verification actually performed
+
+Tier 4 browser approval path, with existing Tier 3 approval/identity contracts
+requiring corresponding verification before merge.
+
+On an isolated partial source copy, Node 22.16.0:
 
 ```sh
-node --test frontend/src/features/runs/workspace/workApprovalContext.test.js
-# 6 passed, 0 failed (isolated source copy, Node 22.16.0)
+node --test frontend/src/lib/reviews/approvalConfirmation.test.js \
+  frontend/src/features/runs/workspace/workApprovalContext.test.js
+# 18 passed, 0 failed, 0 skipped
 ```
 
-Additional verification required before merge:
+The unchanged Work test copy was verified against Git blob
+`08d123cde88aecae7eeb000071dbf276226fd5cf`. The ReviewPage source was verified
+against original blob `bef30c7e3171c55fe06de8b249ae93e18e5ffd89` before applying
+bounded replacements. Twelve local JS/JSX files passed a TypeScript parser
+syntax check; this was not a dependency check, typecheck, frontend build, Vitest
+run, or browser test.
 
-```sh
-npm test --prefix frontend
-npm run lint --prefix frontend
-npm run build --prefix frontend
-npm run test:e2e --prefix frontend
-PYTHONPATH=src .venv/bin/python -m pytest tests -q
-.venv/bin/ruff check src/goodteam_os/ tests/
-```
+Added component and Review integration tests cover empty/whitespace reasons,
+keyboard and duplicate submission, failed retry, changed context, exact API
+identity, stale-page blocking, and the normal positive-evidence path. Existing
+business-loop, embedded-panel and two-tab browser tests now explicitly enter a
+fake-only reason where required. A new real-HTTP/ledger browser case compares
+Work/Review semantics and verifies the bound reason reaches the existing ledger.
+These browser tests use fake Workers, not real model acceptance. Their presence
+is not a passing execution result; inspect the exact current PR head's CI.
 
-The new component tests cover exact payloads, blank reasons, busy/duplicate
-submission, failure retention, changed project/run/version/evidence, and late
-responses. The new browser test uses the existing isolated fixture and real
-HTTP/ledger, with fake Workers. It verifies that the reason reaches the exact
-bound approval and appears in the durable action log. Test existence is not a
-pass; execution evidence belongs in the PR.
+Before merge, run frontend tests/lint/build, isolated Playwright and the required
+backend/approval verification per docs/testing-strategy.md. No CI condition or
+runner privilege was changed to obtain a green result.
 
-## Open boundaries
+## Evidence and remaining boundaries
 
-- ReviewPage/DecisionActions, canvas, task-detail, legacy and non-Web approval
-  entrypoints are not changed. Their informed-continuation coverage remains part
-  of #416 before that issue can close; this is not server-wide reason enforcement.
-- #411 still needs its real-task campaign and genuine outcome/intervention
-  evidence. No provider invocation, deployment, paid bridge experiment, or real
-  project mutation was performed by this increment.
-- A source diagnostic rerun and this PR's first CI run (#1093, head `300373af`)
-  failed evidence upload on 2026-10-05 because GitHub reported artifact storage
-  quota exhaustion. That run's 4 HTTP recovery tests passed, but frontend,
-  browser and full backend verification were skipped. Do not weaken CI or fake
-  an artifact pass to merge this work. Check the latest head's own CI result.
+CI #1093 and #1094 are historical results on older heads: recovery ran, evidence
+upload failed, and downstream checks did not complete. Never assign those
+results to a later head or treat skipped checks as passing.
+
+Canvas/legacy quick actions, task-detail approval, non-Web entrypoints and
+server-wide rationale enforcement are not completed by this increment.
+DecisionActions' default remains compatible for callers not yet wired to the
+informed context; #416 therefore remains open. #418 is not implemented here.
+
+T01 has been selected and its source baseline recorded, but no real GoodTeam
+run was started in this conversation: runtime/provider/cost/intervention and
+product scorecard fields remain uncollected, not zero or PASS. Direct GitHub
+coding and deterministic tests are engineering evidence only. No paid call,
+deployment, production mutation, internal-state repair or paused #446/#476
+bridge/network/Skill-runtime work was performed.
