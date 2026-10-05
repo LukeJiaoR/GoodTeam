@@ -140,6 +140,7 @@ def test_ci_is_pr_or_manual_only_with_candidate_input():
     assert "merge-candidate/validated" in workflow
     assert 'context.ref !== "refs/heads/main"' in workflow
     assert "compareCommitsWithBasehead" in workflow
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in workflow
     assert "target_sha must include the current main HEAD" in workflow
     assert "PR head does not include the current base SHA" in workflow
 
