@@ -159,7 +159,9 @@ jobs:
   browser:
     needs: [prepare, classify]
     if: >-
-      needs.classify.result == 'success'
+      always()
+      && needs.prepare.result == 'success'
+      && needs.classify.result == 'success'
       && (needs.classify.outputs.backend != 'none' || needs.classify.outputs.frontend != 'none')
     runs-on: [self-hosted, linux, x64, goodteam-ci]
     permissions:
