@@ -111,7 +111,8 @@ def _mirror(workers, job_id, snapshot, ref, *, status, error_code="", runtime_st
     expected = requests._metadata(job_id, ref, snapshot)
     result = {"job_id": job_id, "run_id": expected["run_id"], "project_key": expected["project_key"],
               "role": expected["role"], "adapter": expected["adapter"], "status": status,
-              "summary": "Advisory review report received; no approval decision." if status == "review_received" else "Reviewer execution requires attention.",
+              "summary": ("Advisory review report received; no approval decision." if status == "review_received" else
+                          "Reviewer execution in progress." if status == "running" else "Reviewer execution requires attention."),
               "updated_at": requests.datetime.now(requests.UTC).isoformat(), "artifacts": [], "changed_files": [],
               "skill_preflight_status": "verified", "skill_error_code": error_code,
               "skill_runtime_status": runtime_status, "task_skill_context": expected["task_skill_context"],
@@ -192,7 +193,8 @@ def continue_review_worker(workers, job_id, snapshot, ref):
         return None
     context_id = "review-" + uuid4().hex
     provider = SkillContextProvider(workers, job_id, authority=runtime)
-    begun = reserved = False
+    begun = reserved = process_started = False
+    record = None
     try:
         results.reserve_preparation(context_id)
         reserved = True
@@ -210,11 +212,17 @@ def continue_review_worker(workers, job_id, snapshot, ref):
                 results.observe_delivery("content_delivered", content_digest(prompt))
                 results.observe_delivery("catalog_presented", content_digest(prompt))
             results.mark_running()  # Durable before subprocess creation; uncertain crash cannot rerun.
+            _mirror(workers, job_id, snapshot, ref, status="running",
+                    runtime_status=record["runtime_session"]["verification_kind"])
             def check_current():
                 check_cancellation(results)
                 runtime.check_current(provider, context_ref)
+            def observe_progress(observation):
+                nonlocal process_started
+                process_started = True  # The transport calls this only after its owned Popen succeeds.
+                results.observe_progress(observation)
             capture = run_review_process(spec, prompt, check_current=check_current,
-                                         on_input_delivered=delivered)
+                                         on_input_delivered=delivered, on_progress=observe_progress)
         # The adapter context must confirm outer-envelope cleanup before receive.
         results.receive(capture)
         return _mirror(workers, job_id, snapshot, ref, status="review_received",
@@ -253,4 +261,5 @@ def continue_review_worker(workers, job_id, snapshot, ref):
                                      "invalid" if code.startswith(("review_report", "review_capture")) else "failed"))
             except (SkillError, OSError):
                 code = "review_result_save_failed"
-        return _mirror(workers, job_id, snapshot, ref, status="failed", error_code=code, runtime_status="blocked")
+        return _mirror(workers, job_id, snapshot, ref, status="failed", error_code=code,
+                       runtime_status=record["runtime_session"]["verification_kind"] if process_started else "blocked")

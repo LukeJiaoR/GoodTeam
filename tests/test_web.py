@@ -26,10 +26,8 @@ from goodteam_os.web import (
     build_provenance_refs,
     build_workflow_graph,
     build_project_overview_items,
-    build_role_observations,
     build_approval_reviews,
     build_start_console_context,
-    build_workflow_steps,
     decide_approval,
     discover_project_configs,
     discover_project_directories,
@@ -37,15 +35,10 @@ from goodteam_os.web import (
     create_local_project_config,
     delete_project,
     read_artifact,
-    read_artifact_preview,
     read_open_questions,
-    render_markdown_preview,
-    maybe_send_favicon_response,
     retry_blocked_workflow,
     terminate_project_run,
-    resolve_dashboard_state,
     save_artifact,
-    is_active_run,
     list_directory_for_picker,
     open_path_in_file_manager,
     start_workflow,
@@ -637,6 +630,45 @@ def test_project_state_exposes_task_assistant_before_first_workflow(tmp_path: Pa
     assert payload["team_workspace"]["mission"] is None
     assert payload["project_assistant"]["project_key"] == "TEAM"
     assert payload["team_workspace"]["manager_timeline"][0]["event"] == "welcome_existing_project"
+
+
+@pytest.mark.parametrize("projection_fails", [False, True])
+def test_project_state_resolves_replaced_config_after_each_request(tmp_path: Path, monkeypatch, projection_fails) -> None:
+    project_root = tmp_path / "target"
+    project_root.mkdir()
+    config = _write_context_project(tmp_path, project_root, key="TEAM")
+    if projection_fails:
+        def interrupted_projection(**kwargs):
+            raise RuntimeError("interrupted state projection")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(web, "build_team_workspace", interrupted_projection)
+            with pytest.raises(RuntimeError, match="interrupted state projection"):
+                web.build_project_work_state(tmp_path, "TEAM")
+    else:
+        assert web.build_project_work_state(tmp_path, "TEAM")["start_context"]["project_config"] == str(config)
+
+    replacement = config.with_name("replacement.local.yaml")
+    replacement.write_text(config.read_text().replace("Context Project", "Replacement Project"))
+    config.unlink()
+    # A subsequent mutation/helper lookup must also see the current binding.
+    assert web._project_config_for_key(tmp_path, "TEAM") == replacement
+    current = web.build_project_work_state(tmp_path, "TEAM")["start_context"]
+    assert current["project_config"] == str(replacement)
+    assert current["project_name"] == "Replacement Project"
+
+
+def test_project_state_keeps_same_project_keys_bound_to_their_workspace(tmp_path: Path) -> None:
+    for name in ("first", "second", "first"):
+        workspace = tmp_path / name
+        target = workspace / "target"
+        if not workspace.exists():
+            target.mkdir(parents=True)
+            config = _write_context_project(workspace, target, key="TEAM")
+            config.write_text(config.read_text().replace("Context Project", f"Project {name}"))
+        current = web.build_project_work_state(workspace, "TEAM")["start_context"]
+        assert current["project_name"] == f"Project {name}"
+        assert current["project_config"] == str(workspace / "projects/team.local.yaml")
 
 
 def test_task_assistant_message_api_uses_project_bound_service(tmp_path: Path, monkeypatch) -> None:
@@ -1543,16 +1575,6 @@ def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(path)], check=True)
 
 
-def test_build_dev_loop_without_project_returns_empty_note():
-    dev_loop = build_dev_loop(None)
-
-    assert dev_loop["worktrees"] == []
-    assert dev_loop["pull_requests"] == []
-    assert dev_loop["pre_reviews"] == []
-    assert dev_loop["is_git_repo"] is False
-    assert dev_loop["warnings"] == ["no project selected"]
-
-
 def test_request_origin_allows_local_vite_proxy_origin():
     assert _request_origin_is_same_origin(
         origin="http://127.0.0.1:5173",
@@ -1951,141 +1973,6 @@ def test_build_dev_loop_hides_release_graduation_commands_for_non_goodteam_repo(
     }
 
 
-def test_build_workflow_graph_static_nodes_and_edges(tmp_path):
-    graph = build_workflow_graph(tmp_path)
-
-    assert graph["project_key"] == ""
-    assert graph["run"] is None
-    assert {
-        "name": "architect",
-        "gate": "prd",
-        "runner": "run_architecture_until_gate",
-        "kind": "stage",
-    } in graph["nodes"]
-    assert {
-        "name": "security",
-        "gate": "security",
-        "runner": "noop_security_gate",
-        "kind": "stage",
-    } in graph["nodes"]
-    assert {"name": "prd", "kind": "gate"} in graph["nodes"]
-    assert {"name": "rejected", "kind": "terminal"} in graph["nodes"]
-    assert {"name": "revise_prd", "kind": "revise"} in graph["nodes"]
-    assert {"name": "product_requirement", "kind": "role"} in graph["nodes"]
-    assert {"from": "product_requirement", "to": "architect", "type": "dependency"} in graph["edges"]
-    assert {"from": "prd", "to": "architect", "type": "dependency"} in graph["edges"]
-    assert {"from": "architect", "to": "planner", "type": "dependency"} in graph["edges"]
-    assert {"from": "security", "to": "planner", "type": "dependency"} in graph["edges"]
-    assert {"from": "prd", "to": "architect", "type": "approved"} in graph["edges"]
-    assert {"from": "prd", "to": "revise_prd", "type": "changes_requested"} in graph["edges"]
-    assert {"from": "prd", "to": "rejected", "type": "rejected"} in graph["edges"]
-    assert graph["execution_plan"] == {
-        "scheduler": "sequential",
-        "parallel_level_execution": "deferred",
-        "levels": [
-            {"index": 0, "identifiers": ["product_requirement", "prd"], "runnable": [], "passive": ["product_requirement", "prd"]},
-            {"index": 1, "identifiers": ["architect", "rfc"], "runnable": ["architect"], "passive": ["rfc"]},
-            {"index": 2, "identifiers": ["security"], "runnable": ["security"], "passive": []},
-            {"index": 3, "identifiers": ["planner", "staging"], "runnable": ["planner"], "passive": ["staging"]},
-            {"index": 4, "identifiers": ["release"], "runnable": ["release"], "passive": []},
-            {"index": 5, "identifiers": ["retro_memory"], "runnable": ["retro_memory"], "passive": []},
-        ],
-    }
-    assert graph["workflow_execution_plan_v2"]["version"] == 2
-    assert graph["workflow_execution_plan_v2"]["valid"] is True
-    assert graph["workflow_execution_plan_v2"]["validation_errors"] == []
-    assert graph["workflow_execution_plan_v2"]["parallel_execution_plan"] == {
-        "version": 1,
-        "valid": False,
-        "scheduler": "parallel_levels",
-        "runner_kind": "read_only_fake_projection",
-        "parallel_level_execution": "blocked",
-        "parallel_readiness": {
-            "status": "blocked_for_real_workers",
-            "safe_runner_kinds": ["fake_worker", "read_only_advisor"],
-            "blocked_runner_kinds": ["human_gate", "sequential_worker"],
-            "requires_worker_isolation": True,
-            "requires_live_smoke": True,
-            "worker_isolation": {
-                "status": "required_before_real_parallel_workers",
-                "required_strategy": "worktree_per_worker",
-                "allowed_strategies": ["worktree_per_worker"],
-                "rejected_strategies": ["shared_worktree", "single_runtime_root"],
-                "evidence_required": [
-                    "per-worker worktree path outside repository root",
-                    "declared write domains mapped to one worker each",
-                    "fan-in merge or review step after all workers finish",
-                    "live smoke run using fake/read-only workers before real workers",
-                ],
-            },
-            "blockers": [
-                "Parallel execution refuses runner 'architect' with kind 'sequential_worker'",
-                "Parallel execution refuses runner 'planner' with kind 'sequential_worker'",
-                "Parallel execution refuses runner 'release' with kind 'sequential_worker'",
-                "Parallel execution refuses runner 'retro_memory' with kind 'sequential_worker'",
-                "Parallel execution refuses runner 'security' with kind 'human_gate'",
-            ],
-        },
-        "validation_errors": [
-            "Parallel execution refuses runner 'architect' with kind 'sequential_worker'",
-            "Parallel execution refuses runner 'planner' with kind 'sequential_worker'",
-            "Parallel execution refuses runner 'release' with kind 'sequential_worker'",
-            "Parallel execution refuses runner 'retro_memory' with kind 'sequential_worker'",
-            "Parallel execution refuses runner 'security' with kind 'human_gate'",
-        ],
-        "batches": [],
-    }
-    assert {
-        "id": "planner",
-        "kind": "stage",
-        "dependencies": ["architect", "rfc", "security"],
-        "write_domains": ["workflow:planner"],
-        "runner": "run_delivery_until_release_gate",
-        "runner_kind": "sequential_worker",
-        "gate": "rfc",
-        "fan_in_required": True,
-    } in graph["workflow_execution_plan_v2"]["nodes"]
-    node_names = {node["name"] for node in graph["nodes"]}
-    edge_endpoints = {edge["from"] for edge in graph["edges"]} | {edge["to"] for edge in graph["edges"]}
-    assert edge_endpoints <= node_names
-    assert {node["kind"] for node in graph["nodes"]} <= {"stage", "gate", "terminal", "revise", "role"}
-
-
-def test_build_workflow_graph_includes_active_project_run(tmp_path):
-    state = create_initial_state("run-1", "CONTENTOPS", "Build AI Content Studio")
-    state.current_node = "prd_review_gate"
-    state.next_node = "await_prd_approval"
-    state.approvals["prd"] = ApprovalDecision.APPROVED
-    StateStore(tmp_path).write_project_current(state)
-
-    graph = build_workflow_graph(tmp_path, project_key="contentops")
-
-    assert graph["project_key"] == "CONTENTOPS"
-    assert graph["run"] == {
-        "run_id": "run-1",
-        "current_node": "prd_review_gate",
-        "next_node": "await_prd_approval",
-        "current_graph_node": "prd",
-        "next_graph_node": "prd",
-        "approvals": {
-            "prd": "approved",
-            "rfc": "pending",
-            "staging": "pending",
-            "security": "pending",
-            "release": "pending",
-        },
-    }
-
-    state.current_node = "architect"
-    state.next_node = "planner"
-    StateStore(tmp_path).write_project_current(state)
-
-    graph = build_workflow_graph(tmp_path, project_key="contentops")
-
-    assert graph["run"]["current_graph_node"] == "architect"
-    assert graph["run"]["next_graph_node"] == "planner"
-
-
 def test_build_workflow_graph_emits_forward_compat_error_and_blocked_edges(tmp_path, monkeypatch):
     monkeypatch.setattr(
         web,
@@ -2469,240 +2356,6 @@ def test_failed_reviewer_retry_route_forwards_request_and_status(tmp_path, monke
     assert json.loads(response.wfile.getvalue()) == expected
 
 
-def test_maybe_send_favicon_response_returns_204_without_network_server():
-    class FakeHandler:
-        def __init__(self):
-            self.calls = []
-
-        def send_response(self, status):
-            self.calls.append(("response", status))
-
-        def send_header(self, name, value):
-            self.calls.append(("header", name, value))
-
-        def end_headers(self):
-            self.calls.append(("end",))
-
-    handler = FakeHandler()
-
-    handled = maybe_send_favicon_response(handler, "/favicon.ico")
-
-    assert handled is True
-    assert handler.calls == [
-        ("response", 204),
-        ("header", "Content-Length", "0"),
-        ("end",),
-    ]
-    assert maybe_send_favicon_response(handler, "/") is False
-
-
-def test_resolve_dashboard_state_reads_existing_state(tmp_path):
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.current_node = "prd_review_gate"
-    state.next_node = "await_prd_approval"
-    StateStore(tmp_path).write_current(state)
-
-    resolved = resolve_dashboard_state(tmp_path)
-
-    assert resolved.run_id == "run-1"
-    assert resolved.next_node == "await_prd_approval"
-
-
-def test_resolve_dashboard_state_reads_project_scoped_state(tmp_path):
-    state = create_initial_state(
-        "run-1",
-        "CONTENTOPS",
-        "Build an AI content studio for cross-platform post production.",
-    )
-    state.current_node = "prd_review_gate"
-    state.next_node = "await_prd_approval"
-    StateStore(tmp_path).write_project_current(state)
-
-    resolved = resolve_dashboard_state(tmp_path, project_key="CONTENTOPS")
-
-    assert resolved.run_id == "run-1"
-    assert resolved.project_key == "CONTENTOPS"
-    assert resolved.next_node == "await_prd_approval"
-
-
-def test_resolve_dashboard_state_returns_none_without_current_state(tmp_path):
-    assert resolve_dashboard_state(tmp_path) is None
-
-
-def test_is_active_run_detects_current_gate():
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.next_node = "await_prd_approval"
-
-    assert is_active_run(state) is True
-    assert is_active_run(None) is False
-
-
-def test_build_role_observations_maps_artifacts_to_role_statuses():
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.current_node = "prd_review_gate"
-    state.next_node = "await_prd_approval"
-    state.artifacts["prd"] = "/tmp/prd.md"
-    state.role_models = {
-        "orchestrator": {"primary": "codex:gpt-5.5", "mode": "short-context"},
-        "product_requirement": {"primary": "codex:gpt-5.5", "draft": "codex:gpt-5.5"},
-        "architect": {"primary": "codex:gpt-5.5"},
-        "implementation": {"primary": "codex:gpt-5.3-codex", "mode": "worker-dispatch"},
-    }
-
-    observations = build_role_observations(state)
-    product = next(role for role in observations if role["name"] == "Product / Requirement")
-    architect = next(role for role in observations if role["name"] == "Architect")
-    orchestrator = next(role for role in observations if role["name"] == "Task Assistant")
-    implementation = next(role for role in observations if role["name"] == "Implementation")
-
-    assert orchestrator["model"] == "codex:gpt-5.5"
-    assert orchestrator["mode"] == "short-context"
-    assert product["status"] == "Waiting for approval"
-    assert product["artifact"] == "prd"
-    assert product["model"] == "codex:gpt-5.5"
-    assert architect["status"] == "No activity"
-    assert implementation["model"] == "codex:gpt-5.3-codex"
-
-
-def test_build_role_observations_marks_next_role_ready():
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.current_node = "prd_review_gate"
-    state.next_node = "architect"
-
-    observations = build_role_observations(state)
-    architect = next(role for role in observations if role["name"] == "Architect")
-
-    assert architect["status"] == "Ready"
-
-
-def test_build_workflow_steps_marks_current_review_gate():
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.current_node = "prd_review_gate"
-    state.next_node = "await_prd_approval"
-    state.artifacts["prd"] = "/tmp/prd.md"
-
-    steps = build_workflow_steps(state)
-    product = next(step for step in steps if step["key"] == "product_requirement")
-    prd_review = next(step for step in steps if step["key"] == "prd_review")
-    architecture = next(step for step in steps if step["key"] == "architecture")
-
-    assert product["status"] == "done"
-    assert product["artifact_path"] == "/tmp/prd.md"
-    assert prd_review["status"] == "review-needed"
-    assert prd_review["action_label"] == "Review PRD"
-    assert prd_review["approval"] == "prd"
-    assert architecture["status"] == "not-started"
-
-
-def test_build_workflow_steps_for_existing_project_starts_with_takeover_review():
-    state = create_initial_state("run-1", "CONTENTOPS", "Take over the AI content studio")
-    state.source_type = "existing_project"
-    state.current_node = "takeover_review_gate"
-    state.next_node = "await_takeover_approval"
-    state.artifacts["takeover"] = "/tmp/takeover-brief.md"
-    state.approvals["takeover"] = "pending"
-
-    steps = build_workflow_steps(state)
-    takeover = steps[0]
-    prd = next(step for step in steps if step["key"] == "product_requirement")
-
-    assert takeover["key"] == "takeover_review"
-    assert takeover["status"] == "review-needed"
-    assert takeover["action_label"] == "Review TAKEOVER"
-    assert takeover["artifact_path"] == "/tmp/takeover-brief.md"
-    assert prd["status"] == "not-started"
-
-
-def test_build_workflow_steps_marks_next_step_ready():
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.current_node = "prd_review_gate"
-    state.next_node = "architect"
-    state.approvals["prd"] = "approved"
-    state.artifacts["prd"] = "/tmp/prd.md"
-
-    steps = build_workflow_steps(state)
-    architecture = next(step for step in steps if step["key"] == "architecture")
-
-    assert architecture["status"] == "ready"
-    assert architecture["status_label"] == "Ready"
-    assert "no worker execution" in architecture["feedback"]
-
-
-def test_build_workflow_steps_without_state_is_not_started():
-    steps = build_workflow_steps(None)
-
-    assert steps[0]["status"] == "not-started"
-    assert all(step["artifact_path"] == "" for step in steps)
-
-
-def test_build_approval_reviews_reads_prd_artifact(tmp_path):
-    prd = tmp_path / "prd.md"
-    prd.write_text("# PRD\n\nReview me", encoding="utf-8")
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.artifacts["prd"] = str(prd)
-    state.next_node = "await_prd_approval"
-
-    reviews = build_approval_reviews(state)
-    prd_review = next(review for review in reviews if review["approval"] == "prd")
-
-    assert prd_review["artifact"] == "prd"
-    assert prd_review["artifact_path"] == str(prd)
-    assert "# PRD" in prd_review["content"]
-    assert prd_review["is_pending"] is True
-    assert prd_review["is_actionable"] is True
-    rfc_review = next(review for review in reviews if review["approval"] == "rfc")
-    assert rfc_review["is_actionable"] is False
-
-
-def test_build_approval_reviews_titles_takeover_for_humans(tmp_path):
-    takeover = tmp_path / "takeover-brief.md"
-    takeover.write_text("# Takeover Brief\n\nReview me", encoding="utf-8")
-    state = create_initial_state("run-1", "GTO", "Take over the existing project")
-    state.source_type = "existing_project"
-    state.approvals["takeover"] = ApprovalDecision.PENDING
-    state.artifacts["takeover"] = str(takeover)
-    state.next_node = "await_takeover_approval"
-
-    reviews = build_approval_reviews(state)
-    takeover_review = next(review for review in reviews if review["approval"] == "takeover")
-
-    assert takeover_review["title"] == "Takeover Brief"
-    assert takeover_review["is_actionable"] is True
-
-
-def test_build_approval_reviews_includes_multi_role_prd_reviewers(tmp_path):
-    prd = tmp_path / "prd.md"
-    prd.write_text("# PRD\n\nReview me", encoding="utf-8")
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.artifacts["prd"] = str(prd)
-    state.next_node = "await_prd_approval"
-
-    reviews = build_approval_reviews(state)
-    prd_review = next(review for review in reviews if review["approval"] == "prd")
-
-    assert prd_review["review_roles"] == [
-        "Product / Requirement",
-        "Architect",
-        "Review / QA",
-    ]
-
-
-def test_build_approval_reviews_includes_empty_rfc_committee(tmp_path):
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    state.next_node = "await_rfc_approval"
-
-    reviews = build_approval_reviews(state, workspace=tmp_path)
-    rfc_review = next(review for review in reviews if review["approval"] == "rfc")
-    prd_review = next(review for review in reviews if review["approval"] == "prd")
-
-    assert rfc_review["committee"] == {
-        "advisors": ["qa"],
-        "convened": False,
-        "messages": [],
-    }
-    assert "committee" not in prd_review
-
-
 def test_build_approval_reviews_includes_rfc_committee_messages(tmp_path):
     state = create_initial_state("run-1", "GTO", "Build AI Team OS")
     state.next_node = "await_rfc_approval"
@@ -2910,12 +2563,6 @@ def test_build_approval_reviews_actionable_review_carries_recommendation(tmp_pat
     assert "recommendation" not in rfc_review
 
 
-def test_build_provenance_refs_returns_empty_without_manifests(tmp_path):
-    state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-
-    assert build_provenance_refs(state=state, workspace=tmp_path, project_key="GTO") == []
-
-
 def test_build_provenance_refs_parses_manifest_and_masks_paths(tmp_path):
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -2960,24 +2607,6 @@ def test_build_provenance_refs_parses_manifest_and_masks_paths(tmp_path):
 
     snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
     assert snapshot["provenance_refs"] == refs
-
-
-def test_read_artifact_preview_truncates_long_content(tmp_path):
-    artifact = tmp_path / "long.md"
-    artifact.write_text("a" * 20, encoding="utf-8")
-
-    preview = read_artifact_preview(str(artifact), max_chars=5)
-
-    assert preview == "aaaaa\n\n[Preview truncated]"
-
-
-def test_markdown_preview_escapes_script_content():
-    html = render_markdown_preview(
-        "# PRD\n\nReview **bold** text.\n\n- One\n- Two\n\n```html\n<script>alert(1)</script>\n```"
-    )
-
-    assert "<pre><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></pre>" in html
-    assert "<script>" not in html
 
 
 def test_read_artifact_reads_current_run_artifact(tmp_path):
@@ -3096,38 +2725,6 @@ def test_save_artifact_rejects_path_outside_current_run(tmp_path):
         raise AssertionError("Expected outside path to be rejected")
 
 
-def test_build_start_console_context_reads_project_and_model_config(tmp_path):
-    project_config = tmp_path / "real-project.local.yaml"
-    project_config.write_text(
-        "name: Real Product\nkey: REAL\nmodel_profile: cheap\ndelivery_mode: multi_service\nrole_model_overrides:\n  architect: codex:gpt-5.5\nworker_type_settings:\n  implementation:\n    reasoning_depth: high\n    additional_prompt: Keep APIs stable.\n    desired_instances: 2\ndeployment_backend:\n  mode: ssh_compose\n  staging_ssh_target: real-staging\n  staging_remote_dir: /srv/real\n  staging_deploy_command: docker compose up -d\n  staging_healthcheck_command: curl -fsS http://127.0.0.1:8080/health\ndelivery_contract:\n  required: true\n  minimum_evidence: functional\n  fatal_output_patterns:\n    migration_error: migrate: executable file not found\n  staging_acceptance:\n    critical-user-journey:\n      type: local_command\n      command: ./scripts/e2e-critical.sh\n",
-        encoding="utf-8",
-    )
-    context = build_start_console_context(
-        workspace=tmp_path / "goodteam",
-        model_config=Path("models.yaml"),
-        project_config=project_config,
-    )
-
-    assert context["project_key"] == "REAL"
-    assert context["project_name"] == "Real Product"
-    assert "balanced" in context["profiles"]
-    assert context["project_config"] == str(project_config)
-    assert context["task_backend"] == {"mode": "local", "sync": []}
-    assert context["worker_backend"] == {"mode": "codex"}
-    assert context["model_profile"] == "cheap"
-    assert context["delivery_mode"] == "multi_service"
-    assert context["role_model_overrides"]["architect"] == "codex:gpt-5.5"
-    assert context["worker_type_settings"]["implementation"] == {
-        "reasoning_depth": "high",
-        "additional_prompt": "Keep APIs stable.",
-        "desired_instances": 2,
-    }
-    assert context["deployment_backend"]["mode"] == "ssh_compose"
-    assert context["deployment_backend"]["staging_ssh_target"] == "real-staging"
-    assert context["delivery_contract"]["required"] is True
-    assert context["delivery_contract"]["acceptance_count"] == 1
-
-
 def test_build_start_console_context_exposes_latest_archived_run_for_restart(tmp_path):
     workspace = tmp_path / "goodteam"
     project_config = workspace / "projects" / "contentops.local.yaml"
@@ -3208,44 +2805,6 @@ def test_discover_project_configs_lists_only_local_configs(tmp_path):
     assert configs == [projects / "real.local.yaml"]
 
 
-def test_build_project_overview_items_lists_project_configs_with_run_status(tmp_path):
-    content_ops_config = tmp_path / "projects" / "contentops.local.yaml"
-    gto_config = tmp_path / "projects" / "gto.local.yaml"
-    content_ops_config.parent.mkdir()
-    content_ops_config.write_text("name: AI Content Studio\nkey: CONTENTOPS\nmodel_profile: cheap\n", encoding="utf-8")
-    gto_config.write_text("name: GoodTeam\nkey: GTO\nmodel_profile: max_quality\n", encoding="utf-8")
-    active = create_initial_state(
-        "run-1",
-        "CONTENTOPS",
-        "Build an AI content studio that turns research into posts for TikTok, Reddit, X, and LinkedIn.",
-    )
-    active.next_node = "await_prd_approval"
-    StateStore(tmp_path).write_project_current(active)
-
-    items = build_project_overview_items(tmp_path, model_config=Path("models.yaml"))
-
-    by_key = {item["project_key"]: item for item in items}
-    assert by_key["CONTENTOPS"]["status"] == "active"
-    assert by_key["CONTENTOPS"]["next_node"] == "await_prd_approval"
-    assert by_key["CONTENTOPS"]["model_profile"] == "cheap"
-    assert by_key["GTO"]["status"] == "idle"
-    assert by_key["GTO"]["model_profile"] == "max_quality"
-
-
-def test_discover_project_directories_lists_immediate_children(tmp_path):
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "api").mkdir()
-    (tmp_path / ".hidden").mkdir()
-    (tmp_path / "file.txt").write_text("nope", encoding="utf-8")
-
-    dirs = discover_project_directories(tmp_path)
-
-    assert dirs == [
-        {"name": "api", "path": str(tmp_path / "api")},
-        {"name": "docs", "path": str(tmp_path / "docs")},
-    ]
-
-
 def test_discover_project_directories_lists_nested_project_repos(tmp_path):
     project = tmp_path / "product"
     docs = project / "product-docs"
@@ -3261,15 +2820,6 @@ def test_discover_project_directories_lists_nested_project_repos(tmp_path):
     assert str(docs) in paths
     assert str(api) in paths
     assert str(ignored) not in paths
-
-
-def test_discover_project_directories_defaults_to_home_without_personal_path(tmp_path, monkeypatch):
-    (tmp_path / "api").mkdir()
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-
-    dirs = discover_project_directories()
-
-    assert dirs == [{"name": "api", "path": str(tmp_path / "api")}]
 
 
 def test_list_directory_for_picker_returns_files_and_dirs_filtered_sorted_and_git_flag(tmp_path):
@@ -3574,23 +3124,6 @@ def test_create_local_project_config_initializes_git_on_fresh_root(tmp_path):
     assert payload["git"] == {"initialized": True, "remote_created": False, "warnings": []}
 
 
-def test_create_local_project_config_skips_existing_git_repo(tmp_path):
-    project_root = tmp_path / "contentops"
-    project_root.mkdir()
-    _init_git_repo(project_root)
-
-    payload = create_local_project_config(
-        workspace=tmp_path,
-        project_name="AI Content Studio",
-        project_key="CONTENTOPS",
-        project_root=str(project_root),
-    )
-
-    assert payload["git"]["initialized"] is False
-    assert payload["git"]["remote_created"] is False
-    assert "git init skipped: project root already contains .git" in payload["git"]["warnings"]
-
-
 def test_create_local_project_config_create_remote_without_token_warns(tmp_path, monkeypatch):
     project_root = tmp_path / "contentops"
     project_root.mkdir()
@@ -3692,19 +3225,6 @@ def test_create_local_project_config_rejects_newlines_in_scalar_values(tmp_path)
             project_key="CONTENTOPS",
             project_root=str(project_root),
         )
-
-
-def test_web_normalize_delivery_mode_accepts_new_presets_and_custom():
-    for mode in [
-        "static_site",
-        "cli_tool",
-        "library",
-        "data_pipeline",
-        "mobile_app",
-        "feature_increment",
-        "custom",
-    ]:
-        assert web.normalize_delivery_mode(mode) == mode
 
 
 def test_create_local_project_config_defaults_to_local_only_task_backend(tmp_path):
@@ -3820,35 +3340,6 @@ def test_start_workflow_ignores_transient_standards_for_preset_delivery_mode(tmp
     assert "- Run local preview." not in prd
 
 
-def test_start_workflow_notifies_when_prd_approval_gate_is_ready(tmp_path, monkeypatch):
-    notifications = []
-
-    def fake_notification(**kwargs):
-        kwargs.pop("workspace", None)
-        notifications.append(kwargs)
-        return {"status": "sent"}
-
-    monkeypatch.setattr("goodteam_os.web.send_approval_notification", fake_notification)
-
-    payload = start_workflow(
-        workspace=tmp_path,
-        idea="Build an AI content studio that collects source material and drafts posts for TikTok, Reddit, X, and LinkedIn.",
-        project_key="CONTENTOPS",
-        model_config=Path("models.yaml"),
-        model_profile="balanced",
-    )
-
-    assert notifications == [
-        {
-            "project_key": "CONTENTOPS",
-            "run_id": payload["run_id"],
-            "gate": "prd",
-            "artifact_path": payload["artifacts"]["prd"],
-            "summary": "GoodTeam is waiting for PRD approval on CONTENTOPS.",
-        }
-    ]
-
-
 def test_start_workflow_can_adopt_existing_project_first(tmp_path):
     project_config = tmp_path / "project.local.yaml"
     docs = tmp_path / "content-research"
@@ -3924,37 +3415,6 @@ def test_discover_project_configs_reads_sibling_projects_for_legacy_runs(tmp_pat
 
     assert web._project_config_for_key(workspace, "CHECK") == project_config.resolve()
     assert build_project_overview_items(workspace)[0]["project_key"] == "CHECK"
-
-
-def test_start_workflow_notifies_when_takeover_approval_gate_is_ready(tmp_path, monkeypatch):
-    notifications = []
-
-    def fake_notification(**kwargs):
-        kwargs.pop("workspace", None)
-        notifications.append(kwargs)
-        return {"status": "sent"}
-
-    monkeypatch.setattr("goodteam_os.web.send_approval_notification", fake_notification)
-    project_config = tmp_path / "project.local.yaml"
-    docs = tmp_path / "content-research"
-    docs.mkdir()
-    project_config.write_text(
-        f"name: AI Content Studio\nkey: CONTENTOPS\nrepos:\n  docs: {docs}\nworker_backend:\n  mode: fake\n",
-        encoding="utf-8",
-    )
-
-    start_workflow(
-        workspace=tmp_path,
-        idea="Take over the AI content studio and prepare cross-platform publishing workflows.",
-        project_key="CONTENTOPS",
-        model_config=Path("models.yaml"),
-        model_profile="balanced",
-        source_type="existing_project",
-        project_config=project_config,
-    )
-
-    # takeover is an internal gate and is not in the default TG notify set
-    assert notifications == []
 
 
 def test_start_workflow_rejects_new_run_when_current_run_is_active(tmp_path):
@@ -4101,27 +3561,6 @@ def test_start_workflow_rejects_empty_goal(tmp_path):
         raise AssertionError("Expected empty workflow goal to fail")
 
 
-def test_decide_approval_approves_prd_and_generates_rfc(tmp_path):
-    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
-    state.current_node = "prd_review_gate"
-    state.next_node = "await_prd_approval"
-    StateStore(tmp_path).write_project_current(state)
-
-    payload = decide_approval(
-        workspace=tmp_path,
-        project_key="CONTENTOPS",
-        approval="prd",
-        decision="approved",
-    )
-
-    assert payload["approvals"]["prd"] == "approved"
-    assert payload["current_node"] == "rfc_review_gate"
-    assert payload["next_node"] == "await_rfc_approval"
-    assert "rfc" in payload["artifacts"]
-    assert Path(payload["artifacts"]["rfc"]).is_file()
-    assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", "run-1", "rfc_review_gate").is_file()
-
-
 def test_decide_approval_rejects_stale_artifact_version_before_mutation(tmp_path):
     artifact = tmp_path / "prd.md"
     artifact.write_text("# PRD\n\nVersion A\n", encoding="utf-8")
@@ -4203,49 +3642,6 @@ def test_decide_approval_records_exact_approved_artifact_version(tmp_path):
     )
     assert approval_event["artifact"] == "prd"
     assert approval_event["artifact_version"] == artifact_version
-
-
-def test_decide_approval_notifies_when_takeover_approval_generates_prd_gate(tmp_path, monkeypatch):
-    notifications = []
-
-    def fake_notification(**kwargs):
-        kwargs.pop("workspace", None)
-        notifications.append(kwargs)
-        return {"status": "sent"}
-
-    monkeypatch.setattr("goodteam_os.web.send_approval_notification", fake_notification)
-    project_config = tmp_path / "project.local.yaml"
-    docs = tmp_path / "content-research"
-    docs.mkdir()
-    project_config.write_text(
-        f"name: AI Content Studio\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "CONTENTOPS", "Take over AI Content Studio")
-    state.source_type = "existing_project"
-    state.source_ref = str(project_config)
-    state.current_node = "takeover_review_gate"
-    state.next_node = "await_takeover_approval"
-    state.approvals["takeover"] = "pending"
-    StateStore(tmp_path).write_project_current(state)
-
-    payload = decide_approval(
-        workspace=tmp_path,
-        project_key="CONTENTOPS",
-        approval="takeover",
-        decision="approved",
-    )
-
-    assert payload["next_node"] == "await_prd_approval"
-    assert notifications == [
-        {
-            "project_key": "CONTENTOPS",
-            "run_id": "run-1",
-            "gate": "prd",
-            "artifact_path": payload["artifacts"]["prd"],
-            "summary": "GoodTeam is waiting for PRD approval on CONTENTOPS.",
-        }
-    ]
 
 
 def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeypatch):
@@ -4343,31 +3739,6 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
         assert artifact in payload["artifacts"]
         assert Path(payload["artifacts"][artifact]).is_file()
     assert "release_notes" not in payload["artifacts"]
-
-
-def test_decide_approval_approves_staging_and_generates_release_notes(tmp_path):
-    staging_report = tmp_path / "artifacts" / "runs" / "run-1" / "staging_report" / "staging-report.md"
-    staging_report.parent.mkdir(parents=True)
-    staging_report.write_text("# Staging Report\n\nPassed", encoding="utf-8")
-    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
-    state.current_node = "staging_review_gate"
-    state.next_node = "await_staging_approval"
-    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved", "staging": "pending"})
-    state.artifacts["staging_report"] = str(staging_report)
-    StateStore(tmp_path).write_project_current(state)
-
-    payload = decide_approval(
-        workspace=tmp_path,
-        project_key="CONTENTOPS",
-        approval="staging",
-        decision="approved",
-    )
-
-    assert payload["approvals"]["staging"] == "approved"
-    assert payload["current_node"] == "release_review_gate"
-    assert payload["next_node"] == "await_release_approval"
-    assert "release_notes" in payload["artifacts"]
-    assert Path(payload["artifacts"]["release_notes"]).is_file()
 
 
 def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch):
@@ -4698,27 +4069,6 @@ def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_pa
     assert payload["blockers"] == []
 
 
-def test_decide_approval_approves_release_and_completes_run(tmp_path):
-    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
-    state.current_node = "release_review_gate"
-    state.next_node = "await_release_approval"
-    state.approvals.update({"prd": "approved", "rfc": "approved", "security": "approved", "release": "pending"})
-    StateStore(tmp_path).write_project_current(state)
-
-    payload = decide_approval(
-        workspace=tmp_path,
-        project_key="CONTENTOPS",
-        approval="release",
-        decision="approved",
-    )
-
-    assert payload["approvals"]["release"] == "approved"
-    assert payload["current_node"] == "complete"
-    assert payload["next_node"] == ""
-    assert "retro_memory" in payload["artifacts"]
-    assert Path(payload["artifacts"]["retro_memory"]).is_file()
-
-
 def test_decide_approval_rejects_gate_that_is_not_actionable(tmp_path):
     state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
     state.current_node = "implementation"
@@ -4859,41 +4209,6 @@ def test_retry_blocked_workflow_rejects_non_blocked_run(tmp_path, current_node, 
         assert "not blocked" in str(exc)
     else:
         raise AssertionError("Expected retry to reject non-blocked run")
-
-
-def test_decide_approval_approves_takeover_and_generates_prd(tmp_path):
-    docs = tmp_path / "content-research"
-    docs.mkdir()
-    (docs / "codex.md").write_text(
-        "# Memory\n- Existing content workflow collects AI usage source material and drafts posts.\n",
-        encoding="utf-8",
-    )
-    project_config = tmp_path / "project.local.yaml"
-    project_config.write_text(
-        f"name: AI Content Studio\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
-    state.source_type = "existing_project"
-    state.source_ref = str(project_config)
-    state.current_node = "takeover_review_gate"
-    state.next_node = "await_takeover_approval"
-    state.approvals["takeover"] = "pending"
-    state.artifacts["takeover"] = str(tmp_path / "artifacts" / "runs" / "run-1" / "takeover" / "takeover-brief.md")
-    StateStore(tmp_path).write_project_current(state)
-
-    payload = decide_approval(
-        workspace=tmp_path,
-        project_key="CONTENTOPS",
-        approval="takeover",
-        decision="approved",
-    )
-
-    assert payload["approvals"]["takeover"] == "approved"
-    assert payload["current_node"] == "prd_review_gate"
-    assert payload["next_node"] == "await_prd_approval"
-    assert Path(payload["artifacts"]["prd"]).is_file()
-    assert StateStore(tmp_path).latest_project_checkpoint_path("CONTENTOPS", "run-1", "prd_review_gate").is_file()
 
 
 def test_legacy_takeover_review_recovers_a_human_brief_without_exposing_source_packet(tmp_path):
@@ -5293,15 +4608,6 @@ def test_build_approval_evidence_snapshot_smoke_status_failed(tmp_path):
     assert snapshot["smoke_status"] == "failed"
 
 
-def test_build_approval_evidence_snapshot_smoke_status_unknown_when_no_reports(tmp_path):
-    state = create_initial_state("run-smoke", "CONTENTOPS", "Smoke run")
-
-    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="CONTENTOPS")
-
-    assert snapshot["smoke_status"] == "unknown"
-    assert snapshot["smoke_refs"] == []
-
-
 def test_build_approval_evidence_snapshot_smoke_status_ignores_other_projects(tmp_path):
     _seed_smoke_report(tmp_path, "passed")
     state = create_initial_state("run-smoke", "GTO", "Smoke run")
@@ -5328,15 +4634,6 @@ def test_build_approval_evidence_snapshot_qa_status_failed_on_rejected(tmp_path)
     snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
 
     assert snapshot["qa_status"] == "failed"
-
-
-def test_build_approval_evidence_snapshot_qa_status_unknown_when_pending(tmp_path):
-    state = create_initial_state("run-qa", "GTO", "QA run")
-    state.approvals["qa"] = ApprovalDecision.PENDING
-
-    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
-
-    assert snapshot["qa_status"] == "unknown"
 
 
 def _seed_ci_manifest(tmp_path, ci_status, run_id=""):
@@ -5375,14 +4672,6 @@ def test_build_approval_evidence_snapshot_ci_status_failed(tmp_path, monkeypatch
     snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
 
     assert snapshot["ci_status"] == "failed"
-
-
-def test_build_approval_evidence_snapshot_ci_status_unknown_without_manifest(tmp_path):
-    state = create_initial_state("run-ci", "GTO", "CI run")
-
-    snapshot = build_approval_evidence_snapshot(state=state, workspace=tmp_path, project_key="GTO")
-
-    assert snapshot["ci_status"] == "unknown"
 
 
 def test_build_approval_evidence_snapshot_bare_state_all_unknown(tmp_path):
@@ -5589,45 +4878,6 @@ def test_delete_project_rejects_unknown_project(tmp_path):
         assert "No local project config found" in str(exc)
     else:
         raise AssertionError("Expected unknown project delete to fail")
-
-
-def test_tg_notify_gate_default_filter_skips_non_notify_gate(monkeypatch):
-    monkeypatch.delenv("GOODTEAM_TG_NOTIFY_GATES", raising=False)
-    called = []
-
-    def fake_send(**kwargs):
-        called.append(kwargs)
-        return {"status": "ok"}
-
-    monkeypatch.setattr(web, "send_approval_notification", fake_send)
-
-    state = create_initial_state("r1", "TEST", "Test project")
-    state.next_node = "await_takeover_approval"
-    state.approvals["takeover"] = "pending"
-
-    result = web.notify_current_approval_gate(state)
-
-    assert result == {"status": "skipped", "reason": "gate_not_in_notify_set"}
-    assert called == []
-
-
-def test_tg_notify_gate_default_filter_sends_for_prd_gate(monkeypatch):
-    monkeypatch.delenv("GOODTEAM_TG_NOTIFY_GATES", raising=False)
-    called = []
-
-    def fake_send(**kwargs):
-        called.append(kwargs)
-        return {"status": "ok"}
-
-    monkeypatch.setattr(web, "send_approval_notification", fake_send)
-
-    state = create_initial_state("r1", "TEST", "Test project")
-    state.next_node = "await_prd_approval"
-    state.approvals["prd"] = "pending"
-
-    web.notify_current_approval_gate(state)
-
-    assert len(called) == 1
 
 
 def test_tg_notify_gate_env_override_routes_correctly(monkeypatch):

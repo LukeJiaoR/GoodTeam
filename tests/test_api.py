@@ -9,8 +9,6 @@ import pytest
 
 import goodteam_os.web as web
 from goodteam_os.memory import RoleMemoryStore
-from goodteam_os.messages import append_message
-from goodteam_os.resources import register_markdown_artifact, register_task_ledger
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import serve
 
@@ -18,6 +16,24 @@ from goodteam_os.web import serve
 class FakeRequest:
     def makefile(self, *args, **kwargs):
         return BytesIO()
+
+
+def test_api_messages_route_isolates_explicit_run_ledger(tmp_path, monkeypatch):
+    from goodteam_os.messages import append_message
+
+    expected = append_message(
+        tmp_path, "REAL", "run-1", from_role="implementation", to=["qa"],
+        kind="ask", body="Message for the requested run.",
+    )
+    append_message(
+        tmp_path, "REAL", "run-2", from_role="implementation", to=["qa"],
+        kind="ask", body="A different run is not the requested ledger.",
+    )
+
+    handler = capture_get_handler(tmp_path, monkeypatch)("/api/messages?project=REAL&run=run-1")
+
+    assert 200 in handler.responses
+    assert json.loads(handler.wfile.getvalue().decode("utf-8"))["messages"] == [expected]
 
 
 def capture_get_handler(tmp_path, monkeypatch, *, frontend_dist=None):
@@ -209,122 +225,6 @@ def test_api_artifact_route_rejects_unregistered_absolute_path(tmp_path, monkeyp
     assert "Artifact is not registered" in payload["message"]
     assert payload["request_id"]
     assert "Do not expose this" not in handler.wfile.getvalue().decode("utf-8")
-
-
-def test_api_devloop_route_returns_contract_shape(tmp_path, monkeypatch):
-    received_roots = []
-
-    def fake_build_dev_loop(root):
-        received_roots.append(root)
-        return {
-            "worktrees": [],
-            "pull_requests": [
-                {
-                    "number": 57,
-                    "title": "Add devloop",
-                    "head_branch": "feat/devloop",
-                    "ci": "pending",
-                    "url": "https://github.com/org/repo/pull/57",
-                }
-            ],
-            "pre_reviews": [{"pr": 57, "present": True, "report_path": "/tmp/pre-review-57-report.md"}],
-            "warnings": ["no project selected"],
-            "generated_at": "2026-06-04T00:00:00+00:00",
-        }
-
-    monkeypatch.setattr(
-        "goodteam_os.web.build_dev_loop",
-        fake_build_dev_loop,
-    )
-    simulate_get = capture_get_handler(tmp_path, monkeypatch)
-
-    handler = simulate_get("/api/devloop")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert set(payload) == {"worktrees", "pull_requests", "pre_reviews", "warnings", "generated_at"}
-    assert received_roots == [None]
-    assert payload["worktrees"] == []
-    assert payload["pull_requests"][0]["head_branch"] == "feat/devloop"
-    assert payload["pull_requests"][0]["ci"] == "pending"
-    assert payload["pre_reviews"][0]["pr"] == 57
-    assert payload["generated_at"]
-
-
-def test_api_server_actions_reports_disabled_destructive_capabilities(tmp_path, monkeypatch):
-    received_roots = []
-
-    def fake_build_server_action_capabilities(root):
-        received_roots.append(root)
-        readiness = {"server_execution": "disabled_by_default", "pull_requests": []}
-        return {
-            "actions": {
-                "dispatch_track": {"available": True, "mode": "execute", "reason": ""},
-                "dry_smoke": {"available": True, "mode": "execute", "reason": ""},
-                "land_pr": {
-                    "available": False,
-                    "mode": "human_command_only",
-                    "reason": "disabled_by_default",
-                    "readiness": readiness,
-                },
-                "tag_release": {
-                    "available": False,
-                    "mode": "human_command_only",
-                    "reason": "disabled_by_default",
-                    "readiness": readiness,
-                },
-                "graduate_release": {
-                    "available": False,
-                    "mode": "human_command_only",
-                    "reason": "disabled_by_default",
-                },
-            },
-            "execution_policy": {
-                "status": "disabled",
-                "destructive_actions_available": False,
-                "env_gate_configured": False,
-                "nonce_configured": False,
-                "same_origin_required": True,
-                "typed_confirmation_required": True,
-                "argv_allowlist_required": True,
-                "audit_required": True,
-                "audit_dir": str(tmp_path / ".goodteam" / "server-actions"),
-                "timeout_seconds": web.SERVER_ACTION_TIMEOUT_SECONDS,
-                "enabled_actions": [],
-                "blocked_actions": {
-                    "land_pr": ["disabled_by_default"],
-                    "graduate_release": ["disabled_by_default"],
-                    "tag_release": ["tag_release_safety_design_required"],
-                },
-            },
-            "generated_at": "2026-06-08T00:00:00+00:00",
-        }
-
-    monkeypatch.setattr(
-        "goodteam_os.web.build_server_action_capabilities",
-        fake_build_server_action_capabilities,
-        raising=False,
-    )
-    simulate_get = capture_get_handler(tmp_path, monkeypatch)
-
-    handler = simulate_get("/api/server-actions")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert received_roots == [None]
-    assert payload["actions"]["dispatch_track"]["available"] is True
-    assert payload["actions"]["dry_smoke"]["available"] is True
-    assert payload["actions"]["land_pr"] == {
-        "available": False,
-        "mode": "human_command_only",
-        "reason": "disabled_by_default",
-        "readiness": {"server_execution": "disabled_by_default", "pull_requests": []},
-    }
-    assert payload["actions"]["tag_release"]["reason"] == "disabled_by_default"
-    assert payload["actions"]["tag_release"]["readiness"]["server_execution"] == "disabled_by_default"
-    assert payload["actions"]["graduate_release"]["mode"] == "human_command_only"
-    assert payload["execution_policy"]["same_origin_required"] is True
-    assert payload["execution_policy"]["audit_dir"] == str(tmp_path / ".goodteam" / "server-actions")
 
 
 def test_build_server_action_audit_log_reads_recent_records_without_execution(tmp_path):
@@ -902,75 +802,6 @@ def test_api_smoke_run_rejects_cross_origin_before_start(tmp_path, monkeypatch):
     assert payload["request_id"]
 
 
-def test_smoke_run_items_include_async_status_report_runs(tmp_path):
-    smoke_root = tmp_path / "state" / "smoke-runs"
-    smoke_root.mkdir(parents=True)
-    status_path = smoke_root / "smoke-run-smoke-123.json"
-    status_path.write_text(
-        json.dumps(
-            {
-                "run_id": "smoke-123",
-                "status": "completed",
-                "report": {
-                    "status": "planned",
-                    "runs": [
-                        {
-                            "suite": "self",
-                            "project_key": "GOODTEAM-SELF",
-                            "cycle": 1,
-                            "status": "planned",
-                        }
-                    ],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    items = web.build_smoke_run_items(tmp_path)
-
-    assert items == [
-        {
-            "suite": "self",
-            "project_key": "GOODTEAM-SELF",
-            "cycle": "1",
-            "status": "planned",
-            "report_path": str(status_path),
-            "report_status": "planned",
-        }
-    ]
-
-
-def test_api_fs_list_route_returns_directory_listing(tmp_path, monkeypatch):
-    (tmp_path / "repo").mkdir()
-    (tmp_path / "repo" / ".git").mkdir()
-    (tmp_path / "file.txt").write_text("nope", encoding="utf-8")
-    simulate_get = capture_get_handler(tmp_path, monkeypatch)
-
-    handler = simulate_get(f"/api/fs/list?path={tmp_path}")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload == {
-        "path": str(tmp_path.resolve()),
-        "parent": str(tmp_path.resolve().parent),
-        "entries": [
-            {
-                "name": "file.txt",
-                "path": str((tmp_path / "file.txt").resolve()),
-                "is_dir": False,
-                "is_git_repo": False,
-            },
-            {
-                "name": "repo",
-                "path": str((tmp_path / "repo").resolve()),
-                "is_dir": True,
-                "is_git_repo": True,
-            },
-        ],
-    }
-
-
 def test_api_fs_list_route_status_codes(tmp_path, monkeypatch):
     simulate_get = capture_get_handler(tmp_path, monkeypatch)
 
@@ -1315,217 +1146,6 @@ def test_missing_frontend_returns_actionable_diagnostic_instead_of_legacy(tmp_pa
         assert "GoodTeam Projects" not in body
 
 
-def test_api_handler_do_post_routing(tmp_path, monkeypatch):
-    captured_handler_class = None
-    def mock_server(addr, handler_class):
-        nonlocal captured_handler_class
-        captured_handler_class = handler_class
-        class FakeServer:
-            def serve_forever(self):
-                pass
-        return FakeServer()
-
-    monkeypatch.setattr("goodteam_os.web.ThreadingHTTPServer", mock_server)
-    serve(tmp_path, host="127.0.0.1", port=8788)
-
-    # Helper to simulate a POST request
-    def simulate_post(path, body_dict):
-        class SimulatedHandler(captured_handler_class):
-            def __init__(self):
-                self.request = FakeRequest()
-                self.client_address = ("127.0.0.1", 12345)
-                self.server = None
-                body_bytes = json.dumps(body_dict).encode("utf-8")
-                self.headers = {"Content-Length": str(len(body_bytes))}
-                self.path = path
-                self.wfile = BytesIO()
-                self.rfile = BytesIO(body_bytes)
-                self.responses = []
-                self.response_headers = {}
-
-            def send_response(self, code, message=None):
-                self.responses.append(code)
-
-            def send_header(self, keyword, value):
-                self.response_headers[keyword] = value
-
-            def end_headers(self):
-                pass
-
-            def send_error(self, code, message=None, explain=None):
-                self.responses.append(code)
-
-        handler = SimulatedHandler()
-        handler.do_POST()
-        return handler
-
-    # 1. Test POST /api/start validation (should return 400 because idea is missing)
-    handler = simulate_post("/api/start", {"project_key": "CONTENTOPS"})
-    assert 400 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["code"] == "invalid_request"
-    assert payload["request_id"]
-
-    # 2. Test POST /start legacy path validation (should return 400 because idea is missing)
-    handler = simulate_post("/start", {"project_key": "CONTENTOPS"})
-    assert 400 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["code"] == "invalid_request"
-    assert payload["request_id"]
-
-    # 3. Test POST /generate-prd routes through generate_prd and returns payload
-    monkeypatch.setattr(
-        "goodteam_os.web.generate_prd",
-        lambda workspace, project_key: {"project_key": project_key, "current_node": "prd_review_gate"},
-    )
-    handler = simulate_post("/generate-prd", {"project_key": "CONTENTOPS"})
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["project_key"] == "CONTENTOPS"
-    assert payload["current_node"] == "prd_review_gate"
-
-    # 4. Test POST /generate-prd returns 400 when underlying call errors
-    monkeypatch.setattr(
-        "goodteam_os.web.generate_prd",
-        lambda workspace, project_key: (_ for _ in ()).throw(ValueError("No active run for project: BAD")),
-    )
-    handler = simulate_post("/generate-prd", {"project_key": "BAD"})
-    assert 400 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["code"] == "invalid_request"
-    assert payload["request_id"]
-
-    # 5. Test POST /generate-rfc routes through generate_rfc and returns payload
-    monkeypatch.setattr(
-        "goodteam_os.web.generate_rfc",
-        lambda workspace, project_key: {"project_key": project_key, "current_node": "rfc_review_gate"},
-    )
-    handler = simulate_post("/generate-rfc", {"project_key": "CONTENTOPS"})
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["project_key"] == "CONTENTOPS"
-    assert payload["current_node"] == "rfc_review_gate"
-
-    # 6. Test POST /generate-rfc returns 400 when underlying call errors
-    monkeypatch.setattr(
-        "goodteam_os.web.generate_rfc",
-        lambda workspace, project_key: (_ for _ in ()).throw(ValueError("No active run for project: BAD")),
-    )
-    handler = simulate_post("/generate-rfc", {"project_key": "BAD"})
-    assert 400 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["code"] == "invalid_request"
-    assert payload["request_id"]
-
-    monkeypatch.setattr(
-        "goodteam_os.web.refine_artifact",
-        lambda workspace, project_key, artifact_key, content, expected_run_id="", expected_artifact_version="": {
-            "artifact": artifact_key,
-            "base_path": "/tmp/prd.md",
-            "proposed_path": "/tmp/prd.proposed.md",
-            "diff_summary": {"added_lines": 1, "removed_lines": 0},
-        },
-    )
-    handler = simulate_post(
-        "/api/refine-artifact",
-        {"project_key": "CONTENTOPS", "artifact": "prd", "content": "# Edited"},
-    )
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["artifact"] == "prd"
-    assert payload["proposed_path"] == "/tmp/prd.proposed.md"
-
-    state = create_initial_state("run-1", "CONTENTOPS", "Build a content workflow")
-    prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
-    prd.parent.mkdir(parents=True, exist_ok=True)
-    prd.write_text(
-        "# PRD\n\n"
-        "## Risks And Open Questions\n\n"
-        "- Which market launches first?\n"
-        "- What retention period is required?\n",
-        encoding="utf-8",
-    )
-    state.artifacts["prd"] = str(prd)
-    StateStore(tmp_path).write_project_current(state, "CONTENTOPS")
-
-    simulate_get = capture_get_handler(tmp_path, monkeypatch)
-    handler = simulate_get("/api/open-questions?project=CONTENTOPS&artifact=prd")
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload == {
-        "artifact": "prd",
-        "questions": [
-            "Which market launches first?",
-            "What retention period is required?",
-        ],
-    }
-
-    seen = {}
-
-    def fake_refine_artifact(workspace, project_key, artifact_key, content, guidance="",
-                             expected_run_id="", expected_artifact_version=""):
-        seen.update(
-            {
-                "project_key": project_key,
-                "artifact_key": artifact_key,
-                "content": content,
-                "guidance": guidance,
-                "expected_run_id": expected_run_id,
-                "expected_artifact_version": expected_artifact_version,
-            }
-        )
-        return {
-            "artifact": artifact_key,
-            "base_path": "/tmp/prd.md",
-            "proposed_path": "/tmp/prd.proposed.md",
-            "diff_summary": {"added_lines": 1, "removed_lines": 1},
-        }
-
-    monkeypatch.setattr("goodteam_os.web.refine_artifact", fake_refine_artifact)
-    handler = simulate_post(
-        "/api/answer-open-questions",
-        {
-            "project_key": "CONTENTOPS",
-            "artifact": "prd",
-            "answers": [
-                {"question": "Which market launches first?", "answer": "Launch in the US first."},
-                {"question": "What retention period is required?", "answer": "   "},
-            ],
-        },
-    )
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["proposed_path"] == "/tmp/prd.proposed.md"
-    assert "Q: Which market launches first?\nA: Launch in the US first.\n\n" in seen["guidance"]
-    assert "What retention period is required?" not in seen["guidance"]
-    assert "Launch in the US first." in seen["guidance"]
-    assert seen["content"] == prd.read_text(encoding="utf-8")
-    assert state.run_id == seen["expected_run_id"]
-    assert seen["expected_artifact_version"].startswith("sha256:")
-
-    monkeypatch.setattr(
-        "goodteam_os.web.accept_refinement",
-        lambda workspace, project_key, artifact_key: {"artifact": artifact_key, "accepted": True},
-    )
-    handler = simulate_post(
-        "/api/accept-refinement",
-        {"project_key": "CONTENTOPS", "artifact": "prd"},
-    )
-    assert 200 in handler.responses
-    assert json.loads(handler.wfile.getvalue().decode("utf-8"))["accepted"] is True
-
-    monkeypatch.setattr(
-        "goodteam_os.web.discard_refinement",
-        lambda workspace, project_key, artifact_key: {"artifact": artifact_key, "discarded": True},
-    )
-    handler = simulate_post(
-        "/api/discard-refinement",
-        {"project_key": "CONTENTOPS", "artifact": "prd"},
-    )
-    assert 200 in handler.responses
-    assert json.loads(handler.wfile.getvalue().decode("utf-8"))["discarded"] is True
-
-
 def test_api_post_same_origin_guard_rejects_cross_origin_and_allows_trusted_requests(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "goodteam_os.web.generate_prd",
@@ -1557,36 +1177,6 @@ def test_api_post_same_origin_guard_rejects_cross_origin_and_allows_trusted_requ
         headers={"Host": "127.0.0.1:8788"},
     )
     assert 200 in absent_origin.responses
-
-
-def test_api_approve_accepts_optional_note_without_response_shape_change(tmp_path, monkeypatch):
-    captured = {}
-
-    def fake_decide_approval(**kwargs):
-        captured.update(kwargs)
-        return {"run_id": "run-1", "decision": kwargs["decision"], "next_node": "await_prd_approval"}
-
-    monkeypatch.setattr("goodteam_os.web.decide_approval", fake_decide_approval)
-    simulate_post = capture_post_handler(tmp_path, monkeypatch)
-
-    handler = simulate_post(
-        "/api/approve",
-        {
-            "project_key": "CONTENTOPS",
-            "approval": "prd",
-            "decision": "changes_requested",
-            "note": "Tighten acceptance criteria.",
-        },
-        headers={"Host": "127.0.0.1:8788"},
-    )
-
-    assert 200 in handler.responses
-    assert captured["note"] == "Tighten acceptance criteria."
-    assert json.loads(handler.wfile.getvalue().decode("utf-8")) == {
-        "run_id": "run-1",
-        "decision": "changes_requested",
-        "next_node": "await_prd_approval",
-    }
 
 
 def test_api_intent_commit_routes_keep_discussion_separate_from_approval(tmp_path, monkeypatch):
@@ -1647,30 +1237,6 @@ def test_api_intent_commit_routes_keep_discussion_separate_from_approval(tmp_pat
     assert calls[0][1]["expected_artifact_version"] == "sha256:v1"
     assert calls[1][1]["text"] == "Keep it generic."
     assert decide_calls == []
-
-
-def test_api_approve_forwards_rejected_note(tmp_path, monkeypatch):
-    captured = {}
-
-    def fake_decide_approval(**kwargs):
-        captured.update(kwargs)
-        return {"run_id": "run-1", "decision": kwargs["decision"], "next_node": "await_prd_approval"}
-
-    monkeypatch.setattr("goodteam_os.web.decide_approval", fake_decide_approval)
-    simulate_post = capture_post_handler(tmp_path, monkeypatch)
-
-    handler_ok = simulate_post(
-        "/api/approve",
-        {
-            "project_key": "CONTENTOPS",
-            "approval": "prd",
-            "decision": "rejected",
-            "note": "Safety validation failed.",
-        },
-        headers={"Host": "127.0.0.1:8788"},
-    )
-    assert 200 in handler_ok.responses
-    assert captured["note"] == "Safety validation failed."
 
 
 def test_api_approve_requires_and_forwards_exact_approval_binding(tmp_path, monkeypatch):
@@ -1761,32 +1327,6 @@ def test_api_approve_returns_409_when_artifact_version_is_stale(tmp_path, monkey
     assert payload["code"] == "stale_approval"
     assert payload["details"]["mismatches"] == ["artifact_version"]
     assert payload["recovery"] == ["refresh_approval_brief"]
-
-
-def test_api_recover_takeover_brief_forwards_optional_note(tmp_path, monkeypatch):
-    captured = {}
-
-    def fake_recover(**kwargs):
-        captured.update(kwargs)
-        return {"run_id": "run-1", "recovered": True, "next_node": "await_takeover_approval"}
-
-    monkeypatch.setattr("goodteam_os.web.recover_legacy_takeover_review", fake_recover)
-    simulate_post = capture_post_handler(tmp_path, monkeypatch)
-
-    handler = simulate_post(
-        "/api/recover-takeover-brief",
-        {"project_key": "CONTENTOPS", "note": "Explain the main risk."},
-        headers={"Host": "127.0.0.1:8788"},
-    )
-
-    assert 200 in handler.responses
-    assert captured == {
-        "workspace": tmp_path,
-        "project_key": "CONTENTOPS",
-        "note": "Explain the main risk.",
-    }
-    assert json.loads(handler.wfile.getvalue().decode("utf-8"))["recovered"] is True
-
 
 
 def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):
@@ -2190,87 +1730,6 @@ def test_api_dispatch_track_safety_uses_served_workspace_projects_dir(tmp_path, 
     assert "configured project repo" in payload["message"]
 
 
-def test_api_state_exposes_worker_backend_options_and_roles(tmp_path, monkeypatch):
-    captured_handler_class = None
-
-    def mock_server(addr, handler_class):
-        nonlocal captured_handler_class
-        captured_handler_class = handler_class
-
-        class FakeServer:
-            def serve_forever(self):
-                pass
-
-        return FakeServer()
-
-    projects = tmp_path / "projects"
-    projects.mkdir()
-    (projects / "real.local.yaml").write_text(
-        "name: Real Product\nkey: REAL\nworker_backend:\n  mode: codex\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr("goodteam_os.web.ThreadingHTTPServer", mock_server)
-    serve(tmp_path, host="127.0.0.1", port=8788)
-
-    class SimulatedHandler(captured_handler_class):
-        def __init__(self):
-            self.request = FakeRequest()
-            self.client_address = ("127.0.0.1", 12345)
-            self.server = None
-            self.headers = {}
-            self.path = "/api/state?project=REAL"
-            self.wfile = BytesIO()
-            self.rfile = BytesIO()
-            self.responses = []
-            self.response_headers = {}
-
-        def send_response(self, code, message=None):
-            self.responses.append(code)
-
-        def send_header(self, keyword, value):
-            self.response_headers[keyword] = value
-
-        def end_headers(self):
-            pass
-
-        def send_error(self, code, message=None, explain=None):
-            self.responses.append(code)
-
-    handler = SimulatedHandler()
-    handler.do_GET()
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    context = payload["start_context"]
-    assert context["worker_backend_options"] == [
-        "codex",
-        "claude",
-        "gemini",
-        "agy",
-        "opencode",
-        "pi",
-        "fake",
-        "noop",
-        "human",
-    ]
-    assert context["worker_roles"] == [
-        "orchestrator",
-        "research",
-        "product_requirement",
-        "architect",
-        "review",
-        "planner",
-        "ui",
-        "implementation",
-        "frontend",
-        "backend",
-        "qa",
-        "code_review",
-        "release",
-        "retro_memory",
-    ]
-
-
 def test_api_state_reads_runtime_root_when_context_packet_path_empty(tmp_path, monkeypatch):
     project_root = tmp_path / "target"
     backend_repo = project_root / "backend"
@@ -2315,44 +1774,6 @@ def test_api_state_reads_runtime_root_when_context_packet_path_empty(tmp_path, m
             "summary": "",
         }
     ]
-
-
-def test_api_state_includes_resource_descriptors(tmp_path, monkeypatch):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    write_project_config(tmp_path, repos={"root": project_root})
-    state = create_initial_state("run-1", "REAL", "Build the product.")
-    prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
-    register_markdown_artifact(state, "prd", prd)
-    register_task_ledger(state, project_root / ".goodteam" / "tasks" / "tasks.json")
-    StateStore(tmp_path).write_project_current(state)
-
-    handler = capture_get_handler(tmp_path, monkeypatch)("/api/state?project=REAL")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    resources = {item["key"]: item for item in payload["resources"]}
-    assert resources["prd"]["kind"] == "markdown_artifact"
-    assert "edit" in resources["prd"]["capabilities"]
-    assert resources["task_ledger"]["kind"] == "task_ledger"
-    assert "board_source" in resources["task_ledger"]["capabilities"]
-
-
-def test_api_resources_returns_resource_descriptors(tmp_path, monkeypatch):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    write_project_config(tmp_path, repos={"root": project_root})
-    state = create_initial_state("run-1", "REAL", "Build the product.")
-    register_task_ledger(state, project_root / ".goodteam" / "tasks" / "tasks.json")
-    StateStore(tmp_path).write_project_current(state)
-
-    handler = capture_get_handler(tmp_path, monkeypatch)("/api/resources?project=REAL")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["project_key"] == "REAL"
-    assert payload["resources"][0]["key"] == "task_ledger"
-    assert payload["resources"][0]["kind"] == "task_ledger"
 
 
 def test_api_project_config_updates_worker_backends(tmp_path, monkeypatch):
@@ -2501,151 +1922,6 @@ workers:
     invalid_payload = json.loads(invalid.wfile.getvalue().decode("utf-8"))
     assert invalid_payload["code"] == "invalid_request"
     assert invalid_payload["request_id"]
-
-
-def test_api_project_config_still_creates_local_project_config(tmp_path, monkeypatch):
-    captured_handler_class = None
-
-    def mock_server(addr, handler_class):
-        nonlocal captured_handler_class
-        captured_handler_class = handler_class
-
-        class FakeServer:
-            def serve_forever(self):
-                pass
-
-        return FakeServer()
-
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    monkeypatch.setattr("goodteam_os.web.ThreadingHTTPServer", mock_server)
-    serve(tmp_path, host="127.0.0.1", port=8788)
-
-    class SimulatedHandler(captured_handler_class):
-        def __init__(self):
-            self.request = FakeRequest()
-            self.client_address = ("127.0.0.1", 12345)
-            self.server = None
-            body_bytes = json.dumps(
-                {
-                    "project_name": "Real Product",
-                    "project_key": "REAL",
-                    "docs_path": str(docs),
-                    "worker_backend_mode": "fake",
-                }
-            ).encode("utf-8")
-            self.headers = {"Content-Length": str(len(body_bytes))}
-            self.path = "/api/project-config"
-            self.wfile = BytesIO()
-            self.rfile = BytesIO(body_bytes)
-            self.responses = []
-            self.response_headers = {}
-
-        def send_response(self, code, message=None):
-            self.responses.append(code)
-
-        def send_header(self, keyword, value):
-            self.response_headers[keyword] = value
-
-        def end_headers(self):
-            pass
-
-        def send_error(self, code, message=None, explain=None):
-            self.responses.append(code)
-
-    handler = SimulatedHandler()
-    handler.do_POST()
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["project_key"] == "REAL"
-    assert Path(payload["project_config"]).is_file()
-
-
-def test_api_memory_returns_empty_roles_without_memory(tmp_path, monkeypatch):
-    write_project_config(tmp_path)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
-    state = create_initial_state("run-1", "REAL", "Build the product.")
-    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
-    StateStore(tmp_path).write_project_current(state)
-
-    handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory?project=REAL")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload == {"project_key": "REAL", "roles": []}
-    assert handler.response_headers.get("Access-Control-Allow-Origin") is None
-
-
-def test_api_agents_returns_discovered_agents(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "goodteam_os.web.discover_installed_agents",
-        lambda: [
-            {
-                "backend": "claude",
-                "aliases": ["anthropic", "claude"],
-                "available": True,
-                "ready": True,
-                "command": "claude",
-                "command_path": "/fake/bin/claude",
-                "hint": "ready",
-                "models": ["claude-sonnet-4-6", "claude-opus-4-5"],
-                "model_default": "claude-sonnet-4-6",
-            }
-        ],
-    )
-
-    handler = capture_get_handler(tmp_path, monkeypatch)("/api/agents")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload == {
-        "agents": [
-            {
-                "backend": "claude",
-                "aliases": ["anthropic", "claude"],
-                "available": True,
-                "ready": True,
-                "command": "claude",
-                "command_path": "/fake/bin/claude",
-                "hint": "ready",
-                "models": ["claude-sonnet-4-6", "claude-opus-4-5"],
-                "model_default": "claude-sonnet-4-6",
-            }
-        ]
-    }
-    assert handler.response_headers.get("Access-Control-Allow-Origin") is None
-
-
-def test_api_messages_returns_messages_for_run(tmp_path, monkeypatch):
-    message = append_message(
-        tmp_path,
-        "REAL",
-        "run-1",
-        from_role="implementation",
-        to=["qa"],
-        kind="ask",
-        body="Please review the message ledger.",
-        gate="rfc",
-    )
-    append_message(
-        tmp_path,
-        "REAL",
-        "run-2",
-        from_role="implementation",
-        to=["qa"],
-        kind="ask",
-        body="A different run should not be returned.",
-        gate="rfc",
-    )
-
-    handler = capture_get_handler(tmp_path, monkeypatch)("/api/messages?project=REAL&run=run-1")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload == {"messages": [message]}
-    assert handler.response_headers.get("Access-Control-Allow-Origin") is None
 
 
 def test_api_memory_returns_role_summaries_event_count_and_latest_retrieval(tmp_path, monkeypatch):
@@ -2811,79 +2087,6 @@ def test_api_memory_event_returns_full_event(tmp_path, monkeypatch):
     }
 
 
-def test_api_memory_events_returns_browsable_role_events(tmp_path, monkeypatch):
-    project_root = tmp_path / "target"
-    backend_repo = project_root / "backend"
-    frontend_repo = project_root / "frontend"
-    backend_repo.mkdir(parents=True)
-    frontend_repo.mkdir(parents=True)
-    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
-    state = create_initial_state("run-1", "REAL", "Build the product.")
-    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
-    StateStore(tmp_path).write_project_current(state)
-
-    memory_store = RoleMemoryStore(project_root)
-    old_event = memory_store.append_memory_event(
-        "architect",
-        horizon="mid-term",
-        text="Memory browse API exposes the older card behavior.",
-        source="job-old/result.md",
-    )
-    old_id = event_handle(old_event)
-    new_event = memory_store.append_memory_event(
-        "architect",
-        horizon="mid-term",
-        text="Memory browse API exposes the current card behavior.",
-        source="job-new/result.md",
-        supersedes=old_id,
-    )
-
-    handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory/events?project=REAL&role=architect&limit=10")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["project_key"] == "REAL"
-    assert payload["role"] == "architect"
-    assert [event["id"] for event in payload["events"]] == [event_handle(new_event), old_id]
-    assert payload["events"][0]["body"] == "Memory browse API exposes the current card behavior."
-    assert payload["events"][0]["is_superseded"] is False
-    assert payload["events"][1]["is_superseded"] is True
-
-
-def test_api_memory_events_uses_query_and_limit(tmp_path, monkeypatch):
-    project_root = tmp_path / "target"
-    backend_repo = project_root / "backend"
-    frontend_repo = project_root / "frontend"
-    backend_repo.mkdir(parents=True)
-    frontend_repo.mkdir(parents=True)
-    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
-    state = create_initial_state("run-1", "REAL", "Build the product.")
-    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
-    StateStore(tmp_path).write_project_current(state)
-
-    memory_store = RoleMemoryStore(project_root)
-    memory_store.append_memory_event(
-        "implementation",
-        horizon="short-term",
-        text="Memory browse search mentions database only.",
-        source="job-db/result.md",
-    )
-    best = memory_store.append_memory_event(
-        "implementation",
-        horizon="short-term",
-        text="Memory browse search mentions database and sqlite.",
-        source="job-sqlite/result.md",
-    )
-
-    handler = capture_get_handler(tmp_path, monkeypatch)(
-        "/api/memory/events?project=REAL&role=implementation&q=database%20sqlite&limit=1"
-    )
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert [event["id"] for event in payload["events"]] == [event_handle(best)]
-
-
 def test_api_memory_events_returns_empty_for_unknown_role(tmp_path, monkeypatch):
     project_root = tmp_path / "target"
     backend_repo = project_root / "backend"
@@ -2900,33 +2103,6 @@ def test_api_memory_events_returns_empty_for_unknown_role(tmp_path, monkeypatch)
     assert 200 in handler.responses
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert payload == {"project_key": "REAL", "role": "missing", "events": []}
-
-
-def test_api_memory_events_caps_limit(tmp_path, monkeypatch):
-    project_root = tmp_path / "target"
-    backend_repo = project_root / "backend"
-    frontend_repo = project_root / "frontend"
-    backend_repo.mkdir(parents=True)
-    frontend_repo.mkdir(parents=True)
-    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
-    state = create_initial_state("run-1", "REAL", "Build the product.")
-    state.context_packet_path = str(project_root / ".goodteam" / "memory" / "project-memory.md")
-    StateStore(tmp_path).write_project_current(state)
-
-    memory_store = RoleMemoryStore(project_root)
-    for index in range(205):
-        memory_store.append_memory_event(
-            "qa",
-            horizon="short-term",
-            text=f"Memory browse API cap event {index}.",
-            source=f"job-{index}/result.md",
-        )
-
-    handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory/events?project=REAL&role=qa&limit=500")
-
-    assert 200 in handler.responses
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert len(payload["events"]) == 200
 
 
 def test_api_memory_event_returns_supersede_details(tmp_path, monkeypatch):

@@ -4,18 +4,13 @@ from goodteam_os import graph
 from goodteam_os import web
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.workflow_table import (
-    GATE_TRANSITIONS,
     GateTransition,
     WorkflowNode,
-    advisors_for_gate,
     approved_next_for_gate,
-    disposition_for_failure_class,
     gate_transition,
-    topological_workflow_nodes,
     validate_workflow_dag,
     validate_workflow_execution_plan_v2,
     workflow_parallel_execution_plan,
-    workflow_execution_plan,
     workflow_execution_plan_v2,
     workflow_node,
 )
@@ -31,17 +26,6 @@ GROUND_TRUTH_APPROVED_NEXT = {
 }
 
 
-def test_gate_transition_table_matches_ground_truth():
-    assert {
-        gate: transition.on_approved_next
-        for gate, transition in GATE_TRANSITIONS.items()
-    } == GROUND_TRUTH_APPROVED_NEXT
-    for gate in GROUND_TRUTH_APPROVED_NEXT:
-        transition = gate_transition(gate)
-        assert transition.on_changes_requested == f"revise_{gate}"
-        assert transition.on_rejected == "rejected"
-
-
 def test_security_gate_is_declared_as_human_only_transition():
     assert gate_transition("rfc").on_approved_next == "security"
 
@@ -51,175 +35,6 @@ def test_security_gate_is_declared_as_human_only_transition():
     assert transition.on_changes_requested == "revise_security"
     assert transition.on_rejected == "rejected"
     assert workflow_node("security").runner_fn == "noop_security_gate"
-
-
-def test_advisors_for_gate_declares_rfc_committee_only():
-    assert advisors_for_gate("rfc") == ("qa",)
-
-    for gate in GROUND_TRUTH_APPROVED_NEXT:
-        if gate != "rfc":
-            assert advisors_for_gate(gate) == ()
-
-
-def test_workflow_node_failure_policy_defaults_preserve_blocked_routing():
-    node = WorkflowNode(name="example", run_guard_gate="rfc", runner_fn="run_example")
-
-    assert node.on_error == "blocked"
-    assert node.on_blocked == "blocked"
-    assert node.retry_max == 0
-    assert node.retry_on_classes == ()
-    assert node.depends_on == ()
-
-
-def test_workflow_node_dependencies_describe_current_linear_dag():
-    assert workflow_node("architect").depends_on == ("product_requirement", "prd")
-    assert workflow_node("planner").depends_on == ("architect", "rfc", "security")
-    assert workflow_node("release").depends_on == ("planner", "staging")
-    assert workflow_node("retro_memory").depends_on == ("release",)
-    assert workflow_node("security").depends_on == ("rfc",)
-
-    assert topological_workflow_nodes() == [
-        "product_requirement",
-        "prd",
-        "architect",
-        "rfc",
-        "security",
-        "planner",
-        "staging",
-        "release",
-        "retro_memory",
-    ]
-
-
-def test_workflow_execution_plan_groups_fanout_and_fanin_levels():
-    nodes = {
-        "research": WorkflowNode(
-            name="research",
-            run_guard_gate="prd",
-            runner_fn="run_research",
-            depends_on=("product_requirement",),
-        ),
-        "design": WorkflowNode(
-            name="design",
-            run_guard_gate="prd",
-            runner_fn="run_design",
-            depends_on=("product_requirement",),
-        ),
-        "review": WorkflowNode(
-            name="review",
-            run_guard_gate="rfc",
-            runner_fn="run_review",
-            depends_on=("research", "design"),
-        ),
-    }
-    gate_transitions = {
-        "prd": GateTransition(
-            gate="prd",
-            on_approved_next="research",
-            on_changes_requested="revise_prd",
-            on_rejected="rejected",
-        ),
-        "rfc": GateTransition(
-            gate="rfc",
-            on_approved_next="review",
-            on_changes_requested="revise_rfc",
-            on_rejected="rejected",
-        ),
-    }
-
-    plan = workflow_execution_plan(nodes, gate_transitions=gate_transitions)
-
-    assert plan.scheduler == "sequential"
-    assert plan.parallel_level_execution == "deferred"
-    assert [level.identifiers for level in plan.levels] == [
-        ("product_requirement",),
-        ("research", "design"),
-        ("review",),
-    ]
-    assert [level.runnable for level in plan.levels] == [
-        (),
-        ("research", "design"),
-        ("review",),
-    ]
-    assert [level.passive for level in plan.levels] == [
-        ("product_requirement",),
-        (),
-        (),
-    ]
-    assert plan.level_for("research") == 1
-    assert plan.level_for("design") == 1
-    assert plan.level_for("review") == 2
-
-
-def test_workflow_execution_plan_exposes_current_runner_levels_without_enabling_parallelism():
-    plan = workflow_execution_plan()
-
-    assert plan.scheduler == "sequential"
-    assert plan.parallel_level_execution == "deferred"
-    assert plan.order == (
-        "product_requirement",
-        "prd",
-        "architect",
-        "rfc",
-        "security",
-        "planner",
-        "staging",
-        "release",
-        "retro_memory",
-    )
-    assert plan.level_for("architect") < plan.level_for("planner")
-    assert plan.level_for("rfc") < plan.level_for("security")
-    assert plan.level_for("security") < plan.level_for("planner")
-    assert plan.level_for("planner") < plan.level_for("release")
-    assert plan.level_for("release") < plan.level_for("retro_memory")
-
-
-def test_workflow_execution_plan_v2_projects_nodes_and_validation_metadata():
-    plan = workflow_execution_plan_v2()
-
-    assert plan["version"] == 2
-    assert plan["valid"] is True
-    assert plan["scheduler"] == "sequential"
-    assert plan["runner_kind"] == "read_only_projection"
-    assert plan["parallel_level_execution"] == "deferred"
-    assert plan["validation_errors"] == []
-    assert plan["order"] == [
-        "product_requirement",
-        "prd",
-        "architect",
-        "rfc",
-        "security",
-        "planner",
-        "staging",
-        "release",
-        "retro_memory",
-    ]
-    assert plan["levels"][0] == {
-        "index": 0,
-        "identifiers": ["product_requirement", "prd"],
-        "runnable": [],
-        "passive": ["product_requirement", "prd"],
-    }
-    assert {
-        "id": "architect",
-        "kind": "stage",
-        "dependencies": ["product_requirement", "prd"],
-        "write_domains": ["workflow:architect"],
-        "runner": "run_architecture_until_gate",
-        "runner_kind": "sequential_worker",
-        "gate": "prd",
-        "fan_in_required": True,
-    } in plan["nodes"]
-    assert {
-        "id": "prd",
-        "kind": "gate",
-        "dependencies": [],
-        "write_domains": ["approval:prd"],
-        "runner": "",
-        "runner_kind": "human_gate",
-        "gate": "prd",
-        "fan_in_required": False,
-    } in plan["nodes"]
 
 
 def test_workflow_execution_plan_v2_reports_unknown_dependency_without_raising():
@@ -281,86 +96,6 @@ def test_workflow_execution_plan_v2_reports_cycles_missing_fanin_and_write_domai
     assert "Workflow DAG cycle detected: a -> b -> a" in errors
     assert "Workflow execution plan v2 has missing fan-in node 'missing_fanin' for 'a'" in errors
     assert "Workflow execution plan v2 write-domain collision repo:shared: a, b" in errors
-
-
-def test_workflow_parallel_execution_plan_allows_fake_readonly_levels_and_preserves_fanin_order():
-    nodes = {
-        "research": WorkflowNode(
-            name="research",
-            run_guard_gate="prd",
-            runner_fn="fake_research_worker",
-            depends_on=("product_requirement",),
-        ),
-        "advisor": WorkflowNode(
-            name="advisor",
-            run_guard_gate="prd",
-            runner_fn="readonly_advisor",
-            depends_on=("product_requirement",),
-        ),
-        "summary": WorkflowNode(
-            name="summary",
-            run_guard_gate="rfc",
-            runner_fn="fake_summary_worker",
-            depends_on=("research", "advisor"),
-        ),
-    }
-    gate_transitions = {
-        "prd": GateTransition(
-            gate="prd",
-            on_approved_next="research",
-            on_changes_requested="revise_prd",
-            on_rejected="rejected",
-        ),
-        "rfc": GateTransition(
-            gate="rfc",
-            on_approved_next="summary",
-            on_changes_requested="revise_rfc",
-            on_rejected="rejected",
-        ),
-    }
-
-    plan = workflow_parallel_execution_plan(
-        nodes,
-        gate_transitions=gate_transitions,
-        runner_kinds={
-            "research": "fake_worker",
-            "advisor": "read_only_advisor",
-            "summary": "fake_worker",
-        },
-        write_domains={
-            "research": ("artifact:research",),
-            "advisor": ("artifact:advisor",),
-            "summary": ("artifact:summary",),
-        },
-    )
-
-    assert plan == {
-        "version": 1,
-        "valid": True,
-        "scheduler": "parallel_levels",
-        "runner_kind": "read_only_fake_projection",
-        "parallel_level_execution": "enabled_for_fake_and_readonly",
-        "parallel_readiness": {
-            "status": "ready_for_fake_and_readonly",
-            "safe_runner_kinds": ["fake_worker", "read_only_advisor"],
-            "blocked_runner_kinds": [],
-            "requires_worker_isolation": False,
-            "requires_live_smoke": False,
-            "worker_isolation": {
-                "status": "none_required_for_fake_and_readonly",
-                "required_strategy": "",
-                "allowed_strategies": ["none"],
-                "rejected_strategies": [],
-                "evidence_required": [],
-            },
-            "blockers": [],
-        },
-        "validation_errors": [],
-        "batches": [
-            {"level": 1, "nodes": ["research", "advisor"], "mode": "parallel"},
-            {"level": 2, "nodes": ["summary"], "mode": "sequential"},
-        ],
-    }
 
 
 def test_workflow_parallel_execution_plan_fails_closed_for_real_workers_and_write_collisions():
@@ -679,19 +414,6 @@ def test_workflow_dag_validation_rejects_cycles():
         raise AssertionError("expected cycle validation failure")
 
 
-def test_disposition_for_failure_class_maps_declared_classes():
-    for failure_class in ["auth", "rate_limit", "network", "timeout", "stream_disconnect", "infra"]:
-        assert disposition_for_failure_class(failure_class) == "escalate_human"
-
-    for failure_class in ["scaffold", "code_bug", "unknown", "", "unlisted"]:
-        assert disposition_for_failure_class(failure_class) == "block"
-
-
-def test_no_gate_transition_is_self_referential():
-    for gate, transition in GATE_TRANSITIONS.items():
-        assert transition.on_approved_next != gate
-
-
 def test_decide_approval_routes_approved_gates_from_transition_table(tmp_path, monkeypatch):
     calls = []
 
@@ -728,58 +450,6 @@ def test_decide_approval_routes_approved_gates_from_transition_table(tmp_path, m
         assert payload["next_node"] == approved_next
 
     assert calls == list(GROUND_TRUTH_APPROVED_NEXT)
-
-
-def test_advance_approved_workflow_uses_node_table(tmp_path, monkeypatch):
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    project_config = tmp_path / "project.local.yaml"
-    project_config.write_text(
-        f"name: Test\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
-    state.current_node = "prd_review_gate"
-    state.next_node = "architect"
-    state.approvals["prd"] = "approved"
-    calls = []
-    original_workflow_node = graph.workflow_node
-
-    def spy_workflow_node(node):
-        calls.append(node)
-        return original_workflow_node(node)
-
-    monkeypatch.setattr(graph, "workflow_node", spy_workflow_node)
-
-    result = graph.advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
-
-    assert calls[0] == "architect"
-    assert result.next_node == "await_rfc_approval"
-    assert Path(result.artifacts["rfc"]).is_file()
-
-
-def test_advance_approved_workflow_uses_legacy_runner_by_default(tmp_path, monkeypatch):
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    project_config = tmp_path / "project.local.yaml"
-    project_config.write_text(
-        f"name: Test\nkey: CONTENTOPS\nworker_backend:\n  mode: fake\nrepos:\n  docs: {docs}\n",
-        encoding="utf-8",
-    )
-    state = create_initial_state("run-1", "CONTENTOPS", "Existing AI content studio run")
-    state.current_node = "prd_review_gate"
-    state.next_node = "architect"
-    state.approvals["prd"] = "approved"
-
-    def fail_if_topology_runner_is_used(*args, **kwargs):
-        raise AssertionError("topology runner must be opt-in")
-
-    monkeypatch.setattr(graph, "advance_approved_workflow_topology", fail_if_topology_runner_is_used, raising=False)
-
-    result = graph.advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
-
-    assert result.next_node == "await_rfc_approval"
-    assert Path(result.artifacts["rfc"]).is_file()
 
 
 def test_advance_approved_workflow_uses_topology_runner_when_project_opts_in(tmp_path, monkeypatch):

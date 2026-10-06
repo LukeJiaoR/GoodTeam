@@ -435,6 +435,7 @@ export function PlanView({
   board,
   busyDecision = '',
   language,
+  interactionsDisabled = false,
   onDecide,
   onRequestChanges,
   onRetry,
@@ -536,7 +537,7 @@ export function PlanView({
             </ul>
           </section>
         ))}
-        {selectedTask ? (
+        {selectedTask && !interactionsDisabled ? (
           <WorkTaskDetailDialog
             language={language}
             task={selectedTask}
@@ -844,14 +845,16 @@ export default function WorkPage() {
   const mutate = async (name, operation) => {
     setBusy(name); setMutationError(null);
     try {
+      if (status !== 'ready') throw error || new Error(t('work.context.staleActions'));
       const result = await operation();
       await refresh();
       await loadRuns();
       return result;
     } catch (caught) {
       setMutationError(caught);
-      if (['message', 'retry_message', 'check_runtime', 'confirm_team_decision', 'dismiss_team_decision', 'edit_task', 'resolve_draft', 'confirm_project_mode', 'task-confirm'].includes(name)) {
+      if (['message', 'retry_message', 'check_runtime', 'confirm_team_decision', 'dismiss_team_decision', 'edit_task', 'resolve_draft', 'confirm_project_mode', 'task-confirm', 'terminate'].includes(name)) {
         await refresh().catch(() => {});
+        if (name === 'terminate') await loadRuns();
       }
       throw caught;
     } finally {
@@ -982,6 +985,8 @@ export default function WorkPage() {
             t={t}
           />
           <PlanView
+            key={currentRunId}
+            interactionsDisabled={status !== 'ready'}
             approvalReviews={data?.approval_reviews || []}
             board={data.agile_board}
             busyDecision={busy === 'decision' ? 'approved' : ''}
@@ -989,7 +994,7 @@ export default function WorkPage() {
             onDecide={handleDecide}
             onRequestChanges={handleRequestChanges}
             onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
-            onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
+            onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey, currentRunId)).catch(() => {})}
             projectKey={projectKey}
             retrying={busy === 'retry'}
             reviews={data?.approval_reviews || []}
@@ -1113,7 +1118,9 @@ export default function WorkPage() {
         </header>
       </details>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
+      {status === 'stale' ? <p role="status">{t('work.context.staleActions')}</p> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
+      <fieldset className="work-interaction-scope" disabled={status !== 'ready'}>
       {hasProjectedWorkspace ? (
         <>
           {isHistorical ? <HistoricalRunSummary language={language} detail={historicalDetail} summary={selectedSummary} projectKey={projectKey} t={t} /> : null}
@@ -1128,6 +1135,7 @@ export default function WorkPage() {
                 attention_request: null, capabilities: [], execution_actors: [], outcome_tasks: [] },
             } : data}
             error={mutationError}
+            interactionsDisabled={status !== 'ready'}
             inspectorContent={isHistorical || contextIsLoading ? null : inspectorContent}
             language={language}
             onCloseInspector={closeInspector}
@@ -1142,7 +1150,7 @@ export default function WorkPage() {
             onConfirmTask={confirmTaskAssistantProposal}
             onContinuePreparation={continueProjectPreparation}
             onStartChangeIntent={handleStartChangeIntent}
-            onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
+            onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey, currentRunId)).catch(() => {})}
             projectKey={projectKey}
             reducedMotion={reducedMotion}
             t={t}
@@ -1177,6 +1185,8 @@ export default function WorkPage() {
           {mutationError ? <ProductError error={mutationError} t={t} /> : null}
           {legacyView === 'plan' ? (
             <PlanView
+              key={currentRunId}
+              interactionsDisabled={status !== 'ready'}
               approvalReviews={data?.approval_reviews || []}
               board={data.agile_board}
               busyDecision={busy === 'decision' ? 'approved' : ''}
@@ -1184,7 +1194,7 @@ export default function WorkPage() {
               onDecide={handleDecide}
               onRequestChanges={handleRequestChanges}
               onRetry={() => mutate('retry', () => runApi.retryRun(projectKey)).catch(() => {})}
-              onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey)).catch(() => {})}
+              onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey, currentRunId)).catch(() => {})}
               projectKey={projectKey}
               retrying={busy === 'retry'}
               reviews={data?.approval_reviews || []}
@@ -1208,9 +1218,9 @@ export default function WorkPage() {
         </>
       )}
       <Suspense fallback={<p role="status">{t('product.states.loading')}</p>}>
-      {panel?.type === 'runtime' ? <AssistantRuntimePanel
+      {status === 'ready' && panel?.type === 'runtime' ? <AssistantRuntimePanel
         data={data} projectKey={projectKey} onClose={() => setPanel(null)} refresh={refresh} t={t} /> : null}
-      {panel?.type === 'review' && !isHistorical ? <ReviewPage embedded
+      {status === 'ready' && panel?.type === 'review' && !isHistorical ? <ReviewPage embedded
         selectedReviewId={panel.approval} expectedRunId={panel.runId}
         onClose={() => setPanel(null)} onUpdated={refresh}
         onChangeDiscussion={async () => {
@@ -1224,6 +1234,7 @@ export default function WorkPage() {
           focusWorkContext(workspace, 'composer', { reducedMotion });
         }} /> : null}
       </Suspense>
+      </fieldset>
     </main>
   );
 }

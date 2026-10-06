@@ -59,6 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--heartbeat-file", type=Path, help=argparse.SUPPRESS)
     serve_command.add_argument("--heartbeat-token", default="", help=argparse.SUPPRESS)
     serve_command.add_argument("--local-codex-policy", type=Path, help="Explicit task-bound local Reviewer exposure policy.")
+    serve_command.add_argument("--trusted-codex-review-policy", type=Path,
+                               help="Private permission to reuse native Codex for one trusted, method-free review task.")
 
     restart = subparsers.add_parser("restart", help="Restart the background GoodTeam server")
     restart.add_argument("--host", default="127.0.0.1")
@@ -161,6 +163,8 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--review-head", default="", help="Exact head commit for one locked code_review track.")
     dispatch.add_argument("--review-model", default="", help="Exact model for that Codex review; does not grant provider access.")
     dispatch.add_argument("--local-codex-policy", type=Path, help="Explicit task-bound local Reviewer exposure policy.")
+    dispatch.add_argument("--trusted-codex-review-policy", type=Path,
+                          help="Private permission to reuse native Codex for one trusted, method-free review task.")
 
     inspect_local = subparsers.add_parser("local-codex-inspect", help="Inspect existing Codex without calling a model")
     inspect_local.add_argument("--codex", type=Path, required=True)
@@ -220,6 +224,13 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         print(json.dumps(inspect_local_codex(args.codex, args.codex_home, args.model), indent=2))
         return 0
     local_policy = getattr(args, "local_codex_policy", None)
+    trusted_policy = getattr(args, "trusted_codex_review_policy", None)
+    if sum(value is not None for value in (local_policy, trusted_policy, codex_review_admission)) > 1:
+        raise ValueError("Choose one Reviewer startup authority.")
+    if trusted_policy is not None:
+        from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
+
+        codex_review_admission = TrustedCodexReviewAdmission(trusted_policy)
     if local_policy is not None:
         if codex_review_admission is not None:
             raise ValueError("Choose one Reviewer startup authority.")

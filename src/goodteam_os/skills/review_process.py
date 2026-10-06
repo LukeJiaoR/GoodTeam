@@ -18,6 +18,7 @@ from typing import Callable
 
 from .models import SkillError
 from .review_capture import MAX_CAPTURE_BYTES, CapturedReviewTurn, capture_final_turn
+from .review_progress import MAX_REVIEW_SECONDS, ProcessProgress
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class ReviewProcess:
     deadline_seconds: float = 120
     max_input_bytes: int = 1024 * 1024
     forbid_tools: bool = False
+    deadline_ceiling_seconds: int = 120
 
 
 def _group_exists(pid: int) -> bool:
@@ -70,7 +72,8 @@ def _terminate_group(process, *, grace):
 
 
 def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Callable[[], None],
-                       on_input_delivered: Callable[[], None] | None = None) -> CapturedReviewTurn:
+                       on_input_delivered: Callable[[], None] | None = None,
+                       on_progress: Callable[[dict], None] | None = None) -> CapturedReviewTurn:
     """Capture one bounded CLI turn; no output file in Worker/control storage."""
     if (os.name != "posix" or not isinstance(spec, ReviewProcess)
             or not spec.command or not all(isinstance(part, str) and part for part in spec.command)
@@ -78,7 +81,8 @@ def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Cal
             or type(spec.max_input_bytes) is not int or not 0 < spec.max_input_bytes <= 8 * 1024 * 1024
             or not isinstance(prompt, bytes) or not prompt or len(prompt) > spec.max_input_bytes
             or type(spec.deadline_seconds) not in {int, float}
-            or not math.isfinite(spec.deadline_seconds) or not 0 < spec.deadline_seconds <= 120
+            or type(spec.deadline_ceiling_seconds) is not int or not 0 < spec.deadline_ceiling_seconds <= MAX_REVIEW_SECONDS
+            or not math.isfinite(spec.deadline_seconds) or not 0 < spec.deadline_seconds <= spec.deadline_ceiling_seconds
             or not isinstance(spec.environment, dict)
             or type(spec.forbid_tools) is not bool
             or any(not isinstance(k, str) or not isinstance(v, str) for k, v in spec.environment.items())):
@@ -91,13 +95,16 @@ def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Cal
     stderr_size = 0
     position = 0
     deadline = time.monotonic() + spec.deadline_seconds
+    progress = ProcessProgress(spec.deadline_seconds, on_progress)
     try:
+        progress.emit(force=True)
         with selectors.DefaultSelector() as selector:
             for stream, events in ((process.stdin, selectors.EVENT_WRITE), (process.stdout, selectors.EVENT_READ),
                                    (process.stderr, selectors.EVENT_READ)):
                 os.set_blocking(stream.fileno(), False)
                 selector.register(stream, events)
             while selector.get_map():
+                progress.emit()
                 check_current()  # Revocation and stop signals are parent decisions, not stdout events.
                 if time.monotonic() >= deadline:
                     raise SkillError("review_timeout", "Reviewer exceeded the authorized wall-time boundary.")
@@ -114,16 +121,19 @@ def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Cal
                             stream.close()
                             if on_input_delivered is not None:
                                 on_input_delivered()
+                            progress.emit("input_delivered", force=True)
                     else:
                         chunk = os.read(stream.fileno(), 65536)
                         if not chunk:
                             selector.unregister(stream)
                             stream.close()
                         elif stream is process.stdout:
+                            progress.output(chunk)
                             stdout.extend(chunk)
                             if len(stdout) > MAX_CAPTURE_BYTES:
                                 raise SkillError("review_capture_size", "Reviewer result channel exceeded its limit.")
                         else:
+                            progress.output(chunk, stderr=True)
                             # Bound stderr too, but never expose raw diagnostics containing secrets/paths.
                             stderr_size += len(chunk)
                             if stderr_size > MAX_CAPTURE_BYTES:
@@ -132,6 +142,7 @@ def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Cal
             # revocation/cancellation during this phase, not only at the end of
             # a potentially long wait (a child can close stdio and keep running).
             while process.poll() is None:
+                progress.emit()
                 check_current()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -146,9 +157,22 @@ def run_review_process(spec: ReviewProcess, prompt: bytes, *, check_current: Cal
             raise SkillError("review_descendants_running", "Reviewer descendants remained after its final output.")
         check_current()
         return capture_final_turn(bytes(stdout), returncode=returncode, forbid_tools=spec.forbid_tools)
+    except SkillError as exc:
+        progress.value["error_code"] = exc.code
+        raise
     finally:
         try:
-            _terminate(process)
+            try:
+                _terminate(process)
+            except SkillError:
+                progress.value.update(termination_confirmed=False, error_code="review_termination_unknown")
+                try:
+                    progress.emit(force=True)
+                except (SkillError, OSError):
+                    pass  # Observation failure cannot convert uncertain cleanup into an ordinary failure.
+                raise
+            progress.value.update(termination_confirmed=True, returncode=process.returncode)
+            progress.emit(force=True)
         finally:
             # Closing transport handles is not a claim that the process stopped.
             for stream in (process.stdin, process.stdout, process.stderr):

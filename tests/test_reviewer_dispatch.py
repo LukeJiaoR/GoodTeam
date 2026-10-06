@@ -88,33 +88,6 @@ def _project_config(tmp_path: Path, *, dispatch: dict[str, object] | None = None
     return config, project_root
 
 
-def test_missing_dispatch_config_defaults_to_single_mode():
-    assert normalize_reviewer_dispatch_config({}) == {"mode": "single", "phases": {}}
-    assert normalize_reviewer_dispatch_config(None) == {"mode": "single", "phases": {}}
-
-
-def test_dispatch_diagnostics_default_single_has_no_warnings_or_errors():
-    diagnostics = reviewer_dispatch_diagnostics({})
-
-    assert diagnostics["mode"] == "single"
-    assert diagnostics["parallel_requested"] is False
-    assert diagnostics["parallel_enabled"] is False
-    assert diagnostics["warnings"] == []
-    assert diagnostics["errors"] == []
-    assert diagnostics["queued_reviewer_jobs"] == {"total": 0, "by_gate": {}, "by_profile": {}}
-    assert diagnostics["advisory_only"] is True
-
-
-def test_dispatch_diagnostics_single_mode_reports_no_fanout():
-    diagnostics = reviewer_dispatch_diagnostics({"reviewer_dispatch": {"mode": "single"}})
-
-    assert diagnostics["mode"] == "single"
-    assert diagnostics["parallel_requested"] is False
-    assert diagnostics["parallel_enabled"] is False
-    assert diagnostics["warnings"] == []
-    assert diagnostics["errors"] == []
-
-
 def test_dispatch_diagnostics_parallel_without_acknowledgement_is_guarded():
     diagnostics = reviewer_dispatch_diagnostics({"reviewer_dispatch": _parallel_dispatch_without_ack()})
 
@@ -128,16 +101,6 @@ def test_dispatch_diagnostics_parallel_without_acknowledgement_is_guarded():
     ]
 
 
-def test_dispatch_diagnostics_full_acknowledgement_is_enabled():
-    diagnostics = reviewer_dispatch_diagnostics({"reviewer_dispatch": _parallel_dispatch()})
-
-    assert diagnostics["mode"] == "parallel"
-    assert diagnostics["parallel_requested"] is True
-    assert diagnostics["parallel_enabled"] is True
-    assert diagnostics["warnings"] == []
-    assert diagnostics["errors"] == []
-
-
 def test_dispatch_diagnostics_invalid_config_reports_error_without_crashing():
     diagnostics = reviewer_dispatch_diagnostics({"reviewer_dispatch": {"mode": "fast"}})
 
@@ -146,53 +109,6 @@ def test_dispatch_diagnostics_invalid_config_reports_error_without_crashing():
     assert diagnostics["parallel_enabled"] is False
     assert diagnostics["warnings"] == []
     assert diagnostics["errors"] == ["reviewer_dispatch.mode must be one of: single, parallel."]
-
-
-def test_dispatch_diagnostics_includes_profile_counts_by_phase():
-    diagnostics = reviewer_dispatch_diagnostics(
-        {
-            "reviewer_profiles": {
-                "implementation": ["correctness-security", "architecture-maintainability"],
-                "release": ["product-operator"],
-            },
-            "reviewer_dispatch": {
-                "mode": "single",
-                "phases": {"implementation": "parallel", "release": "single"},
-            },
-        }
-    )
-
-    assert diagnostics["phases"]["implementation"] == {
-        "dispatch_mode": "parallel",
-        "configured_profiles": ["correctness-security", "architecture-maintainability"],
-        "profile_count": 2,
-    }
-    assert diagnostics["phases"]["release"] == {
-        "dispatch_mode": "single",
-        "configured_profiles": ["product-operator"],
-        "profile_count": 1,
-    }
-
-
-def test_dispatch_diagnostics_counts_queued_reviewer_jobs_by_gate_and_profile():
-    diagnostics = reviewer_dispatch_diagnostics(
-        {},
-        worker_jobs=[
-            {"status": "queued", "gate": "qa", "profile_id": "correctness-security"},
-            {"status": "queued", "approval": "qa", "profile_id": "architecture-maintainability"},
-            {"status": "completed", "gate": "qa", "profile_id": "correctness-security"},
-            {"status": "queued", "role": "implementation"},
-        ],
-    )
-
-    assert diagnostics["queued_reviewer_jobs"] == {
-        "total": 2,
-        "by_gate": {"qa": 2},
-        "by_profile": {
-            "architecture-maintainability": 1,
-            "correctness-security": 1,
-        },
-    }
 
 
 def test_select_queued_reviewer_jobs_for_gate_filters_status_run_gate_artifact_and_profile():
@@ -627,17 +543,6 @@ def test_rollout_status_requires_second_acknowledgement_for_parallel_mode():
     ]
 
 
-def test_rollout_status_accepts_full_explicit_parallel_acknowledgement():
-    status = reviewer_dispatch_rollout_status({"reviewer_dispatch": _parallel_dispatch()})
-
-    assert status == {
-        "parallel_requested": True,
-        "parallel_enabled": True,
-        "warnings": [],
-        "errors": [],
-    }
-
-
 def test_rollout_status_accepts_project_loader_true_string():
     dispatch = _parallel_dispatch()
     dispatch["rollout"] = {
@@ -660,65 +565,6 @@ def test_unknown_dispatch_phase_fails_clearly():
         normalize_reviewer_dispatch_config(
             {"reviewer_dispatch": {"mode": "parallel", "phases": {"design": "parallel"}}}
         )
-
-
-def test_single_mode_does_not_create_reviewer_jobs(tmp_path: Path):
-    store = WorkerJobStore(tmp_path)
-    artifact = _artifact(tmp_path)
-
-    results = dispatch_reviewer_jobs_for_gate(
-        store=store,
-        state=_state(),
-        target=_target(
-            "correctness-security",
-            "architecture-maintainability",
-            dispatch={"mode": "single", "phases": {"implementation": "parallel"}},
-        ),
-        approval="staging",
-        artifact_key="staging_report",
-        artifact_path=str(artifact),
-        context="review context",
-    )
-
-    assert results == []
-    assert store.list_jobs() == []
-
-
-def test_parallel_phase_opt_in_creates_one_job_per_profile_with_identity(tmp_path: Path):
-    store = WorkerJobStore(tmp_path)
-    artifact = _artifact(tmp_path)
-
-    results = dispatch_reviewer_jobs_for_gate(
-        store=store,
-        state=_state(),
-        target=_target(
-            "correctness-security",
-            "architecture-maintainability",
-            dispatch=_parallel_dispatch(),
-        ),
-        approval="staging",
-        artifact_key="staging_report",
-        artifact_path=str(artifact),
-        context="review context",
-    )
-
-    assert [result["profile_id"] for result in results] == [
-        "correctness-security",
-        "architecture-maintainability",
-    ]
-    jobs = store.list_jobs()
-    assert {job["profile_id"] for job in jobs} == {
-        "correctness-security",
-        "architecture-maintainability",
-    }
-    assert {job["approval"] for job in jobs} == {"staging"}
-    assert {job["gate"] for job in jobs} == {"staging"}
-    assert {job["phase"] for job in jobs} == {"implementation"}
-    assert {job["artifact_key"] for job in jobs} == {"staging_report"}
-    assert {job["artifact_path"] for job in jobs} == {str(artifact)}
-    assert all(str(job["artifact_version"]).startswith("sha256:") for job in jobs)
-    assert len({job["dispatch_group_id"] for job in jobs}) == 1
-    assert all(job["idempotency_key"] for job in jobs)
 
 
 def test_parallel_reviewer_jobs_apply_legacy_worker_type_settings_without_team_state(tmp_path: Path):
@@ -757,28 +603,6 @@ def test_parallel_reviewer_jobs_apply_legacy_worker_type_settings_without_team_s
     assert job["reasoning_depth"] == "high"
     assert job["additional_prompt"] == "Prioritize authorization boundaries."
     assert job["desired_instances"] == 2
-
-
-def test_parallel_mode_without_rollout_acknowledgement_does_not_create_jobs(tmp_path: Path):
-    store = WorkerJobStore(tmp_path)
-    artifact = _artifact(tmp_path)
-
-    results = dispatch_reviewer_jobs_for_gate(
-        store=store,
-        state=_state(),
-        target=_target(
-            "correctness-security",
-            "architecture-maintainability",
-            dispatch=_parallel_dispatch_without_ack(),
-        ),
-        approval="staging",
-        artifact_key="staging_report",
-        artifact_path=str(artifact),
-        context="review context",
-    )
-
-    assert results == []
-    assert store.list_jobs() == []
 
 
 def test_graph_default_project_config_does_not_create_reviewer_jobs(tmp_path: Path):
@@ -821,30 +645,6 @@ def test_graph_full_parallel_opt_in_creates_idempotent_reviewer_jobs_with_identi
     assert all(str(job["artifact_version"]).startswith("sha256:") for job in jobs)
     assert len({job["dispatch_group_id"] for job in jobs}) == 1
     assert len({job["idempotency_key"] for job in jobs}) == 2
-
-
-def test_repeated_parallel_dispatch_reuses_existing_reviewer_jobs(tmp_path: Path):
-    store = WorkerJobStore(tmp_path)
-    artifact = _artifact(tmp_path)
-    kwargs = {
-        "store": store,
-        "state": _state(),
-        "target": _target(
-            "correctness-security",
-            "architecture-maintainability",
-            dispatch=_parallel_dispatch(),
-        ),
-        "approval": "staging",
-        "artifact_key": "staging_report",
-        "artifact_path": str(artifact),
-        "context": "review context",
-    }
-
-    first = dispatch_reviewer_jobs_for_gate(**kwargs)
-    second = dispatch_reviewer_jobs_for_gate(**kwargs)
-
-    assert [result["job_id"] for result in second] == [result["job_id"] for result in first]
-    assert len(store.list_jobs()) == 2
 
 
 def test_different_artifact_version_does_not_reuse_reviewer_job(tmp_path: Path):

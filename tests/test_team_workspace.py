@@ -341,6 +341,7 @@ def test_planned_task_without_worker_attempt_projects_once_as_waiting() -> None:
             "status_reason": "waiting_for_dependencies",
             "attempt": "",
             "attempt_count": 0,
+            "queued_count": 0,
             "current_attempt_id": "",
             "source": "task_role",
             "updated_at": "2026-08-30T10:00:00Z",
@@ -957,8 +958,33 @@ def test_retry_history_compresses_replayed_attempts_and_preserves_provenance() -
     retry_items = [item for item in projection["manager_timeline"] if item["event"] == "work_retry_converged"]
     assert len(retry_items) == 1
     assert retry_items[0]["details"]["attempt_count"] == 2
+    assert retry_items[0]["details"]["retry_count"] == 1
     assert retry_items[0]["refs"] == ["job-blocked", "job-completed"]
     assert projection["manager_timeline"][-1]["event"] == "mission_completed"
+
+
+def test_queued_selection_and_one_failed_review_are_one_attempt_without_a_retry():
+    task = _workflow_task("DEMO-1", "Native review", "reviewer")
+    jobs = [_workflow_job("legacy-selection", "queued", "2026-08-30T10:01:00Z", role="reviewer"),
+            _workflow_job("native-attempt", "failed", "2026-08-30T10:02:00Z", role="reviewer")]
+    projection = _workflow_identity_projection([task], jobs)
+    assert projection["outcome_tasks"][0]["attempt_count"] == 1
+    assert projection["outcome_tasks"][0]["queued_count"] == 1
+    assert projection["execution_actors"][0]["attempt_count"] == 1
+    assert not any(item["event"].startswith("work_retry") for item in projection["manager_timeline"])
+
+
+def test_real_retry_count_excludes_queued_rows_and_preserves_attempt_ids():
+    task = _workflow_task("DEMO-1", "Native review", "implementation")
+    jobs = [_workflow_job("legacy-selection", "queued", "2026-08-30T10:01:00Z", role="implementation"),
+            _workflow_job("first", "failed", "2026-08-30T10:02:00Z", role="implementation"),
+            _workflow_job("second", "failed", "2026-08-30T10:03:00Z", role="implementation")]
+    projection = _workflow_identity_projection([task], jobs)
+    retry = next(item for item in projection["manager_timeline"] if item["event"] == "work_retry_blocked")
+    assert retry["details"]["attempt_count"] == 2
+    assert retry["details"]["retry_count"] == 1
+    assert retry["details"]["queued_count"] == 1
+    assert retry["refs"] == ["first", "second"]
 
 
 def test_review_blocker_fix_and_revised_review_form_one_semantic_update() -> None:
@@ -1825,3 +1851,37 @@ def test_task_assistant_conversation_has_no_mission_before_workflow_start(tmp_pa
     assert projection["manager_timeline"][0]["timestamp"] == "2026-09-04T10:00:00Z"
     assert projection["manager_timeline"][0]["event"] == "welcome_existing_project"
     assert projection["suggestions"] == session["suggestions"]
+
+
+def test_completed_current_project_accepts_next_task_but_history_stays_read_only():
+    state = create_initial_state("first-run", "DEMO", "First task")
+    state.current_node, state.next_node = "complete", ""
+    session = {
+        "project_key": "DEMO", "status": "ready_for_request", "timeline": [],
+        "proposed_task": {"id": "next-draft", "exact_request": "Second task", "confirmed": False},
+    }
+    current = build_team_workspace(
+        state=state, workflow_active=False, project_root=None, task_assistant_session=session,
+    )
+    history = build_team_workspace(
+        state=state, workflow_active=False, project_root=None, task_assistant_session=session, read_only=True,
+    )
+
+    assert current["mission"] is None
+    assert session["proposed_task"] == current["proposed_task"]
+    assert "first-run" == history["mission"]["run_id"]
+    assert True is history["mission"]["read_only"]
+    assert "proposed_task" not in history
+    assert [] == history["capabilities"]
+
+
+def test_active_workflow_keeps_authority_over_the_assistant_conversation():
+    state = create_initial_state("active-run", "DEMO", "Current task")
+    state.current_node, state.next_node = "prd_review_gate", "await_prd_approval"
+    projection = build_team_workspace(
+        state=state, workflow_active=True, project_root=None,
+        task_assistant_session={"project_key": "DEMO", "timeline": []},
+    )
+
+    assert "active-run" == projection["mission"]["run_id"]
+    assert "workflow" == projection["mission"]["source"]
