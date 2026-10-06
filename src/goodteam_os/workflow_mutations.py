@@ -65,6 +65,9 @@ def serialized_workflow(operation):
 
 
 def begin_transition(workspace, state, action):
+    from goodteam_os.approval_rationale import validate_approval_action
+
+    validate_approval_action(workspace, state, action)
     identifier = uuid4().hex
     action = {**action, "workflow_operation_id": identifier}
     state.pending_transition = {

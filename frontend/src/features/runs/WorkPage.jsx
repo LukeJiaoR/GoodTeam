@@ -4,6 +4,7 @@ import { flushSync } from 'react-dom';
 import { focusWorkContext } from './workspace/currentWorkContext';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import WorkflowCanvas from '../../components/WorkflowCanvas';
+import { canConfirmApproval, requiresInformedApproval, usableApprovalTarget } from '../../lib/reviews/approvalConfirmation';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -215,6 +216,8 @@ export function WorkFocusBanner({
     return null;
   }
 
+  const canQuickApprove = Boolean(onDecide && priorityReview?.is_actionable
+    && !requiresInformedApproval(priorityReview.recommendation));
   const rec = prompt?.recommendation;
   const verdictKey = rec?.verdict === 'approve'
     ? 'work.review.recommendationApprove'
@@ -251,7 +254,7 @@ export function WorkFocusBanner({
             ) : null}
           </div>
           <div className="work-focus-banner__actions">
-            {onDecide && priorityReview?.is_actionable ? (
+            {canQuickApprove ? (
               <Button
                 variant="primary"
                 busy={busyDecision === 'approved'}
@@ -261,10 +264,10 @@ export function WorkFocusBanner({
               </Button>
             ) : null}
             <Link
-              className={`product-button ${onDecide && priorityReview?.is_actionable ? 'product-button--secondary' : 'product-button--primary'}`}
+              className={`product-button ${canQuickApprove ? 'product-button--secondary' : 'product-button--primary'}`}
               to={routes.projectReviewItem(projectKey, priorityReview.approval)}
             >
-              {onDecide && priorityReview?.is_actionable ? t('work.review.viewDetails') : prompt.action}
+              {canQuickApprove ? t('work.review.viewDetails') : prompt.action}
             </Link>
             {onTerminate ? (
               <details className="work-run-controls">
@@ -868,6 +871,14 @@ export default function WorkPage() {
     );
     const expectedApproval = approvalTarget
       || approvalTargetForReview(currentReview, data?.state?.run_id || '');
+    if (decision === 'approved' && !canConfirmApproval({
+      disabled: !currentReview || !usableApprovalTarget(expectedApproval),
+      requiresReason: requiresInformedApproval(currentReview?.recommendation),
+      note,
+    })) {
+      navigate(routes.projectReviewItem(projectKey, approval));
+      return false;
+    }
     try {
       const result = await mutate('decision', () => (
         decision === 'approved'
@@ -877,7 +888,7 @@ export default function WorkPage() {
       toast.success(t('toast.decisionSubmitted'));
       return result;
     } catch (caught) {
-      if (caught?.code === 'stale_approval') {
+      if (['stale_approval', 'approval_reason_required'].includes(caught?.code)) {
         await Promise.allSettled([refresh(), loadRuns()]);
       }
       toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));

@@ -14,3 +14,11 @@ export function approvalConfirmationKey(value) {
       : item
   ));
 }
+
+export function usableApprovalTarget(target) {
+  return target?.target_type === 'review'
+    && ['run_id', 'target_id', 'artifact_key', 'artifact_version'].every(field => (
+      typeof target[field] === 'string' && Boolean(target[field].trim())
+    ))
+    && target.artifact_version.trim() !== 'missing';
+}

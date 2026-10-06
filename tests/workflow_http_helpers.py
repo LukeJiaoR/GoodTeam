@@ -102,9 +102,9 @@ class RecoveryServer:
         (self.control / "release").touch()
 
 
-def approval_body(data, gate):
+def approval_body(data, gate, *, note="Model-free recovery fixture: continue with simulated review to test recovery only."):
     review = next(item for item in data["approval_reviews"] if item["approval"] == gate)
-    return {"project_key": "RECOVERY", "approval": gate, "decision": "approved",
+    return {"project_key": "RECOVERY", "approval": gate, "decision": "approved", "note": note,
             "expected_run_id": data["state"]["run_id"], "expected_target_type": "review",
             "expected_target_id": gate, "expected_artifact_key": review["artifact"],
             "expected_artifact_version": review["artifact_version"]}
