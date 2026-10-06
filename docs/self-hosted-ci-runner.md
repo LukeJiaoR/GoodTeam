@@ -151,7 +151,7 @@ its own workspace on normal server shutdown.
 | Browser HTML/JSON reports, traces, screenshots in the checkout | Job-local debugging output only; `actions/checkout` owns workspace cleanup. These are outside the helper's deletion scope and are not uploaded. |
 | Marked pip/npm/Playwright caches | Regenerable downloads only; aggregate 4 GiB boundary cap, oldest whole cache evicted first; each cache generation expires after 30 days. Whole-cache eviction avoids partial browser/package formats. Live jobs/references prevent eviction. |
 | GoodTeam runner `_diag/Runner_*-utc.log` and `Worker_*-utc.log` | Registered GoodTeam runner path, matching generated filename and UID only. Closed logs expire after 14 days; 512 MiB budget warns if protected/unknown logs still exceed it. |
-| Runner's own `RUNNER_TEMP`, tracked-source export, action internals | [Actions Runner's native temp manager](https://github.com/actions/runner/blob/v2.337.0/src/Runner.Worker/TempDirectoryManager.cs); the custom hook does not sweep this directory. |
+| Runner's own `RUNNER_TEMP` and action internals | [Actions Runner's native temp manager](https://github.com/actions/runner/blob/v2.337.0/src/Runner.Worker/TempDirectoryManager.cs); the custom hook does not sweep this directory. |
 | Checkout dependencies/build outputs and Actions Node tool cache | Checkout and Actions own these; this helper does not delete them. |
 | Containers, networks, volumes, business databases, other services | GoodTeam CI creates none and has no Docker access. This helper makes no Docker calls and does not claim to reclaim these resources. |
 
@@ -200,8 +200,8 @@ never evicted to meet a budget. Local job evidence has a 1 GiB warning budget,
 and recent runner logs have a 512 MiB warning budget; their minimum retention
 takes priority. If those budgets or protected caches cannot be reclaimed, an
 annotation identifies it and the disk threshold prevents further exhaustion.
-Uploads themselves, checkout/setup-node/action preparation, and other host
-services are outside the command monitor. The start hook runs before workflow
+Checkout/setup-node/action preparation and other host services are outside the
+command monitor. The start hook runs before workflow
 steps but after Actions' own action preparation.
 
 Defaults are configurable with the dedicated runner's
