@@ -80,6 +80,7 @@ def _assert_ci_candidate_boundary(workflow):
 def test_all_workflows_follow_runner_policy(path):
     # BaseLoader keeps GitHub's `on` key as a string (YAML 1.1 treats it as True).
     workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    assert "actions/upload-artifact@" not in path.read_text(encoding="utf-8"), path.name
     if path.name == "ci.yml":
         _assert_ci_candidate_boundary(workflow)
     elif path.name == "openwiki-update.yml":
