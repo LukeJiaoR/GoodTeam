@@ -180,6 +180,13 @@ def serve(*, bind, port, input_fd, output_fd, deadline=20):
                 while not relay.closed.is_set() and time.monotonic() < expires:
                     try:
                         code, content_type, result = replies.get(timeout=0.05)
+                        # The complete parent response ends the owned request.
+                        # Release it before any HTTP bytes become visible: the
+                        # client can submit again before this handler returns.
+                        with relay.mutex:
+                            if relay.active is not None and relay.active[0] == request_id:
+                                relay.active = None
+                        sent = False
                         self.send_response(code)
                         self.send_header("Content-Type", content_type)
                         self.send_header("Content-Length", str(len(result)))
@@ -187,7 +194,6 @@ def serve(*, bind, port, input_fd, output_fd, deadline=20):
                         self.end_headers()
                         self.wfile.write(result)
                         self.wfile.flush()
-                        sent = False
                         return
                     except queue.Empty:
                         pass

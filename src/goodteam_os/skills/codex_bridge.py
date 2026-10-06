@@ -425,6 +425,7 @@ class BridgeRelayPump:
         self._writer = threading.Lock()
         self._active = None
         self._active_id = None
+        self._response = None
         self._closed = threading.Event()
 
     def _send(self, frame):
@@ -442,8 +443,11 @@ class BridgeRelayPump:
         except Exception:
             status, content_type, body = 400, "application/json", b'{"error":"bridge_request_invalid"}'
         try:
-            self._send({"type": "response", "request_id": frame["request_id"], "status": status,
-                        "content_type": content_type, "body": encode_body(body)})
+            # Publish only from run(), after this forwarding thread exits.
+            # Otherwise a client can read the response and submit again while
+            # is_alive() still reports this completed operation as overlapping.
+            self._response = {"type": "response", "request_id": frame["request_id"], "status": status,
+                              "content_type": content_type, "body": encode_body(body)}
         except Exception:
             self._closed.set()
             self.bridge.cancel(wait_seconds=0)
@@ -451,6 +455,13 @@ class BridgeRelayPump:
     def run(self):
         try:
             while not self._closed.is_set():
+                if self._active is not None and not self._active.is_alive():
+                    self._active.join()
+                    response = self._response
+                    self._active, self._response = None, None
+                    if response is None:
+                        raise ValueError("Missing completed relay response")
+                    self._send(response)
                 frame = self.reader.read()
                 if frame is None:
                     continue
@@ -462,7 +473,7 @@ class BridgeRelayPump:
                         raise ValueError("Foreign relay cancellation")
                     self.bridge.cancel(wait_seconds=0)
                 elif frame.get("type") == "request" and set(frame) == {"type", "request_id", "method", "path", "body"}:
-                    if self._active is not None and self._active.is_alive():
+                    if self._active is not None:
                         raise ValueError("Overlapping relay requests")
                     self._active_id = request_id
                     self._active = threading.Thread(target=self._forward, args=(frame,), daemon=True)
