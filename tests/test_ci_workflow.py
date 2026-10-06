@@ -157,11 +157,60 @@ def test_ci_separates_hosted_metadata_control_from_self_hosted_candidate_executi
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "ref: ${{ needs.prepare.outputs.target_sha }}" in text
     assert 'test "$(git rev-parse HEAD)" = "$TARGET_SHA"' in text
-    assert 'git merge-base origin/main "$TARGET_SHA"' in text
+    assert 'git merge-base --is-ancestor "$base" "$TARGET_SHA"' in text
     assert "persist-credentials: false" in text
     assert "pull_request_target:" not in text
     assert "secrets." not in text
     assert "environment:" not in text
+
+
+@pytest.mark.parametrize("invalid", [None, "wrong_head", "unrelated_base", "empty_base"])
+def test_candidate_classification_uses_pinned_base_without_remote_credentials(tmp_path, invalid):
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    script = next(step["run"] for step in workflow["jobs"]["classify"]["steps"] if step.get("id") == "plan")
+    repo = tmp_path / "candidate"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-c", "user.name=CI test", "-c", "user.email=ci@example.invalid", *args],
+            cwd=repo, text=True,
+        ).strip()
+
+    git("init", "-q")
+    classifier = repo / "scripts/ci/classify_changes.py"
+    classifier.parent.mkdir(parents=True)
+    classifier.write_text(Path("scripts/ci/classify_changes.py").read_text(encoding="utf-8"), encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    changed = repo / "frontend/src/ui.js"
+    changed.parent.mkdir(parents=True)
+    changed.write_text("export const candidate = true;\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "candidate")
+    target = git("rev-parse", "HEAD")
+    # A credential-free checkout has all ancestors but cannot fetch again.
+    git("remote", "add", "origin", str(tmp_path / "unavailable-remote"))
+    if invalid == "wrong_head":
+        target = base
+    elif invalid == "unrelated_base":
+        base = git("commit-tree", "HEAD^{tree}", "-m", "unrelated")
+    elif invalid == "empty_base":
+        base = ""
+    output = tmp_path / "output"
+    result = subprocess.run(
+        ["bash", "-e", "-c", script], cwd=repo,
+        env={**os.environ, "MODE": "candidate", "TARGET_SHA": target, "BASE_SHA": base,
+             "GIT_TERMINAL_PROMPT": "0", "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")},
+        capture_output=True, text=True, timeout=10,
+    )
+    if invalid:
+        assert result.returncode != 0
+        assert not output.exists(), "Invalid identity must not reach classification"
+    else:
+        assert result.returncode == 0, result.stderr
+        assert "frontend=full" in output.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

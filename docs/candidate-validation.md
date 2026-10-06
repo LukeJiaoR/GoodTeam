@@ -21,3 +21,9 @@ GoodTeam no longer needs to spend a full remote CI run on every development push
 The PR-side `CI / gate` becomes metadata-only after `.github/ci/candidate-gate-v1` is present on the PR base. It checks the exact head status instead of re-running the heavy suite. The PR that introduces this mechanism uses the previous heavy path because its base does not yet contain the activation marker.
 
 The candidate dispatch must use `--ref main`: the workflow definition is therefore the reviewed default-branch policy while the checked-out application source is the explicit candidate SHA.
+
+Preparation pins the current main SHA in its metadata output. The full-history
+candidate checkout already contains this ancestor; classification verifies that
+relationship and uses the pinned SHA without fetching after checkout credentials
+have been removed. If main advances, the PR gate still requires a new synchronized
+candidate and new validation.
