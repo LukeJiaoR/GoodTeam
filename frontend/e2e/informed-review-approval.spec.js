@@ -6,7 +6,7 @@ test('Review and Work share evidence semantics and Review records a bound manual
   const evidence = [];
   try {
     await importProject(page, fixture);
-    await sendTask(page, fixture, 'Verify an informed planning decision.');
+    await sendTask(page, fixture, 'Implement an empty-state message for the project list.');
     await prepareFirstTask(page, fixture, evidence);
     const before = await expectGate(page, fixture.key, 'takeover');
     const review = before.approval_reviews.find(item => item.approval === 'takeover');

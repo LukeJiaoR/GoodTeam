@@ -41,7 +41,7 @@ Work retains its existing exact-target validation, including the producer's
 `missing` sentinel rejection and matching brief/action/target gates. Its key and
 recommendation helpers now delegate to the shared confirmation module.
 
-## Verification actually performed
+## Initial verification (2026-10-05)
 
 Tier 4 browser approval path, with existing Tier 3 approval/identity contracts
 requiring corresponding verification before merge.
@@ -73,6 +73,51 @@ is not a passing execution result; inspect the exact current PR head's CI.
 Before merge, run frontend tests/lint/build, isolated Playwright and the required
 backend/approval verification per docs/testing-strategy.md. No CI condition or
 runner privilege was changed to obtain a green result.
+
+## Merge-candidate verification (2026-10-06)
+
+Synced the existing PR with main `7c6e5db0d8ce943d2b9f68ff876e51cbf39e4df3`
+in a separate managed worktree. The net application change remains the bounded
+Work/Review confirmation slice; the CI policy comes from main. Verification tier
+remains Tier 4 with Tier 3 approval, ledger and execution-identity coverage.
+
+Executed locally with Python 3.12.13 and Node 25.8.0:
+
+| Command | Observed result |
+| --- | --- |
+| `PYTHONPATH=src .venv/bin/python -m pytest tests/test_review_gate.py tests/test_review_policy.py tests/test_reviewer_evidence_snapshot.py tests/test_execution_api.py tests/test_execution_idempotency.py tests/test_web.py -q` | 216 passed |
+| `PYTHONPATH=src .venv/bin/python -m pytest tests -q` | 2997 passed, 17 skipped in 539.80s |
+| `.venv/bin/ruff check src/goodteam_os/ tests/` | Passed |
+| `npm test --prefix frontend` | 24 Node tests and 307 React tests passed |
+| Focused Vitest: DecisionActions, informed ReviewPage, existing ReviewPage regressions, WorkApprovalAction | 30 passed |
+| `npm run lint --prefix frontend` and `npm run build --prefix frontend` | Passed |
+| `npm run test:e2e --prefix frontend -- informed-review-approval.spec.js` | 1 passed after correcting its task setup |
+| `npm run test:e2e --prefix frontend` | Final run: 37 passed, retries disabled |
+| `git diff --check` | Passed |
+
+The 17 backend skips require Linux `/proc` for the dedicated runner lifecycle;
+they are inapplicable to this macOS host, not skipped approval tests. All live
+HTTP/browser work used freshly owned temporary roots, isolated registry/home and
+fake Workers, with Telegram networking disabled; no active project config or real
+model was used. Browser assertions verified blank mouse/keyboard rejection,
+matching Work/Review advice, exact submitted identity, the typed reason in the
+durable ledger, and one decision/execution across two tabs. Existing embedded
+editing, feedback handoff, restart/re-entry and archived-run isolation also passed.
+
+The first browser run was 36 passed / 1 failed: its new Review case asked to
+"Verify an informed planning decision", correctly triggering clarification before
+a task existed. The case now requests a concrete project-list implementation;
+its approval and ledger assertions are unchanged. The corrected focused case and
+the subsequent full run both passed. The final macOS run reported `ENOTEMPTY`
+during removal of its own temporary server root after all assertions completed;
+retain that teardown diagnostic separately from the passing browser assertions.
+This is not a claim that the local fixture teardown was clean.
+
+Local execution does not replace the new exact-SHA remote gate. Publish a clean
+candidate containing current main, dispatch the reviewed `main` workflow for that
+SHA, and require `merge-candidate/validated` plus the PR-side `CI / gate` before
+merging. Final SHA/run links belong to the PR evidence record. Historical artifact
+quota failures remain historical until the candidate's actual run is observed.
 
 ## Evidence and remaining boundaries
 
