@@ -30,6 +30,25 @@ worker dispatch boundaries, PR/CI binding, or security-sensitive server actions.
 Live-path changes need live smoke evidence from an isolated workspace; never run
 mutating smoke commands against an active real project workspace.
 
+### Exact-SHA candidate CI
+
+Do not spend heavy remote CI on every development push. While iterating, run the
+focused local checks required by `docs/testing-strategy.md`. When the branch is
+ready to become a pull request candidate:
+
+1. Sync with the current `main`, require a clean working tree, and record `git rev-parse HEAD`. The candidate must contain the current `main` HEAD.
+2. Run the reviewed default-branch workflow against that exact SHA:
+   `gh workflow run ci.yml --repo LukeJiaoR/GoodTeam --ref main -f "target_sha=<40-char-sha>"`.
+3. Wait for the run to succeed and for commit status
+   `merge-candidate/validated` to be green.
+4. Only then open/update the PR. Any new commit invalidates the old evidence;
+   validate the new SHA before merge. If `main` advances, sync the new base and
+   validate the resulting SHA again.
+
+The PR-side `CI / gate` is the authority for whether the current exact head is
+eligible to merge. Never copy a status from an older SHA or bypass the gate
+because a previous branch state passed.
+
 ## Local Artifacts
 
 Do not delete untracked local output directories such as `output/` unless the
@@ -40,8 +59,9 @@ user explicitly confirms they are disposable.
 Follow `docs/self-hosted-ci-runner.md` for every workflow, including temporary
 diagnostic workflows on feature branches. Read-only Linux x64 diagnostics use
 `[self-hosted, linux, x64, goodteam-ci]` with explicit read-only permissions.
-Reuse `.github/workflows/source-diagnostic.yml` for tracked-source exports.
-Do not add a GitHub-hosted fallback for these tasks.
+Do not create GitHub Actions artifacts for routine CI or source transport; read
+source by exact GitHub ref instead. Do not add a GitHub-hosted fallback for
+self-hosted code-execution tasks.
 
 OpenWiki stays manual-only on GitHub-hosted runners. Provider secrets,
 GitHub Environments, and repository-write tokens must not enter `goodteam-ci`.

@@ -5,7 +5,7 @@ Owner: repository maintainers
 
 ## Decision and security boundary
 
-Routine pull-request CI uses one repository-scoped Linux x64 runner:
+Heavy exact-SHA candidate CI uses one repository-scoped Linux x64 runner. Pull-request control-plane checks are metadata-only and run on GitHub-hosted Linux:
 
 | Property | Value |
 | --- | --- |
@@ -19,17 +19,18 @@ Routine pull-request CI uses one repository-scoped Linux x64 runner:
 
 The label is a workload class, not a machine identity. The runner is registered
 only to `LukeJiaoR/GoodTeam`. Its account and home contain no provider,
-production, deployment, repository-write, or OpenWiki credentials. Routine CI
-has only `contents: read`, does not select a GitHub Environment, and has no
-automatic GitHub-hosted fallback.
+production, deployment, repository-write, or OpenWiki credentials. Candidate
+execution jobs override the token to `contents: read`, do not select a GitHub
+Environment, and have no hosted fallback.
 
-The first self-hosted job accepts a pull request only when its head repository
-is the current repository. Browser acceptance depends on that guarded job;
-frontend checks share the browser job's install/build, the backend waits for
-that job, and
-the always-running gate repeats the same-repository guard. A fork PR therefore
-cannot schedule code on this persistent host; a maintainer must first put the
-reviewed patch on a same-repository branch. The workflow does not use
+Heavy PR code no longer reaches the persistent runner automatically after the
+candidate-gate activation marker is present on the PR base. An agent or
+maintainer dispatches the reviewed `main` workflow with an exact candidate SHA;
+only that manual candidate run schedules browser/backend code on `goodteam-ci`.
+The hosted preparation/result jobs may read or write only the candidate commit
+status. The PR-side `CI / gate` reads that exact-head status and does not
+checkout or execute PR code. Any new commit therefore invalidates the prior
+candidate evidence automatically. The workflow does not use
 `pull_request_target`.
 
 OpenWiki remains on `ubuntu-latest`. It is manual-only because it has provider
@@ -42,7 +43,8 @@ These rules also apply to temporary workflows on feature or diagnostic branches:
 
 | Workload | Runner and permissions |
 | --- | --- |
-| Routine tests, tracked-source archives, read-only inspection, public dependency downloads | `[self-hosted, linux, x64, goodteam-ci]`; explicit read-only permissions, no hosted fallback |
+| Exact-SHA candidate tests, tracked-source archives, read-only inspection, public dependency downloads | `[self-hosted, linux, x64, goodteam-ci]`; explicit read-only permissions, no hosted fallback |
+| Candidate metadata preparation/status gate | `ubuntu-latest`; no checkout, no secrets, status read/write only where explicitly required |
 | OpenWiki | `ubuntu-latest`, manual-only; existing provider secrets and PR-write permissions stay here |
 | New tasks needing provider secrets, a GitHub Environment, repository writes, or deployment access | A separately reviewed isolated environment; do not use `goodteam-ci` |
 | Native ARM64 or Docker inspection | A matching separately provisioned environment; the existing x64 account cannot run these checks |
@@ -55,38 +57,28 @@ write access on `goodteam-ci`. Source-only checkout must set
 `persist-credentials: false` and must not execute code from the inspected ref.
 
 `tests/test_ci_workflow.py` checks every committed workflow for the fixed
-read-only runner boundary. OpenWiki is the only hosted exception. A future
-runner exception needs an explicit policy/test update alongside its isolation
-and provisioning evidence. These checks run in PR CI when workflow files change;
-they are not GitHub-side enforcement for arbitrary branch pushes. Agents must
-validate temporary workflows locally before pushing them and follow the same
-policy even when the branch will never become a PR.
+runner boundary. `ci.yml` has a reviewed hosted metadata control plane
+(`prepare`, candidate status writer, and `CI / gate`) while candidate code
+execution remains on `goodteam-ci`; OpenWiki remains the credential-bearing
+hosted exception. A future runner exception needs an explicit policy/test update
+alongside its isolation and provisioning evidence. These checks run in candidate
+CI when workflow files change; they are not GitHub-side enforcement for
+arbitrary branch pushes. Agents must validate temporary workflows locally before
+pushing them and follow the same policy even when the branch will never become a
+PR.
 
-### Read-only source diagnostic
+### Source inspection
 
-Use **Read-only source diagnostic** instead of creating a temporary workflow
-just to export source. Dispatch the workflow from `main`; `source_ref` selects
-a branch, tag, or exact commit in this repository. Prefer an exact commit when
-capturing review evidence. An empty input uses the workflow's own commit.
-
-```bash
-gh workflow run source-diagnostic.yml --repo LukeJiaoR/GoodTeam --ref main \
-  -f 'source_ref=<commit-sha>'
-```
-
-The workflow accepts dispatches only from the default branch, checks out the
-selected source without persisting credentials, and runs a fixed inline archive
-script. It does not install dependencies or execute repository scripts. Each run
-uses its own directory under `RUNNER_TEMP` and uploads a one-day artifact:
-tracked-source tar, resolved commit/tree IDs, tracked-file manifest, SHA-256,
-and a statement of the export's scope. Untracked workspace files, `.git`, and
-runner caches are not included. This is source transport, not test or runtime
-acceptance evidence. It shares the single CI runner and may queue behind PR CI.
+The retired `source-diagnostic.yml` workflow is no longer needed. Repository
+source is read directly from GitHub by exact ref when review or diagnosis needs
+it; CI does not create tracked-source tarballs or GitHub Actions artifacts.
+Temporary diagnostic workflows must still follow the same read-only runner and
+credential boundaries.
 
 Before pushing any new or temporary workflow, run:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m pytest tests/test_ci_workflow.py tests/test_source_diagnostic.py -q
+PYTHONPATH=src .venv/bin/python -m pytest tests/test_ci_workflow.py -q
 ```
 
 ## Shared-host capacity boundary
@@ -123,22 +115,16 @@ Browser jobs create their own Python environment and use the lockfile-pinned
 Playwright version to download Chromium into the unprivileged runner cache.
 Chromium system libraries must be available on the host; CI does not run sudo
 or install system packages. The browser suite refuses an existing server, uses
-a fresh workspace/registry/port, runs every case once without automatic
-retries, and uploads report/state/trace evidence. These temporary artifacts are
-retained for 1 day on success or 3 days after failure/cancellation, using the job
-status at upload time. The source diagnostic upload runs only on success and
-retains its artifact for 1 day.
+a fresh workspace/registry/port, and runs every case once without automatic
+retries. Reports, state snapshots, screenshots and traces are job-local debug
+outputs only; no workflow uploads GitHub Actions artifacts.
 
-This is the uploading job's current status, not the final workflow result. A
-later step or another job may fail after an artifact has been uploaded with a
-1-day lifetime. The policy applies to new uploads; existing artifacts keep their
-recorded expiry dates. Workflow runs, job logs, and check history are unchanged.
-
-Keep concise review/acceptance summaries, version information, and reproduction
-steps in the repository when they need to outlive these temporary artifacts.
-Cross-project evidence may live in private Google Docs/Sheets with a link from
-the summary. Keep large screenshots, videos, raw logs, and all credentials out of
-Git; do not migrate old evidence as part of this policy.
+The durable CI record is the exact SHA, workflow/job result, step logs, step
+summary and `merge-candidate/validated` status. Keep concise review/acceptance
+summaries, version information and reproduction steps in the repository when
+they need to outlive Actions logs. Cross-project evidence may live in private
+Google Docs/Sheets with a link from the summary. Keep large screenshots, videos,
+raw logs and all credentials out of Git.
 
 The lifecycle implementation in `ops/ci-runner/runner_cleanup.py` replaces the
 old broad `RUNNER_TEMP` sweep and the home-cache `find -delete` calls. **Existing
@@ -159,13 +145,13 @@ its own workspace on normal server shutdown.
 
 | Resource | Reclamation owner and policy |
 | --- | --- |
-| Marked job `tmp/`: virtual environments, Python/Node temp files, browser workspace | Completion hook after workflow artifact uploads, regardless of result. Active references prevent deletion. |
+| Marked job `tmp/`: virtual environments, Python/Node temp files, browser workspace | Completion hook after the job completes, regardless of result. Active references prevent deletion. |
 | Missed marked job temporary resources after worker/host termination | Next start/completion boundary, after 24 hours, matching worker no longer exists, and no process references the directory. A recorded completion permits earlier retry once the worker exits. PID reuse and reboot are distinguished. |
-| HTTP recovery evidence in marked job `evidence/` | Preserve locally for 14 days, including when upload fails. GitHub artifact retention follows the 1-day success / 3-day failure or cancellation policy above. |
-| Browser HTML/JSON reports, traces, screenshots in the checkout | Existing `always()` artifact upload owns temporary evidence retention (1 or 3 days, as above); `actions/checkout` owns workspace cleanup. These are outside the helper's deletion scope. |
+| HTTP recovery evidence in marked job `evidence/` | Preserve locally for 14 days for bounded failure diagnosis; nothing is uploaded to GitHub Artifact Storage. |
+| Browser HTML/JSON reports, traces, screenshots in the checkout | Job-local debugging output only; `actions/checkout` owns workspace cleanup. These are outside the helper's deletion scope and are not uploaded. |
 | Marked pip/npm/Playwright caches | Regenerable downloads only; aggregate 4 GiB boundary cap, oldest whole cache evicted first; each cache generation expires after 30 days. Whole-cache eviction avoids partial browser/package formats. Live jobs/references prevent eviction. |
 | GoodTeam runner `_diag/Runner_*-utc.log` and `Worker_*-utc.log` | Registered GoodTeam runner path, matching generated filename and UID only. Closed logs expire after 14 days; 512 MiB budget warns if protected/unknown logs still exceed it. |
-| Runner's own `RUNNER_TEMP`, tracked-source export, action internals | [Actions Runner's native temp manager](https://github.com/actions/runner/blob/v2.337.0/src/Runner.Worker/TempDirectoryManager.cs); the custom hook does not sweep this directory. |
+| Runner's own `RUNNER_TEMP` and action internals | [Actions Runner's native temp manager](https://github.com/actions/runner/blob/v2.337.0/src/Runner.Worker/TempDirectoryManager.cs); the custom hook does not sweep this directory. |
 | Checkout dependencies/build outputs and Actions Node tool cache | Checkout and Actions own these; this helper does not delete them. |
 | Containers, networks, volumes, business databases, other services | GoodTeam CI creates none and has no Docker access. This helper makes no Docker calls and does not claim to reclaim these resources. |
 
@@ -214,8 +200,8 @@ never evicted to meet a budget. Local job evidence has a 1 GiB warning budget,
 and recent runner logs have a 512 MiB warning budget; their minimum retention
 takes priority. If those budgets or protected caches cannot be reclaimed, an
 annotation identifies it and the disk threshold prevents further exhaustion.
-Uploads themselves, checkout/setup-node/action preparation, and other host
-services are outside the command monitor. The start hook runs before workflow
+Checkout/setup-node/action preparation and other host services are outside the
+command monitor. The start hook runs before workflow
 steps but after Actions' own action preparation.
 
 Defaults are configurable with the dedicated runner's
@@ -271,8 +257,8 @@ listing with actual PID/PPID metadata; kernel adoption, identities, signals,
 Playwright-created sessions, port closure, and reaping are exercised directly.
 
 Post-install acceptance must observe `Set up runner` and `Complete runner`,
-one success/failure/cancellation, retained upload evidence, marked temp
-reclamation, and disk/cache usage on the actual GoodTeam runner. These are
+one success/failure/cancellation, job logs/summaries, marked temp reclamation,
+and disk/cache usage on the actual GoodTeam runner. These are
 deployment checks, not claims from isolated local validation. This code task
 does not perform host cleanup or change existing runner jobs/configuration.
 

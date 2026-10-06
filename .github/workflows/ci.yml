@@ -3,112 +3,179 @@ name: CI
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact 40-character commit SHA to validate before opening or updating a PR
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.target_sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    name: Prepare CI mode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      target_sha: ${{ steps.plan.outputs.target_sha }}
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+    steps:
+      - name: Resolve candidate or bootstrap mode
+        id: plan
+        uses: actions/github-script@v8
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            if (context.eventName === "workflow_dispatch") {
+              const target = process.env.TARGET_SHA;
+              if (context.ref !== "refs/heads/main") {
+                core.setFailed("Candidate CI must be dispatched from the reviewed main workflow definition");
+                return;
+              }
+              if (!/^[0-9a-f]{40}$/u.test(target)) {
+                core.setFailed("target_sha must be an exact lowercase 40-character commit SHA");
+                return;
+              }
+              await github.rest.repos.getCommit({ owner, repo, ref: target });
+              const main = await github.rest.repos.getBranch({ owner, repo, branch: "main" });
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner,
+                repo,
+                basehead: main.data.commit.sha + "..." + target,
+              });
+              if (comparison.data.merge_base_commit.sha !== main.data.commit.sha) {
+                core.setFailed("target_sha must include the current main HEAD before candidate validation");
+                return;
+              }
+              core.setOutput("mode", "candidate");
+              core.setOutput("target_sha", target);
+              core.setOutput("base_sha", "");
+              return;
+            }
+
+            const pull = context.payload.pull_request;
+            const target = pull.head.sha;
+            const base = pull.base.sha;
+            let active = false;
+            try {
+              await github.rest.repos.getContent({
+                owner,
+                repo,
+                path: ".github/ci/candidate-gate-v1",
+                ref: base,
+              });
+              active = true;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.notice("Candidate gate bootstrap: base does not contain the activation marker yet.");
+            }
+            core.setOutput("mode", active ? "gate" : "legacy");
+            core.setOutput("target_sha", target);
+            core.setOutput("base_sha", base);
+
+  mark-candidate:
+    name: Mark candidate pending
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'candidate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Publish pending candidate status
+        uses: actions/github-script@v8
+        env:
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            await github.rest.repos.createCommitStatus({
+              owner,
+              repo,
+              sha: process.env.TARGET_SHA,
+              state: "pending",
+              context: "merge-candidate/validated",
+              description: "Candidate CI is running",
+              target_url: "https://github.com/" + owner + "/" + repo + "/actions/runs/" + context.runId,
+            });
+
   classify:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: [prepare, mark-candidate]
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      (
+        (
+          needs.prepare.outputs.mode == 'legacy' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        ) ||
+        (needs.prepare.outputs.mode == 'candidate' && needs.mark-candidate.result == 'success')
+      )
     runs-on: [self-hosted, linux, x64, goodteam-ci]
+    permissions:
+      contents: read
     outputs:
       tier: ${{ steps.plan.outputs.tier }}
       backend: ${{ steps.plan.outputs.backend }}
       frontend: ${{ steps.plan.outputs.frontend }}
       backend_test_targets: ${{ steps.plan.outputs.backend_test_targets }}
       live_smoke_evidence_required: ${{ steps.plan.outputs.live_smoke_evidence_required }}
-
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Classify changed files
+      - name: Classify exact candidate diff
         id: plan
         shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            python3 scripts/ci/classify_changes.py \
-              --full \
-              --github-output "$GITHUB_OUTPUT" \
-              --summary "$GITHUB_STEP_SUMMARY"
-          else
-            git diff --check \
-              "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
-            python3 scripts/ci/classify_changes.py \
-              --base "${{ github.event.pull_request.base.sha }}" \
-              --head "${{ github.event.pull_request.head.sha }}" \
-              --github-output "$GITHUB_OUTPUT" \
-              --summary "$GITHUB_STEP_SUMMARY"
-          fi
-
-  backend:
-    needs: [classify, browser]
-    if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && needs.classify.outputs.backend != 'none'
-    runs-on: [self-hosted, linux, x64, goodteam-ci]
-    env:
-      GOODTEAM_DISABLE_TG_NETWORK: "1"
-      GOODTEAM_TG_BOT_TOKEN: ""
-      GOODTEAM_TG_CHAT_ID: ""
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Create isolated Python 3.12 environment
-        shell: bash
-        run: |
-          if [[ "$(python3.12 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" != "3.12" ]]; then
-            echo "The goodteam-ci runner must provide Python 3.12." >&2
-            exit 1
-          fi
-          job_temp="${GOODTEAM_CI_JOB_TEMP:-$RUNNER_TEMP}"
-          echo "$job_temp/goodteam-venv/bin" >> "$GITHUB_PATH"
-          exec python3 ops/ci-runner/runner_cleanup.py run -- python3.12 -m venv "$job_temp/goodteam-venv"
-
-      - run: exec python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
-
-      - name: Run focused backend tests
-        if: needs.classify.outputs.backend == 'focused'
         env:
-          TEST_TARGETS: ${{ needs.classify.outputs.backend_test_targets }}
-        shell: bash
+          MODE: ${{ needs.prepare.outputs.mode }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          PR_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
         run: |
-          if [[ -z "$TEST_TARGETS" ]]; then
-            echo "Focused backend verification requires at least one fixed test target." >&2
-            exit 1
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          if [[ "$MODE" == "candidate" ]]; then
+            git fetch --no-tags origin main
+            base="$(git merge-base origin/main "$TARGET_SHA")"
+          else
+            base="$PR_BASE_SHA"
           fi
-          read -r -a targets <<< "$TEST_TARGETS"
-          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run -- python -m pytest "${targets[@]}" -q
-
-      - name: Run full backend tests
-        if: needs.classify.outputs.backend == 'full'
-        # The required browser job already ran recovery with dedicated evidence.
-        run: >-
-          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run --
-          python -m pytest tests --ignore=tests/test_workflow_http_recovery.py -q
-
-      - run: ruff check src/goodteam_os/ tests/ scripts/ci/ ops/ci-runner/runner_cleanup.py
+          test -n "$base"
+          git diff --check "$base...$TARGET_SHA"
+          python3 scripts/ci/classify_changes.py             --base "$base"             --head "$TARGET_SHA"             --github-output "$GITHUB_OUTPUT"             --summary "$GITHUB_STEP_SUMMARY"
 
   browser:
-    needs: classify
+    needs: [prepare, classify]
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      always()
+      && needs.prepare.result == 'success'
+      && needs.classify.result == 'success'
       && (needs.classify.outputs.backend != 'none' || needs.classify.outputs.frontend != 'none')
     runs-on: [self-hosted, linux, x64, goodteam-ci]
+    permissions:
+      contents: read
     timeout-minutes: 15
     env:
       GOODTEAM_DISABLE_TG_NETWORK: "1"
       GOODTEAM_TG_BOT_TOKEN: ""
       GOODTEAM_TG_CHAT_ID: ""
-
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          persist-credentials: false
 
       - name: Create isolated browser backend environment
         shell: bash
@@ -124,19 +191,7 @@ jobs:
         run: |
           evidence="${GOODTEAM_CI_EVIDENCE:-$RUNNER_TEMP}/goodteam-http-recovery"
           mkdir -p "$evidence"
-          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run -- \
-            python -m pytest tests/test_workflow_http_recovery.py -q \
-            --basetemp="$evidence/workspaces" --junitxml="$evidence/results.xml"
-
-      - name: Upload HTTP recovery evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: http-recovery-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.GOODTEAM_CI_EVIDENCE || runner.temp }}/goodteam-http-recovery/
-          include-hidden-files: true
-          retention-days: ${{ job.status == 'success' && 1 || 3 }}
-          if-no-files-found: warn
+          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run --             python -m pytest tests/test_workflow_http_recovery.py -q             --basetemp="$evidence/workspaces" --junitxml="$evidence/results.xml"
 
       - uses: actions/setup-node@v5
         with:
@@ -144,46 +199,82 @@ jobs:
 
       - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm ci
         working-directory: frontend
-
       - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run build
         working-directory: frontend
-
       - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npx playwright install chromium
         working-directory: frontend
-
       - name: Verify isolated business loop
         run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run test:e2e
         working-directory: frontend
-
-      - name: Upload browser evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            frontend/playwright-report/
-            frontend/test-results/
-          retention-days: ${{ job.status == 'success' && 1 || 3 }}
-          if-no-files-found: warn
-
       - name: Run frontend unit tests
         if: needs.classify.outputs.frontend != 'none'
         run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm test
         working-directory: frontend
-
       - name: Lint frontend
         if: needs.classify.outputs.frontend != 'none'
         run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run lint
         working-directory: frontend
 
-  gate:
-    name: CI / gate
-    needs: [classify, backend, browser]
+  backend:
+    needs: [prepare, classify, browser]
     if: >-
       always()
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && needs.classify.result == 'success'
+      && needs.classify.outputs.backend != 'none'
+      && needs.browser.result == 'success'
     runs-on: [self-hosted, linux, x64, goodteam-ci]
+    permissions:
+      contents: read
     env:
+      GOODTEAM_DISABLE_TG_NETWORK: "1"
+      GOODTEAM_TG_BOT_TOKEN: ""
+      GOODTEAM_TG_CHAT_ID: ""
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          persist-credentials: false
+      - name: Create isolated Python 3.12 environment
+        shell: bash
+        run: |
+          if [[ "$(python3.12 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" != "3.12" ]]; then
+            echo "The goodteam-ci runner must provide Python 3.12." >&2
+            exit 1
+          fi
+          job_temp="${GOODTEAM_CI_JOB_TEMP:-$RUNNER_TEMP}"
+          echo "$job_temp/goodteam-venv/bin" >> "$GITHUB_PATH"
+          exec python3 ops/ci-runner/runner_cleanup.py run -- python3.12 -m venv "$job_temp/goodteam-venv"
+      - run: exec python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
+      - name: Run focused backend tests
+        if: needs.classify.outputs.backend == 'focused'
+        env:
+          TEST_TARGETS: ${{ needs.classify.outputs.backend_test_targets }}
+        shell: bash
+        run: |
+          if [[ -z "$TEST_TARGETS" ]]; then
+            echo "Focused backend verification requires at least one fixed test target." >&2
+            exit 1
+          fi
+          read -r -a targets <<< "$TEST_TARGETS"
+          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run -- python -m pytest "${targets[@]}" -q
+      - name: Run full backend tests
+        if: needs.classify.outputs.backend == 'full'
+        run: >-
+          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run --
+          python -m pytest tests --ignore=tests/test_workflow_http_recovery.py -q
+      - run: ruff check src/goodteam_os/ tests/ scripts/ci/ ops/ci-runner/runner_cleanup.py
+
+  gate:
+    name: CI / gate
+    needs: [prepare, classify, backend, browser]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    env:
+      MODE: ${{ needs.prepare.outputs.mode }}
+      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
       CLASSIFY_RESULT: ${{ needs.classify.result }}
       BACKEND_MODE: ${{ needs.classify.outputs.backend }}
       BACKEND_RESULT: ${{ needs.backend.result }}
@@ -191,9 +282,10 @@ jobs:
       BROWSER_RESULT: ${{ needs.browser.result }}
       TIER: ${{ needs.classify.outputs.tier }}
       LIVE_SMOKE_REQUIRED: ${{ needs.classify.outputs.live_smoke_evidence_required }}
-
     steps:
       - name: Validate planned jobs
+        id: validate
+        if: env.MODE != 'gate'
         shell: bash
         run: |
           if [[ "$CLASSIFY_RESULT" != "success" ]]; then
@@ -224,19 +316,84 @@ jobs:
             exit 1
           fi
 
+      - name: Require exact candidate status
+        if: env.MODE == 'gate'
+        uses: actions/github-script@v8
+        env:
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const baseSha = context.payload.pull_request.base.sha;
+            const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              owner,
+              repo,
+              basehead: baseSha + "..." + process.env.TARGET_SHA,
+            });
+            if (comparison.data.merge_base_commit.sha !== baseSha) {
+              core.setFailed("PR head does not include the current base SHA; update the branch and revalidate the new head.");
+              return;
+            }
+            const statuses = await github.paginate(
+              github.rest.repos.listCommitStatusesForRef,
+              { owner, repo, ref: process.env.TARGET_SHA, per_page: 100 },
+              (response) => response.data,
+            );
+            const candidate = statuses.find((status) => status.context === "merge-candidate/validated");
+            if (!candidate || candidate.state !== "success") {
+              core.setFailed("Exact PR head " + process.env.TARGET_SHA + " has not passed manual candidate CI.");
+              return;
+            }
+            core.notice("Exact candidate status accepted from " + (candidate.target_url || "recorded status"));
+
       - name: Summarize gate
+        if: always()
         shell: bash
         run: |
           {
             echo "## CI gate"
             echo
-            echo "- Tier: **$TIER**"
-            echo "- Backend: \`$BACKEND_MODE\` ($BACKEND_RESULT)"
-            echo "- Frontend unit/lint plan: \`$FRONTEND_MODE\` (included in browser job)"
-            echo "- Browser acceptance: $BROWSER_RESULT (isolated workspace, fake Worker)"
-            echo "- Live smoke evidence required: \`$LIVE_SMOKE_REQUIRED\`"
-            if [[ "$LIVE_SMOKE_REQUIRED" == "true" ]]; then
-              echo
-              echo "> Reviewer action: inspect the browser-acceptance artifact; adapter-specific live evidence may still be required."
+            echo "- Mode: $MODE"
+            echo "- Exact target: $TARGET_SHA"
+            if [[ "$MODE" != "gate" ]]; then
+              echo "- Tier: $TIER"
+              echo "- Backend: $BACKEND_MODE ($BACKEND_RESULT)"
+              echo "- Frontend unit/lint plan: $FRONTEND_MODE"
+              echo "- Browser acceptance: $BROWSER_RESULT"
+              echo "- Live smoke evidence required: $LIVE_SMOKE_REQUIRED"
+            else
+              echo "- Heavy CI: validated before PR on this exact SHA"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  record-candidate:
+    name: Record candidate result
+    needs: [prepare, mark-candidate, gate]
+    if: >-
+      always()
+      && needs.prepare.outputs.mode == 'candidate'
+      && needs.mark-candidate.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Publish exact-SHA candidate result
+        uses: actions/github-script@v8
+        env:
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          GATE_RESULT: ${{ needs.gate.result }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const success = process.env.GATE_RESULT === "success";
+            await github.rest.repos.createCommitStatus({
+              owner,
+              repo,
+              sha: process.env.TARGET_SHA,
+              state: success ? "success" : "failure",
+              context: "merge-candidate/validated",
+              description: success ? "Exact-SHA candidate CI passed" : "Exact-SHA candidate CI failed",
+              target_url: "https://github.com/" + owner + "/" + repo + "/actions/runs/" + context.runId,
+            });
+            if (!success) core.setFailed("Candidate gate result: " + process.env.GATE_RESULT);
