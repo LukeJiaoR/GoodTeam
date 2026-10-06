@@ -1,7 +1,6 @@
 name: CI
 
 on:
-  pull_request:
   workflow_dispatch:
     inputs:
       target_sha:
@@ -35,52 +34,33 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            if (context.eventName === "workflow_dispatch") {
-              const target = process.env.TARGET_SHA;
-              if (context.ref !== "refs/heads/main") {
-                core.setFailed("Candidate CI must be dispatched from the reviewed main workflow definition");
-                return;
-              }
-              if (!/^[0-9a-f]{40}$/u.test(target)) {
-                core.setFailed("target_sha must be an exact lowercase 40-character commit SHA");
-                return;
-              }
-              await github.rest.repos.getCommit({ owner, repo, ref: target });
-              const main = await github.rest.repos.getBranch({ owner, repo, branch: "main" });
-              const comparison = await github.rest.repos.compareCommitsWithBasehead({
-                owner,
-                repo,
-                basehead: main.data.commit.sha + "..." + target,
-              });
-              if (comparison.data.merge_base_commit.sha !== main.data.commit.sha) {
-                core.setFailed("target_sha must include the current main HEAD before candidate validation");
-                return;
-              }
-              core.setOutput("mode", "candidate");
-              core.setOutput("target_sha", target);
-              core.setOutput("base_sha", main.data.commit.sha);
+            const target = process.env.TARGET_SHA;
+            if (context.eventName !== "workflow_dispatch"
+                || context.ref !== "refs/heads/codex/ci-recovery-f649f402"
+                || owner !== "LukeJiaoR" || repo !== "GoodTeam") {
+              core.setFailed("Recovery is manual-only on the explicitly reviewed repository and temporary ref");
               return;
             }
-
-            const pull = context.payload.pull_request;
-            const target = pull.head.sha;
-            const base = pull.base.sha;
-            let active = false;
-            try {
-              await github.rest.repos.getContent({
-                owner,
-                repo,
-                path: ".github/ci/candidate-gate-v1",
-                ref: base,
-              });
-              active = true;
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              core.notice("Candidate gate bootstrap: base does not contain the activation marker yet.");
+            if (target !== "f649f402f9f4269c529d6c81b7403d0e3627a21e") {
+              core.setFailed("Recovery is restricted to the reviewed CI repair candidate");
+              return;
             }
-            core.setOutput("mode", active ? "gate" : "legacy");
+            await github.rest.repos.getCommit({ owner, repo, ref: target });
+            const main = await github.rest.repos.getBranch({ owner, repo, branch: "main" });
+            if (main.data.commit.sha !== "2b93754cb08c0d15cfc88813ec64401e7f96027b") {
+              core.setFailed("Recovery base changed; reconcile and authorize a new exact scope");
+              return;
+            }
+            const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo, basehead: main.data.commit.sha + "..." + target,
+            });
+            if (comparison.data.merge_base_commit.sha !== main.data.commit.sha) {
+              core.setFailed("Recovery candidate must contain the pinned current main");
+              return;
+            }
+            core.setOutput("mode", "candidate");
             core.setOutput("target_sha", target);
-            core.setOutput("base_sha", base);
+            core.setOutput("base_sha", main.data.commit.sha);
 
   mark-candidate:
     name: Mark candidate pending
