@@ -320,12 +320,13 @@ On the single runner, browser acceptance precedes the remaining frontend checks
 in the same job and the backend job so setup or workflow failures surface first.
 The final gate still requires every planned stack to pass. CI runs
 `npm run test:e2e` with retries disabled. Repetition is available on demand via
-`npm run test:e2e -- --repeat-each=2` for flake investigation. The
-`browser-acceptance-<run>-<attempt>` artifact contains the HTML/JSON report,
-business-state/ledger snapshots, and screenshots/traces on failure. This is
-evidence for the built-in fake workflow; it does not verify real model output,
-deployment, GitHub or Telegram adapters. Staging deployment is disabled in the
-fixture's default configuration.
+`npm run test:e2e -- --repeat-each=2` for flake investigation. GitHub Actions
+artifacts are intentionally disabled: the exact SHA, job result, step logs and
+`CI / gate` summary are the durable CI evidence. Playwright reports, state
+snapshots, screenshots and traces remain runner-local debugging output for the
+current job and are not uploaded. This built-in fake workflow does not verify
+real model output, deployment, GitHub or Telegram adapters. Staging deployment
+is disabled in the fixture's default configuration.
 
 The initial implementation used CI-only validation at the user's request.
 Subsequent changes follow the verification tiers above. Review the CI run for
@@ -356,11 +357,11 @@ timeout uses a bounded Python sleeper through the existing Worker subprocess
 handler, with no provider/real Worker invocation. The tab test delays forwarding
 both requests until both have arrived; it never replaces an API response.
 
-Workspaces, registry and Operator state all use temporary paths. CI uploads
-`http-recovery-<run>-<attempt>` with JUnit results, server logs, current state,
-approval logs and fake Worker evidence for 1 day on success or 3 days after
-failure/cancellation, using the job status at upload time. Playwright retains its
-separate browser artifact with concurrency state snapshots under the same policy.
+Workspaces, registry and Operator state all use temporary paths. HTTP recovery
+still writes JUnit results, server logs, current state, approval logs and fake
+Worker evidence into the job-local evidence directory so the current run can
+diagnose failures. Nothing from that directory is uploaded to GitHub Artifact
+Storage; the runner lifecycle owns its bounded local retention.
 
 These cases verify the recorded interruption boundaries and explicit retry
 contract. They do not promise exactly-once external side effects after an

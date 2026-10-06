@@ -59,8 +59,9 @@ user explicitly confirms they are disposable.
 Follow `docs/self-hosted-ci-runner.md` for every workflow, including temporary
 diagnostic workflows on feature branches. Read-only Linux x64 diagnostics use
 `[self-hosted, linux, x64, goodteam-ci]` with explicit read-only permissions.
-Reuse `.github/workflows/source-diagnostic.yml` for tracked-source exports.
-Do not add a GitHub-hosted fallback for these tasks.
+Do not create GitHub Actions artifacts for routine CI or source transport; read
+source by exact GitHub ref instead. Do not add a GitHub-hosted fallback for
+self-hosted code-execution tasks.
 
 OpenWiki stays manual-only on GitHub-hosted runners. Provider secrets,
 GitHub Environments, and repository-write tokens must not enter `goodteam-ci`.
