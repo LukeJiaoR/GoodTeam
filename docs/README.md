@@ -21,8 +21,7 @@ For the short current-state summary, start with [`status.md`](status.md).
 | Understand bounded existing-project onboarding | [`repository-context-provider.md`](repository-context-provider.md), [`project-onboarding-runner.md`](project-onboarding-runner.md) |
 | Understand execution identity | [`execution-identity.md`](execution-identity.md) |
 | Understand memory and provenance | [`memory-model.md`](memory-model.md), [`provenance-ledger.md`](provenance-ledger.md) |
-| Choose the right PR verification | [`testing-strategy.md`](testing-strategy.md) |
-| Operate the repository CI runner | [`self-hosted-ci-runner.md`](self-hosted-ci-runner.md) |
+| Choose PR verification and understand repository CI policy | [`testing-strategy.md`](testing-strategy.md) |
 | Work as an automated agent | [`../AGENTS.md`](../AGENTS.md), [`../CLAUDE.md`](../CLAUDE.md) |
 | Clean up branches and PR worktrees | [`development-branch-hygiene.md`](development-branch-hygiene.md) |
 | Inspect historical implementation footprints | [`current-progress.md`](current-progress.md), [`mainline-progress.md`](mainline-progress.md) |
@@ -71,7 +70,7 @@ A historical document can explain *why* a decision was made, but it must not sil
 
 - [`testing-strategy.md`](testing-strategy.md): risk-tiered verification matrix for PRs.
 - [`development-branch-hygiene.md`](development-branch-hygiene.md): branch, PR, and worktree cleanup rules.
-- [`self-hosted-ci-runner.md`](self-hosted-ci-runner.md): persistent CI runner security boundary, resource limits, provisioning, and operations.
+- [`self-hosted-ci-runner.md`](self-hosted-ci-runner.md): retirement status for the former runner; active GitHub Actions jobs use GitHub-hosted runners.
 - [`../AGENTS.md`](../AGENTS.md) and [`../CLAUDE.md`](../CLAUDE.md): agent and repository operating rules.
 
 ## Historical and rolling memory

@@ -81,18 +81,16 @@ user explicitly confirms they are disposable.
 
 ## CI Runner Selection
 
-Follow `docs/self-hosted-ci-runner.md` for every workflow, including temporary
-diagnostic workflows on feature branches. Read-only Linux x64 diagnostics use
-`[self-hosted, linux, x64, goodteam-ci]` with explicit read-only permissions.
-Do not create GitHub Actions artifacts for routine CI or source transport; read
-source by exact GitHub ref instead. Do not add a GitHub-hosted fallback for
-self-hosted code-execution tasks.
+Use GitHub-hosted `ubuntu-latest` for every workflow job, including temporary
+diagnostic workflows on feature branches. Do not add self-hosted runner
+selectors or invoke the retired `goodteam-ci` runner. Keep workflow and job
+permissions scoped to each task; code-execution jobs use `contents: read`, and
+candidate status writers receive only the status permissions they require.
 
-OpenWiki stays manual-only on GitHub-hosted runners. Provider secrets,
-GitHub Environments, and repository-write tokens must not enter `goodteam-ci`.
-Tasks requiring these capabilities need a separately reviewed, isolated runner
-environment; none is currently provisioned. The shared x64 runner also cannot
-provide native ARM64 or Docker diagnostics.
+Do not create GitHub Actions artifacts for routine CI or source transport; read
+source by exact GitHub ref instead. OpenWiki stays manual-only on a
+GitHub-hosted runner. Keep its provider secrets and repository-write token
+scoped to that workflow.
 
 <!-- OPENWIKI:START -->
 

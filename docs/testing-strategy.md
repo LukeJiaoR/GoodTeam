@@ -238,8 +238,8 @@ The automated contract is:
 - Tier 2 ordinary application contracts run maintained contract test groups.
 - Tier 3 control-plane, security, dependency, build, and CI-authority changes run
   the applicable full backend and/or frontend checks.
-- Every change affecting either stack also runs the `browser` job on the guarded
-  `goodteam-ci` runner. It builds the frontend and runs the real HTTP/browser
+- Every change affecting either stack also runs the `browser` job on a GitHub-hosted
+  `ubuntu-latest` runner. It builds the frontend and runs the real HTTP/browser
   acceptance suite once against a fresh temporary workspace with fake Workers.
   Frontend unit tests and lint also run in this job when the frontend is affected,
   sharing the same dependency install and build.
@@ -287,8 +287,9 @@ duplicate model-default assertions, a same-object JSON serialization comparison,
 and CI/documentation substring checks. Package imports remain exercised by the
 backend suite; the model routing matrix remains covered by `test_models.py`.
 Classifier behavior and an executable gate test protect CI selection and reject
-failed or cancelled jobs and unexpected skips. The guarded runner and read-only
-permissions retain explicit checks.
+failed or cancelled jobs and unexpected skips. Workflow checks require every
+job to use `ubuntu-latest`; code jobs have `contents: read`, while candidate
+status writes stay in narrowly permissioned status jobs.
 
 The subsequent [full backend test-value audit](audit/backend-test-value-2026-09-21.md)
 records a disposition and supporting evidence for all 2,235 baseline pytest cases,
@@ -312,12 +313,12 @@ browser console and unhandled-error checks remain enabled.
 Each CI invocation uses a unique temporary directory and loopback
 port; the server refuses reuse and cleans only its owned directory on shutdown.
 
-The runner must provide the Chromium system libraries. CI downloads the pinned
-Playwright browser into the runner user cache with `npx playwright install chromium`;
-it does not require sudo or change system packages. Missing libraries fail the job.
+CI installs Chromium and its system dependencies on the ephemeral GitHub-hosted
+runner with `npx playwright install --with-deps chromium`.
 
-On the single runner, browser acceptance precedes the remaining frontend checks
-in the same job and the backend job so setup or workflow failures surface first.
+Browser acceptance precedes the remaining frontend checks in the browser job;
+the backend job waits for browser acceptance so setup or workflow failures
+surface first.
 The final gate still requires every planned stack to pass. CI runs
 `npm run test:e2e` with retries disabled. Repetition is available on demand via
 `npm run test:e2e -- --repeat-each=2` for flake investigation. GitHub Actions
