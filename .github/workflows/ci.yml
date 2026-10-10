@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Exact 40-character commit SHA to validate before opening or updating a PR
+        description: Exact 40-character commit SHA to validate when preparing to merge a PR
         required: true
         type: string
 
@@ -360,7 +360,7 @@ jobs:
               echo "- Browser acceptance: $BROWSER_RESULT"
               echo "- Live smoke evidence required: $LIVE_SMOKE_REQUIRED"
             else
-              echo "- Heavy CI: validated before PR on this exact SHA"
+              echo "- Heavy CI: validated on this exact SHA"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
