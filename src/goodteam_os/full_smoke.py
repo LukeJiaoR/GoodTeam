@@ -114,7 +114,17 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
         summary["failures"] = failed_runs
-        summary["status"] = "failed" if failed_runs or report.get("status") == "failed" else "passed"
+        if failed_runs or report.get("status") == "failed":
+            summary["status"] = "failed"
+        elif report.get("status") == "blocked":
+            summary["status"] = "blocked"
+            summary["failures"] = [
+                {"classification": str(run.get("classification") or "product"),
+                 "message": str(run.get("blocked_reason", {}).get("message") or "Approval is required.")}
+                for run in report.get("runs", []) if isinstance(run, dict) and run.get("status") == "blocked"
+            ]
+        else:
+            summary["status"] = "passed"
 
     summary["environment_overrides"] = env_updates
     summary["completed_at"] = datetime.now(UTC).isoformat()
@@ -126,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     _restore_managed_env(original_env)
     print(json.dumps({"status": summary["status"], "summary": str(summary_path), "report": str(output_root / "report.md")}, indent=2))
-    return 1 if summary["status"] == "failed" else 0
+    return 1 if summary["status"] in {"failed", "blocked"} else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

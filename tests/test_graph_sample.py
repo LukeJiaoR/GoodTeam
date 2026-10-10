@@ -826,6 +826,7 @@ def test_refine_artifact_proposes_without_clobbering_and_accept_promotes(tmp_pat
         project_key="CONTENTOPS",
         approval="prd",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
 
     assert approved["approvals"]["prd"] == "approved"

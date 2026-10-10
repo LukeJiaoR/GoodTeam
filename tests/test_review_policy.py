@@ -256,6 +256,9 @@ review_evidence_policy:
     )
     _write_worker_status(project_root, _provider_status())
     state = _staging_state()
+    artifact = workspace / "staging-fixture.md"
+    artifact.write_text("# Failed invocation evidence\nModel-free fixture for the explicit manual override contract.")
+    state.artifacts[web._approval_artifact_for_gate("staging")] = str(artifact)
     StateStore(workspace).write_project_current(state, "DEMO")
 
     monkeypatch.setattr(web, "advance_approved_workflow", lambda **kwargs: kwargs["state"])

@@ -100,6 +100,7 @@ def test_fix_profile_runs_end_to_end_with_fake_worker(tmp_path):
         project_key="FIXPROJ",
         approval="fix_plan",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
     assert payload["next_node"] == "await_code_review_approval"
     assert "implementation_handoff" in payload["artifacts"]
@@ -111,6 +112,7 @@ def test_fix_profile_runs_end_to_end_with_fake_worker(tmp_path):
         project_key="FIXPROJ",
         approval="code_review",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
     assert payload["next_node"] == "await_qa_approval"
     assert "qa_report" in payload["artifacts"]
@@ -122,6 +124,7 @@ def test_fix_profile_runs_end_to_end_with_fake_worker(tmp_path):
         project_key="FIXPROJ",
         approval="qa",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
     assert payload["next_node"] == ""
     assert payload["current_node"] == "complete"

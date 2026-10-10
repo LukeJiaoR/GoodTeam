@@ -12,7 +12,7 @@ from typing import Callable
 
 from goodteam_os.state import StateStore
 from goodteam_os.tasks import LocalTaskStore
-from goodteam_os.web import decide_approval, start_workflow
+from goodteam_os.web import ProjectApiError, decide_approval, start_workflow
 
 
 CommandRunner = Callable[[str, Path], dict[str, object]]
@@ -113,7 +113,7 @@ def run_smoke_suite(
             )
             report["runs"].append(run)
             if run["status"] != "passed":
-                report["status"] = "failed"
+                report["status"] = run["status"]
                 report_path = prepare_smoke_report_for_write(workspace, report)
                 write_smoke_report(workspace, report)
                 _attach_report_path_to_smoke_tasks(report["runs"], report_path, projects)
@@ -179,7 +179,12 @@ def _execute_project_cycle(
         return run
     except Exception as exc:
         message = str(exc)
-        run["status"] = "failed"
+        approval_blocked = isinstance(exc, ProjectApiError) and exc.code in {
+            "approval_reason_required", "stale_approval", "invalid_approval_note",
+        }
+        run["status"] = "blocked" if approval_blocked else "failed"
+        if approval_blocked:
+            run["blocked_reason"] = {"code": exc.code, "message": message, "recovery": exc.recovery}
         run["classification"] = classify_smoke_failure(message)
         run["next_task"] = _record_failure_task(project, cycle, message, run["classification"], smoke_task_id=smoke_task_id)
         return run

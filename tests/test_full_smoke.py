@@ -6,6 +6,21 @@ import pytest
 from goodteam_os import full_smoke
 
 
+def test_full_smoke_preserves_approval_blocker_and_exits_nonzero(tmp_path, monkeypatch):
+    output = tmp_path / "blocked-smoke"
+    reason = "Record why you are continuing despite the current review limitations."
+    monkeypatch.setattr(full_smoke, "run_smoke_suite", lambda **kwargs: {
+        "status": "blocked", "runs": [{"project_key": "CONTENTOPS", "status": "blocked",
+        "classification": "product", "blocked_reason": {"code": "approval_reason_required", "message": reason}}],
+    })
+    result = full_smoke.main(["--output-root", str(output), "--suite", "contentops", "--worker-mode", "fake"])
+    assert result == 1
+    summary = json.loads((output / "summary.json").read_text())
+    assert summary["status"] == "blocked"
+    assert summary["failures"] == [{"classification": "product", "message": reason}]
+    assert reason in (output / "report.md").read_text()
+
+
 def test_full_smoke_configures_isolated_contentops_and_external_self_worktree(tmp_path, monkeypatch):
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
