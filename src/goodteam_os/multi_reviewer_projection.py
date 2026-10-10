@@ -98,9 +98,65 @@ def build_multi_reviewer_projection(
         "advisory_only": True,
         "can_human_override": True,
         "operator_message": AGGREGATE_OPERATOR_MESSAGE,
+        "configured_profile_ids": [profile.profile_id for profile in profiles],
         "aggregate_policy": _aggregate_policy(reviewers),
         "reviewers": reviewers,
     }
+
+
+
+def projection_supports_approval(
+    projection: object,
+    *,
+    approval: str,
+    run_id: str,
+    artifact_key: str,
+    artifact_path: str,
+    artifact_version: str,
+) -> bool:
+    """Reconcile aggregate, configured coverage and current evidence for advice only."""
+    if not isinstance(projection, Mapping) or projection.get("approval") != approval or not run_id:
+        return False
+    profiles = projection.get("configured_profile_ids")
+    reviewers = projection.get("reviewers")
+    if (not isinstance(profiles, list)
+            or any(not isinstance(item, str) or not item.strip() for item in profiles)
+            or len(set(profiles)) != len(profiles)
+            or not isinstance(reviewers, list) or not reviewers):
+        return False
+    if any(not isinstance(item, Mapping) or not isinstance(item.get("status"), Mapping) for item in reviewers):
+        return False
+    statuses = [dict(item["status"]) for item in reviewers]
+    identity = dict(artifact_key=artifact_key, artifact_path=artifact_path, artifact_version=artifact_version)
+    if (any(status.get("run_id") != run_id for status in statuses)
+            or len(reviewer_statuses_for_artifact(statuses, **identity, require_exact=True)) != len(statuses)):
+        return False
+    phase = reviewer_phase_for_approval(approval)
+    if profiles and phase is None:
+        return False
+    expected = build_multi_reviewer_projection(
+        approval=approval,
+        reviewer_target={"reviewer_profiles": {phase: profiles}} if profiles else {},
+        reviewer_statuses=statuses,
+        **identity,
+    )
+    if (expected["configured_profile_ids"] != profiles
+            or projection.get("phase") != expected["phase"]
+            or len(expected["reviewers"]) != len(reviewers)
+            or expected["aggregate_policy"]["state_counts"] != {"ok": len(reviewers)}
+            or projection.get("aggregate_policy") != expected["aggregate_policy"]):
+        return False
+    for recorded, derived in zip(reviewers, expected["reviewers"], strict=True):
+        if any(recorded.get(key) != derived[key] for key in ("profile_id", "status", "provenance")):
+            return False
+        policy = recorded.get("policy")
+        # Every valid project policy maps successful provider evidence to ok.
+        # Rationale differs in strict mode, so compare its evidence contract only.
+        if not isinstance(policy, Mapping) or any(
+            policy.get(key) != derived["policy"][key] for key in ("state", "severity", "gate", "evidence")
+        ):
+            return False
+    return True
 
 
 def _configured_profiles(target: Mapping[str, object] | None, phase: str | None) -> list[ReviewerProfile]:

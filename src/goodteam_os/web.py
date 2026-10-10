@@ -63,7 +63,11 @@ from goodteam_os.team_control_plane import (
     execute_team_commands,
 )
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
-from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection, reviewer_statuses_for_artifact
+from goodteam_os.multi_reviewer_projection import (
+    build_multi_reviewer_projection,
+    projection_supports_approval,
+    reviewer_statuses_for_artifact,
+)
 from goodteam_os.native_picker import choose_native_path
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
@@ -819,6 +823,14 @@ def build_approval_recommendation(
         )
         if derived_policy["state"] != "ok" or inconsistent_policy:
             reasons.append({"kind": "missing_evidence", "text": "Reviewer evidence is missing, simulated or unsuccessful. Human review is required."})
+        if "multi_reviewer_projection" in review_dict and not projection_supports_approval(
+            review_dict["multi_reviewer_projection"], approval=approval,
+            run_id=str(getattr(state, "run_id", "") or ""),
+            artifact_key=str(review_dict.get("artifact", "") or ""),
+            artifact_path=str(review_dict.get("artifact_path", "") or ""),
+            artifact_version=str(review_dict.get("artifact_version", "") or ""),
+        ):
+            reasons.append({"kind": "missing_evidence", "text": "Current reviewer evidence is incomplete or inconsistent across the review team. Human review is required."})
 
         messages = {}
         raw_messages = {}
