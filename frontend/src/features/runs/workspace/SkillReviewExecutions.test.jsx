@@ -348,3 +348,113 @@ it.each(['context_digest', 'version_id', 'runtime_session_id', 'resource_digest'
   expect(await screen.findByRole('alert')).toHaveTextContent('No successful report is shown');
   expect(screen.queryByText('Resource read witnesses')).not.toBeInTheDocument();
 });
+
+describe('Read-only delivery evidence', () => {
+  const setupDelivery = (props = {}) => render(<SkillReviewExecutions projectKey="DEMO" runId="run" language="en" mode="delivery" {...props} />);
+  const openDelivery = () => fireEvent.click(screen.getByRole('button', { name: 'Review evidence for this delivery' }));
+
+  it('reuses the bound report reader, retains the verification boundary and exposes no execution controls', async () => {
+    requestJson.mockResolvedValueOnce({ ...list, start_available: true,
+      reviews: [{ ...item, retry_available: true, cancel_available: true }] }).mockResolvedValueOnce(report);
+    setupDelivery();
+    expect(requestJson).not.toHaveBeenCalled();
+    openDelivery();
+    await openReport();
+    expect(await screen.findByText('Tests were not executed.')).toBeVisible();
+    expect(screen.getByText('Reviewer-reported checks')).toBeVisible();
+    expect(screen.getByText('No independent verification record is bound to this task and current code.')).toBeVisible();
+    expect(screen.getByText('Contract fixture · not live Runtime acceptance')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Start review|Retry with locked inputs|Cancel review/ })).not.toBeInTheDocument();
+    expect(requestJson.mock.calls.every(([, options]) => !options.method || options.method === 'GET')).toBe(true);
+  });
+
+  it.each(['prepared', 'running', 'stopping', 'failed', 'invalid', 'cancelled', 'interrupted', 'recovery_required', 'unavailable'])('does not lend a report or execution witness to %s', async (status) => {
+    requestJson.mockResolvedValue({ ...list, reviews: [{ ...item, status, report_available: true, retry_available: true, cancel_available: true }] });
+    setupDelivery(); openDelivery();
+    expect(await screen.findByText('Process execution not observed in the saved evidence')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Open review report|Start review|Retry with locked inputs|Cancel review/ })).not.toBeInTheDocument();
+  });
+
+  it.each([{ report_available: false }, { cancel_requested: true }])('rejects contradictory received metadata %j', async (flags) => {
+    requestJson.mockResolvedValue({ ...list, reviews: [{ ...item, ...flags }] });
+    setupDelivery(); openDelivery();
+    expect(await screen.findByText('Review evidence is unavailable. No successful report is shown.')).toBeVisible();
+    expect(screen.queryByText('Report received')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open review report' })).not.toBeInTheDocument();
+  });
+
+  it('shows a timeout with observed output and local termination without declaring success or remote retirement', async () => {
+    requestJson.mockResolvedValue({ ...list, reviews: [{ ...item, status: 'failed', report_available: false,
+      error_code: 'review_timeout', process_progress: { phase: 'native_output', elapsed_seconds: 900.093,
+        deadline_seconds: 900, termination_confirmed: true } }] });
+    setupDelivery(); openDelivery();
+    expect(await screen.findByText('Failed')).toBeVisible();
+    expect(screen.getByText('Reviewer process observed')).toBeVisible();
+    expect(screen.getByText('native_output')).toBeVisible();
+    expect(screen.getByText('Local process stopped; upstream request status unconfirmed.')).toBeVisible();
+    expect(screen.queryByText('Report received')).not.toBeInTheDocument();
+  });
+
+  it('reports changed artifact evidence as stale, and never opens its formerly successful report', async () => {
+    requestJson.mockResolvedValue({ ...list, reviews: [{ ...item, status: 'unavailable', report_available: false,
+      error_code: 'review_target_changed' }] });
+    setupDelivery(); openDelivery();
+    expect(await screen.findByText('Reviewed artifact changed · evidence is for an earlier version')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Open review report' })).not.toBeInTheDocument();
+  });
+
+  it('keeps fixed Git evidence scoped to its recorded SHA with currentness unknown', async () => {
+    requestJson.mockResolvedValue({ ...list, reviews: [{ ...item, target: { ...item.target,
+      kind: 'git_change', base_sha: 'b'.repeat(40), head_sha: 'c'.repeat(40) } }] });
+    setupDelivery(); openDelivery();
+    expect(await screen.findByText('This review covers the recorded commits. Whether they match the current code has not been checked.')).toBeVisible();
+    fireEvent.click(screen.getByText('Bound attempt and reviewed version'));
+    expect(screen.getByText('c'.repeat(40))).toBeVisible();
+  });
+
+  it('keeps every registered attempt instead of hiding a failed same-role attempt', async () => {
+    requestJson.mockResolvedValue({ ...list, reviews: [{ ...item, job_id: `job-skill-${'b'.repeat(64)}`,
+      status: 'failed', report_available: false }, item] });
+    setupDelivery(); openDelivery();
+    expect(await screen.findAllByRole('article')).toHaveLength(2);
+    expect(screen.getByText('Failed')).toBeVisible();
+    expect(screen.getByText('Report received')).toBeVisible();
+  });
+
+  it('clears old evidence on refresh failure and does not replace unavailable data with no execution', async () => {
+    requestJson.mockResolvedValueOnce(list).mockRejectedValueOnce(new Error('unavailable'));
+    setupDelivery(); openDelivery();
+    await screen.findByText('Report received');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh reviews' }));
+    expect(await screen.findByRole('alert')).toBeVisible();
+    expect(screen.queryByText('Report received')).not.toBeInTheDocument();
+    expect(screen.queryByText(/No registered review evidence/)).not.toBeInTheDocument();
+  });
+
+  it('does not claim never-executed when the registry is empty', async () => {
+    requestJson.mockResolvedValue({ ...list, reviews: [] });
+    setupDelivery(); openDelivery();
+    expect(await screen.findByText('No registered review evidence for this task. This does not prove that no execution occurred.')).toBeVisible();
+  });
+
+  it('rejects foreign-task evidence and late replies after changing run', async () => {
+    let resolve;
+    requestJson.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const view = setupDelivery(); openDelivery();
+    const signal = requestJson.mock.calls[0][1].signal;
+    view.rerender(<SkillReviewExecutions projectKey="DEMO" runId="next" language="en" mode="delivery" />);
+    expect(signal.aborted).toBe(true);
+    await act(async () => resolve(list));
+    expect(screen.queryByText('Report received')).not.toBeInTheDocument();
+    requestJson.mockResolvedValue(list); openDelivery();
+    expect(await screen.findByRole('alert')).toBeVisible();
+  });
+
+  it('labels the read-only evidence and missing independent verification in Chinese', async () => {
+    requestJson.mockResolvedValue({ ...list, reviews: [] });
+    setupDelivery({ language: 'zh' });
+    fireEvent.click(screen.getByRole('button', { name: '本次交付的审查依据' }));
+    expect(await screen.findByText('本任务没有已登记的审查依据；这不证明从未发生执行。')).toBeVisible();
+    expect(screen.getByText('尚无绑定本任务及当前代码的独立验证记录。')).toBeVisible();
+  });
+});

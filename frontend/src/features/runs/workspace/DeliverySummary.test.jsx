@@ -52,7 +52,7 @@ describe('Delivery summary', () => {
     `${artifact.href}&run=other`,
   ])('never fetches an external, foreign or ambiguous report URL: %s', (href) => {
     render(<DeliverySummary summary={{ ...summary, artifacts: [{ ...artifact, href }] }} t={t} />);
-    expect(screen.getByRole('button')).toBeDisabled();
+    expect(screen.getByRole('button', { name: /handoff/i })).toBeDisabled();
     expect(requestJson).not.toHaveBeenCalled();
   });
 
@@ -92,4 +92,18 @@ describe('Delivery summary', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('The report changed. Reload Work.');
     expect(screen.queryByRole('heading', { name: 'Local result' })).not.toBeInTheDocument();
   });
+});
+
+
+it('discards delivery review evidence when the same run receives a newer artifact version', async () => {
+  const pending = deferred();
+  requestJson.mockReturnValue(pending.promise);
+  const view = render(<DeliverySummary summary={summary} t={t} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Review evidence for this delivery' }));
+  const signal = requestJson.mock.calls[0][1].signal;
+  view.rerender(<DeliverySummary summary={{ ...summary, artifacts: [{ ...artifact, version: 'sha256:new' }] }} t={t} />);
+  expect(signal.aborted).toBe(true);
+  await act(async () => pending.resolve({ schema_version: 'goodteam.task-reviews.v1', project_key: 'DEMO', run_id: 'run', reviews: [] }));
+  expect(screen.queryByText('No registered review evidence for this task. This does not prove that no execution occurred.')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Review evidence for this delivery' })).toHaveAttribute('aria-expanded', 'false');
 });

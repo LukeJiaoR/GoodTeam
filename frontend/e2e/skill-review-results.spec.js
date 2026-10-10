@@ -84,6 +84,24 @@ test('task-bound reports: source evidence, zero findings, durable recovery, fail
     await review.getByRole('button', { name: 'Open review report', exact: true }).click();
     await expect(review.getByText('No findings reported')).toBeVisible();
     await expect(review.getByText('No application tests were run by the Reviewer.')).toBeVisible();
+    // The delivery summary reuses the protected read contract, with no Start/retry/cancel actions.
+    const delivery = page.getByRole('region', { name: 'Delivery reports', exact: true });
+    const readPosts = [];
+    const capturePost = request => { if (request.method() === 'POST') readPosts.push(request.url()); };
+    page.on('request', capturePost);
+    await delivery.getByRole('button', { name: 'Review evidence for this delivery', exact: true }).click();
+    const deliveryReview = delivery.getByRole('article', { name: accepted.job_id, exact: true });
+    await expect(deliveryReview.getByText('Report received', { exact: true })).toBeVisible();
+    await expect(delivery.getByText('No independent verification record is bound to this task and current code.')).toBeVisible();
+    await expect(deliveryReview.getByText('Contract fixture · not live Runtime acceptance')).toBeVisible();
+    await expect(delivery.getByRole('button', { name: /Start review|Cancel review|Retry with locked inputs/ })).toHaveCount(0);
+    await deliveryReview.getByRole('button', { name: 'Open review report', exact: true }).click();
+    await expect(deliveryReview.getByText('No application tests were run by the Reviewer.')).toBeVisible();
+    await expect(deliveryReview.getByText('Reviewer-reported checks')).toBeVisible();
+    await delivery.getByRole('button', { name: 'Review evidence for this delivery', exact: true }).click();
+    page.off('request', capturePost);
+    expect(readPosts).toEqual([]);
+    expect((await workState(page, fixture.key)).state).toEqual(before.state);
     await review.getByText('E1 · candidate:1–1', { exact: true }).click();
     await expect(review.locator('pre')).toHaveText("export const fixture = 'read-only source';");
     await testInfo.attach('received-advisory-source-evidence', { body: await page.screenshot(), contentType: 'image/png' });

@@ -4,6 +4,13 @@ import './skillReviewExecutions.css';
 
 const words = {
   en: {
+    deliveryTitle: 'Review evidence for this delivery', independent: 'No independent verification record is bound to this task and current code.',
+    noRecord: 'No registered review evidence for this task. This does not prove that no execution occurred.',
+    stale: 'Reviewed artifact changed · evidence is for an earlier version',
+    currentUnknown: 'This review covers the recorded commits. Whether they match the current code has not been checked.',
+    witnessed: 'Reviewer process observed', noWitness: 'Process execution not observed in the saved evidence',
+    localStopped: 'Local process stopped; upstream request status unconfirmed.',
+    phase: 'Last parent-observed phase', identity: 'Bound attempt and reviewed version',
     title: 'Review execution details', refresh: 'Refresh reviews', loading: 'Loading review evidence…',
     empty: 'No locked Reviewer execution in this task.', unavailable: 'Review evidence is unavailable. No successful report is shown.',
     advisory: 'Advisory only. Receiving a report does not independently confirm its judgment or approve, merge, or deploy anything.',
@@ -27,6 +34,13 @@ const words = {
     required: 'Required', on_demand: 'On demand', promoted: 'Explicitly required by this task',
   },
   zh: {
+    deliveryTitle: '本次交付的审查依据', independent: '尚无绑定本任务及当前代码的独立验证记录。',
+    noRecord: '本任务没有已登记的审查依据；这不证明从未发生执行。',
+    stale: '审查材料已变化 · 依据属于此前版本',
+    currentUnknown: '本次审查针对记录中的提交，尚未核对它们是否与当前代码一致。',
+    witnessed: '已观察到 Reviewer 进程执行', noWitness: '已保存的依据中未观察到进程执行',
+    localStopped: '本机进程已停止；上游请求状态未确认。',
+    phase: '父进程最后观察到的阶段', identity: '绑定的执行尝试与审查版本',
     title: '审查执行详情', refresh: '刷新审查', loading: '正在读取审查依据…',
     empty: '当前任务没有已绑定方法的 Reviewer 执行。', unavailable: '审查依据不可用，不显示成功报告。',
     advisory: '仅供参考。报告被接收不代表判断已获独立证实，也不会自动批准、合并或部署。',
@@ -179,9 +193,40 @@ function ReviewControl({ item, projectKey, runId, w, onRefresh, action }) {
     {error ? <p role="alert">{action === 'cancel' ? w.cancelFailed : w.retryFailed}</p> : null}</div>;
 }
 
-function ReviewPanel({ projectKey, runId, language }) {
+function DeliveryReviewEvidence({ item, projectKey, runId, w }) {
+  const received = item.status === 'received' && item.report_available === true && !item.cancel_requested && !item.error_code;
+  const observed = item.process_progress;
+  const progress = observed && ['process_started', 'input_delivered', 'native_thread_started',
+    'native_turn_started', 'native_output', 'native_turn_completed'].includes(observed.phase)
+    && Number.isFinite(observed.elapsed_seconds) && observed.elapsed_seconds >= 0 ? observed : null;
+  const stale = item.error_code === 'review_target_changed';
+  const status = stale ? w.stale : item.status === 'received' && !received ? w.unavailable
+    : w[item.status] || w.unavailable;
+  return <article aria-label={item.job_id}>
+    <h4>{status}</h4>
+    <p>{progress ? w.witnessed : w.noWitness}</p>
+    {progress ? <p>{w.phase}: <code>{progress.phase}</code> · {Math.floor(progress.elapsed_seconds)}s</p> : null}
+    {progress?.termination_confirmed === true ? <p>{w.localStopped}</p> : null}
+    {item.error_code ? <p><code>{item.error_code}</code></p> : null}
+    {item.runtime_verification === 'contract_fixture' ? <p>{w.fixture}</p> : null}
+    {item.target?.kind === 'git_change' ? <p>{w.currentUnknown}</p> : null}
+    <details><summary>{w.identity}</summary>
+      <code>{item.job_id}</code><code>{item.snapshot_ref?.digest}</code><code>{item.context_ref?.digest}</code>
+      <p>{item.target?.display_name || item.target?.artifact_key}</p><code>{item.target?.artifact_version}</code>
+      {item.target?.kind === 'git_change' ? <dl>
+        <dt>{w.base}</dt><dd><code>{item.target.base_sha}</code></dd>
+        <dt>{w.head}</dt><dd><code>{item.target.head_sha}</code></dd>
+      </dl> : null}
+    </details>
+    {received ? <ReviewReport item={item} projectKey={projectKey} runId={runId} w={w} /> : null}
+  </article>;
+}
+
+function ReviewPanel({ projectKey, runId, language, mode }) {
   const locale = String(language || '').startsWith('zh') ? 'zh' : 'en';
   const w = words[locale];
+  const delivery = mode === 'delivery';
+  const title = delivery ? w.deliveryTitle : w.title;
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState(null);
   const [error, setError] = useState(false);
@@ -252,15 +297,18 @@ function ReviewPanel({ projectKey, runId, language }) {
     setOpen(!open);
   };
   return <div className="skill-review-executions">
-    <button type="button" aria-expanded={open} onClick={toggle}>{w.title}</button>
-    {open ? <section aria-label={w.title}>
+    <button type="button" aria-expanded={open} onClick={toggle}>{title}</button>
+    {open ? <section aria-label={title}>
       <p className="skill-review-advisory">{w.advisory}</p>
       <button type="button" onClick={load}>{w.refresh}</button>
-      {startAvailable || starting ? <button type="button" onClick={start} disabled={starting}>{starting ? w.starting : w.start}</button> : null}
-      {startError ? <p role="alert">{w.startFailed}</p> : null}
+      {delivery ? <p>{w.independent}</p> : null}
+      {!delivery && (startAvailable || starting) ? <button type="button" onClick={start} disabled={starting}>{starting ? w.starting : w.start}</button> : null}
+      {!delivery && startError ? <p role="alert">{w.startFailed}</p> : null}
       {error ? <p role="alert">{w.unavailable}</p> : items === null ? <p role="status">{w.loading}</p> : null}
-      {items?.length === 0 ? <p>{w.empty}</p> : null}
-      {items?.map((item) => <article key={`${item.job_id}:${item.report_digest || item.status}`} aria-label={item.job_id}>
+      {items?.length === 0 ? <p>{delivery ? w.noRecord : w.empty}</p> : null}
+      {delivery ? items?.map((item) => <DeliveryReviewEvidence
+        key={JSON.stringify([item.job_id, item.snapshot_ref?.digest, item.context_ref?.digest, item.target, item.report_digest, item.status])}
+        item={item} projectKey={projectKey} runId={runId} w={w} />) : items?.map((item) => <article key={`${item.job_id}:${item.report_digest || item.status}`} aria-label={item.job_id}>
         <h3>{w[item.status] || w.unavailable}</h3>
         {item.error_code ? <p role="status"><code>{item.error_code}</code></p> : null}
         {item.process_progress ? <div aria-label={locale === 'zh' ? '实际进程进度' : 'Observed process progress'}>
@@ -320,7 +368,7 @@ function ReviewPanel({ projectKey, runId, language }) {
   </div>;
 }
 
-export default function SkillReviewExecutions({ projectKey, runId, language }) {
+export default function SkillReviewExecutions({ projectKey, runId, language, mode }) {
   if (!projectKey || !runId) return null;
-  return <ReviewPanel key={`${projectKey}:${runId}`} projectKey={projectKey} runId={runId} language={language} />;
+  return <ReviewPanel key={`${projectKey}:${runId}:${mode || 'execution'}`} projectKey={projectKey} runId={runId} language={language} mode={mode} />;
 }

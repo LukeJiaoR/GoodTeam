@@ -143,6 +143,7 @@ function OutcomesPane({
   approval,
   historical,
   deliverySummary,
+  language,
   activeReviewTaskId,
   attentionTaskId,
   expandedTaskId,
@@ -164,7 +165,7 @@ function OutcomesPane({
       </header>
       <div className="team-outcomes-scroll">
       {approval}
-      <DeliverySummary summary={deliverySummary} historical={historical} t={t} />
+      <DeliverySummary summary={deliverySummary} historical={historical} language={language} t={t} />
       {outcomes.length ? (
         <ol className="team-outcome-list">
           {outcomes.map((task, index) => {
@@ -562,6 +563,7 @@ function TeamWorkspace({
           /> : null}
           historical={readOnly}
           deliverySummary={data.delivery_summary}
+          language={language}
           activeReviewTaskId={activeReviewTargetId}
           attentionTaskId={attentionReviewTask?.id || ''}
           expandedTaskId={expandedTaskId}
