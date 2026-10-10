@@ -159,18 +159,18 @@ jobs:
             --github-output "$GITHUB_OUTPUT" \
             --summary "$GITHUB_STEP_SUMMARY"
 
-  browser:
-    name: Frontend checks and selected browser acceptance
+  verify:
+    name: Selected candidate checks
     needs: [prepare, classify]
     if: >-
       always()
       && needs.prepare.result == 'success'
       && needs.classify.result == 'success'
-      && (needs.classify.outputs.browser_required == 'true' || needs.classify.outputs.frontend != 'none')
+      && (needs.classify.outputs.backend != 'none' || needs.classify.outputs.frontend != 'none' || needs.classify.outputs.browser_required == 'true')
     runs-on: [self-hosted, linux, x64, goodteam-ci]
     permissions:
       contents: read
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       GOODTEAM_DISABLE_TG_NETWORK: "1"
       GOODTEAM_TG_BOT_TOKEN: ""
@@ -180,70 +180,8 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.target_sha }}
           persist-credentials: false
-
-      - name: Create isolated browser backend environment
-        if: needs.classify.outputs.browser_required == 'true'
-        shell: bash
-        run: |
-          job_temp="${GOODTEAM_CI_JOB_TEMP:-$RUNNER_TEMP}"
-          echo "$job_temp/goodteam-e2e-venv/bin" >> "$GITHUB_PATH"
-          echo "GOODTEAM_E2E_PYTHON=$job_temp/goodteam-e2e-venv/bin/python" >> "$GITHUB_ENV"
-          exec python3 ops/ci-runner/runner_cleanup.py run -- python3.12 -m venv "$job_temp/goodteam-e2e-venv"
-
-      - run: exec python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
-        if: needs.classify.outputs.browser_required == 'true'
-
-      - name: Verify HTTP crash and timeout recovery
-        if: needs.classify.outputs.browser_required == 'true'
-        run: |
-          evidence="${GOODTEAM_CI_EVIDENCE:-$RUNNER_TEMP}/goodteam-http-recovery"
-          mkdir -p "$evidence"
-          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run --             python -m pytest tests/test_workflow_http_recovery.py -q             --basetemp="$evidence/workspaces" --junitxml="$evidence/results.xml"
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "20"
-
-      - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm ci
-        working-directory: frontend
-      - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run build
-        working-directory: frontend
-      - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npx playwright install chromium
-        if: needs.classify.outputs.browser_required == 'true'
-        working-directory: frontend
-      - name: Verify isolated business loop
-        if: needs.classify.outputs.browser_required == 'true'
-        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run test:e2e
-        working-directory: frontend
-      - name: Run frontend unit tests
-        if: needs.classify.outputs.frontend != 'none'
-        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm test
-        working-directory: frontend
-      - name: Lint frontend
-        if: needs.classify.outputs.frontend != 'none'
-        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run lint
-        working-directory: frontend
-
-  backend:
-    needs: [prepare, classify]
-    if: >-
-      always()
-      && needs.prepare.result == 'success'
-      && needs.classify.result == 'success'
-      && needs.classify.outputs.backend != 'none'
-    runs-on: [self-hosted, linux, x64, goodteam-ci]
-    permissions:
-      contents: read
-    env:
-      GOODTEAM_DISABLE_TG_NETWORK: "1"
-      GOODTEAM_TG_BOT_TOKEN: ""
-      GOODTEAM_TG_CHAT_ID: ""
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.prepare.outputs.target_sha }}
-          persist-credentials: false
-      - name: Create isolated Python 3.12 environment
+      - name: Create one isolated Python environment
+        if: needs.classify.outputs.backend != 'none' || needs.classify.outputs.browser_required == 'true'
         shell: bash
         run: |
           if [[ "$(python3.12 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" != "3.12" ]]; then
@@ -252,8 +190,11 @@ jobs:
           fi
           job_temp="${GOODTEAM_CI_JOB_TEMP:-$RUNNER_TEMP}"
           echo "$job_temp/goodteam-venv/bin" >> "$GITHUB_PATH"
+          echo "GOODTEAM_E2E_PYTHON=$job_temp/goodteam-venv/bin/python" >> "$GITHUB_ENV"
           exec python3 ops/ci-runner/runner_cleanup.py run -- python3.12 -m venv "$job_temp/goodteam-venv"
-      - run: exec python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
+      - name: Install Python dependencies once
+        if: needs.classify.outputs.backend != 'none' || needs.classify.outputs.browser_required == 'true'
+        run: exec python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
       - name: Run focused backend tests
         if: needs.classify.outputs.backend == 'focused'
         env:
@@ -268,15 +209,51 @@ jobs:
           PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run -- python -m pytest "${targets[@]}" -q
       - name: Run full backend tests
         if: needs.classify.outputs.backend == 'full'
-        # Tier 3/4 always requires browser acceptance, which owns HTTP recovery.
+        # HTTP recovery has its own selected step and evidence below.
         run: >-
           PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run --
           python -m pytest tests --ignore=tests/test_workflow_http_recovery.py -q
-      - run: ruff check src/goodteam_os/ tests/ scripts/ci/ ops/ci-runner/runner_cleanup.py
+      - name: Lint backend
+        if: needs.classify.outputs.backend != 'none'
+        run: ruff check src/goodteam_os/ tests/ scripts/ci/ ops/ci-runner/runner_cleanup.py
+      - name: Verify HTTP crash and timeout recovery
+        if: needs.classify.outputs.browser_required == 'true'
+        run: |
+          evidence="${GOODTEAM_CI_EVIDENCE:-$RUNNER_TEMP}/goodteam-http-recovery"
+          mkdir -p "$evidence"
+          PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run -- python -m pytest tests/test_workflow_http_recovery.py -q --basetemp="$evidence/workspaces" --junitxml="$evidence/results.xml"
+      - uses: actions/setup-node@v5
+        if: needs.classify.outputs.frontend != 'none' || needs.classify.outputs.browser_required == 'true'
+        with:
+          node-version: "20"
+      - name: Install frontend dependencies once
+        if: needs.classify.outputs.frontend != 'none' || needs.classify.outputs.browser_required == 'true'
+        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm ci --prefer-offline --no-audit --no-fund
+        working-directory: frontend
+      - name: Run frontend unit tests
+        if: needs.classify.outputs.frontend != 'none'
+        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm test
+        working-directory: frontend
+      - name: Lint frontend
+        if: needs.classify.outputs.frontend != 'none'
+        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run lint
+        working-directory: frontend
+      - name: Build frontend
+        if: needs.classify.outputs.frontend != 'none' || needs.classify.outputs.browser_required == 'true'
+        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run build
+        working-directory: frontend
+      - name: Select lockfile-pinned Chromium
+        if: needs.classify.outputs.browser_required == 'true'
+        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npx playwright install chromium
+        working-directory: frontend
+      - name: Verify isolated business loop
+        if: needs.classify.outputs.browser_required == 'true'
+        run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run test:e2e
+        working-directory: frontend
 
   gate:
     name: CI / gate
-    needs: [prepare, classify, backend, browser]
+    needs: [prepare, classify, verify]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -287,10 +264,9 @@ jobs:
       TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
       CLASSIFY_RESULT: ${{ needs.classify.result }}
       BACKEND_MODE: ${{ needs.classify.outputs.backend }}
-      BACKEND_RESULT: ${{ needs.backend.result }}
       FRONTEND_MODE: ${{ needs.classify.outputs.frontend }}
       BROWSER_REQUIRED: ${{ needs.classify.outputs.browser_required }}
-      BROWSER_RESULT: ${{ needs.browser.result }}
+      VERIFY_RESULT: ${{ needs.verify.result }}
       TIER: ${{ needs.classify.outputs.tier }}
       LIVE_SMOKE_REQUIRED: ${{ needs.classify.outputs.live_smoke_evidence_required }}
     steps:
@@ -304,14 +280,10 @@ jobs:
             exit 1
           fi
 
-          if [[ "$BACKEND_MODE" == "none" && "$BACKEND_RESULT" == "skipped" ]]; then
-            echo "Backend was intentionally skipped."
-          elif [[ ( "$BACKEND_MODE" == "focused" || "$BACKEND_MODE" == "full" ) && "$BACKEND_RESULT" == "success" ]]; then
-            echo "Backend $BACKEND_MODE verification succeeded."
-          else
-            echo "Backend result $BACKEND_RESULT does not match plan $BACKEND_MODE." >&2
-            exit 1
-          fi
+          case "$BACKEND_MODE" in
+            none|focused|full) ;;
+            *) echo "Unknown backend verification mode: $BACKEND_MODE" >&2; exit 1 ;;
+          esac
 
           if [[ "$FRONTEND_MODE" != "none" && "$FRONTEND_MODE" != "full" ]]; then
             echo "Unknown frontend verification mode: $FRONTEND_MODE" >&2
@@ -336,14 +308,15 @@ jobs:
             exit 1
           fi
 
-          if [[ "$BROWSER_REQUIRED" == "false" && "$FRONTEND_MODE" == "none" && "$BROWSER_RESULT" == "skipped" ]]; then
-            echo "Frontend and browser checks were intentionally skipped by the change plan."
-          elif [[ ( "$BROWSER_REQUIRED" == "true" || "$FRONTEND_MODE" == "full" ) && "$BROWSER_RESULT" == "success" ]]; then
-            echo "Planned frontend and browser checks succeeded."
-          else
-            echo "Browser result $BROWSER_RESULT does not match the verification plan." >&2
+          expected_result=success
+          if [[ "$BACKEND_MODE" == "none" && "$FRONTEND_MODE" == "none" && "$BROWSER_REQUIRED" == "false" ]]; then
+            expected_result=skipped
+          fi
+          if [[ "$VERIFY_RESULT" != "$expected_result" ]]; then
+            echo "Candidate result $VERIFY_RESULT does not match plan $expected_result." >&2
             exit 1
           fi
+          echo "Selected candidate checks: $VERIFY_RESULT"
 
       - name: Require exact candidate status
         if: env.MODE == 'gate'
@@ -386,10 +359,10 @@ jobs:
             echo "- Exact target: $TARGET_SHA"
             if [[ "$MODE" != "gate" ]]; then
               echo "- Tier: $TIER"
-              echo "- Backend: $BACKEND_MODE ($BACKEND_RESULT)"
+              echo "- Backend plan: $BACKEND_MODE"
               echo "- Frontend unit/lint plan: $FRONTEND_MODE"
               echo "- Browser acceptance required: $BROWSER_REQUIRED"
-              echo "- Browser acceptance: $BROWSER_RESULT"
+              echo "- Selected verification: $VERIFY_RESULT"
               echo "- Live smoke evidence required: $LIVE_SMOKE_REQUIRED"
             else
               echo "- Heavy CI: validated before PR on this exact SHA"

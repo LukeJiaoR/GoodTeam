@@ -95,28 +95,32 @@ This bounds unsafe cross-repository concurrency while allowing either idle
 runner's capacity to be used by the other. Do not install a second GoodTeam
 runner service or raise these limits without measuring simultaneous YUVA and
 GoodTeam jobs. The host's system Docker daemon is not available to the
-GoodTeam account; GoodTeam CI does not require Docker or a database. The browser job runs
+GoodTeam account; GoodTeam CI does not require Docker or a database. Selected verification runs
 headless Chromium against an isolated temporary workspace with fake Workers.
 Tier 3/4 and explicit live-smoke changes select this acceptance suite. Low-risk
-backend-only candidates schedule focused backend tests without the browser job.
-Low-risk frontend helpers/assets schedule unit tests, lint and build in that
-job without its Python, recovery or Chromium steps. Backend and frontend jobs
-depend on successful classification and queue naturally on the single runner;
-the final gate requires every selected job. HTTP recovery runs once in required
-browser acceptance and is excluded from full backend verification.
+backend-only candidates run focused backend tests without browser setup.
+Low-risk frontend helpers/assets run unit tests, lint and build without Python,
+recovery or Chromium steps. A single verification job runs the selected backend,
+frontend and browser checks after successful classification. It installs each
+required environment once; the final gate requires its actual successful result
+or an intentionally empty plan. HTTP recovery runs once in required browser
+acceptance and is excluded from full backend verification.
 
 ## Dependencies and caches
 
 The host provides Git, a checksum-pinned CPython 3.12.11 build, npm, and standard
-Python build tooling. Each backend job verifies Python 3.12 and creates a fresh
+Python build tooling. The selected verification job verifies Python 3.12 and creates one fresh
 virtual environment in `RUNNER_TEMP`; `actions/setup-node` installs/selects
 Node 20 in the runner tool cache. The PR job logs are the runtime-version proof.
 GitHub-backed dependency caches are disabled. Persistent runner-local pip and
 npm caches remain available while reproducibility stays anchored by
 `pip install -e ".[dev]"` and `npm ci`.
+The combined verification job prefers the existing npm download cache and skips
+npm's advisory audit/funding requests; lockfile integrity still governs `npm ci`.
 
-Browser jobs create their own Python environment and use the lockfile-pinned
-Playwright version to download Chromium into the unprivileged runner cache.
+Browser acceptance shares that job's Python environment and uses the lockfile-pinned
+Playwright version to select Chromium from the unprivileged runner cache,
+downloading it only when the required revision is absent.
 Chromium system libraries must be available on the host; CI does not run sudo
 or install system packages. The browser suite refuses an existing server, uses
 a fresh workspace/registry/port, and runs every case once without automatic

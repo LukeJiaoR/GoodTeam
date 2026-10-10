@@ -14,7 +14,7 @@ GoodTeam no longer needs to spend a full remote CI run on every development push
      -f "target_sha=<recorded-40-character-sha>"
    ```
 
-5. Wait for the run to finish successfully. It classifies the diff from `main`, runs the planned frontend/browser/backend checks on the self-hosted runner, and records commit status `merge-candidate/validated`. Tier 1/2 backend-only candidates skip browser acceptance; low-risk frontend helpers/assets retain frontend unit tests, lint and build. Tier 3/4 and live-path candidates retain HTTP/browser acceptance.
+5. Wait for the run to finish successfully. It classifies the diff from `main`, runs the planned frontend/browser/backend checks in one self-hosted verification job, and records commit status `merge-candidate/validated`. Required Python and frontend dependencies install once each. Tier 1/2 backend-only candidates skip browser acceptance; low-risk frontend helpers/assets retain frontend unit tests, lint and build. Tier 3/4 and live-path candidates retain HTTP/browser acceptance.
 6. Open or update the PR only after the exact SHA has that successful status. The PR-side `CI / gate` must also succeed on that head before merge; if it ran before the status was recorded, rerun the metadata gate.
 7. Any new commit invalidates the old evidence automatically because the PR head SHA changes. Re-run candidate CI for the new SHA before merge.
 8. If `main` advances after validation, the PR gate requires the head to include the new base SHA. Sync `main`, producing a new SHA, and run candidate CI again.

@@ -45,13 +45,12 @@ def _assert_ci_candidate_boundary(workflow):
         "prepare",
         "mark-candidate",
         "classify",
-        "browser",
-        "backend",
+        "verify",
         "gate",
         "record-candidate",
     }
 
-    for name in ("classify", "browser", "backend"):
+    for name in ("classify", "verify"):
         job = jobs[name]
         assert job["runs-on"] == ["self-hosted", "linux", "x64", "goodteam-ci"]
         assert job.get("permissions") == {"contents": "read"}
@@ -71,8 +70,8 @@ def _assert_ci_candidate_boundary(workflow):
         assert "actions/checkout@" not in yaml.safe_dump(job), name
 
     assert jobs["mark-candidate"]["if"] == "needs.prepare.outputs.mode == 'candidate'"
-    assert "always()" in jobs["browser"]["if"]
-    assert "needs.classify.result == 'success'" in jobs["browser"]["if"]
+    assert "always()" in jobs["verify"]["if"]
+    assert "needs.classify.result == 'success'" in jobs["verify"]["if"]
     assert "needs.prepare.outputs.mode == 'candidate'" in jobs["record-candidate"]["if"]
 
 
@@ -214,19 +213,19 @@ def test_candidate_classification_uses_pinned_base_without_remote_credentials(tm
 
 
 @pytest.mark.parametrize(
-    ("backend_mode", "frontend_mode", "tier", "browser_required", "backend_result", "browser_result"),
+    ("backend_mode", "frontend_mode", "tier", "browser_required", "verify_result"),
     [
-        ("none", "none", "0", "false", "skipped", "skipped"),
-        ("focused", "none", "1", "false", "success", "skipped"),
-        ("focused", "full", "4", "true", "success", "success"),
-        ("full", "none", "3", "true", "success", "success"),
-        ("none", "full", "2", "false", "skipped", "success"),
-        ("none", "full", "3", "true", "skipped", "success"),
-        ("full", "full", "3", "true", "success", "success"),
+        ("none", "none", "0", "false", "skipped"),
+        ("focused", "none", "1", "false", "success"),
+        ("focused", "full", "4", "true", "success"),
+        ("full", "none", "3", "true", "success"),
+        ("none", "full", "2", "false", "success"),
+        ("none", "full", "3", "true", "success"),
+        ("full", "full", "3", "true", "success"),
     ],
 )
 def test_gate_accepts_only_successful_planned_jobs(
-    backend_mode, frontend_mode, tier, browser_required, backend_result, browser_result,
+    backend_mode, frontend_mode, tier, browser_required, verify_result,
 ):
     # Execute the real gate: source-string checks cannot prove that failures,
     # cancellations, or unexpected skips actually block merging.
@@ -237,8 +236,7 @@ def test_gate_accepts_only_successful_planned_jobs(
         "CLASSIFY_RESULT": "success",
         "BACKEND_MODE": backend_mode,
         "FRONTEND_MODE": frontend_mode,
-        "BACKEND_RESULT": backend_result,
-        "BROWSER_RESULT": browser_result,
+        "VERIFY_RESULT": verify_result,
         "BROWSER_REQUIRED": browser_required,
         "TIER": tier,
         "LIVE_SMOKE_REQUIRED": "false",
@@ -255,7 +253,7 @@ def test_gate_accepts_only_successful_planned_jobs(
         return result.returncode == 0
 
     assert accepts({})
-    for key in ("CLASSIFY_RESULT", "BACKEND_RESULT", "BROWSER_RESULT"):
+    for key in ("CLASSIFY_RESULT", "VERIFY_RESULT"):
         for result in ("success", "skipped", "failure", "cancelled", ""):
             if result != planned[key]:
                 assert not accepts({key: result}), (key, result, planned)
@@ -269,16 +267,37 @@ def test_gate_accepts_only_successful_planned_jobs(
         assert not accepts({"TIER": value}), (value, planned)
 
 
-def test_low_risk_frontend_checks_do_not_install_or_run_browser_backend():
+@pytest.mark.parametrize(
+    ("backend", "frontend", "browser", "python_count", "node_count"),
+    [
+        ("none", "none", "false", 0, 0),
+        ("focused", "none", "false", 1, 0),
+        ("none", "full", "false", 0, 1),
+        ("focused", "full", "false", 1, 1),
+        ("none", "none", "true", 1, 1),
+        ("full", "none", "true", 1, 1),
+        ("full", "full", "true", 1, 1),
+    ],
+)
+def test_selected_checks_install_each_environment_once(backend, frontend, browser, python_count, node_count):
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    browser = workflow["jobs"]["browser"]
-    assert "needs.classify.outputs.browser_required == 'true'" in browser["if"]
-    assert "needs.classify.outputs.frontend != 'none'" in browser["if"]
-    for step in browser["steps"]:
-        if any(command in step.get("run", "") for command in (
-            "pip install", "-m venv", "test_workflow_http_recovery.py", "playwright install", "test:e2e",
-        )):
+    verify = workflow["jobs"]["verify"]
+    assert verify["needs"] == ["prepare", "classify"]
+    modes = {"backend": backend, "frontend": frontend, "browser_required": browser}
+
+    def selected(step):
+        expression = step.get("if", "True")
+        expression = re.sub(r"needs\.classify\.outputs\.(\w+)", lambda match: repr(modes[match[1]]), expression)
+        return eval(expression.replace("||", " or ").replace("&&", " and "), {"__builtins__": {}})
+
+    commands = [step.get("run", "") for step in verify["steps"] if selected(step)]
+    assert sum("pip install" in command for command in commands) == python_count
+    assert sum("-m venv" in command for command in commands) == python_count
+    assert sum("npm ci" in command for command in commands) == node_count
+    assert sum("test:e2e" in command for command in commands) == int(browser == "true")
+    assert sum("pytest tests/test_workflow_http_recovery.py -q" in command for command in commands) == int(browser == "true")
+    assert sum("npm test" in command for command in commands) == int(frontend == "full")
+    assert sum("pytest tests --ignore" in command for command in commands) == int(backend == "full")
+    for step in verify["steps"]:
+        if any(command in step.get("run", "") for command in ("playwright install", "test:e2e", "pytest tests/test_workflow_http_recovery.py -q")):
             assert step.get("if") == "needs.classify.outputs.browser_required == 'true'"
-    backend = workflow["jobs"]["backend"]
-    assert "browser" not in backend["needs"]
-    assert "needs.browser" not in backend["if"]

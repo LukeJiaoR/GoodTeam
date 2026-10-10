@@ -118,18 +118,21 @@ def test_success_failure_and_cancel_keep_evidence_and_remove_owned_temp(lifecycl
         # Execute the actual multi-command workflow step through the same Bash
         # options as Actions. A fixture replaces only the venv tool and runner root.
         workflow = yaml.load(Path(".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
-        step = next(s for s in workflow["jobs"]["browser"]["steps"]
-                    if s.get("name") == "Create isolated browser backend environment")
+        step = next(s for s in workflow["jobs"]["verify"]["steps"]
+                    if s.get("name") == "Create one isolated Python environment")
         fixture_bin = lifecycle.root / "bin"
         fixture_bin.mkdir()
         tool = fixture_bin / "python3.12"
-        tool.write_text(f"#!{sys.executable}\n" + payload[2] + "\n")
+        tool.write_text(f"#!{sys.executable}\nimport sys\n"
+                        'if sys.argv[1:2] == ["-c"]:\n    print("3.12")\nelse:\n    '
+                        + payload[2] + "\n")
         tool.chmod(0o700)
         script.write_text(step["run"].replace("python3 ops/ci-runner/runner_cleanup.py run --",
                                              shlex.join(command), 1))
         process = subprocess.Popen(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", str(script)],
                                    env={**os.environ, **env, "PATH": f"{fixture_bin}:{os.environ['PATH']}",
-                                        "GITHUB_PATH": str(lifecycle.root / "github-path")})
+                                        "GITHUB_PATH": str(lifecycle.root / "github-path"),
+                                        "GITHUB_ENV": str(lifecycle.root / "github-env")})
         try:
             deadline = time.monotonic() + 5
             while not ready.exists() and time.monotonic() < deadline:

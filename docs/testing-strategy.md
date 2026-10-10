@@ -323,8 +323,8 @@ The runner must provide the Chromium system libraries. CI downloads the pinned
 Playwright browser into the runner user cache with `npx playwright install chromium`;
 it does not require sudo or change system packages. Missing libraries fail the job.
 
-On the single runner, browser acceptance precedes the remaining frontend checks
-in the same job and the backend job so setup or workflow failures surface first.
+The single verification job runs the selected backend and frontend checks, HTTP
+recovery and browser acceptance with one Python install and one frontend install.
 The final gate still requires every planned stack to pass. CI runs
 `npm run test:e2e` with retries disabled. Repetition is available on demand via
 `npm run test:e2e -- --repeat-each=2` for flake investigation. GitHub Actions
@@ -341,11 +341,11 @@ the exact PR head rather than reusing a prior PR's result.
 
 ## Recovery Acceptance
 
-The browser CI job first runs `tests/test_workflow_http_recovery.py` with a
-dedicated pytest temporary root, then runs Playwright. Both must pass before
-the remaining frontend checks, backend job, and final gate can succeed. The CI
-backend command excludes `tests/test_workflow_http_recovery.py` because the
-required browser job already ran it with dedicated evidence. An ordinary local
+Selected verification runs `tests/test_workflow_http_recovery.py` with a
+dedicated pytest temporary root before Playwright. Both must pass along with
+the other planned checks for the final gate to succeed. The CI backend command
+excludes `tests/test_workflow_http_recovery.py` because the required recovery
+step runs it with dedicated evidence in the same job. An ordinary local
 `pytest tests -q` still includes recovery; no tests are globally deselected.
 
 | Scenario | Observed contract |
