@@ -438,6 +438,10 @@ def test_decide_approval_routes_approved_gates_from_transition_table(tmp_path, m
         state.current_node = f"{gate}_review_gate"
         state.next_node = f"await_{gate}_approval"
         state.approvals[gate] = "pending"
+        workspace.mkdir(parents=True)
+        artifact = workspace / "gate-fixture.md"
+        artifact.write_text("# Simulated gate evidence\nTransition-table verification only.")
+        state.artifacts[web._approval_artifact_for_gate(gate)] = str(artifact)
         StateStore(workspace).write_project_current(state)
 
         payload = web.decide_approval(
@@ -445,6 +449,7 @@ def test_decide_approval_routes_approved_gates_from_transition_table(tmp_path, m
             project_key="CONTENTOPS",
             approval=gate,
             decision="approved",
+            note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
         )
 
         assert payload["next_node"] == approved_next

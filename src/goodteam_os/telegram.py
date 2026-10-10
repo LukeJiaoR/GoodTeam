@@ -1943,7 +1943,12 @@ def poll_telegram_approvals(
                     "answerCallbackQuery",
                     {
                         "callback_query_id": callback.get("id", ""),
-                        "text": "GoodTeam approval recorded." if result["status"] == "processed" else "GoodTeam approval was already handled.",
+                        "text": (
+                            "GoodTeam approval was not recorded. Open the current Review page."
+                            if result.get("accepted") is False else
+                            "GoodTeam approval recorded." if result["status"] == "processed" else
+                            "GoodTeam approval was already handled."
+                        ),
                     },
                 )
             if result["status"] == "processed":
@@ -2051,6 +2056,44 @@ def _process_command_context_chooser_callback(
 
 
 def process_telegram_update(
+    update: dict[str, object],
+    *,
+    workspace: Path,
+    allowed_users: list[str],
+    processed_callbacks: set[str],
+    project_key: str = "",
+) -> dict[str, object]:
+    from goodteam_os.web import ProjectApiError
+
+    try:
+        return _process_telegram_update(
+            update, workspace=workspace, allowed_users=allowed_users,
+            processed_callbacks=processed_callbacks, project_key=project_key,
+        )
+    except ProjectApiError as exc:
+        if exc.code not in {"approval_reason_required", "stale_approval", "invalid_approval_note"}:
+            raise
+        # The existing handler has already checked sender/context authority.
+        # Do not mark the review decided or invent a rationale for a button.
+        callback = dict(update.get("callback_query", {}) or {})
+        message = dict(callback.get("message", {}) or update.get("message", {}) or {})
+        chat_id = dict(message.get("chat", {}) or {}).get("id", 0)
+        guidance = (
+            "This review changed or has no versioned material. Open the current Review page before deciding."
+            if exc.code == "stale_approval" else
+            "Open the current Review page, inspect its evidence, and enter a text reason to continue."
+        )
+        _send_masked_telegram_message(
+            token=os.getenv(TOKEN_ENV, ""), chat_id=chat_id,
+            text=f"{guidance} No approval was recorded.",
+        )
+        callback_id = str(callback.get("id", ""))
+        if callback_id:
+            processed_callbacks.add(callback_id)
+        return {"status": "processed", "accepted": False, "reason": exc.code}
+
+
+def _process_telegram_update(
     update: dict[str, object],
     *,
     workspace: Path,

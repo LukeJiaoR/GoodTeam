@@ -39,6 +39,8 @@ def binding_for(state):
 
 
 def decide(workspace, gate, **kwargs):
+    # This fixture explicitly continues with simulated evidence; no provider PASS.
+    kwargs.setdefault("note", "Model-free recovery fixture: continue with simulated evidence to test recovery only.")
     return web.decide_approval(workspace=workspace, project_key="RECOVERY", approval=gate,
                                decision=kwargs.pop("decision", "approved"), **kwargs)
 
@@ -100,11 +102,15 @@ def test_execution_exception_preserves_approval_and_retry_does_not_redecide(tmp_
 
 def test_restart_recovers_recorded_decision_without_requiring_another_approval(tmp_path):
     state = gate_state(tmp_path, "release")
+    binding = binding_for(state)
     state.approvals["release"] = ApprovalDecision.APPROVED
     state.next_node = "retro_memory"
     with workflow_guard(tmp_path, "RECOVERY"):
         begin_transition(tmp_path, state, dict(run_id=state.run_id, project_key=state.project_key,
                                                actor="human", action="approval_decided", gate="release",
+                                               artifact=binding["expected_artifact_key"],
+                                               artifact_version=binding["expected_artifact_version"],
+                                               note="Model-free interrupted-recording fixture with simulated evidence.",
                                                decision="approved", before_node="await_release_approval", after_node="retro_memory"))
     recovered = web.resolve_dashboard_state(tmp_path, "RECOVERY")
     assert "blocked" == recovered.next_node

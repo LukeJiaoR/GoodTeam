@@ -3795,6 +3795,9 @@ def decide_approval(
     except ValueError as exc:
         raise ValueError(f"Unknown approval decision: {decision}") from exc
 
+    if not isinstance(note, str):
+        raise ProjectApiError("invalid_approval_note", "Approval note must be text.", 400)
+
     if approval_decision in (ApprovalDecision.CHANGES_REQUESTED, ApprovalDecision.REJECTED):
         if not note.strip():
             raise ValueError(f"Approval decision reason is required for {approval_decision.value}")
@@ -8016,7 +8019,7 @@ def serve(
                         approval=str(request.get("approval", "")),
                         decision=str(request.get("decision", "")),
                         debate_ref=str(request.get("debate_ref", "")),
-                        note=str(request.get("note", "")),
+                        note=request.get("note", ""),
                         **approval_binding,
                     )
                 elif normalized_path == "/recover-takeover-brief":

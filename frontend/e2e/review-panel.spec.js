@@ -1,5 +1,5 @@
 import { test, expect, importProject } from './fixtures.js';
-import { clickMutation, prepareFirstTask, sendTask } from './business-loop-helpers.js';
+import { clickMutation, prepareFirstTask, prepareReviewApproval, sendTask } from './business-loop-helpers.js';
 
 for (const narrow of [false, true]) {
 test(`review editing and change discussion stay in the current task (narrow=${narrow})`, async ({ page, fixture }, testInfo) => {
@@ -56,11 +56,12 @@ test('approval from the document panel stays bound to the displayed run and evid
   const fullReview = page.getByRole('dialog').getByRole('button', { name: 'Review document', exact: true });
   if (await fullReview.count()) await fullReview.first().click();
   const review = page.getByRole('dialog', { name: 'Review', exact: true });
-  await expect(review.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled();
+  const note = 'Fake-only panel acceptance: I understand that reviewer evidence is simulated.';
+  const approve = await prepareReviewApproval(page, fixture, 'takeover', { scope: review, note });
   const request = page.waitForRequest((item) => item.url().endsWith('/api/approve') && item.method() === 'POST');
-  await clickMutation(page, review.getByRole('button', { name: 'Approve', exact: true }), '/api/approve');
+  await clickMutation(page, approve, '/api/approve');
   const binding = (await request).postDataJSON();
-  expect(binding).toMatchObject({ expected_run_id: runId, expected_target_type: 'review', expected_target_id: 'takeover' });
+  expect(binding).toMatchObject({ expected_run_id: runId, expected_target_type: 'review', expected_target_id: 'takeover', note });
   expect(binding.expected_artifact_version).toMatch(/^sha256:/);
   expect(page.url()).toBe(url);
   await review.getByRole('button', { name: 'Back to task', exact: true }).click();

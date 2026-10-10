@@ -1,7 +1,7 @@
 import { test, expect, importProject } from './fixtures.js';
-import { approveGate, decisions, expectGate, prepareFirstTask, sendTask, snapshot, workState } from './business-loop-helpers.js';
+import { approveGate, decisions, expectGate, prepareFirstTask, prepareReviewApproval, sendTask, snapshot, workState } from './business-loop-helpers.js';
 
-async function submitFromBothTabs(tabs) {
+async function submitFromBothTabs(tabs, buttons) {
   let arrivals = 0;
   let release;
   const bothSubmitted = new Promise((resolve) => { release = resolve; });
@@ -16,7 +16,7 @@ async function submitFromBothTabs(tabs) {
   const pending = tabs.map((tab) => tab.waitForResponse((response) => (
     response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/approve'
   )));
-  await Promise.all(tabs.map((tab) => tab.getByRole('button', { name: 'Approve', exact: true }).click()));
+  await Promise.all(buttons.map(button => button.click()));
   const responses = await Promise.all(pending);
   expect(responses.some((response) => response.status() === 200)).toBe(true);
   for (const response of responses) {
@@ -31,6 +31,7 @@ async function submitFromBothTabs(tabs) {
 test('two tabs approving the same evidence dispatch one execution and preserve one decision', async ({ page, fixture }, testInfo) => {
   const evidence = [];
   const tabs = [];
+  const buttons = [];
   const errors = [];
   try {
     await importProject(page, fixture);
@@ -43,9 +44,9 @@ test('two tabs approving the same evidence dispatch one execution and preserve o
       tabs.push(tab);
       tab.on('pageerror', (error) => errors.push(error.message));
       await tab.goto(`/projects/${fixture.key}/review/security`);
-      await expect(tab.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled();
+      buttons.push(await prepareReviewApproval(tab, fixture, 'security'));
     }
-    await submitFromBothTabs(tabs);
+    await submitFromBothTabs(tabs, buttons);
     await expectGate(page, fixture.key, 'release');
     const after = await snapshot(page, fixture, evidence);
     const added = after.worker_jobs.filter((job) => !before.worker_jobs.some((prior) => prior.id === job.id));
@@ -53,7 +54,10 @@ test('two tabs approving the same evidence dispatch one execution and preserve o
     expect(added.every((job) => job.adapter === 'fake' && job.status === 'completed')).toBe(true);
     expect(decisions(after).filter((item) => item.gate === 'security')).toHaveLength(1);
     await Promise.all(tabs.map((tab) => tab.reload()));
-    for (const tab of tabs) await expect(tab.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+    for (const tab of tabs) {
+      await expect(tab.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
+      await expect(tab.getByRole('button', { name: 'Confirm manual continuation', exact: true })).toHaveCount(0);
+    }
     expect((await workState(page, fixture.key)).state).toEqual(after.state);
     expect(errors).toEqual([]);
   } finally {

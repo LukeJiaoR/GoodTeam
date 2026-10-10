@@ -91,12 +91,26 @@ export async function expectGate(page, key, gate) {
   return data;
 }
 
+// These fixtures use fake Workers. A typed reason is not a real reviewer PASS.
+export async function prepareReviewApproval(page, fixture, gate, { scope = page, note = 'Fake-only acceptance: continue despite simulated reviewer evidence to exercise the approval contract.' } = {}) {
+  const data = await workState(page, fixture.key);
+  const review = data.approval_reviews.find(item => item.approval === gate && item.is_actionable);
+  expect(review).toBeTruthy();
+  const manual = review.recommendation?.verdict !== 'approve';
+  const button = scope.getByRole('button', { name: manual ? 'Confirm manual continuation' : 'Approve', exact: true });
+  if (manual) {
+    await expect(button).toBeDisabled();
+    await scope.getByRole('textbox', { name: 'Why are you continuing despite these evidence gaps?' }).fill(note);
+  }
+  await expect(button).toBeEnabled();
+  return button;
+}
+
 export async function approveGate(page, fixture, gate) {
   await expectGate(page, fixture.key, gate);
   await page.goto(`/projects/${fixture.key}/review/${gate}`);
   await expect(page.getByRole('heading', { name: 'Review', exact: true })).toBeVisible();
-  const approve = page.getByRole('button', { name: 'Approve', exact: true });
-  await expect(approve).toBeEnabled();
+  const approve = await prepareReviewApproval(page, fixture, gate);
   return clickMutation(page, approve, '/api/approve');
 }
 
@@ -118,5 +132,5 @@ export async function requestRevision(page, fixture, evidence) {
   expect(revised.state.change_requests.security).toBe(note);
   expect(revised.state.change_requests.rfc).toBe(note);
   expect(decisions(revised).at(-1)).toMatchObject({ gate: 'security', decision: 'changes_requested', note });
-  await expect(page.getByRole('button', { name: 'Approve and continue', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Confirm manual continuation', exact: true })).toBeDisabled();
 }

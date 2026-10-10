@@ -13,7 +13,6 @@ import {
   FileCode,
   FileText,
   Link as LinkIcon,
-  Loader2,
   ShieldAlert,
   ShieldCheck,
   Tag,
@@ -25,7 +24,6 @@ import Button from '../../../components/ui/Button';
 import FileLocation from '../../../components/ui/FileLocation';
 import { documentTitle } from '../../../lib/presentation/filePresentation';
 import MarkdownView from '../../../components/ui/MarkdownView';
-import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
 import { routes } from '../../../lib/routing/routes';
 
@@ -229,9 +227,7 @@ export default function WorkTaskDetailDialog({
   tasks = [],
   reviews = [],
   projectKey = '',
-  onDecide,
   onClose,
-  onRequestChanges,
   onOpenReview,
   t,
 }) {
@@ -246,10 +242,7 @@ export default function WorkTaskDetailDialog({
 
   const [activeTab, setActiveTab] = useState(() => (isActionable ? 'approval' : 'details'));
   const [previewMode, setPreviewMode] = useState('rendered');
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState('');
   const [copied, setCopied] = useState(false);
-  const [mutationError, setMutationError] = useState(null);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -317,34 +310,6 @@ export default function WorkTaskDetailDialog({
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // ignore clipboard error
-    }
-  };
-
-  const handleDecision = async (decision) => {
-    if (!onDecide || !review?.approval) return;
-    setBusy(decision);
-    setMutationError(null);
-    try {
-      await onDecide(review.approval, decision, note);
-      onClose();
-    } catch (err) {
-      setMutationError(err);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const handleRequestChanges = async () => {
-    if (!onRequestChanges || !review?.approval) return;
-    setBusy('changes_requested');
-    setMutationError(null);
-    try {
-      await onRequestChanges(review.approval, null, note);
-      onClose();
-    } catch (err) {
-      setMutationError(err);
-    } finally {
-      setBusy('');
     }
   };
 
@@ -650,62 +615,8 @@ export default function WorkTaskDetailDialog({
                 <EvidenceSummary evidence={evidence} t={t} />
               </div>
 
-              {isActionable ? (
-                <div className="task-detail-decision-form">
-                  {busy ? (
-                    <div className="task-detail-processing-banner">
-                      <Loader2 size={18} className="task-detail-processing-spinner" />
-                      <div>
-                        <strong>{t('work.plan.approval.processingTitle')}</strong>
-                        <p>{t('work.plan.approval.processingDesc')}</p>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <label className="task-detail-decision-label">
-                    <span>{t('work.plan.approval.rationale')}</span>
-                    <textarea
-                      rows={3}
-                      value={note}
-                      disabled={Boolean(busy)}
-                      placeholder={t('work.plan.approval.rationalePlaceholder')}
-                      onChange={(e) => setNote(e.target.value)}
-                    />
-                  </label>
-
-                  {mutationError ? <ProductError error={mutationError} t={t} /> : null}
-
-                  <div className="task-detail-decision-buttons">
-                    <Button
-                      variant="primary"
-                      busy={busy === 'approved'}
-                      disabled={Boolean(busy)}
-                      onClick={() => handleDecision('approved')}
-                    >
-                      {!busy ? <Check size={14} /> : null}
-                      {busy === 'approved' ? t('work.plan.approval.approving') : t('work.plan.approval.approve')}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      busy={busy === 'changes_requested'}
-                      disabled={Boolean(busy) || (!onRequestChanges && !note.trim())}
-                      onClick={onRequestChanges
-                        ? handleRequestChanges
-                        : () => handleDecision('changes_requested')}
-                    >
-                      {busy === 'changes_requested' ? t('work.plan.approval.requestingChanges') : t('work.plan.approval.changes')}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      busy={busy === 'rejected'}
-                      disabled={Boolean(busy) || !note.trim()}
-                      onClick={() => handleDecision('rejected')}
-                    >
-                      {busy === 'rejected' ? t('work.plan.approval.rejecting') : t('work.plan.approval.reject')}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
+              {/* Decisions use the version-bound Review page, not this task projection. */}
+              {!isActionable ? (
                 <div className="task-detail-static-state-card">
                   {review?.decision === 'approved' ? (
                     <p className="text-emerald-400 font-medium">{t('work.plan.approval.approvedState')}</p>
@@ -717,7 +628,7 @@ export default function WorkTaskDetailDialog({
                     <p className="text-zinc-400">{t('work.plan.approval.pendingState')}</p>
                   )}
                 </div>
-              )}
+              ) : null}
 
               {projectKey && review?.approval ? (
                 <div className="task-detail-workbench-footer">

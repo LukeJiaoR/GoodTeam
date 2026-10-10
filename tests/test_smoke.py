@@ -1,6 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from goodteam_os import smoke, web
+
 from goodteam_os.smoke import (
     SmokeProject,
     classify_smoke_failure,
@@ -9,6 +13,18 @@ from goodteam_os.smoke import (
     run_shell_command,
     run_smoke_suite,
 )
+
+
+
+@pytest.fixture
+def accept_simulated_reviews(monkeypatch):
+    """Explicit synthetic operator input for report/verification tests only."""
+    def decide(**kwargs):
+        return web.decide_approval(
+            **kwargs,
+            note="Model-free smoke fixture: accept simulated evidence only to test reports and command results.",
+        )
+    monkeypatch.setattr(smoke, "decide_approval", decide)
 
 
 def test_smoke_failure_classifier_uses_stable_categories():
@@ -39,7 +55,27 @@ def test_smoke_suite_dry_run_reports_two_cycles_without_mutating_targets(tmp_pat
     assert not (tmp_path / "state" / "smoke-runs" / "latest.json").exists()
 
 
-def test_smoke_suite_fake_mode_generates_reports_tasks_and_worker_ids(tmp_path, monkeypatch):
+def test_unattended_smoke_reports_blocked_without_inventing_a_reason(tmp_path, monkeypatch):
+    from goodteam_os.state import StateStore
+
+    monkeypatch.setenv("GOODTEAM_CONTENTOPS_ROOT", str(tmp_path / "contentops"))
+    result = run_smoke_suite(
+        workspace=tmp_path, suites=["contentops"], cycles=1, autonomy="full",
+        dry_run=False, worker_mode="fake", repo_root=Path.cwd(),
+    )
+    assert result["status"] == "blocked"
+    run = result["runs"][0]
+    assert run["status"] == "blocked"
+    assert run["blocked_reason"]["code"] == "approval_reason_required"
+    assert run["blocked_reason"]["message"]
+    assert run["commands"] == []
+    state = StateStore(tmp_path).read_project_current("CONTENTOPS")
+    assert state.next_node.startswith("await_")
+    assert not any(row["action"] == "approval_decided" for row in web.build_action_items(tmp_path, "CONTENTOPS"))
+    assert json.loads(Path(result["report_path"]).read_text())["status"] == "blocked"
+
+
+def test_smoke_suite_fake_mode_generates_reports_tasks_and_worker_ids(tmp_path, monkeypatch, accept_simulated_reviews):
     monkeypatch.setenv("GOODTEAM_CONTENTOPS_ROOT", str(tmp_path / "contentops"))
 
     result = run_smoke_suite(
@@ -71,7 +107,7 @@ def test_smoke_suite_fake_mode_generates_reports_tasks_and_worker_ids(tmp_path, 
     assert all(path in smoke_task["artifact_refs"] for path in result["runs"][0]["evidence"]["worker_result_paths"])
 
 
-def test_smoke_evidence_only_includes_current_run_worker_results(tmp_path):
+def test_smoke_evidence_only_includes_current_run_worker_results(tmp_path, accept_simulated_reviews):
     def runner(command, *, cwd):
         return {"command": command, "cwd": str(cwd), "exit_code": 0, "stdout": "ok", "stderr": ""}
 
@@ -108,7 +144,7 @@ def test_smoke_evidence_only_includes_current_run_worker_results(tmp_path):
     assert all("job-old" not in path for path in evidence_paths)
 
 
-def test_smoke_suite_failure_creates_blocker_task(tmp_path):
+def test_smoke_suite_failure_creates_blocker_task(tmp_path, accept_simulated_reviews):
     def failing_runner(command, *, cwd):
         return {"command": command, "cwd": str(cwd), "exit_code": 1, "stdout": "", "stderr": "npm run build failed"}
 
@@ -146,7 +182,7 @@ def test_smoke_suite_failure_creates_blocker_task(tmp_path):
     assert smoke_task["priority"] == "high"
 
 
-def test_smoke_failure_updates_existing_backlog_task_for_same_cycle(tmp_path):
+def test_smoke_failure_updates_existing_backlog_task_for_same_cycle(tmp_path, accept_simulated_reviews):
     calls = {"count": 0}
 
     def failing_runner(command, *, cwd):
@@ -201,7 +237,7 @@ def test_smoke_failure_updates_existing_backlog_task_for_same_cycle(tmp_path):
     assert "npm run build failed" in failure_tasks[0]["description"]
 
 
-def test_smoke_cycle_rerun_refreshes_acceptance_criteria_after_success(tmp_path):
+def test_smoke_cycle_rerun_refreshes_acceptance_criteria_after_success(tmp_path, accept_simulated_reviews):
     calls = {"count": 0}
 
     def flaky_runner(command, *, cwd):
