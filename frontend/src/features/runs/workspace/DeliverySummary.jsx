@@ -5,6 +5,7 @@ import MarkdownView from '../../../components/ui/MarkdownView';
 import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
 import { documentTitle } from '../../../lib/presentation/filePresentation';
+import SkillReviewExecutions from './SkillReviewExecutions';
 import './deliverySummary.css';
 
 function isBoundReportUrl(artifact, summary) {
@@ -71,7 +72,7 @@ function ArtifactReport({ artifact, summary, t }) {
   );
 }
 
-export default function DeliverySummary({ summary, historical = false, t }) {
+export default function DeliverySummary({ summary, historical = false, language, t }) {
   if (!summary) return null;
   const failed = summary.status === 'blocked';
   const artifacts = Array.isArray(summary.artifacts) ? summary.artifacts : [];
@@ -82,6 +83,9 @@ export default function DeliverySummary({ summary, historical = false, t }) {
       <header><h3>{t('work.deliverySummary.title')}</h3><StatusBadge tone={failed ? 'danger' : 'neutral'}>{t(`work.deliverySummary.status.${summary.status}`)}</StatusBadge></header>
       <h4>{t('work.deliverySummary.verification')}</h4>
       <p>{t('work.deliverySummary.unverified')}</p>
+      <SkillReviewExecutions mode="delivery" language={language}
+        key={JSON.stringify([summary.project_key, summary.run_id, artifacts.map(item => [item.key, item.version])])}
+        projectKey={summary.project_key} runId={summary.run_id} />
       {summary.simulated ? <p role="status">{t('work.deliverySummary.simulated')}</p> : null}
       <h4>{t('work.deliverySummary.nextStep')}</h4>
       <p>{t(`work.deliverySummary.next.${summary.status}`)}</p>

@@ -130,3 +130,41 @@ def test_retry_admission_does_not_grant_other_report_writes(suffix):
     prefix = "/api/projects/DEMO/runs/git-review/skill-reviews/job-skill-" + "a" * 64
     assert not web._is_project_api_post_path(prefix + "/" + suffix)
     assert not web._is_project_api_post_path(prefix[:-1] + "/retry")
+
+
+@pytest.mark.parametrize("handler", ["contract", "product"])
+def test_delivery_reads_bound_review_failure_and_changed_source_without_execution(ctx, monkeypatch, handler):
+    """The delivery view consumes this GET-only contract, not worker prose."""
+    from test_skill_review_execution import ProcessFixture, ready_job
+
+    job, _context, _method, source = ready_job(ctx)
+    runtime = ProcessFixture(ctx.root, output=b"not a structured report\n")
+    monkeypatch.setattr(review_execution, "selected_review_runtime", lambda *_: runtime)
+    assert ctx.workers.run_job(job["id"])["status"] == "failed"
+    states = StateStore(ctx.workspace)
+    before = states.read_project_current("DEMO")
+    path = "/api/projects/DEMO/runs/review-worker/skill-reviews"
+
+    def get(base, url):
+        with urllib.request.urlopen(base + url, timeout=10) as response:
+            assert response.status == 200
+            return json.loads(response.read())
+
+    with server_url(ctx, monkeypatch, handler) as base:
+        first = get(base, path)
+        item = first["reviews"][0]
+        assert first["project_key"] == "DEMO" and first["run_id"] == before.run_id
+        assert item["job_id"] == job["id"]
+        assert item["status"] == "invalid" and item["report_available"] is False
+        assert item["advisory"] is True
+        assert item["judgment_verification"] == "not_independently_verified"
+        assert item["runtime_verification"] == "contract_fixture"
+        assert get(base, path)["reviews"] == first["reviews"]
+        source.write_bytes(b"The current artifact is now a different version.\n")
+        changed = get(base, path)["reviews"][0]
+        assert changed["status"] == "unavailable"
+        assert changed["error_code"] == "review_target_changed"
+        assert changed["target"]["artifact_version"] == item["target"]["artifact_version"]
+        assert changed["report_available"] is False
+        assert runtime.executions == 1
+        assert states.read_project_current("DEMO") == before
