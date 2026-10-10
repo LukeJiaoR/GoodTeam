@@ -93,7 +93,8 @@ def latest_reviewer_status_for_approval(
     roles = set(REVIEW_ROLES_BY_APPROVAL.get(approval, ()))
     if not roles:
         return None
-    role_matches = [status for status in payloads if str(status.get("role", "")).strip() in roles]
+    role_matches = [status for status in payloads if str(status.get("role", "")).strip() in roles
+                    and not str(status.get("approval", "") or status.get("gate", "")).strip()]
     return _latest_status(role_matches)
 
 

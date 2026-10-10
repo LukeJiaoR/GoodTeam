@@ -199,14 +199,21 @@ reviewer_profiles:
     )
     job_root = project_root / ".goodteam" / "workers" / "jobs" / "job-codex"
     job_root.mkdir(parents=True)
+    artifact = workspace / "staging.md"
+    artifact.write_text("# Staging review target\n")
+    from goodteam_os.reviewer_dispatch import artifact_version_for_path
+
+    binding = {"artifact_key": "staging_report", "artifact_path": str(artifact),
+               "artifact_version": artifact_version_for_path(str(artifact))}
     (job_root / "job.json").write_text(
-        json.dumps({"id": "job-codex", "run_id": "run-1", "role": "code_review", "adapter": "codex"}),
+        json.dumps({"id": "job-codex", "run_id": "run-1", "role": "code_review", "adapter": "codex", **binding}),
         encoding="utf-8",
     )
     (job_root / "status.json").write_text(json.dumps(_provider_status()), encoding="utf-8")
     state = create_initial_state(run_id="run-1", project_key="DEMO", idea="ship it")
     state.approvals["staging"] = ApprovalDecision.PENDING
     state.next_node = "await_staging_approval"
+    state.artifacts["staging_report"] = str(artifact)
 
     reviews = build_approval_reviews(state, workspace=workspace)
     staging = next(review for review in reviews if review["approval"] == "staging")

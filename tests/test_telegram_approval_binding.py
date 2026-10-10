@@ -93,6 +93,62 @@ def test_notification_captures_the_displayed_artifact_without_explicit_path(tmp_
     }
 
 
+def current_review_job(state, *, kind="provider", **overrides):
+    artifact = web._approval_artifact_for_gate("prd")
+    path = state.artifacts[artifact]
+    return {"id": "review-evidence", "run_id": state.run_id, "role": "review", "approval": "prd",
+        "artifact_key": artifact, "artifact_path": path, "artifact_version": web.artifact_version_for_path(path),
+        "status": "completed", "adapter": "fake" if kind == "builtin" else "codex",
+        "invocation_evidence": {"kind": kind, "external_invocation": kind == "provider"}, **overrides}
+
+
+@pytest.mark.parametrize("kind,verdict", [(None, "caution"), ("builtin", "caution"), ("provider", "approve")])
+def test_notification_matches_current_work_review_evidence(tmp_path, monkeypatch, kind, verdict):
+    # Only the saved invocation input is synthetic; build the real projections,
+    # card and durable binding. No provider or Telegram network call is made.
+    monkeypatch.setattr(web, "_reviewer_statuses_for_state", lambda *, state, **_: (
+        [] if kind is None else [current_review_job(state, kind=kind)]))
+    state, session, sent = published_card(tmp_path, monkeypatch, gate="prd")
+    review = next(item for item in web.build_approval_reviews(state, workspace=tmp_path) if item["approval"] == "prd")
+    assert review["recommendation"]["verdict"] == verdict
+    text = next(params["text"] for method, params in sent if method == "sendMessage")
+    assert f" {verdict} · 阻断 0" in text
+    if verdict == "caution":
+        assert "Reviewer evidence is missing, simulated or unsuccessful" in text
+    assert session["approval_target"]["artifact_version"] == review["artifact_version"]
+    assert StateStore(tmp_path).read_project_current(state.project_key) == state
+    assert not web.build_action_items(tmp_path, state.project_key)
+
+
+@pytest.mark.parametrize("mismatch", ["run", "artifact"])
+def test_notification_does_not_borrow_provider_evidence_from_a_different_target(tmp_path, monkeypatch, mismatch):
+    monkeypatch.setattr(web, "_reviewer_statuses_for_state", lambda *, state, **_: [current_review_job(state)])
+    state, _session, sent = published_card(tmp_path, monkeypatch, gate="prd")
+    other = tmp_path / "different.md"
+    other.write_text("# Different material without reviewer evidence")
+    telegram.send_approval_notification(workspace=tmp_path, project_key=state.project_key,
+        run_id="old-run" if mismatch == "run" else state.run_id, gate="prd",
+        artifact_path=str(other) if mismatch == "artifact" else state.artifacts[web._approval_artifact_for_gate("prd")])
+    assert " caution · 阻断 0" in sent[-1][1]["text"]
+    assert StateStore(tmp_path).read_project_current(state.project_key) == state
+
+
+@pytest.mark.parametrize("overrides", [
+    {"artifact_version": "sha256:old"}, {"artifact_version": ""},
+    {"artifact_key": "another_artifact"}, {"artifact_key": ""},
+    {"artifact_path": "/old/report.md"}, {"artifact_path": ""},
+    {"approval": "rfc"},
+])
+def test_work_and_telegram_do_not_approve_from_unbound_or_stale_reviewer(tmp_path, monkeypatch, overrides):
+    monkeypatch.setattr(web, "_reviewer_statuses_for_state", lambda *, state, **_: [current_review_job(state, **overrides)])
+    state, _session, sent = published_card(tmp_path, monkeypatch, gate="prd")
+    review = next(item for item in web.build_approval_reviews(state, workspace=tmp_path) if item["approval"] == "prd")
+    assert review["recommendation"]["verdict"] == "caution"
+    assert review["reviewer_provenance"]["badge"]["kind"] == "missing"
+    assert " caution · 阻断 0" in sent[-1][1]["text"]
+    assert StateStore(tmp_path).read_project_current(state.project_key) == state
+
+
 @pytest.mark.parametrize("command,decision", [("approve", "approved"), ("reject", "rejected"),
                                                ("changes", "changes_requested")])
 def test_current_bound_text_decision_succeeds_once_with_exact_audit(tmp_path, monkeypatch, command, decision):
