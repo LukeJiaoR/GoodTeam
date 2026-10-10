@@ -11,22 +11,20 @@ import yaml
 WORKFLOW = Path(".github/workflows/ci.yml")
 
 
-def _assert_read_only_runner_boundary(workflow):
+def _assert_github_hosted_runner_boundary(workflow):
     permissions = workflow.get("permissions")
     assert isinstance(permissions, dict), "Declare explicit read-only workflow permissions"
-    assert set(permissions.values()) <= {"read", "none"}, "No workflow write permissions on goodteam-ci"
-    assert "pull_request_target" not in workflow.get("on", {}), "No privileged PR trigger on goodteam-ci"
+    assert set(permissions.values()) <= {"read", "none"}, "No workflow-level write permissions"
+    assert "pull_request_target" not in workflow.get("on", {}), "No privileged PR trigger"
     assert not re.search(
         r"\$\{\{(?:(?!\}\}).)*\bsecrets\b", yaml.safe_dump(workflow), flags=re.DOTALL,
-    ), "No secret context on goodteam-ci"
+    ), "No secret context in this workflow"
     assert workflow.get("jobs"), "A workflow must declare jobs"
     for name, job in workflow["jobs"].items():
-        runner = job.get("runs-on")
-        assert isinstance(runner, list), f"{name}: use fixed goodteam-ci labels, not hosted or dynamic routing"
-        assert {label.lower() for label in runner} == {"self-hosted", "linux", "x64", "goodteam-ci"}, name
+        assert job.get("runs-on") == "ubuntu-latest", f"{name}: use a GitHub-hosted runner"
         assert "uses" not in job, f"{name}: reusable workflow routing needs explicit review"
-        assert "environment" not in job, f"{name}: no GitHub Environment on goodteam-ci"
-        assert "secrets" not in job, f"{name}: no inherited secrets on goodteam-ci"
+        assert "environment" not in job, f"{name}: no GitHub Environment"
+        assert "secrets" not in job, f"{name}: no inherited secrets"
         effective = job.get("permissions", permissions)
         assert isinstance(effective, dict) and set(effective.values()) <= {"read", "none"}, name
 
@@ -41,6 +39,8 @@ def _assert_ci_candidate_boundary(workflow):
     for name, job in jobs.items():
         assert "environment" not in job, name
         assert "secrets" not in job, name
+        assert "uses" not in job, f"{name}: reusable workflow routing needs explicit review"
+        assert job["runs-on"] == "ubuntu-latest", name
     assert set(jobs) == {
         "prepare",
         "mark-candidate",
@@ -53,14 +53,17 @@ def _assert_ci_candidate_boundary(workflow):
 
     for name in ("classify", "browser", "backend"):
         job = jobs[name]
-        assert job["runs-on"] == ["self-hosted", "linux", "x64", "goodteam-ci"]
+        assert job["runs-on"] == "ubuntu-latest"
         assert job.get("permissions") == {"contents": "read"}
-        assert "uses" not in job
         assert "secrets" not in job
+        assert "actions/checkout@v6" in yaml.safe_dump(job)
 
     expected_hosted_permissions = {
         "prepare": {"contents": "read"},
         "mark-candidate": {"contents": "read", "statuses": "write"},
+        "classify": {"contents": "read"},
+        "browser": {"contents": "read"},
+        "backend": {"contents": "read"},
         "gate": {"contents": "read", "statuses": "read"},
         "record-candidate": {"contents": "read", "statuses": "write"},
     }
@@ -68,6 +71,9 @@ def _assert_ci_candidate_boundary(workflow):
         job = jobs[name]
         assert job["runs-on"] == "ubuntu-latest"
         assert job.get("permissions") == permissions
+
+    for name in ("prepare", "mark-candidate", "gate", "record-candidate"):
+        job = jobs[name]
         assert "actions/checkout@" not in yaml.safe_dump(job), name
 
     assert jobs["mark-candidate"]["if"] == "needs.prepare.outputs.mode == 'candidate'"
@@ -89,15 +95,15 @@ def test_all_workflows_follow_runner_policy(path):
         for job in workflow["jobs"].values():
             assert job["runs-on"] == "ubuntu-latest", "Keep OpenWiki credentials off goodteam-ci"
     else:
-        _assert_read_only_runner_boundary(workflow)
+        _assert_github_hosted_runner_boundary(workflow)
 
 
 @pytest.mark.parametrize(
     "override",
     [
-        {"runs-on": "ubuntu-latest"},
-        {"runs-on": "${{ inputs.runner }}"},
         {"runs-on": ["self-hosted", "linux", "x64"]},
+        {"runs-on": "${{ inputs.runner }}"},
+        {"runs-on": "windows-latest"},
         {"permissions": {"contents": "write"}},
         {"permissions": "write-all"},
         {"environment": "production"},
@@ -109,24 +115,24 @@ def test_all_workflows_follow_runner_policy(path):
         {"uses": "./.github/workflows/other.yml"},
     ],
 )
-def test_runner_policy_rejects_hosted_fallback_and_privilege_escalation(override):
+def test_runner_policy_rejects_self_hosted_or_dynamic_runner_and_privilege_escalation(override):
     workflow = {
         "on": {"workflow_dispatch": {}},
         "permissions": {"contents": "read"},
-        "jobs": {"diagnostic": {"runs-on": ["self-hosted", "linux", "x64", "goodteam-ci"]}},
+        "jobs": {"diagnostic": {"runs-on": "ubuntu-latest"}},
     }
-    _assert_read_only_runner_boundary(workflow)
+    _assert_github_hosted_runner_boundary(workflow)
     workflow["jobs"]["diagnostic"].update(override)
     with pytest.raises(AssertionError):
-        _assert_read_only_runner_boundary(workflow)
+        _assert_github_hosted_runner_boundary(workflow)
 
 
 @pytest.mark.parametrize("permissions", [None, "read-all", "write-all", {"contents": "write"}])
 def test_runner_policy_requires_explicit_read_only_workflow_permissions(permissions):
     with pytest.raises(AssertionError):
-        _assert_read_only_runner_boundary({
+        _assert_github_hosted_runner_boundary({
             "permissions": permissions,
-            "jobs": {"diagnostic": {"runs-on": ["self-hosted", "linux", "x64", "goodteam-ci"]}},
+            "jobs": {"diagnostic": {"runs-on": "ubuntu-latest"}},
         })
 
 
@@ -150,7 +156,7 @@ def test_ci_is_pr_or_manual_only_with_candidate_input():
     assert "PR head does not include the current base SHA" in workflow
 
 
-def test_ci_separates_hosted_metadata_control_from_self_hosted_candidate_execution():
+def test_ci_runs_exact_sha_candidate_checks_on_github_hosted_runners():
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     _assert_ci_candidate_boundary(workflow)
 
@@ -159,6 +165,10 @@ def test_ci_separates_hosted_metadata_control_from_self_hosted_candidate_executi
     assert 'test "$(git rev-parse HEAD)" = "$TARGET_SHA"' in text
     assert 'git merge-base --is-ancestor "$base" "$TARGET_SHA"' in text
     assert "persist-credentials: false" in text
+    assert "runner_cleanup.py run --" not in text
+    assert "actions/setup-python@v6" in text
+    assert "npx playwright install --with-deps chromium" in text
+    assert "self-hosted" not in text
     assert "pull_request_target:" not in text
     assert "secrets." not in text
     assert "environment:" not in text

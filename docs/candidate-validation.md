@@ -14,7 +14,7 @@ GoodTeam no longer needs to spend a full remote CI run on every development push
      -f "target_sha=<recorded-40-character-sha>"
    ```
 
-5. Wait for the run to finish successfully. It classifies the diff from `main`, runs the planned browser/backend jobs on the self-hosted runner, and records commit status `merge-candidate/validated`.
+5. Wait for the run to finish successfully. It classifies the diff from `main`, runs the planned browser/backend jobs on GitHub-hosted runners, and records commit status `merge-candidate/validated`.
 6. Open a ready-for-review PR, update an existing ready PR, or mark a Draft ready only after its exact head has that successful status. The PR-side `CI / gate` must also succeed on that head before merge; if it ran before the status was recorded, rerun the metadata gate.
 7. Any new commit invalidates the old evidence automatically because the PR head SHA changes. Re-run candidate CI for the new SHA before merge.
 8. If `main` advances after validation, the PR gate requires the head to include the new base SHA. Sync `main`, producing a new SHA, and run candidate CI again.
@@ -68,7 +68,7 @@ bounded recovery procedure:
    candidate's intended `ci.yml`. Allow manual dispatch only, bind preparation
    to one temporary ref and one exact candidate SHA, and require the candidate
    to include the current `main`. Record the current base and workflow digest.
-   Keep the reviewed test plan, runner selection, credential isolation, hosted
+   Keep the reviewed test plan, GitHub-hosted runner selection, credential isolation, hosted
    status writer, and final gate unchanged. Validate the temporary workflow's
    runner boundary and rejection paths locally before publishing it.
 3. Obtain explicit user or maintainer authorization for that reviewed workflow,
@@ -89,4 +89,4 @@ bounded recovery procedure:
 Documenting this procedure does not itself authorize a recovery run. It does
 not permit arbitrary feature workflows, privileged runners, or production
 deployment. Runner and credential rules also apply to temporary workflows; see
-`docs/self-hosted-ci-runner.md`.
+`docs/testing-strategy.md`.
