@@ -590,6 +590,9 @@ def test_explicit_text_reason_approves_workflow_and_preserves_review_audit(tmp_p
     session_data = {
         "session_id": session_id,
         "run_id": "run-final",
+        "approval_target": {"project_key": "CONTENTOPS", "run_id": "run-final", "target_type": "review",
+                            "target_id": "staging", "artifact_key": web._approval_artifact_for_gate("staging"),
+                            "artifact_version": web.artifact_version_for_path(str(artifact))},
         "project_key": "CONTENTOPS",
         "gate": "staging",
         "chat_id": 12345,

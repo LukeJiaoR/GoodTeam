@@ -71,3 +71,20 @@ def artifact_contract(
 
 def approval_artifact_map(config_path: Path = DEFAULT_ROLE_CONFIG_PATH) -> dict[str, str]:
     return deepcopy(load_role_config(config_path).get("approval_artifacts", {}))
+
+
+# Fix-profile gates reuse artifact files from the configured workflow. Keep
+# this resolution shared by web review and notification adapters.
+_FIX_APPROVAL_ARTIFACTS: dict[str, str] = {
+    "fix_plan": "fix_plan",
+    "code_review": "implementation_handoff",
+    "qa": "qa_report",
+}
+
+
+def approval_artifact_for_gate(gate: str, config_path: Path = DEFAULT_ROLE_CONFIG_PATH) -> str:
+    """Resolve configured gates first, then fix-profile overlays or the key."""
+    base = approval_artifact_map(config_path)
+    if gate in base:
+        return base[gate]
+    return _FIX_APPROVAL_ARTIFACTS.get(gate, gate)

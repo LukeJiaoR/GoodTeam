@@ -506,6 +506,7 @@ def test_send_approval_notification_skips_when_env_is_incomplete(monkeypatch):
 def test_process_telegram_update_enforces_allowlist_and_idempotency(tmp_path, monkeypatch):
     calls = []
     write_project_state(tmp_path)
+    _save_live_tg_session(tmp_path, "bound-legacy")
 
     def fake_decide_approval(**kwargs):
         calls.append(kwargs)
@@ -518,6 +519,7 @@ def test_process_telegram_update_enforces_allowlist_and_idempotency(tmp_path, mo
             "id": "callback-1",
             "from": {"id": 111},
             "data": "gt:CONTENTOPS:run-1:prd:approved",
+            "message": {"chat": {"id": 12345}, "message_id": 9999},
         }
     }
 
@@ -539,8 +541,8 @@ def test_process_telegram_update_enforces_allowlist_and_idempotency(tmp_path, mo
     assert calls[0]["actor_ref"] == "telegram:user:111"
     assert calls[0]["review_mode"] == "quick"
     assert calls[0]["client_context"] == {
-        "telegram_chat_id": "",
-        "telegram_message_id": "",
+        "telegram_chat_id": "12345",
+        "telegram_message_id": "9999",
         "telegram_user_id": "111",
     }
 
@@ -681,6 +683,7 @@ def test_legacy_callback_current_actionable_gate_applies_decision(tmp_path, monk
     decisions = []
     telegram_requests = []
     write_project_state(tmp_path)
+    _save_live_tg_session(tmp_path, "bound-legacy")
 
     def fake_decide_approval(**kwargs):
         decisions.append(kwargs)
@@ -700,6 +703,7 @@ def test_legacy_callback_current_actionable_gate_applies_decision(tmp_path, monk
                 "id": "callback-current",
                 "from": {"id": 111},
                 "data": "gt:CONTENTOPS:run-1:prd:approved",
+                "message": {"chat": {"id": 12345}, "message_id": 9999},
             }
         },
         workspace=tmp_path,
@@ -717,13 +721,14 @@ def test_legacy_callback_current_actionable_gate_applies_decision(tmp_path, monk
             "decision_origin": "telegram",
             "actor_ref": "telegram:user:111",
             "review_mode": "quick",
-            "review_session_id": "",
+            "review_session_id": "bound-legacy",
             "client_context": {
-                "telegram_chat_id": "",
-                "telegram_message_id": "",
+                "telegram_chat_id": "12345",
+                "telegram_message_id": "9999",
                 "telegram_user_id": "111",
             },
             "review_items": [],
+            **{f"expected_{key}": value for key, value in _unit_approval_target().items() if key != "project_key"},
         }
     ]
     assert telegram_requests == []
@@ -733,6 +738,7 @@ def test_poll_telegram_approvals_still_processes_approval_callback(tmp_path, mon
     decisions = []
     telegram_requests = []
     write_project_state(tmp_path)
+    _save_live_tg_session(tmp_path, "bound-legacy")
 
     def fake_decide_approval(**kwargs):
         decisions.append(kwargs)
@@ -750,6 +756,7 @@ def test_poll_telegram_approvals_still_processes_approval_callback(tmp_path, mon
                             "id": "callback-poll",
                             "from": {"id": 111},
                             "data": "gt:CONTENTOPS:run-1:prd:approved",
+                            "message": {"chat": {"id": 12345}, "message_id": 9999},
                         },
                     }
                 ],
@@ -1018,6 +1025,15 @@ def _write_state_with_artifact(
     return state
 
 
+def _unit_approval_target(project_key="CONTENTOPS", run_id="run-1", gate="prd"):
+    # Structural fixture for tests that spy on the decision adapter. Real
+    # state/artifact/version validation is exercised in test_telegram_approval_binding.
+    from goodteam_os.roles import approval_artifact_map
+
+    return {"project_key": project_key, "run_id": run_id, "target_type": "review", "target_id": gate,
+            "artifact_key": approval_artifact_map().get(gate, gate), "artifact_version": "sha256:unit-fixture"}
+
+
 def _save_live_tg_session(
     tmp_path,
     session_id: str,
@@ -1043,6 +1059,7 @@ def _save_live_tg_session(
             "cursor": 0,
             "items": [],
             "decided": decided,
+            "approval_target": _unit_approval_target(project_key, run_id, gate),
             "created_at": datetime.now(UTC).isoformat(),
             "expires_at": (datetime.now(UTC) + expires_delta).isoformat(),
         },
