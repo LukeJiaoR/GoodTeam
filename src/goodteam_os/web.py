@@ -63,7 +63,7 @@ from goodteam_os.team_control_plane import (
     execute_team_commands,
 )
 from goodteam_os.models import list_model_profiles, resolve_project_model_profile
-from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
+from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection, reviewer_statuses_for_artifact
 from goodteam_os.native_picker import choose_native_path
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
@@ -806,18 +806,19 @@ def build_approval_recommendation(
         if release_stage and unknown_count:
             reasons.append({"kind": "missing_evidence", "text": "Release-stage gate has unknown CI, smoke, or QA evidence."})
 
-        if "reviewer_provenance" in review_dict or "review_evidence_policy" in review_dict:
-            provenance = review_dict.get("reviewer_provenance")
-            provenance = provenance if isinstance(provenance, dict) else {}
-            derived_policy = evaluate_review_evidence_policy(provenance, gate=approval)
-            policy = review_dict.get("review_evidence_policy")
-            policy_state = policy.get("state") if isinstance(policy, dict) else None
-            unproven_policy = (
-                derived_policy["state"] != "ok"
-                or ("review_evidence_policy" in review_dict and policy_state != "ok")
-            )
-            if unproven_policy:
-                reasons.append({"kind": "missing_evidence", "text": "Reviewer evidence is missing, simulated or unsuccessful. Human review is required."})
+        # Legacy callers may omit both fields. Missing metadata is unknown,
+        # never a successful review inferred from non-empty artifact content.
+        provenance = review_dict.get("reviewer_provenance")
+        provenance = provenance if isinstance(provenance, dict) else {}
+        derived_policy = evaluate_review_evidence_policy(provenance, gate=approval)
+        policy = review_dict.get("review_evidence_policy")
+        inconsistent_policy = "review_evidence_policy" in review_dict and (
+            not isinstance(policy, dict) or policy.get("state") != "ok"
+            or policy.get("gate", approval) != approval
+            or policy.get("evidence", derived_policy["evidence"]) != derived_policy["evidence"]
+        )
+        if derived_policy["state"] != "ok" or inconsistent_policy:
+            reasons.append({"kind": "missing_evidence", "text": "Reviewer evidence is missing, simulated or unsuccessful. Human review is required."})
 
         messages = {}
         raw_messages = {}
@@ -5238,8 +5239,12 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             },
             "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
         }
+        current_reviewer_statuses = reviewer_statuses_for_artifact(
+            reviewer_statuses, artifact_key=artifact, artifact_path=artifact_path,
+            artifact_version=artifact_version, require_exact=True,
+        )
         reviewer_profile = reviewer_profile_for_approval(reviewer_target, approval)
-        reviewer_status = latest_reviewer_status_for_approval(reviewer_statuses, approval)
+        reviewer_status = latest_reviewer_status_for_approval(current_reviewer_statuses, approval)
         review["reviewer_provenance"] = build_reviewer_provenance(reviewer_status, profile=reviewer_profile)
         review["review_evidence_policy"] = evaluate_review_evidence_policy(
             review["reviewer_provenance"],
@@ -5249,7 +5254,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
         review["multi_reviewer_projection"] = build_multi_reviewer_projection(
             approval=approval,
             reviewer_target=reviewer_target,
-            reviewer_statuses=reviewer_statuses,
+            reviewer_statuses=current_reviewer_statuses,
             review_evidence_policy_config=_review_evidence_policy_config(reviewer_target),
             artifact_key=artifact,
             artifact_path=artifact_path,

@@ -31,7 +31,7 @@ def build_multi_reviewer_projection(
     gate = str(approval)
     phase = reviewer_phase_for_approval(gate)
     current_artifact_version = str(artifact_version or "").strip() or _artifact_version(artifact_path)
-    statuses = _statuses_for_current_artifact(
+    statuses = reviewer_statuses_for_artifact(
         [dict(status) for status in reviewer_statuses],
         artifact_key=str(artifact_key or "").strip(),
         artifact_path=str(artifact_path or "").strip(),
@@ -221,13 +221,23 @@ def _statuses_for_approval(statuses: list[dict[str, object]], approval: str) -> 
     return explicit + [status for status in legacy if str(status.get("role", "")).strip() in roles]
 
 
-def _statuses_for_current_artifact(
+def reviewer_statuses_for_artifact(
     statuses: list[dict[str, object]],
     *,
     artifact_key: str,
     artifact_path: str,
     artifact_version: str,
+    require_exact: bool = False,
 ) -> list[dict[str, object]]:
+    if require_exact:
+        # Positive current-artifact advice needs identity evidence. Legacy
+        # display-only callers may still retain explicitly unbound records.
+        if not all(isinstance(value, str) and value.strip()
+                   for value in (artifact_key, artifact_path, artifact_version)):
+            return []
+        return [status for status in statuses if _matches_current_artifact_identity(
+            status, artifact_key=artifact_key, artifact_path=artifact_path, artifact_version=artifact_version,
+        )]
     if not any((artifact_key, artifact_path, artifact_version)):
         return statuses
     return [

@@ -221,8 +221,14 @@ review_evidence_policy:
     - failed_invocation
 """,
     )
-    _write_worker_status(project_root, _provider_status())
+    artifact = workspace / "staging.md"
+    artifact.write_text("# Staging review target\n")
+    _write_worker_status(project_root, _provider_status(
+        artifact_key="staging_report", artifact_path=str(artifact),
+        artifact_version=web.artifact_version_for_path(str(artifact)),
+    ))
     state = _staging_state()
+    state.artifacts["staging_report"] = str(artifact)
 
     def fail_append_action(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("review evidence policy projection must not write ledger events")

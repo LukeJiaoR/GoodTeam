@@ -1,8 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 import goodteam_os.web as web
-from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection
+from goodteam_os.multi_reviewer_projection import build_multi_reviewer_projection, reviewer_statuses_for_artifact
 from goodteam_os.state import ApprovalDecision, create_initial_state
 
 
@@ -15,6 +17,15 @@ def _target(*profile_ids: str, policy: dict[str, object] | None = None) -> dict[
     if policy is not None:
         target["review_evidence_policy"] = policy
     return target
+
+
+@pytest.mark.parametrize("field", ["artifact_key", "artifact_path", "artifact_version"])
+@pytest.mark.parametrize("missing", ["", "  ", None])
+def test_exact_artifact_filter_rejects_incomplete_current_identity(field, missing):
+    identity = {"artifact_key": "prd", "artifact_path": "/current/prd.md", "artifact_version": "sha256:current"}
+    status = {**identity, "status": "completed"}
+    assert reviewer_statuses_for_artifact([status], **identity, require_exact=True) == [status]
+    assert reviewer_statuses_for_artifact([status], **{**identity, field: missing}, require_exact=True) == []
 
 
 def _provider_status(**overrides: object) -> dict[str, object]:
@@ -469,12 +480,17 @@ def test_workbench_payload_adds_multi_projection_without_replacing_existing_fiel
         tmp_path,
         profiles=["correctness-security", "architecture-maintainability"],
     )
+    artifact = workspace / "staging.md"
+    artifact.write_text("# Staging review target\n")
+    binding = {"artifact_key": "staging_report", "artifact_path": str(artifact),
+               "artifact_version": web.artifact_version_for_path(str(artifact))}
     _write_worker_status(
         project_root,
         _provider_status(
             profile_id="correctness-security",
             job_id="job-codex",
             updated_at="2026-07-05T11:00:00+00:00",
+            **binding,
         ),
     )
     _write_worker_status(
@@ -485,9 +501,11 @@ def test_workbench_payload_adds_multi_projection_without_replacing_existing_fiel
             adapter="claude",
             status="failed",
             summary="Claude reviewer failed.",
+            **binding,
         ),
     )
     state = _staging_state()
+    state.artifacts["staging_report"] = str(artifact)
 
     def fail_append_action(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("multi reviewer projection must not write ledger events")

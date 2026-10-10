@@ -1804,11 +1804,18 @@ def send_approval_notification(
         digest = ""
 
     try:
-        from goodteam_os.web import build_approval_evidence_snapshot, build_approval_recommendation
+        from goodteam_os.web import build_approval_evidence_snapshot, build_approval_recommendation, build_approval_reviews
 
         evidence = build_approval_evidence_snapshot(state=state, workspace=workspace, project_key=project_key)
+        review = {"approval": gate, "content": content}
+        if state is not None and state.run_id == run_id and displayed_version:
+            # Reuse the same evidence as Work/Review only for the exact card
+            # target. A foreign run or different displayed artifact stays unknown.
+            review = next((item for item in build_approval_reviews(state, workspace=workspace)
+                           if item["approval"] == gate and item["is_actionable"]
+                           and item["artifact_version"] == displayed_version), review)
         recommendation = build_approval_recommendation(
-            state=state, review={"approval": gate, "content": content}, evidence_snapshot=evidence, workspace=workspace
+            state=state, review=review, evidence_snapshot=evidence, workspace=workspace
         )
     except Exception:
         evidence, recommendation = {}, {}

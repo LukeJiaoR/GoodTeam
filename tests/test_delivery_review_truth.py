@@ -42,13 +42,23 @@ def test_incomplete_provider_invocation_respects_existing_policy_warning(tmp_pat
 
 
 @pytest.mark.parametrize("metadata", [
+    {},
     {"reviewer_provenance": {}},
     {"reviewer_provenance": None},
+    {"reviewer_provenance": "malformed"},
     {"reviewer_provenance": {"badge": {"kind": "manual"}}},
     {"reviewer_provenance": {"badge": {"kind": "provider"}, "invocation": {"status": "running"}}},
     {"reviewer_provenance": {"badge": {"kind": "provider"}}, "review_evidence_policy": {"state": "ok"}},
     {"review_evidence_policy": {"state": "unexpected"}},
     {"review_evidence_policy": "malformed"},
+    {"reviewer_provenance": {"badge": {"kind": "provider"}, "invocation": {"status": "failed"}},
+     "review_evidence_policy": {"state": "ok"}},
+    {"reviewer_provenance": {"badge": {"kind": "provider"}, "invocation": {"status": "completed"}},
+     "review_evidence_policy": {"state": "missing_evidence"}},
+    {"reviewer_provenance": {"badge": {"kind": "provider"}, "invocation": {"status": "completed"}},
+     "review_evidence_policy": {"state": "ok", "gate": "another_gate"}},
+    {"reviewer_provenance": {"badge": {"kind": "provider"}, "invocation": {"status": "completed"}},
+     "review_evidence_policy": {"state": "ok", "evidence": {"badge_kind": "builtin"}}},
 ])
 def test_explicit_missing_malformed_or_incomplete_metadata_never_recommends_approval(tmp_path, metadata):
     result = build_approval_recommendation(

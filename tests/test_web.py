@@ -2487,7 +2487,8 @@ def test_build_approval_recommendation_cautions_for_unresolved_committee_objecti
 
 def test_build_approval_recommendation_approves_clean_review_with_known_evidence(tmp_path):
     state = create_initial_state("run-1", "GTO", "Build AI Team OS")
-    review = {"approval": "prd", "content": "# PRD\n\nReady."}
+    review = {"approval": "prd", "content": "# PRD\n\nReady.",
+              "reviewer_provenance": {"badge": {"kind": "provider"}, "invocation": {"status": "completed"}}}
     evidence = {
         "blocker_count": 0,
         "ci_status": "passed",
