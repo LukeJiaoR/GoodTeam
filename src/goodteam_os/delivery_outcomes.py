@@ -118,7 +118,7 @@ def _effective_attempts(attempts):
     return effective
 
 
-def _delivery_status(state, attempts, historical_reason=""):
+def _delivery_status(state, attempts, historical_reason="", *, received_review_ids=frozenset()):
     reason = str(historical_reason or "").strip().lower()
     if reason in STOPPED_STATUSES or state.next_node in STOPPED_STATUSES or state.current_node in STOPPED_STATUSES:
         return "stopped"
@@ -126,7 +126,10 @@ def _delivery_status(state, attempts, historical_reason=""):
         return "stopped"
     statuses = {item["status"] for item in attempts}
     known = FAILED_STATUSES | ACTIVE_STATUSES | STOPPED_STATUSES | COMPLETE_STATUSES
-    if state.blockers or statuses & FAILED_STATUSES or statuses - known:
+    unknown = any(item["status"] not in known and not (
+        item["status"] == "review_received" and item["id"] in received_review_ids
+    ) for item in attempts)
+    if state.blockers or statuses & FAILED_STATUSES or unknown:
         return "blocked"
     if statuses & ACTIVE_STATUSES:
         return "working"
@@ -137,7 +140,33 @@ def _delivery_status(state, attempts, historical_reason=""):
     return "working" if state.next_node else "needs_verification"
 
 
-def build_delivery_summary(workspace, *, state, jobs=(), historical_reason=""):
+def _received_review_ids(workspace, state, worker_root):
+    """Read protected receipts, never turn a mutable Worker flag into evidence."""
+    if worker_root is None:
+        return frozenset()
+    from goodteam_os.skills.models import SkillError
+    from goodteam_os.skills.review_api import _review_context, task_review_details
+    from goodteam_os.workers import WorkerJobStore
+
+    try:
+        workers = WorkerJobStore(worker_root)
+        context = _review_context(workers, workspace, state)
+        if not context:
+            return frozenset()
+        code, payload = task_review_details(workers, context)
+        if code != 200:
+            return frozenset()
+        return frozenset(item["job_id"] for item in payload["reviews"]
+                         if item["status"] == "received" and item["report_available"] is True
+                         and item.get("advisory") is True
+                         and item.get("judgment_verification") == "not_independently_verified"
+                         and not item.get("cancel_requested") and not item.get("error_code"))
+    except (SkillError, OSError, ValueError, KeyError, TypeError):
+        # Unknown, changed, revoked or unreadable receipts remain blocking.
+        return frozenset()
+
+
+def build_delivery_summary(workspace, *, state, jobs=(), historical_reason="", worker_root=None):
     if state is None:
         return None
     attempts = [
@@ -147,10 +176,13 @@ def build_delivery_summary(workspace, *, state, jobs=(), historical_reason=""):
         and (not job.get("project_key") or normalize_project_key(str(job["project_key"])) == state.project_key)
     ]
     artifacts = [_artifact_item(workspace, state, key) for key in DELIVERY_KEYS if key in state.artifacts]
+    received_review_ids = (_received_review_ids(workspace, state, worker_root)
+                           if any(item["status"] == "review_received" for item in attempts) else frozenset())
     return {
         "run_id": state.run_id,
         "project_key": state.project_key,
-        "status": _delivery_status(state, _effective_attempts(attempts), historical_reason),
+        "status": _delivery_status(state, _effective_attempts(attempts), historical_reason,
+                                   received_review_ids=received_review_ids),
         "verification": "unverified",
         "artifacts": artifacts,
         "attempts": attempts,

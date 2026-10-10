@@ -2543,7 +2543,7 @@ def _build_project_work_state(workspace: Path, project_key: str) -> dict[str, ob
         "smoke_run_items": build_smoke_run_items(workspace),
         "agile_board": agile_board,
         "worker_jobs": worker_jobs,
-        "delivery_summary": build_delivery_summary(workspace, state=state, jobs=worker_job_records),
+        "delivery_summary": build_delivery_summary(workspace, state=state, jobs=worker_job_records, worker_root=project_root),
         "team_workspace": team_workspace,
         "project_assistant": build_project_assistant(
             task_assistant_session, team_workspace, project_key=project_key,
@@ -3497,6 +3497,7 @@ def build_project_run_detail(
         "team_workspace": team_workspace,
         "delivery_summary": build_delivery_summary(
             workspace, state=state, jobs=worker_jobs, historical_reason=str(summary.get("reason", "")),
+            worker_root=project_root,
         ),
     }
 
