@@ -21,6 +21,7 @@ def test_docs_only_is_tier_zero_without_product_jobs():
     assert plan.tier == 0
     assert plan.backend == "none"
     assert plan.frontend == "none"
+    assert plan.browser_required is False
 
 
 def test_mixed_changes_take_highest_tier_and_union_stack_impact():
@@ -35,6 +36,7 @@ def test_mixed_changes_take_highest_tier_and_union_stack_impact():
     assert plan.backend == "full"
     assert plan.frontend == "full"
     assert plan.live_smoke_evidence_required is True
+    assert plan.browser_required is True
 
 
 @pytest.mark.parametrize(
@@ -45,7 +47,7 @@ def test_mixed_changes_take_highest_tier_and_union_stack_impact():
         ("src/goodteam_os/execution/orchestrator.py", 3, "full", "none", False),
         ("src/goodteam_os/workers.py", 3, "full", "none", False),
         ("src/goodteam_os/telegram.py", 4, "full", "none", True),
-        ("frontend/src/utils/time.js", 2, "focused", "full", False),
+        ("frontend/src/utils/time.js", 2, "none", "full", False),
         ("frontend/src/features/projects/ProjectHomePage.jsx", 4, "focused", "full", True),
         ("frontend/src/App.jsx", 4, "focused", "full", True),
         ("frontend/src/index.css", 4, "focused", "full", True),
@@ -61,6 +63,7 @@ def test_path_policy(path, tier, backend, frontend, smoke):
 
     assert (plan.tier, plan.backend, plan.frontend) == (tier, backend, frontend)
     assert plan.live_smoke_evidence_required is smoke
+    assert plan.browser_required is (tier >= 3 or smoke)
 
 
 def test_focused_paths_emit_fixed_test_targets():
@@ -71,7 +74,16 @@ def test_focused_paths_emit_fixed_test_targets():
         ]
     )
 
-    assert plan.backend_test_targets == ("tests/test_memory.py", "tests/test_web.py")
+    assert plan.backend_test_targets == ("tests/test_memory.py",)
+    assert plan.browser_required is False
+
+
+def test_rename_from_control_plane_to_helper_keeps_browser_acceptance():
+    plan = classify_changes([
+        Change("R100", ("src/goodteam_os/service.py", "src/goodteam_os/memory.py")),
+    ])
+    assert plan.backend == "full"
+    assert plan.browser_required is True
 
 
 def test_name_status_parser_preserves_add_delete_and_rename_paths():
@@ -127,6 +139,8 @@ def test_empty_changes_and_unknown_paths_fail_closed():
     assert (unknown.tier, unknown.backend, unknown.frontend) == (3, "full", "full")
     assert "fail closed" in empty.reasons[0]
     assert "fail closed" in unknown.reasons[0]
+    assert empty.browser_required is True
+    assert unknown.browser_required is True
 
 
 def test_full_plan_selects_both_stacks_without_smoke():
@@ -134,6 +148,7 @@ def test_full_plan_selects_both_stacks_without_smoke():
 
     assert (plan.tier, plan.backend, plan.frontend) == (3, "full", "full")
     assert plan.live_smoke_evidence_required is False
+    assert plan.browser_required is True
 
 
 def test_github_outputs_and_summary_expose_decision(tmp_path):
@@ -149,10 +164,12 @@ def test_github_outputs_and_summary_expose_decision(tmp_path):
     assert "tier=4\n" in output_text
     assert "backend=full\n" in output_text
     assert "frontend=none\n" in output_text
+    assert "browser_required=true\n" in output_text
     assert "live_smoke_evidence_required=true\n" in output_text
     assert "plan_json={" in output_text
     assert "Tier: **4**" in summary_text
     assert "Live smoke evidence required: `true`" in summary_text
+    assert "Browser acceptance required: `true`" in summary_text
     assert "src/goodteam_os/telegram.py" in summary_text
 
 

@@ -97,9 +97,13 @@ runner service or raise these limits without measuring simultaneous YUVA and
 GoodTeam jobs. The host's system Docker daemon is not available to the
 GoodTeam account; GoodTeam CI does not require Docker or a database. The browser job runs
 headless Chromium against an isolated temporary workspace with fake Workers.
-Frontend unit tests/lint run after browser acceptance in the same job when the
-frontend is affected. The backend starts only after that job succeeds. HTTP
-recovery runs once in the browser job and is excluded from the later backend run.
+Tier 3/4 and explicit live-smoke changes select this acceptance suite. Low-risk
+backend-only candidates schedule focused backend tests without the browser job.
+Low-risk frontend helpers/assets schedule unit tests, lint and build in that
+job without its Python, recovery or Chromium steps. Backend and frontend jobs
+depend on successful classification and queue naturally on the single runner;
+the final gate requires every selected job. HTTP recovery runs once in required
+browser acceptance and is excluded from full backend verification.
 
 ## Dependencies and caches
 

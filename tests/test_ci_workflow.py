@@ -214,16 +214,20 @@ def test_candidate_classification_uses_pinned_base_without_remote_credentials(tm
 
 
 @pytest.mark.parametrize(
-    ("backend_mode", "frontend_mode", "backend_result", "browser_result"),
+    ("backend_mode", "frontend_mode", "tier", "browser_required", "backend_result", "browser_result"),
     [
-        ("none", "none", "skipped", "skipped"),
-        ("focused", "none", "success", "success"),
-        ("full", "none", "success", "success"),
-        ("none", "full", "skipped", "success"),
-        ("full", "full", "success", "success"),
+        ("none", "none", "0", "false", "skipped", "skipped"),
+        ("focused", "none", "1", "false", "success", "skipped"),
+        ("focused", "full", "4", "true", "success", "success"),
+        ("full", "none", "3", "true", "success", "success"),
+        ("none", "full", "2", "false", "skipped", "success"),
+        ("none", "full", "3", "true", "skipped", "success"),
+        ("full", "full", "3", "true", "success", "success"),
     ],
 )
-def test_gate_accepts_only_successful_planned_jobs(backend_mode, frontend_mode, backend_result, browser_result):
+def test_gate_accepts_only_successful_planned_jobs(
+    backend_mode, frontend_mode, tier, browser_required, backend_result, browser_result,
+):
     # Execute the real gate: source-string checks cannot prove that failures,
     # cancellations, or unexpected skips actually block merging.
     workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -235,6 +239,9 @@ def test_gate_accepts_only_successful_planned_jobs(backend_mode, frontend_mode, 
         "FRONTEND_MODE": frontend_mode,
         "BACKEND_RESULT": backend_result,
         "BROWSER_RESULT": browser_result,
+        "BROWSER_REQUIRED": browser_required,
+        "TIER": tier,
+        "LIVE_SMOKE_REQUIRED": "false",
     }
 
     def accepts(overrides):
@@ -255,3 +262,23 @@ def test_gate_accepts_only_successful_planned_jobs(backend_mode, frontend_mode, 
     for key in ("BACKEND_MODE", "FRONTEND_MODE"):
         for mode in ("", "unknown"):
             assert not accepts({key: mode}), (key, mode, planned)
+    for value in ("", "unknown", "true", "false"):
+        if value != browser_required:
+            assert not accepts({"BROWSER_REQUIRED": value}), (value, planned)
+    for value in ("", "-1", "5", "unknown"):
+        assert not accepts({"TIER": value}), (value, planned)
+
+
+def test_low_risk_frontend_checks_do_not_install_or_run_browser_backend():
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    browser = workflow["jobs"]["browser"]
+    assert "needs.classify.outputs.browser_required == 'true'" in browser["if"]
+    assert "needs.classify.outputs.frontend != 'none'" in browser["if"]
+    for step in browser["steps"]:
+        if any(command in step.get("run", "") for command in (
+            "pip install", "-m venv", "test_workflow_http_recovery.py", "playwright install", "test:e2e",
+        )):
+            assert step.get("if") == "needs.classify.outputs.browser_required == 'true'"
+    backend = workflow["jobs"]["backend"]
+    assert "browser" not in backend["needs"]
+    assert "needs.browser" not in backend["if"]

@@ -226,8 +226,9 @@ Reviewer feedback should cite the matrix rather than inventing ad hoc rules.
 
 ## CI Policy
 
-Pull request CI derives a minimum Tier 0-4 risk classification from changed
-files. Authors cannot lower the tier with PR text, checkboxes, or labels. The
+Exact-SHA candidate CI derives a minimum Tier 0-4 risk classification from changed
+files. The ordinary PR gate checks the recorded candidate status. Authors cannot
+lower the tier with PR text, checkboxes, or labels. The
 classifier also computes backend and frontend impact separately, so a high-risk
 backend-only change does not run unrelated frontend checks.
 
@@ -238,11 +239,16 @@ The automated contract is:
 - Tier 2 ordinary application contracts run maintained contract test groups.
 - Tier 3 control-plane, security, dependency, build, and CI-authority changes run
   the applicable full backend and/or frontend checks.
-- Every change affecting either stack also runs the `browser` job on the guarded
-  `goodteam-ci` runner. It builds the frontend and runs the real HTTP/browser
-  acceptance suite once against a fresh temporary workspace with fake Workers.
-  Frontend unit tests and lint also run in this job when the frontend is affected,
-  sharing the same dependency install and build.
+- Tier 1/2 backend-only changes run the fixed backend targets and lint. Frontend
+  helpers and assets run frontend unit tests, lint, and build without Python
+  installation, HTTP recovery, Chromium installation, or browser acceptance.
+  Pure frontend helpers do not select unrelated backend web tests.
+- Tier 3/4 changes and explicit live-smoke requirements select HTTP/browser
+  acceptance against a fresh temporary workspace with fake Workers. The
+  `browser` job also owns frontend checks when the frontend is affected, sharing
+  their dependency install and build. Full backend verification always requires
+  browser acceptance; HTTP recovery runs there once and is excluded from the
+  ordinary backend suite.
   Tier 4 changes require reviewing this evidence and any additional smoke needed
   for adapters outside that suite.
 
@@ -251,10 +257,11 @@ fail closed to Tier 3 full backend and frontend verification. Changes to the
 classifier or workflow also run both full stacks.
 
 `CI / gate` is the stable required status check. It succeeds only when
-classification passes, the backend job matches its planned mode, and the browser
-job (including planned frontend checks) succeeds. Browser acceptance may be skipped only
-when both stacks are unaffected. A manual `workflow_dispatch` bypasses
-changed-file selection and always runs full backend, frontend, and browser verification.
+classification passes and every selected job succeeds. The gate independently
+checks the risk tier and browser requirement, and rejects unexpected skips,
+failures, cancellations, or malformed plans. A manual `workflow_dispatch` pins
+the exact target and current main base, then classifies that diff. Workflow,
+classifier, dependency and unknown-path changes keep the full applicable checks.
 
 New commits cancel obsolete runs for the same pull request. The workflow also
 covers stacked pull requests targeting another feature branch.

@@ -127,6 +127,7 @@ jobs:
       tier: ${{ steps.plan.outputs.tier }}
       backend: ${{ steps.plan.outputs.backend }}
       frontend: ${{ steps.plan.outputs.frontend }}
+      browser_required: ${{ steps.plan.outputs.browser_required }}
       backend_test_targets: ${{ steps.plan.outputs.backend_test_targets }}
       live_smoke_evidence_required: ${{ steps.plan.outputs.live_smoke_evidence_required }}
     steps:
@@ -152,15 +153,20 @@ jobs:
             git merge-base --is-ancestor "$base" "$TARGET_SHA"
           fi
           git diff --check "$base...$TARGET_SHA"
-          python3 scripts/ci/classify_changes.py             --base "$base"             --head "$TARGET_SHA"             --github-output "$GITHUB_OUTPUT"             --summary "$GITHUB_STEP_SUMMARY"
+          python3 scripts/ci/classify_changes.py \
+            --base "$base" \
+            --head "$TARGET_SHA" \
+            --github-output "$GITHUB_OUTPUT" \
+            --summary "$GITHUB_STEP_SUMMARY"
 
   browser:
+    name: Frontend checks and selected browser acceptance
     needs: [prepare, classify]
     if: >-
       always()
       && needs.prepare.result == 'success'
       && needs.classify.result == 'success'
-      && (needs.classify.outputs.backend != 'none' || needs.classify.outputs.frontend != 'none')
+      && (needs.classify.outputs.browser_required == 'true' || needs.classify.outputs.frontend != 'none')
     runs-on: [self-hosted, linux, x64, goodteam-ci]
     permissions:
       contents: read
@@ -176,6 +182,7 @@ jobs:
           persist-credentials: false
 
       - name: Create isolated browser backend environment
+        if: needs.classify.outputs.browser_required == 'true'
         shell: bash
         run: |
           job_temp="${GOODTEAM_CI_JOB_TEMP:-$RUNNER_TEMP}"
@@ -184,8 +191,10 @@ jobs:
           exec python3 ops/ci-runner/runner_cleanup.py run -- python3.12 -m venv "$job_temp/goodteam-e2e-venv"
 
       - run: exec python3 ops/ci-runner/runner_cleanup.py run -- pip install -e ".[dev]"
+        if: needs.classify.outputs.browser_required == 'true'
 
       - name: Verify HTTP crash and timeout recovery
+        if: needs.classify.outputs.browser_required == 'true'
         run: |
           evidence="${GOODTEAM_CI_EVIDENCE:-$RUNNER_TEMP}/goodteam-http-recovery"
           mkdir -p "$evidence"
@@ -200,8 +209,10 @@ jobs:
       - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run build
         working-directory: frontend
       - run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npx playwright install chromium
+        if: needs.classify.outputs.browser_required == 'true'
         working-directory: frontend
       - name: Verify isolated business loop
+        if: needs.classify.outputs.browser_required == 'true'
         run: exec python3 ../ops/ci-runner/runner_cleanup.py run -- npm run test:e2e
         working-directory: frontend
       - name: Run frontend unit tests
@@ -214,12 +225,12 @@ jobs:
         working-directory: frontend
 
   backend:
-    needs: [prepare, classify, browser]
+    needs: [prepare, classify]
     if: >-
       always()
+      && needs.prepare.result == 'success'
       && needs.classify.result == 'success'
       && needs.classify.outputs.backend != 'none'
-      && needs.browser.result == 'success'
     runs-on: [self-hosted, linux, x64, goodteam-ci]
     permissions:
       contents: read
@@ -257,6 +268,7 @@ jobs:
           PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run -- python -m pytest "${targets[@]}" -q
       - name: Run full backend tests
         if: needs.classify.outputs.backend == 'full'
+        # Tier 3/4 always requires browser acceptance, which owns HTTP recovery.
         run: >-
           PYTHONPATH=src exec python3 ops/ci-runner/runner_cleanup.py run --
           python -m pytest tests --ignore=tests/test_workflow_http_recovery.py -q
@@ -277,6 +289,7 @@ jobs:
       BACKEND_MODE: ${{ needs.classify.outputs.backend }}
       BACKEND_RESULT: ${{ needs.backend.result }}
       FRONTEND_MODE: ${{ needs.classify.outputs.frontend }}
+      BROWSER_REQUIRED: ${{ needs.classify.outputs.browser_required }}
       BROWSER_RESULT: ${{ needs.browser.result }}
       TIER: ${{ needs.classify.outputs.tier }}
       LIVE_SMOKE_REQUIRED: ${{ needs.classify.outputs.live_smoke_evidence_required }}
@@ -305,10 +318,28 @@ jobs:
             exit 1
           fi
 
-          if [[ "$BACKEND_MODE" == "none" && "$FRONTEND_MODE" == "none" && "$BROWSER_RESULT" == "skipped" ]]; then
-            echo "Browser acceptance was intentionally skipped for documentation."
-          elif [[ ( "$BACKEND_MODE" != "none" || "$FRONTEND_MODE" != "none" ) && "$BROWSER_RESULT" == "success" ]]; then
-            echo "Isolated browser acceptance and planned frontend checks succeeded."
+          if [[ "$BROWSER_REQUIRED" != "true" && "$BROWSER_REQUIRED" != "false" ]]; then
+            echo "Invalid browser acceptance requirement: $BROWSER_REQUIRED" >&2
+            exit 1
+          fi
+
+          case "$TIER:$LIVE_SMOKE_REQUIRED" in
+            [0-4]:true|[0-4]:false) ;;
+            *) echo "Invalid risk tier or live smoke requirement." >&2; exit 1 ;;
+          esac
+          expected_browser=false
+          if [[ "$TIER" -ge 3 || "$BACKEND_MODE" == "full" || "$LIVE_SMOKE_REQUIRED" == "true" ]]; then
+            expected_browser=true
+          fi
+          if [[ "$BROWSER_REQUIRED" != "$expected_browser" ]]; then
+            echo "Browser requirement does not match the risk plan." >&2
+            exit 1
+          fi
+
+          if [[ "$BROWSER_REQUIRED" == "false" && "$FRONTEND_MODE" == "none" && "$BROWSER_RESULT" == "skipped" ]]; then
+            echo "Frontend and browser checks were intentionally skipped by the change plan."
+          elif [[ ( "$BROWSER_REQUIRED" == "true" || "$FRONTEND_MODE" == "full" ) && "$BROWSER_RESULT" == "success" ]]; then
+            echo "Planned frontend and browser checks succeeded."
           else
             echo "Browser result $BROWSER_RESULT does not match the verification plan." >&2
             exit 1
@@ -357,6 +388,7 @@ jobs:
               echo "- Tier: $TIER"
               echo "- Backend: $BACKEND_MODE ($BACKEND_RESULT)"
               echo "- Frontend unit/lint plan: $FRONTEND_MODE"
+              echo "- Browser acceptance required: $BROWSER_REQUIRED"
               echo "- Browser acceptance: $BROWSER_RESULT"
               echo "- Live smoke evidence required: $LIVE_SMOKE_REQUIRED"
             else

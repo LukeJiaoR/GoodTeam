@@ -125,8 +125,12 @@ class Plan:
     live_smoke_evidence_required: bool = False
     reasons: tuple[str, ...] = ()
 
+    @property
+    def browser_required(self) -> bool:
+        return self.tier >= 3 or self.backend == "full" or self.live_smoke_evidence_required
+
     def as_dict(self) -> dict[str, object]:
-        return asdict(self)
+        return {**asdict(self), "browser_required": self.browser_required}
 
 
 def _plan(
@@ -201,11 +205,10 @@ def _decision_for_frontend(path: str) -> Plan:
     if path.startswith(("frontend/src/constants/", "frontend/src/i18n/", "frontend/src/lib/", "frontend/src/utils/")):
         return _plan(
             2,
-            "focused",
+            "none",
             "full",
             path,
             "frontend helper contract",
-            backend_targets=("tests/test_web.py",),
         )
 
     if path.startswith(("frontend/public/", "frontend/src/assets/")):
@@ -318,6 +321,7 @@ def write_github_outputs(path: Path, plan: Plan) -> None:
         "tier": str(plan.tier),
         "backend": plan.backend,
         "frontend": plan.frontend,
+        "browser_required": str(plan.browser_required).lower(),
         "backend_test_targets": " ".join(plan.backend_test_targets),
         "live_smoke_evidence_required": str(plan.live_smoke_evidence_required).lower(),
         "plan_json": json.dumps(plan.as_dict(), separators=(",", ":"), sort_keys=True),
@@ -335,6 +339,7 @@ def append_summary(path: Path, plan: Plan) -> None:
         f"- Tier: **{plan.tier}**",
         f"- Backend: `{plan.backend}`",
         f"- Frontend: `{plan.frontend}`",
+        f"- Browser acceptance required: `{str(plan.browser_required).lower()}`",
         "- Live smoke evidence required: "
         f"`{str(plan.live_smoke_evidence_required).lower()}`",
         "",
