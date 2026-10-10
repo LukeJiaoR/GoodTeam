@@ -6,19 +6,22 @@ import pytest
 
 from goodteam_os import telegram, web
 from test_approval_rationale_boundary import durable_files
-from test_workflow_recovery import gate_state
+from test_workflow_recovery import binding_for, gate_state
 
 
 @pytest.mark.parametrize("missing_artifact", [False, True])
 @pytest.mark.parametrize("entrypoint", ["card", "legacy", "command"])
 def test_missing_reason_or_material_is_reported_without_deciding(tmp_path, monkeypatch, missing_artifact, entrypoint):
     state = gate_state(tmp_path, "release")
+    target = {key.removeprefix("expected_"): value for key, value in binding_for(state).items()}
+    target["project_key"] = state.project_key
     if missing_artifact:
         for path in state.artifacts.values():
             Path(path).unlink()
     store = telegram.TelegramReviewSessionStore(tmp_path)
     session = {"session_id": "informed", "project_key": "RECOVERY", "run_id": state.run_id,
-               "gate": "release", "chat_id": 100, "message_id": 200, "items": [], "decided": False}
+               "gate": "release", "chat_id": 100, "message_id": 200, "items": [], "decided": False,
+               "approval_target": target}
     store.save("informed", session)
     before = durable_files(tmp_path)
     sent = []
