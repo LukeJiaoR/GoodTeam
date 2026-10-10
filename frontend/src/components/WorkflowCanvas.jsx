@@ -15,6 +15,7 @@ import '@xyflow/react/dist/style.css';
 import { Link } from 'react-router-dom';
 import Button from './ui/Button';
 import DecisionActions from './DecisionActions';
+import { approvalConfirmationKey, canConfirmApproval, requiresInformedApproval, usableApprovalTarget } from '../lib/reviews/approvalConfirmation';
 import EvidenceSummary from './EvidenceSummary';
 import WorkflowPipeline from './WorkflowPipeline';
 import { routes } from '../lib/routing/routes';
@@ -103,6 +104,7 @@ function CanvasInner({ fallback, onDecided, onRequestChanges, projectKey, review
   }, []);
 
   const handleKeyDown = useCallback((event) => {
+    if (event.defaultPrevented || event.target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
     const index = steps.findIndex((step) => (step.key || `step-${steps.indexOf(step)}`) === focusedKey);
     if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
       event.preventDefault();
@@ -153,18 +155,19 @@ function CanvasInner({ fallback, onDecided, onRequestChanges, projectKey, review
       : {})
     : {};
 
+  const expectedApproval = {
+    run_id: runId, target_type: 'review', target_id: actionableReview?.approval || '',
+    artifact_key: actionableReview?.artifact || '', artifact_version: actionableReview?.artifact_version || '',
+  };
+  const informedApproval = requiresInformedApproval(actionableReview?.recommendation);
+  const approveDisabled = Boolean(busy) || !usableApprovalTarget(expectedApproval);
+
   const decide = async (decision, note) => {
-    if (!expandedStep || !actionableReview) return;
+    if (!expandedStep || !actionableReview || busy) return;
+    if (decision === 'approved' && !canConfirmApproval({ disabled: approveDisabled, requiresReason: informedApproval, note })) return;
     setBusy(decision);
     setError(null);
     try {
-      const expectedApproval = {
-        run_id: runId,
-        target_type: 'review',
-        target_id: actionableReview.approval || '',
-        artifact_key: actionableReview.artifact || '',
-        artifact_version: actionableReview.artifact_version || '',
-      };
       if (decision === 'approved') {
         await reviewApi.decideReview(
           projectKey,
@@ -180,7 +183,7 @@ function CanvasInner({ fallback, onDecided, onRequestChanges, projectKey, review
       onDecided?.();
     } catch (caught) {
       setError(caught);
-      if (caught?.code === 'stale_approval') await onDecided?.();
+      if (['stale_approval', 'approval_reason_required'].includes(caught?.code)) await onDecided?.();
     } finally {
       setBusy('');
     }
@@ -282,8 +285,20 @@ function CanvasInner({ fallback, onDecided, onRequestChanges, projectKey, review
           ) : null}
           {actionableReview ? (
             <>
+              <section aria-label={t('review.recommendation.title')}>
+                <p>{actionableReview.recommendation?.verdict
+                  ? t(`review.recommendation.verdict.${actionableReview.recommendation.verdict}`)
+                  : t('review.recommendation.none')}</p>
+                {(Array.isArray(actionableReview.recommendation?.reasons)
+                  ? actionableReview.recommendation.reasons : []).map((reason, index) => (
+                  <p key={index}>{typeof reason === 'string' ? reason : reason?.text || ''}</p>
+                ))}
+              </section>
               <EvidenceSummary evidence={evidence} t={t} />
               <DecisionActions
+                decisionContextKey={approvalConfirmationKey([projectKey, expectedApproval, actionableReview])}
+                informedApproval={informedApproval}
+                approveDisabled={approveDisabled}
                 busy={busy}
                 error={error}
                 onDecision={decide}
@@ -303,7 +318,7 @@ export default function WorkflowCanvas(props) {
   if (!props.steps?.length) return null;
   return (
     <ReactFlowProvider>
-      <CanvasInner {...props} />
+      <CanvasInner key={`${props.projectKey}:${props.runId}`} {...props} />
     </ReactFlowProvider>
   );
 }

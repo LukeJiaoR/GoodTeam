@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -9,6 +10,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 from telebot import apihelper
+
+from goodteam_os.telegram_approval_binding import capture_target, session_decision_binding
 
 
 TOKEN_ENV = "GOODTEAM_TG_BOT_TOKEN"
@@ -53,7 +56,7 @@ class TelegramReviewSessionStore:
                 yield data
 
     def _is_live_card_session(self, data: dict[str, object]) -> bool:
-        return data.get("decided", False) is False and int(data.get("message_id", 0)) > 0
+        return not data.get("superseded") and data.get("decided", False) is False and int(data.get("message_id", 0)) > 0
 
     def get(self, session_id: str) -> dict[str, object] | None:
         file_path = self._file_path(session_id)
@@ -1520,6 +1523,7 @@ def _process_telegram_command(
                 review_items=review_items,
             ),
             note=note,
+            **session_decision_binding(context_session, chat_id=chat_id, project_key=project_key),
         )
 
         # Try to find and mark the live session, then edit the card
@@ -1777,15 +1781,23 @@ def send_approval_notification(
         state = None
 
     content = ""
+    displayed_version = ""
+    if not artifact_path and state is not None:
+        from goodteam_os.roles import approval_artifact_for_gate
+
+        artifact_path = str(state.artifacts.get(approval_artifact_for_gate(gate), "") or "")
     if artifact_path:
         try:
             path = Path(artifact_path)
             if not path.is_absolute():
                 path = (workspace / path).resolve()
             if path.is_file():
-                content = path.read_text(encoding="utf-8")
+                raw_content = path.read_bytes()
+                content = raw_content.decode("utf-8")
+                displayed_version = f"sha256:{hashlib.sha256(raw_content).hexdigest()}"
         except Exception:
             content = ""
+            displayed_version = ""
     try:
         digest = mask_sensitive_data(_artifact_digest(content))
     except Exception:
@@ -1801,11 +1813,25 @@ def send_approval_notification(
     except Exception:
         evidence, recommendation = {}, {}
 
+    try:
+        approval_target = capture_target(state=state, workspace=workspace, project_key=project_key,
+                                         run_id=run_id, gate=gate, displayed_version=displayed_version)
+    except Exception:
+        approval_target = {}
     store = TelegramReviewSessionStore(workspace)
     existing_session = store.find_live_for_gate(project_key, run_id, gate)
+    if (existing_session is not None and not existing_session.get("operator_task_id")
+            and (existing_session.get("approval_target", {}) != approval_target
+                 or str(existing_session.get("chat_id")) != str(config["chat_id"]))):
+        # A changed target gets a new message and session. Updating the old
+        # message would let an already queued reply inherit unseen new bytes.
+        existing_session["superseded"] = True
+        store.save(str(existing_session["session_id"]), existing_session)
+        existing_session = None
     if existing_session is not None:
         if session_metadata:
-            existing_session.update(session_metadata)
+            protected = {"session_id", "run_id", "project_key", "gate", "chat_id", "message_id", "approval_target"}
+            existing_session.update({key: value for key, value in session_metadata.items() if key not in protected})
             store.save(str(existing_session["session_id"]), existing_session)
         session_id = str(existing_session["session_id"])
         message_id = int(existing_session["message_id"])
@@ -1867,8 +1893,11 @@ def send_approval_notification(
         "decided": False,
         "created_at": datetime.now(UTC).isoformat(),
         "expires_at": (datetime.now(UTC) + timedelta(hours=24)).isoformat(),
-        **dict(session_metadata or {}),
+        "approval_target": approval_target,
     }
+    # Caller metadata may extend an operator card, but must never replace the
+    # displayed workflow identity or its exact artifact binding.
+    session_data.update({key: value for key, value in (session_metadata or {}).items() if key not in session_data})
     store.save(session_id, session_data)
 
     card_payload = _approval_notification_payload(
@@ -1943,7 +1972,12 @@ def poll_telegram_approvals(
                     "answerCallbackQuery",
                     {
                         "callback_query_id": callback.get("id", ""),
-                        "text": "GoodTeam approval recorded." if result["status"] == "processed" else "GoodTeam approval was already handled.",
+                        "text": (
+                            "GoodTeam approval was not recorded. Open the current Review page."
+                            if result.get("accepted") is False else
+                            "GoodTeam approval recorded." if result["status"] == "processed" else
+                            "GoodTeam approval was already handled."
+                        ),
                     },
                 )
             if result["status"] == "processed":
@@ -2007,6 +2041,7 @@ def _process_command_context_chooser_callback(
     if (
         session is None
         or session.get("decided", False)
+        or session.get("superseded", False)
         or int(session.get("message_id", 0) or 0) <= 0
         or int(session.get("chat_id", 0) or 0) != chat_id
     ):
@@ -2028,11 +2063,6 @@ def _process_command_context_chooser_callback(
     if command != str(intent.get("command", "") or command):
         return {"status": "ignored", "reason": "chooser command mismatch"}
 
-    remaining_intents = dict(intents)
-    remaining_intents.pop(intent_id, None)
-    session["chooser_intents"] = remaining_intents
-    store.save(session_id, session)
-
     result = _process_telegram_command(
         command,
         token=token,
@@ -2044,13 +2074,58 @@ def _process_command_context_chooser_callback(
         context_session=session,
         command_message_id=command_message_id or message_id,
     )
-    if result.get("status") == "processed":
+    if result.get("status") == "processed" and result.get("accepted") is not False:
+        # Consume only after the bound decision succeeds. Do not overwrite a
+        # newer decided session saved by the command handler.
+        saved = store.get(session_id) or session
+        remaining_intents = dict(saved.get("chooser_intents", {}))
+        remaining_intents.pop(intent_id, None)
+        saved["chooser_intents"] = remaining_intents
+        store.save(session_id, saved)
         processed_callbacks.add(callback_id)
         return {"status": "processed", "callback_id": callback_id}
     return result
 
 
 def process_telegram_update(
+    update: dict[str, object],
+    *,
+    workspace: Path,
+    allowed_users: list[str],
+    processed_callbacks: set[str],
+    project_key: str = "",
+) -> dict[str, object]:
+    from goodteam_os.web import ProjectApiError
+
+    try:
+        return _process_telegram_update(
+            update, workspace=workspace, allowed_users=allowed_users,
+            processed_callbacks=processed_callbacks, project_key=project_key,
+        )
+    except ProjectApiError as exc:
+        if exc.code not in {"approval_reason_required", "stale_approval", "invalid_approval_note"}:
+            raise
+        # The existing handler has already checked sender/context authority.
+        # Do not mark the review decided or invent a rationale for a button.
+        callback = dict(update.get("callback_query", {}) or {})
+        message = dict(callback.get("message", {}) or update.get("message", {}) or {})
+        chat_id = dict(message.get("chat", {}) or {}).get("id", 0)
+        guidance = (
+            "This review changed or has no versioned material. Open the current Review page before deciding."
+            if exc.code == "stale_approval" else
+            "Open the current Review page, inspect its evidence, and enter a text reason to continue."
+        )
+        _send_masked_telegram_message(
+            token=os.getenv(TOKEN_ENV, ""), chat_id=chat_id,
+            text=f"{guidance} No approval was recorded.",
+        )
+        callback_id = str(callback.get("id", ""))
+        if callback_id:
+            processed_callbacks.add(callback_id)
+        return {"status": "processed", "accepted": False, "reason": exc.code}
+
+
+def _process_telegram_update(
     update: dict[str, object],
     *,
     workspace: Path,
@@ -2228,6 +2303,10 @@ def process_telegram_update(
 
         if session.get("decided", False):
             return {"status": "ignored", "reason": "already decided"}
+        binding = {}
+        if action in {"A", "C", "Y"} and not session.get("operator_task_id"):
+            binding = session_decision_binding(session, chat_id=chat_id, message_id=message_id,
+                                               project_key=str(session.get("project_key") or ""))
 
         if action == "A":
             if session.get("operator_task_id"):
@@ -2250,6 +2329,7 @@ def process_telegram_update(
                 project_key=str(session["project_key"]),
                 approval=str(session["gate"]),
                 decision="approved",
+                **binding,
                 **_telegram_decision_audit_kwargs(
                     user_id=user_id,
                     chat_id=chat_id,
@@ -2295,12 +2375,12 @@ def process_telegram_update(
                 store.save(session_id, session)
                 processed_callbacks.add(callback_id)
                 return {"status": "processed", "callback_id": callback_id}
-            compile_and_write_review_notes(workspace, session)
             decide_approval(
                 workspace=workspace,
                 project_key=str(session["project_key"]),
                 approval=str(session["gate"]),
                 decision="changes_requested",
+                **binding,
                 **_telegram_decision_audit_kwargs(
                     user_id=user_id,
                     chat_id=chat_id,
@@ -2310,6 +2390,7 @@ def process_telegram_update(
                     review_items=_session_review_items(session),
                 ),
             )
+            compile_and_write_review_notes(workspace, session)
             session["decided"] = True
             store.save(session_id, session)
 
@@ -2358,6 +2439,7 @@ def process_telegram_update(
                 project_key=str(session["project_key"]),
                 approval=str(session["gate"]),
                 decision="rejected",
+                **binding,
                 **_telegram_decision_audit_kwargs(
                     user_id=user_id,
                     chat_id=chat_id,
@@ -2525,16 +2607,33 @@ def process_telegram_update(
         or state.next_node != f"await_{approval.gate}_approval"
     ):
         return ignore_legacy_approval("gate not actionable")
+    store = TelegramReviewSessionStore(workspace)
+    session = store.find_live_by_card_message(
+        int(callback.get("message", {}).get("chat", {}).get("id", 0)),
+        int(callback.get("message", {}).get("message_id", 0)),
+    )
+    binding = session_decision_binding(
+        session, chat_id=callback.get("message", {}).get("chat", {}).get("id", 0),
+        message_id=callback.get("message", {}).get("message_id", 0), project_key=approval.project_key,
+    )
+    if binding["expected_run_id"] != approval.run_id or binding["expected_target_id"] != approval.gate:
+        return ignore_legacy_approval("card identity mismatch")
     decide_approval(
         workspace=workspace,
         project_key=approval.project_key,
         approval=approval.gate,
         decision=approval.decision,
+        **binding,
         **_telegram_decision_audit_kwargs(
             user_id=user_id,
+            chat_id=session["chat_id"],
+            message_id=session["message_id"],
+            review_session_id=str(session["session_id"]),
             review_mode="quick",
         ),
     )
+    session["decided"] = True
+    store.save(str(session["session_id"]), session)
     processed_callbacks.add(callback_id)
     return {"status": "processed", "callback_id": callback_id}
 

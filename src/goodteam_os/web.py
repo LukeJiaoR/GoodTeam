@@ -105,7 +105,10 @@ from goodteam_os.review_provenance import (
     reviewer_profile_for_approval,
 )
 from goodteam_os.review_policy import evaluate_review_evidence_policy
-from goodteam_os.roles import artifact_contract, approval_artifact_map, list_role_definitions, workflow_steps_for_source
+from goodteam_os.roles import (
+    artifact_contract, approval_artifact_for_gate, approval_artifact_map,
+    list_role_definitions, workflow_steps_for_source,
+)
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.messages import read_messages
 from goodteam_os.staging import (
@@ -312,22 +315,9 @@ _DEFAULT_TG_NOTIFY_GATES: frozenset[str] = frozenset(
     {"prd", "rfc", "security", "staging", "release", "fix_plan", "code_review", "qa"}
 )
 
-# Phase 1 `fix` profile gate -> artifact-key overlay. The role-config
-# approval_artifacts map only knows greenfield gates; the fix gates write the
-# same artifact files greenfield does, so map them onto those keys additively.
-_FIX_APPROVAL_ARTIFACTS: dict[str, str] = {
-    "fix_plan": "fix_plan",
-    "code_review": "implementation_handoff",
-    "qa": "qa_report",
-}
-
-
 def _approval_artifact_for_gate(gate: str) -> str:
     """Resolve the artifact key for a gate, overlaying the fix-profile gates."""
-    base = approval_artifact_map()
-    if gate in base:
-        return base[gate]
-    return _FIX_APPROVAL_ARTIFACTS.get(gate, gate)
+    return approval_artifact_for_gate(gate)
 
 
 def _tg_notify_gate_set() -> frozenset[str]:
@@ -3794,6 +3784,9 @@ def decide_approval(
         approval_decision = ApprovalDecision(decision)
     except ValueError as exc:
         raise ValueError(f"Unknown approval decision: {decision}") from exc
+
+    if not isinstance(note, str):
+        raise ProjectApiError("invalid_approval_note", "Approval note must be text.", 400)
 
     if approval_decision in (ApprovalDecision.CHANGES_REQUESTED, ApprovalDecision.REJECTED):
         if not note.strip():
@@ -8016,7 +8009,7 @@ def serve(
                         approval=str(request.get("approval", "")),
                         decision=str(request.get("decision", "")),
                         debate_ref=str(request.get("debate_ref", "")),
-                        note=str(request.get("note", "")),
+                        note=request.get("note", ""),
                         **approval_binding,
                     )
                 elif normalized_path == "/recover-takeover-brief":

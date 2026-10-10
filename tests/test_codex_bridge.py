@@ -349,6 +349,72 @@ def test_host_route_drift_revokes_before_next_request_without_secret_error(tmp_p
         forward(target)
     assert error.value.code == "bridge_authorization_revoked" and TEST_BEARER not in str(error.value)
     assert target.authority.auth_reads == 0 and not upstream.requests
+    retirement = tmp_path / "operator" / target.scope.authorization_id / (target.scope.context_id + ".retired")
+    assert retirement.read_bytes() == b"retired\n"
+    target.authority.revoked = False
+    with pytest.raises(SkillError) as retired:
+        forward(target)
+    assert retired.value.code == "bridge_context_retired"
+    assert not upstream.requests and target.boundaries()["upstream_requests_allocated"] == 0
+
+
+def test_synchronous_inflight_revocation_retires_before_watcher_can_observe_it(tmp_path, upstream):
+    class ObservedAuthority(FixtureAuthority):
+        def __init__(self, url):
+            super().__init__(url)
+            self.forward_ident = None
+            self.watcher_checked = threading.Event()
+            self.release_watcher = threading.Event()
+            self.watcher_returned = threading.Event()
+            self.watcher_timed_out = threading.Event()
+
+        def check(self, binding, selected):
+            super().check(binding, selected)
+            if self.forward_ident is not None and threading.get_ident() != self.forward_ident:
+                # Hold a successful watcher check while the real HTTP response
+                # makes forward() observe revocation synchronously. No fake
+                # transport, sleeps or call-count-dependent authorization.
+                self.watcher_checked.set()
+                try:
+                    if not self.release_watcher.wait(5):
+                        self.watcher_timed_out.set()
+                        raise AssertionError("The test did not release the observed watcher check")
+                finally:
+                    self.watcher_returned.set()
+
+    authority = ObservedAuthority(f"http://127.0.0.1:{upstream.server_port}/v1/responses")
+    target = bridge(tmp_path, upstream, selected=scope(tmp_path, max_requests=2), authority=authority)
+    upstream.hold = True
+
+    def owned_forward():
+        authority.forward_ident = threading.get_ident()
+        return forward(target)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        job = executor.submit(owned_forward)
+        try:
+            assert upstream.accepted.wait(2)
+            assert authority.watcher_checked.wait(2)
+            authority.revoked = True
+            upstream.release.set()
+            with pytest.raises(SkillError) as error:
+                job.result(2)
+            assert error.value.code == "bridge_authorization_revoked"
+            assert TEST_BEARER not in str(error.value)
+            assert not authority.watcher_timed_out.is_set()
+            assert not authority.watcher_returned.is_set()
+        finally:
+            authority.release_watcher.set()
+            upstream.release.set()
+
+    retirement = tmp_path / "operator" / target.scope.authorization_id / (target.scope.context_id + ".retired")
+    assert retirement.read_bytes() == b"retired\n"
+    authority.revoked = False
+    with pytest.raises(SkillError) as retired:
+        forward(target)
+    assert retired.value.code == "bridge_context_retired"
+    assert len(upstream.requests) == 1
+    assert target.boundaries()["upstream_requests_allocated"] == 1
 
 
 def test_inflight_host_revocation_stops_real_transport_without_remote_retirement_claim(tmp_path, upstream):

@@ -32,22 +32,47 @@ mutating smoke commands against an active real project workspace.
 
 ### Exact-SHA candidate CI
 
+Follow `docs/candidate-validation.md` for publication, dispatch, evidence, and
+recovery details.
+
 Do not spend heavy remote CI on every development push. While iterating, run the
-focused local checks required by `docs/testing-strategy.md`. When the branch is
-ready to become a pull request candidate:
+focused local checks required by `docs/testing-strategy.md`. Draft PRs may be
+opened and updated before candidate CI; a Draft is not evidence of validation or
+permission to merge. When preparing the final candidate for merge:
 
 1. Sync with the current `main`, require a clean working tree, and record `git rev-parse HEAD`. The candidate must contain the current `main` HEAD.
-2. Run the reviewed default-branch workflow against that exact SHA:
+2. Publish that committed SHA to a temporary candidate branch and verify the
+   remote ref. Keep an existing ready-for-review PR's head unchanged until
+   validation succeeds; Draft PR heads may change during local iteration.
+3. Run the reviewed default-branch workflow against that exact SHA:
    `gh workflow run ci.yml --repo LukeJiaoR/GoodTeam --ref main -f "target_sha=<40-char-sha>"`.
-3. Wait for the run to succeed and for commit status
+4. Wait for the run to succeed and for commit status
    `merge-candidate/validated` to be green.
-4. Only then open/update the PR. Any new commit invalidates the old evidence;
+5. Only then open a ready-for-review PR, update an existing ready PR, or mark a
+   Draft ready with that exact head. Any new commit invalidates the old evidence;
    validate the new SHA before merge. If `main` advances, sync the new base and
    validate the resulting SHA again.
 
 The PR-side `CI / gate` is the authority for whether the current exact head is
-eligible to merge. Never copy a status from an older SHA or bypass the gate
-because a previous branch state passed.
+eligible to merge. Draft PR events can run this lightweight check and fail while
+validation is missing; opening a Draft does not trigger full candidate CI. After
+candidate validation, rerun the metadata gate if needed. Never copy a status from
+an older SHA or bypass the gate because a previous branch state passed.
+
+Record the candidate SHA, pinned base SHA, run URL, planned job outcomes, and
+limitations. A manual run's `headSha` identifies the workflow definition; use
+its `target_sha` input and recorded status to identify the tested source.
+
+### Broken default-branch CI
+
+If the reviewed `main` workflow cannot validate its own repair, preserve the
+failed result and prepare a minimal CI repair separately from product work.
+Follow the recovery procedure in `docs/candidate-validation.md`. Dispatch from
+a temporary workflow ref requires explicit user or maintainer authorization for
+the reviewed workflow, exact candidate SHA, and current base. Editing these rules
+does not grant that authorization. Keep the runner/credential boundary, real
+job outcomes, exact-SHA status, and PR gate intact; never fabricate success or
+bypass failed checks. Resume normal `--ref main` validation after recovery.
 
 ## Local Artifacts
 
@@ -75,6 +100,6 @@ provide native ARM64 or Docker diagnostics.
 
 This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
 
-The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+The OpenWiki GitHub Actions workflow is manual-only. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting an authorized OpenWiki run regenerate them.
 
 <!-- OPENWIKI:END -->

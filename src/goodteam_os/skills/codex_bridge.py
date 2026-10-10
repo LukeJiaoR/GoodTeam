@@ -197,6 +197,17 @@ class TaskProviderBridge:
         except Exception:
             raise SkillError("bridge_authorization_revoked", "The effective provider authorization changed or was revoked.") from None
 
+    def _check_authority_or_retire(self):
+        try:
+            self._check_authority()
+        except SkillError:
+            # Synchronous checks can observe revocation before the watcher.
+            # Persist retirement before returning; restored authority must not
+            # make this same context usable again. Construction uses the plain
+            # check because no context ledger exists at that point.
+            self.cancel(reason="revoked", wait_seconds=0)
+            raise
+
     def _ledger(self):
         from contextlib import contextmanager
 
@@ -287,7 +298,7 @@ class TaskProviderBridge:
     def _check_operation(self, operation):
         if operation.reason is not None or self._retired:
             raise SkillError(self._stop_code(operation), "The task provider transport stopped.")
-        self._check_authority()
+        self._check_authority_or_retire()
 
     @staticmethod
     def _stop_code(operation):
@@ -315,7 +326,7 @@ class TaskProviderBridge:
         with self._mutex:
             if self._active is not None:
                 raise SkillError("bridge_busy", "A task context has one owned provider transport.")
-            self._check_authority()
+            self._check_authority_or_retire()
             try:
                 bearer = self.authority.authorization(self.binding, self.scope)
                 if (not isinstance(bearer, str) or not 1 <= len(bearer) <= 4096

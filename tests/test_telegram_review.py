@@ -560,7 +560,7 @@ def test_forcereply_note_reply_does_not_use_chat_first_lookup_when_reply_context
     assert store.get("target")["items"][1]["note"] == "Exact context"
 
 
-def test_final_decision_approves_workflow(tmp_path, monkeypatch):
+def test_explicit_text_reason_approves_workflow_and_preserves_review_audit(tmp_path, monkeypatch):
     tg_calls = []
 
     def fake_tg_request(token, method, params):
@@ -579,6 +579,10 @@ def test_final_decision_approves_workflow(tmp_path, monkeypatch):
         next_node="await_staging_approval",
     )
     state.approvals["staging"] = ApprovalDecision.PENDING
+    from goodteam_os import web
+    artifact = tmp_path / "staging-fixture.md"
+    artifact.write_text("# Simulated staging evidence\nFor Telegram decision-audit verification only.")
+    state.artifacts[web._approval_artifact_for_gate("staging")] = str(artifact)
     StateStore(tmp_path).write_project_current(state)
 
     store = TelegramReviewSessionStore(tmp_path)
@@ -586,6 +590,9 @@ def test_final_decision_approves_workflow(tmp_path, monkeypatch):
     session_data = {
         "session_id": session_id,
         "run_id": "run-final",
+        "approval_target": {"project_key": "CONTENTOPS", "run_id": "run-final", "target_type": "review",
+                            "target_id": "staging", "artifact_key": web._approval_artifact_for_gate("staging"),
+                            "artifact_version": web.artifact_version_for_path(str(artifact))},
         "project_key": "CONTENTOPS",
         "gate": "staging",
         "chat_id": 12345,
@@ -599,12 +606,14 @@ def test_final_decision_approves_workflow(tmp_path, monkeypatch):
     }
     store.save(session_id, session_data)
 
+    reason = "Model-free Telegram acceptance: continue with this simulated staging evidence."
     update = {
-        "callback_query": {
-            "id": "cb_fin",
+        "message": {
+            "message_id": 10000,
             "from": {"id": 111},
-            "message": {"chat": {"id": 12345}, "message_id": 9999},
-            "data": f"v1:A:{session_id}",
+            "chat": {"id": 12345},
+            "reply_to_message": {"message_id": 9999},
+            "text": f"/gt approve {reason}",
         }
     }
 
@@ -625,6 +634,7 @@ def test_final_decision_approves_workflow(tmp_path, monkeypatch):
         for line in (tmp_path / "state" / "projects" / "CONTENTOPS" / "action-log.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     approval_action = next(action for action in actions if action["action"] == "approval_decided")
+    assert approval_action["note"] == reason
     assert approval_action["decision_origin"] == "telegram"
     assert approval_action["actor_ref"] == "telegram:user:111"
     assert approval_action["review_mode"] == "step_by_step"

@@ -411,7 +411,7 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             worker_mode=args.worker_mode,
         )
         print(json.dumps(payload, indent=2))
-        return 1 if payload.get("status") == "failed" else 0
+        return 1 if payload.get("status") in {"failed", "blocked"} else 0
     if args.command == "dispatch":
         tracks = [
             parse_dispatch_track_spec(track, base_dir=Path.cwd())

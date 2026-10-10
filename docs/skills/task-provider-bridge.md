@@ -2,9 +2,10 @@
 
 Status: **actual HTTP/pipe forwarding implemented and tested against a local
 model-free server; production admission and native model execution remain
-blocked**. This independent increment is stacked on #475's fail-closed fix,
-which is itself stacked on #473. It does not merge either PR, use #474, replace
-the host's managed route, or enable the blocked macOS native CLI path.
+blocked**. This independent increment targets current `main`, which already
+contains the earlier fail-closed admission work. The former #475/#473 stack is
+historical. It does not use #474, replace the host's managed route, or enable the
+blocked macOS native CLI path.
 
 ## Concrete path
 
@@ -53,6 +54,9 @@ approved isolation and network wiring before it may bind its private endpoint.
   and by a bounded watcher while the HTTP call is blocked. Revocation or
   deadline retires the context and shuts down its registered socket. A cancel
   never clears the connection socket in a way that permits implicit reconnect.
+  A synchronous revocation check also persists retirement, even if the watcher
+  has not observed it yet. Restoring authorization cannot revive that context,
+  and retirement never refunds an already allocated request.
 - Worker HTTP disconnect propagates through the relay to that exact host
   request. Closing the owning relay process/pipe retires the bridge. Foreign
   cancellation frames and overlapping requests fail closed. Local shutdown is

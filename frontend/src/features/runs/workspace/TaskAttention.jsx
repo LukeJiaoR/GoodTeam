@@ -8,6 +8,8 @@ import { routes } from '../../../lib/routing/routes';
 import { translated } from './presentationUtils';
 import ManagerApprovalBrief from './ManagerApprovalBrief';
 import PreparationFacts from './PreparationFacts';
+import WorkApprovalAction from './WorkApprovalAction';
+import { requiresInformedWorkApproval } from './workApprovalContext';
 
 export function TaskAttention({
   attention,
@@ -58,16 +60,6 @@ export function TaskAttention({
   const approvalBrief = attention.approval_brief?.schema_version === 'manager_approval_brief.v1'
     ? attention.approval_brief
     : null;
-  const decide = (decision, decisionNote = '') => {
-    Promise.resolve()
-      .then(() => onDecide?.(
-        gate,
-        decision,
-        decisionNote,
-        decision === 'approved' ? approvalBrief?.approval_target : null,
-      ))
-      .catch(() => {});
-  };
   const startChangeDiscussion = () => Promise.resolve()
     .then(() => onStartChangeIntent?.(gate, approvalBrief?.approval_target || null))
     .catch(() => {});
@@ -90,17 +82,20 @@ export function TaskAttention({
         {translated(t, `work.manager.attentionKinds.${attention.kind}`, attention.reason)}
       </h3>
       {approvalBrief ? (
-        <ManagerApprovalBrief brief={approvalBrief} t={t} compact />
+        <ManagerApprovalBrief brief={approvalBrief} t={t} compact={!requiresInformedWorkApproval(approvalBrief)} />
       ) : (
         <p>{translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason)}</p>
       )}
       <div className="team-attention__actions">
         {!intent && actions.has('approve') ? (
-          <Button busy={busy === 'decision'} onClick={() => decide('approved')}>
-            {approvalBrief
-              ? t('work.manager.approvalBrief.approve')
-              : t('work.review.quickApprove')}
-          </Button>
+          <WorkApprovalAction
+            brief={approvalBrief}
+            busy={busy}
+            gate={gate}
+            onDecide={onDecide}
+            projectKey={projectKey}
+            t={t}
+          />
         ) : null}
         {!intent && actions.has('request_changes') ? (
           <Button busy={busy === 'intent-start'} variant="secondary" onClick={startChangeDiscussion}>

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Exact 40-character commit SHA to validate before opening or updating a PR
+        description: Exact 40-character commit SHA to validate when preparing to merge a PR
         required: true
         type: string
 
@@ -58,7 +58,7 @@ jobs:
               }
               core.setOutput("mode", "candidate");
               core.setOutput("target_sha", target);
-              core.setOutput("base_sha", "");
+              core.setOutput("base_sha", main.data.commit.sha);
               return;
             }
 
@@ -142,17 +142,15 @@ jobs:
         env:
           MODE: ${{ needs.prepare.outputs.mode }}
           TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
-          PR_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          if [[ "$MODE" == "candidate" ]]; then
-            git fetch --no-tags origin main
-            base="$(git merge-base origin/main "$TARGET_SHA")"
-          else
-            base="$PR_BASE_SHA"
-          fi
+          base="$BASE_SHA"
           test -n "$base"
+          if [[ "$MODE" == "candidate" ]]; then
+            git merge-base --is-ancestor "$base" "$TARGET_SHA"
+          fi
           git diff --check "$base...$TARGET_SHA"
           python3 scripts/ci/classify_changes.py             --base "$base"             --head "$TARGET_SHA"             --github-output "$GITHUB_OUTPUT"             --summary "$GITHUB_STEP_SUMMARY"
 
@@ -362,7 +360,7 @@ jobs:
               echo "- Browser acceptance: $BROWSER_RESULT"
               echo "- Live smoke evidence required: $LIVE_SMOKE_REQUIRED"
             else
-              echo "- Heavy CI: validated before PR on this exact SHA"
+              echo "- Heavy CI: validated on this exact SHA"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

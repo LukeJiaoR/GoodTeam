@@ -132,7 +132,7 @@ test('approves the loaded full-content version, not a newer preview snapshot', a
   mocks.decideReview.mockResolvedValue({ ok: true });
 
   render(<RouterProvider router={routerFor()} />);
-  const approve = await screen.findByRole('button', { name: translate('en', 'review.decision.approve') });
+  let approve = await screen.findByRole('button', { name: translate('en', 'work.informedApproval.continue') });
   expect(approve).toBeDisabled();
   await waitFor(() => expect(mocks.getArtifact).toHaveBeenCalledTimes(1));
 
@@ -145,13 +145,17 @@ test('approves the loaded full-content version, not a newer preview snapshot', a
     await pendingArtifact.promise;
   });
 
+  approve = screen.getByRole('button', { name: translate('en', 'work.informedApproval.continue') });
+  expect(approve).toBeDisabled();
+  const note = 'I inspected the loaded full document; reviewer evidence is still unknown.';
+  await user.type(screen.getByRole('textbox', { name: translate('en', 'work.informedApproval.reason') }), note);
   await waitFor(() => expect(approve).toBeEnabled());
   await user.click(approve);
   await waitFor(() => expect(mocks.decideReview).toHaveBeenCalledWith(
     'DEMO',
     'prd',
     'approved',
-    '',
+    note,
     {
       expectedApproval: {
         run_id: 'run-1',
@@ -178,9 +182,12 @@ test('blocks approval while the visible artifact has unsaved edits', async () =>
   mocks.getOpenQuestions.mockResolvedValue({ questions: [] });
 
   render(<RouterProvider router={routerFor()} />);
-  await user.click(await screen.findByRole('button', { name: translate('en', 'review.artifact.edit') }));
+  await user.type(await screen.findByRole('textbox', { name: translate('en', 'work.informedApproval.reason') }), 'I inspected the current document.');
+  const approve = screen.getByRole('button', { name: translate('en', 'work.informedApproval.continue') });
+  await waitFor(() => expect(approve).toBeEnabled());
+  await user.click(screen.getByRole('button', { name: translate('en', 'review.artifact.edit') }));
   await user.type(screen.getByRole('textbox', { name: translate('en', 'review.artifact.content') }), '\nUnsaved edit');
 
-  expect(screen.getByRole('button', { name: translate('en', 'review.decision.approve') })).toBeDisabled();
+  expect(approve).toBeDisabled();
   expect(mocks.decideReview).not.toHaveBeenCalled();
 });

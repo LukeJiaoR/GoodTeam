@@ -3627,6 +3627,7 @@ def test_decide_approval_records_exact_approved_artifact_version(tmp_path):
         project_key="CONTENTOPS",
         approval="prd",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
         expected_run_id="run-bound",
         expected_target_type="review",
         expected_target_id="prd",
@@ -3680,6 +3681,10 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
     state.current_node = "rfc_review_gate"
     state.next_node = "await_rfc_approval"
     state.approvals["prd"] = "approved"
+    artifact = tmp_path / "approval-fixture.md"
+    artifact.write_text("# Simulated gate evidence\nFor workflow contract verification only.")
+    gate = state.next_node.removeprefix("await_").removesuffix("_approval")
+    state.artifacts[web._approval_artifact_for_gate(gate)] = str(artifact)
     StateStore(tmp_path).write_project_current(state)
 
     def fake_run_job(self, job_id):
@@ -3718,6 +3723,7 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
         project_key="CONTENTOPS",
         approval="rfc",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
 
     assert payload["approvals"]["rfc"] == "approved"
@@ -3730,6 +3736,7 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
         project_key="CONTENTOPS",
         approval="security",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
 
     assert payload["approvals"]["security"] == "approved"
@@ -3774,6 +3781,10 @@ def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch)
     state.current_node = "rfc_review_gate"
     state.next_node = "await_rfc_approval"
     state.approvals["prd"] = "approved"
+    artifact = tmp_path / "approval-fixture.md"
+    artifact.write_text("# Simulated gate evidence\nFor workflow contract verification only.")
+    gate = state.next_node.removeprefix("await_").removesuffix("_approval")
+    state.artifacts[web._approval_artifact_for_gate(gate)] = str(artifact)
     StateStore(tmp_path).write_project_current(state)
 
     def fake_run_job(self, job_id):
@@ -3808,6 +3819,7 @@ def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch)
         project_key="CONTENTOPS",
         approval="rfc",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
 
     assert payload["current_node"] == "security_review_gate"
@@ -3818,6 +3830,7 @@ def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch)
         project_key="CONTENTOPS",
         approval="security",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
 
     assert payload["current_node"] == "implementation"
@@ -3853,6 +3866,10 @@ def test_decide_approval_approves_security_and_runs_planner(tmp_path, monkeypatc
     state.current_node = "security_review_gate"
     state.next_node = "await_security_approval"
     state.approvals.update({"prd": "approved", "rfc": "approved", "security": "pending"})
+    artifact = tmp_path / "approval-fixture.md"
+    artifact.write_text("# Simulated gate evidence\nFor workflow contract verification only.")
+    gate = state.next_node.removeprefix("await_").removesuffix("_approval")
+    state.artifacts[web._approval_artifact_for_gate(gate)] = str(artifact)
     StateStore(tmp_path).write_project_current(state)
 
     def fake_run_job(self, job_id):
@@ -3875,6 +3892,7 @@ def test_decide_approval_approves_security_and_runs_planner(tmp_path, monkeypatc
         project_key="CONTENTOPS",
         approval="security",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
 
     assert payload["approvals"]["security"] == "approved"
@@ -3921,6 +3939,10 @@ def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient
     state.current_node = "rfc_review_gate"
     state.next_node = "await_rfc_approval"
     state.approvals["prd"] = "approved"
+    artifact = tmp_path / "approval-fixture.md"
+    artifact.write_text("# Simulated gate evidence\nFor workflow contract verification only.")
+    gate = state.next_node.removeprefix("await_").removesuffix("_approval")
+    state.artifacts[web._approval_artifact_for_gate(gate)] = str(artifact)
     StateStore(tmp_path).write_project_current(state)
 
     def fake_run_job(self, job_id):
@@ -3961,6 +3983,7 @@ def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient
         project_key="CONTENTOPS",
         approval="rfc",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
 
     assert payload["current_node"] == "security_review_gate"
@@ -3971,6 +3994,7 @@ def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient
         project_key="CONTENTOPS",
         approval="security",
         decision="approved",
+        note="Model-free acceptance: continue with simulated evidence to verify the workflow contract.",
     )
 
     assert payload["current_node"] == "implementation"

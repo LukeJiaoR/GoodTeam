@@ -534,7 +534,7 @@ test('routes the detail canvas Request changes into Task Assistant Intent Commit
   });
 });
 
-test('routes the detail plan task Request changes into Task Assistant Intent Commit', async () => {
+test('routes a detail plan task to its exact full Review without a direct decision', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();
   data.agile_board = {
@@ -554,9 +554,6 @@ test('routes the detail plan task Request changes into Task Assistant Intent Com
   };
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
   mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-  mocks.startChangeIntent.mockResolvedValue({
-    intent_commit: { id: 'intent-plan-1', status: 'discussing' },
-  });
 
   renderWorkPage('/projects/DEMO/work/runs/run-active?view=plan');
 
@@ -565,20 +562,18 @@ test('routes the detail plan task Request changes into Task Assistant Intent Com
   const taskDialog = within(inspector).getByRole('dialog', {
     name: 'Review RFC security boundaries',
   });
-  await userEvent.type(within(taskDialog).getByRole('textbox'), 'Add regression coverage.');
-  await userEvent.click(within(taskDialog).getByRole('button', { name: 'Request changes' }));
-
-  expect(mocks.startChangeIntent).toHaveBeenCalledWith('DEMO', 'security', {
-    run_id: 'run-active',
-    target_type: 'review',
-    target_id: 'security',
-    artifact_key: 'rfc',
-    artifact_version: 'sha256:1234567890abcdef1234567890abcdef',
-  }, { initialText: 'Add regression coverage.' });
-  expect(mocks.decideReview).not.toHaveBeenCalled();
-  await waitFor(() => {
-    expect(screen.getByTestId('location-search')).toHaveTextContent('');
+  expect(within(taskDialog).queryByRole('textbox')).not.toBeInTheDocument();
+  expect(within(taskDialog).queryByRole('button', { name: 'Request changes' })).not.toBeInTheDocument();
+  const workbench = within(taskDialog).getByRole('link', {
+    name: `${translate('en', 'work.plan.approval.openWorkbench')} →`,
   });
+  expect(workbench).toHaveAttribute('href', '/projects/DEMO/review/security');
+  await userEvent.click(workbench);
+
+  expect(await screen.findByTestId('full-review-page')).toBeVisible();
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/review/security');
+  expect(mocks.startChangeIntent).not.toHaveBeenCalled();
+  expect(mocks.decideReview).not.toHaveBeenCalled();
 });
 
 test('durably summarizes change text, supports Keep discussing, and commits only on confirm', async () => {
@@ -780,7 +775,7 @@ test('refreshes the Task Assistant brief when exact approval binding is stale', 
   expect(await screen.findByText('This approval changed after the brief was loaded.')).toBeVisible();
 });
 
-test('routes Request changes from exact Outcome details back into the Task Assistant discussion', async () => {
+test('opens exact Outcome full Review without mutating the decision', async () => {
   const data = managerReviewData();
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
@@ -788,27 +783,20 @@ test('routes Request changes from exact Outcome details back into the Task Assis
   });
   mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
   mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
-  mocks.startChangeIntent.mockResolvedValue({
-    intent_commit: { id: 'intent-from-outcome', status: 'discussing' },
-  });
   const user = userEvent.setup();
 
   renderWorkPage();
   await user.click(screen.getByRole('button', { name: 'Inspect details →' }));
   const dialog = await screen.findByRole('dialog', { name: 'Architecture' });
-  const note = '  Fix the security boundary.  \n\nKeep the existing API.\n';
-  await user.type(within(dialog).getByRole('textbox'), note);
-  await user.click(within(dialog).getByRole('button', { name: 'Request changes' }));
+  expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole('button', { name: 'Request changes' })).not.toBeInTheDocument();
+  await user.click(within(dialog).getByRole('button', { name: 'Review document', exact: true }));
 
-  expect(mocks.startChangeIntent).toHaveBeenCalledWith(
-    'DEMO',
-    'security',
-    data.team_workspace.attention_request.approval_brief.approval_target,
-    { initialText: note },
-  );
+  const review = await screen.findByRole('dialog', { name: 'Review document', exact: true });
+  expect(within(review).getByText('security', { exact: true })).toBeVisible();
+  expect(mocks.startChangeIntent).not.toHaveBeenCalled();
   expect(mocks.decideReview).not.toHaveBeenCalled();
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByRole('region', { name: 'Task Assistant' })).toBeVisible();
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work/runs/run-active');
 });
 
 test('does not lend an actionable review to another same-role Outcome', async () => {
@@ -897,7 +885,6 @@ test('requires confirmation before the Task Assistant cancels a mission', async 
   mocks.terminateRun.mockResolvedValue({ terminated: true });
 
   renderWorkPage();
-
   await userEvent.click(screen.getByRole('button', { name: 'Archive current task' }));
   expect(screen.getByText(/moves the current task to history/)).toBeVisible();
   expect(mocks.terminateRun).not.toHaveBeenCalled();

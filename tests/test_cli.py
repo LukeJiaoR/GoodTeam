@@ -56,14 +56,15 @@ def test_cli_smoke_dry_run_outputs_planned_report(tmp_path):
     assert not (tmp_path / "state" / "smoke-runs" / "latest.json").exists()
 
 
-def test_cli_smoke_failure_exits_nonzero_and_writes_report(tmp_path, monkeypatch):
+@pytest.mark.parametrize("status", ["failed", "blocked"])
+def test_cli_smoke_failure_exits_nonzero_and_writes_report(tmp_path, monkeypatch, status):
     from goodteam_os import cli
 
     def fake_run_smoke_suite(**kwargs):
         return {
-            "status": "failed",
+            "status": status,
             "report_path": str(tmp_path / "state" / "smoke-runs" / "latest.json"),
-            "runs": [{"project_key": "CONTENTOPS", "status": "failed", "classification": "target scaffold"}],
+            "runs": [{"project_key": "CONTENTOPS", "status": status, "classification": "target scaffold"}],
         }
 
     monkeypatch.setattr(cli, "run_smoke_suite", fake_run_smoke_suite)
