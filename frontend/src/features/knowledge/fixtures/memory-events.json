@@ -1,0 +1,63 @@
+{
+  "architect": {
+    "project_key": "AUDIT",
+    "role": "architect",
+    "events": [
+      {
+        "id": "mem:f8c7abd3a4d8",
+        "kind": "long-term",
+        "horizon": "long-term",
+        "role": "architect",
+        "timestamp": "2026-01-02T03:04:05+00:00",
+        "ts": "2026-01-02T03:04:05+00:00",
+        "body": "数据库迁移前使用旧备份流程",
+        "source": "contract-fixture",
+        "action": "add",
+        "is_superseded": true
+      },
+      {
+        "id": "mem:7a0ff8c939c6",
+        "kind": "long-term",
+        "horizon": "long-term",
+        "role": "architect",
+        "timestamp": "2026-01-02T03:04:05+00:00",
+        "ts": "2026-01-02T03:04:05+00:00",
+        "body": "数据库迁移前必须验证新备份",
+        "source": "contract-fixture",
+        "action": "add",
+        "is_superseded": false
+      }
+    ]
+  },
+  "qa": {
+    "project_key": "AUDIT",
+    "role": "qa",
+    "events": [
+      {
+        "id": "mem:00db8937f75e",
+        "kind": "mid-term",
+        "horizon": "mid-term",
+        "role": "qa",
+        "timestamp": "2026-01-02T03:04:05+00:00",
+        "ts": "2026-01-02T03:04:05+00:00",
+        "body": "QA 独立验证数据库回滚",
+        "source": "contract-fixture",
+        "action": "add",
+        "is_superseded": false
+      }
+    ]
+  },
+  "detail": {
+    "id": "mem:7a0ff8c939c6",
+    "role": "architect",
+    "horizon": "long-term",
+    "timestamp": "2026-01-02T03:04:05+00:00",
+    "source": "contract-fixture",
+    "text": "数据库迁移前必须验证新备份",
+    "action": "add",
+    "supersedes": "mem:f8c7abd3a4d8",
+    "superseded_by": [],
+    "is_superseded": false,
+    "cited_by_jobs": []
+  }
+}
