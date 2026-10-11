@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ArrowRight, FolderOpen, ShieldCheck, X } from 'lucide-react';
 import Button from '../../components/ui/Button';
 import InlineNotice from '../../components/ui/InlineNotice';
@@ -59,23 +59,37 @@ export default function LoadProjectPanel({
   const inputId = useId();
   const dialogRef = useRef(null);
   const inputRef = useRef(null);
+  const activeRef = useRef(true);
+  const importRequestRef = useRef(null);
   const [root, setRoot] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const t = (key, params) => translate(language, key, params);
 
   useEffect(() => {
+    activeRef.current = true;
     inputRef.current?.focus();
+    return () => {
+      activeRef.current = false;
+      importRequestRef.current = null;
+    };
   }, []);
+
+  const close = useCallback(() => {
+    // Dismissal stops adopting this request's result, not the server import.
+    activeRef.current = false;
+    importRequestRef.current = null;
+    onClose?.();
+  }, [onClose]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.defaultPrevented) return;
-      if (event.key === 'Escape') onClose?.();
+      if (event.key === 'Escape') close();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [close]);
 
   const { chooseLocalPath, directoryPickerModal } = useDirectoryPicker(
     (path) => setRoot(path),
@@ -103,7 +117,7 @@ export default function LoadProjectPanel({
 
   const submit = async (event) => {
     event?.preventDefault();
-    if (busy) return;
+    if (!activeRef.current || importRequestRef.current) return;
     const trimmedRoot = root.trim();
     if (!trimmedRoot.startsWith('/')) {
       setError({ code: 'invalid_project_root', recovery: ['choose_another_directory'] });
@@ -111,10 +125,14 @@ export default function LoadProjectPanel({
       return;
     }
 
+    const request = {};
+    importRequestRef.current = request;
+    const isCurrentRequest = () => activeRef.current && importRequestRef.current === request;
     setBusy(true);
     setError(null);
     try {
       const payload = await api.importProject({ root: trimmedRoot });
+      if (!isCurrentRequest()) return;
       if (typeof payload?.project?.project_key !== 'string' || !payload.project.project_key.trim()) {
         throw Object.assign(new Error('Invalid import response.'), {
           code: 'invalid_response',
@@ -123,11 +141,14 @@ export default function LoadProjectPanel({
       }
       onImported?.(payload);
     } catch (caught) {
-      if (!isAbortError(caught)) {
+      if (isCurrentRequest() && !isAbortError(caught)) {
         setError(caught);
       }
     } finally {
-      setBusy(false);
+      if (isCurrentRequest()) {
+        importRequestRef.current = null;
+        setBusy(false);
+      }
     }
   };
 
@@ -162,7 +183,7 @@ export default function LoadProjectPanel({
 
   return (
     <div className="projects-import-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose?.();
+      if (event.target === event.currentTarget) close();
     }}>
       <form
         ref={dialogRef}
@@ -184,7 +205,7 @@ export default function LoadProjectPanel({
           <button
             type="button"
             className="projects-icon-button"
-            onClick={onClose}
+            onClick={close}
             aria-label={t('projects.load.close')}
           >
             <X aria-hidden="true" size={18} />
@@ -228,7 +249,9 @@ export default function LoadProjectPanel({
             </div>
             <div id={`${inputId}-help`} className="projects-field-help" aria-live="polite">
               <ShieldCheck aria-hidden="true" size={14} />
-              <span>{root.trim() ? t('projects.directory.selected') : t('projects.load.boundary')}</span>
+              <span>{busy
+                ? t('projects.load.pending')
+                : root.trim() ? t('projects.directory.selected') : t('projects.load.boundary')}</span>
             </div>
           </div>
 
@@ -273,8 +296,8 @@ export default function LoadProjectPanel({
 
         </div>
         <footer className="projects-import-dialog__footer">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            {t('projects.load.cancel')}
+          <Button type="button" variant="secondary" onClick={close}>
+            {t(busy ? 'projects.load.dismiss' : 'projects.load.cancel')}
           </Button>
           <Button className="projects-load-button" type="submit" busy={busy} disabled={!root.trim()}>
             <span>{t('projects.load.action')}</span>
