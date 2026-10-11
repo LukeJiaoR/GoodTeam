@@ -4,6 +4,16 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .memory_core.context import (
+    MEMORY_CONTEXT_REASONS, PICKUP_EVENT_CHARS, PICKUP_RELEVANT_CHARS, PICKUP_SHORT_CHARS, PICKUP_SUMMARY_CHARS,
+    _bounded_context as _bounded_context, _pickup_content_digest as _pickup_content_digest,
+    _sha256_value as _sha256_value, summarize_markdown as summarize_markdown,
+    empty_pickup, generated_horizon_context, normal_pickup_content, pickup_provenance_valid,
+)
+from .memory_core.projections import (
+    IDENTITY_FIELDS as IDENTITY_FIELDS, MEMORY_HORIZONS as MEMORY_HORIZONS,
+    active_events, browse_result, event_id as legacy_event_id, normal_retrieval_events, retrieval_result,
+)
 from .memory_storage import (
     MAX_WAL_BYTES, MemoryStorageError, atomic_write, read_bytes, role_lock, serialized_role,
 )
@@ -14,20 +24,6 @@ except ImportError:  # pragma: no cover - exercised only without the optional wh
     BM25Okapi = None
 
 
-MEMORY_HORIZONS = ("long-term", "mid-term", "short-term")
-IDENTITY_FIELDS = ("timestamp", "role_key", "horizon", "action", "source", "text")
-# Prompt-facing characters are capped independently of WAL size. Valid UTF-8
-# takes at most four bytes per character, so these also bound encoded bytes.
-PICKUP_SUMMARY_CHARS = 600
-PICKUP_SHORT_CHARS = 1600
-PICKUP_EVENT_CHARS = 1600
-PICKUP_RELEVANT_CHARS = 4000
-MEMORY_CONTEXT_REASONS = frozenset({
-    "wal_unreadable", "wal_changed_during_read", "wal_changed_after_capture",
-    "legacy_mixed_after_correction", "legacy_source_unreadable", "legacy_changed_during_read",
-    "legacy_changed_after_capture", "source_unreadable", "pickup_unverifiable",
-    "events_no_longer_active", "retrieval_unavailable", "history_unverifiable",
-})
 COSINE_FLOOR = 0.05  # keep weak/noisy matches out while retaining clear semantic hits
 
 _TOKEN_RE = re.compile(r"[^\W_]+")
@@ -37,41 +33,6 @@ _HAN_RE = re.compile(r"([\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000
 def slug(value: str) -> str:
     cleaned = "".join(char.lower() if char.isalnum() else "-" for char in value.strip())
     return "-".join(part for part in cleaned.split("-") if part) or "project"
-
-
-def summarize_markdown(content: str) -> str:
-    headings = [
-        line.strip("# ").strip()
-        for line in content.splitlines()
-        if line.startswith("#") and line.strip("# ").strip()
-    ][:8]
-    bullets = [
-        line.strip()[2:].strip()
-        for line in content.splitlines()
-        if line.strip().startswith("- ")
-    ][:12]
-    parts = []
-    if headings:
-        parts.append("Headings: " + "; ".join(headings))
-    if bullets:
-        parts.append("Signals: " + "; ".join(bullets))
-    return " | ".join(parts) if parts else content.strip()[:600]
-
-
-
-def _bounded_context(text: str, limit: int, marker: str = "[Memory context truncated]") -> str:
-    """Hard character/UTF-8 bounds, including the marker, for prompt text."""
-    if len(text) <= limit and len(text.encode("utf-8")) <= limit * 4:
-        return text
-    suffix = "\n" + marker
-    return text[:max(0, limit - len(suffix))] + suffix[:limit]
-
-
-def _pickup_content_digest(packet: dict[str, object]) -> str:
-    content = {key: packet.get(key) for key in ("role_key", "short_term", "summaries", "relevant_events", "event_count", "context_status", "context_reasons")}
-    provenance = packet.get("provenance")
-    content["provenance"] = {key: value for key, value in provenance.items() if key != "content_sha256"} if isinstance(provenance, dict) else provenance
-    return hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def _wal_prefix_matches(raw: bytes, count: int, digest: str, size: int | None = None) -> bool:
@@ -103,10 +64,6 @@ def _wal_prefix_matches(raw: bytes, count: int, digest: str, size: int | None = 
                 if candidate.hexdigest() == digest:
                     return True
     return False
-
-
-def _sha256_value(value: object) -> bool:
-    return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None
 
 
 def tokenize(text: str) -> list[str]:
@@ -622,11 +579,7 @@ class RoleMemoryStore:
         return current == digest
 
     def _empty_pickup(self, role_key: str, reason: str) -> dict[str, object]:
-        return {
-            "role_key": role_key, "event_count": 0, "short_term": "",
-            "summaries": {"long-term": "", "mid-term": ""}, "relevant_events": [],
-            "context_status": "unavailable", "context_reasons": [reason],
-        }
+        return empty_pickup(role_key, reason)
 
     @serialized_role(create=False, missing="_empty_memory_sources")
     def _capture_memory_sources(self, role_key: str):
@@ -671,17 +624,9 @@ class RoleMemoryStore:
         short_limit = min(PICKUP_SHORT_CHARS, max(0, int(max_short_chars)))
         for horizon in MEMORY_HORIZONS:
             horizon_events = [event for event in active if event["horizon"] == horizon]
-            # Preserve the existing 12-bullet summary budget and add a hard
-            # UTF-8 cap. These dependency IDs do not claim every fact was used.
-            selected = horizon_events if horizon == "short-term" else horizon_events[:12]
-            generated = "\n".join(f"- {event['text']}" for event in selected)
-            generated = _bounded_context(generated, short_limit if horizon == "short-term" else PICKUP_SUMMARY_CHARS)
-            if horizon != "short-term":
-                generated = _bounded_context(summarize_markdown(generated), PICKUP_SUMMARY_CHARS)
-            generated_sources[horizon] = {
-                "source_kind": "wal_generated", "event_ids": [self._event_id(event) for event in selected],
-                "sha256": hashlib.sha256(generated.encode("utf-8")).hexdigest(),
-            }
+            generated, generated_sources[horizon] = generated_horizon_context(
+                horizon, horizon_events, short_limit=short_limit, identify=self._event_id,
+            )
             path = self.memory_path(role_key, horizon)
             legacy = ""
             source = {"source_kind": "legacy_mixed", "path": str(path.relative_to(self.project_root)),
@@ -756,30 +701,9 @@ class RoleMemoryStore:
         return source.get("sha256") == hashlib.sha256(raw).hexdigest()
 
     def _pickup_provenance_valid(self, role_key: str, packet: dict) -> bool:
-        provenance = packet.get("provenance")
-        if (not isinstance(provenance, dict) or provenance.get("schema_version") != "memory_pickup.v1"
-                or not _sha256_value(provenance.get("wal_sha256"))
-                or type(provenance.get("wal_event_count")) is not int or provenance["wal_event_count"] < 0
-                or type(provenance.get("wal_bytes")) is not int or provenance["wal_bytes"] < 0
-                or provenance.get("content_sha256") != _pickup_content_digest(packet)):
-            return False
-        for key in ("legacy_sources", "generated_sources"):
-            if not isinstance(provenance.get(key), dict) or set(provenance[key]) != set(MEMORY_HORIZONS):
-                return False
-        for horizon in MEMORY_HORIZONS:
-            legacy = provenance["legacy_sources"][horizon]
-            generated = provenance["generated_sources"][horizon]
-            if (not isinstance(legacy, dict) or legacy.get("source_kind") != "legacy_mixed"
-                    or legacy.get("status") not in ("compatibility_unverified", "withheld_after_correction", "unavailable")
-                    or legacy.get("path") != str(self.memory_path(role_key, horizon).relative_to(self.project_root))
-                    or (legacy["status"] != "unavailable" and not _sha256_value(legacy.get("sha256")))):
-                return False
-            if (not isinstance(generated, dict) or generated.get("source_kind") != "wal_generated"
-                    or not _sha256_value(generated.get("sha256")) or not isinstance(generated.get("event_ids"), list)
-                    or any(not isinstance(event_id, str) or re.fullmatch(r"mem:[a-f0-9]{12}", event_id) is None
-                           for event_id in generated["event_ids"])):
-                return False
-        return True
+        legacy_paths = {horizon: str(self.memory_path(role_key, horizon).relative_to(self.project_root))
+                        for horizon in MEMORY_HORIZONS}
+        return pickup_provenance_valid(packet, legacy_paths)
 
     def validate_pickup_packet(self, packet: object) -> dict[str, object]:
         """Filter a frozen packet; never retrieve or add a newer fact at use time."""
@@ -958,56 +882,22 @@ Role: `{role_key}`
             atomic_write(path, raw + (separator + heading + "".join(additions)).encode("utf-8"))
 
     def _event_id(self, event: dict[str, object]) -> str:
-        identity_payload = {key: event.get(key) for key in IDENTITY_FIELDS}
-        payload = json.dumps(identity_payload, sort_keys=True, ensure_ascii=False)
-        return "mem:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+        return legacy_event_id(event)
 
     def _active_events(self, events: list[dict[str, str]]) -> list[dict[str, str]]:
-        superseded_ids = {
-            str(event.get("supersedes", "")).strip()
-            for event in events
-            if isinstance(event.get("supersedes"), str) and str(event.get("supersedes", "")).strip()
-        }
-        return [event for event in events if self._event_id(event) not in superseded_ids]
+        return active_events(events, identify=self._event_id)
 
     def _normal_retrieval_events(self, events: list[dict[str, str]]) -> list[dict[str, str]]:
-        return [event for event in events if str(event.get("source", "")).split(":", 1)[0] != "worker_failure"]
+        return normal_retrieval_events(events)
 
     def _normal_pickup_content(self, content: str) -> str:
-        lines = [
-            line
-            for line in content.splitlines()
-            if " Source: `worker_failure:" not in line
-        ]
-        return "\n".join(lines).rstrip()
+        return normal_pickup_content(content)
 
     def _retrieval_result(self, score: float, event: dict[str, object]) -> dict[str, object]:
-        return {
-            "id": self._event_id(event),
-            "score": float(score),
-            "horizon": event.get("horizon", ""),
-            "text": event.get("text", ""),
-            "source": event.get("source", ""),
-            "timestamp": event.get("timestamp", ""),
-        }
+        return retrieval_result(score, event, identifier=self._event_id(event))
 
     def _browse_result(self, event: dict[str, object], *, active_ids: set[str]) -> dict[str, object]:
-        event_id = self._event_id(event)
-        text = str(event.get("text", ""))
-        body = text if len(text) <= 240 else text[:237].rstrip() + "..."
-        timestamp = str(event.get("timestamp", ""))
-        return {
-            "id": event_id,
-            "kind": str(event.get("horizon", "")),
-            "horizon": str(event.get("horizon", "")),
-            "role": str(event.get("role_key", "")),
-            "timestamp": timestamp,
-            "ts": timestamp,
-            "body": body,
-            "source": str(event.get("source", "")),
-            "action": str(event.get("action", "")),
-            "is_superseded": event_id not in active_ids,
-        }
+        return browse_result(event, active_ids=active_ids, identifier=self._event_id(event))
 
     def _rank_events(
         self,

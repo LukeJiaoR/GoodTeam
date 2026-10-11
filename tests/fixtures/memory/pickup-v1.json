@@ -1,0 +1,1334 @@
+{
+  "schema_version": "memory_compatibility_fixture.v1",
+  "baseline_commit": "1c7953ad6e1912960ca6901764abc6c513cfa12e",
+  "baseline_tree": "d74e3d6ef3bec3d9f9f4374b821fa28d7d816ad6",
+  "fixed_time": "2026-01-02T03:04:05+00:00",
+  "cases": [
+    {
+      "name": "empty",
+      "query": "",
+      "operations": [],
+      "expected_capture": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 0,
+        "short_term": "",
+        "summaries": {
+          "long-term": "",
+          "mid-term": ""
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "wal_event_count": 0,
+          "wal_bytes": 0,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "content_sha256": "fef7b87b3780a95120fd76807f0a702f7adb0c2bc57c5d164aea2de5e170ddac"
+        }
+      },
+      "expected_validation": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 0,
+        "short_term": "",
+        "summaries": {
+          "long-term": "",
+          "mid-term": ""
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "wal_event_count": 0,
+          "wal_bytes": 0,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "content_sha256": "fef7b87b3780a95120fd76807f0a702f7adb0c2bc57c5d164aea2de5e170ddac"
+        },
+        "relevant_events": []
+      },
+      "expected_events": []
+    },
+    {
+      "name": "legacy_unicode",
+      "query": "",
+      "legacy": {
+        "long-term": "# 手写约定\n- SQLite keeps local state.\n",
+        "mid-term": "# Notes\n- Prepare rollout.\n",
+        "short-term": "# Pickup\n- Resume 数据库迁移.\n"
+      },
+      "operations": [],
+      "expected_capture": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 0,
+        "short_term": "\n\nLegacy notes (unclassified):\n# Pickup\n- Resume 数据库迁移.",
+        "summaries": {
+          "long-term": "\n\nLegacy notes (unclassified):\nHeadings: 手写约定 | Signals: SQLite keeps local state.",
+          "mid-term": "\n\nLegacy notes (unclassified):\nHeadings: Notes | Signals: Prepare rollout."
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "wal_event_count": 0,
+          "wal_bytes": 0,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "5846a10c33f757b6bbc1256f9e40df6ea5b4f2d440af3b952b8c3c5c928019a6"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "32ad4a3b5fa2e32591ffe9180256f3ef6ee513832f93b944c042ca96b5bd081f"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "d81326ec7a4a0e52c6221582457d281c70eb49e52f4b67b69a6364f6f73e6cec"
+            }
+          },
+          "content_sha256": "16d8e7005f1714c884caaa5ac8262a574935d2072f86b5f58ecf11a1e7c7b05b"
+        }
+      },
+      "expected_validation": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 0,
+        "short_term": "\n\nLegacy notes (unclassified):\n# Pickup\n- Resume 数据库迁移.",
+        "summaries": {
+          "long-term": "\n\nLegacy notes (unclassified):\nHeadings: 手写约定 | Signals: SQLite keeps local state.",
+          "mid-term": "\n\nLegacy notes (unclassified):\nHeadings: Notes | Signals: Prepare rollout."
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "wal_event_count": 0,
+          "wal_bytes": 0,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "5846a10c33f757b6bbc1256f9e40df6ea5b4f2d440af3b952b8c3c5c928019a6"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "32ad4a3b5fa2e32591ffe9180256f3ef6ee513832f93b944c042ca96b5bd081f"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "d81326ec7a4a0e52c6221582457d281c70eb49e52f4b67b69a6364f6f73e6cec"
+            }
+          },
+          "content_sha256": "16d8e7005f1714c884caaa5ac8262a574935d2072f86b5f58ecf11a1e7c7b05b"
+        },
+        "relevant_events": []
+      },
+      "expected_events": []
+    },
+    {
+      "name": "active_horizons",
+      "query": "数据库迁移",
+      "operations": [
+        {
+          "text": "数据库迁移使用 SQLite。",
+          "horizon": "long-term"
+        },
+        {
+          "text": "本周数据库迁移先写回归用例。",
+          "horizon": "mid-term"
+        },
+        {
+          "text": "下一步核验数据库迁移。",
+          "horizon": "short-term"
+        },
+        {
+          "text": "数据库迁移失败日志不作为默认经验。",
+          "horizon": "long-term",
+          "source": "worker_failure:synthetic"
+        }
+      ],
+      "expected_capture": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 4,
+        "short_term": "- 下一步核验数据库迁移。\n\nLegacy notes (unclassified):\n# architect Short-Term Memory\n\nProject: Configured Project\nRole: `architect`\n\n## Purpose\n\n- Current interrupted work, pickup notes, next actions, blockers, and recent handoffs live here.\n\n## Pickup Notes\n\n- No role-specific notes recorded yet.\n\n## Update Rules\n\n- Keep secrets out.\n- Prefer dated bullets with source references.\n- Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.\n\n## Memory Events\n\n- 下一步核验数据库迁移。 Source: `synthetic-job/result.md`.",
+        "summaries": {
+          "long-term": "Signals: 数据库迁移使用 SQLite。\n\nLegacy notes (unclassified):\nHeadings: architect Long-Term Memory; Purpose; Pickup Notes; Update Rules; Memory Events | Signals: Stable role-specific project facts, contracts, ownership rules, and durable conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.; 数据库迁移使用 SQLite。 Source: `synthetic-job/result.md`.",
+          "mid-term": "Signals: 本周数据库迁移先写回归用例。\n\nLegacy notes (unclassified):\nHeadings: architect Mid-Term Memory; Purpose; Pickup Notes; Update Rules; Memory Events | Signals: Active initiatives, in-progress decisions, current risks, and role conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.; 本周数据库迁移先写回归用例。 Source: `synthetic-job/result.md`."
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "d19e72ecb8a416621a083ed45dc363ce981a0632b49cda4b1e934ba3a4c20114",
+          "wal_event_count": 4,
+          "wal_bytes": 940,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:9313589d6843"
+              ],
+              "sha256": "26ed443b58086c26b1bf04cd901657845efc5faad4cdf51d94658cd7b5da5f58"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:85752008f60c"
+              ],
+              "sha256": "e48011cc0398b60e874123444f876a13c9a5c48a8658cd856c015cabe52a69ae"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:bd418a45abcb"
+              ],
+              "sha256": "fab4e552cd6a62b43566e3a43a24ef8e083d67bd62644f697b6ea317ab500f96"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "0d41e60aff56aa351f7cdd75bf3026286c30c86aa13acb0bd9da2ebe5dc69919"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "bb52f63407021abfcbcf479cbbdb648d18fb073328910d3acdc9dd03cf7e04fd"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "08ddf8d7b23889dfea2a5bef026aaab674f098f2ea38451bad65e488582a2f68"
+            }
+          },
+          "content_sha256": "abbe85316d070544dd99b6eaa4c062ec76bfe696f25dd826bb6083c0500c4253"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:85752008f60c",
+            "score": 4.466105596088759,
+            "horizon": "mid-term",
+            "text": "本周数据库迁移先写回归用例。",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:bd418a45abcb",
+            "score": 4.461700473416677,
+            "horizon": "short-term",
+            "text": "下一步核验数据库迁移。",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:9313589d6843",
+            "score": 4.457048621669058,
+            "horizon": "long-term",
+            "text": "数据库迁移使用 SQLite。",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_validation": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 4,
+        "short_term": "- 下一步核验数据库迁移。\n\nLegacy notes (unclassified):\n# architect Short-Term Memory\n\nProject: Configured Project\nRole: `architect`\n\n## Purpose\n\n- Current interrupted work, pickup notes, next actions, blockers, and recent handoffs live here.\n\n## Pickup Notes\n\n- No role-specific notes recorded yet.\n\n## Update Rules\n\n- Keep secrets out.\n- Prefer dated bullets with source references.\n- Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.\n\n## Memory Events\n\n- 下一步核验数据库迁移。 Source: `synthetic-job/result.md`.",
+        "summaries": {
+          "long-term": "Signals: 数据库迁移使用 SQLite。\n\nLegacy notes (unclassified):\nHeadings: architect Long-Term Memory; Purpose; Pickup Notes; Update Rules; Memory Events | Signals: Stable role-specific project facts, contracts, ownership rules, and durable conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.; 数据库迁移使用 SQLite。 Source: `synthetic-job/result.md`.",
+          "mid-term": "Signals: 本周数据库迁移先写回归用例。\n\nLegacy notes (unclassified):\nHeadings: architect Mid-Term Memory; Purpose; Pickup Notes; Update Rules; Memory Events | Signals: Active initiatives, in-progress decisions, current risks, and role conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.; 本周数据库迁移先写回归用例。 Source: `synthetic-job/result.md`."
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "d19e72ecb8a416621a083ed45dc363ce981a0632b49cda4b1e934ba3a4c20114",
+          "wal_event_count": 4,
+          "wal_bytes": 940,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:9313589d6843"
+              ],
+              "sha256": "26ed443b58086c26b1bf04cd901657845efc5faad4cdf51d94658cd7b5da5f58"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:85752008f60c"
+              ],
+              "sha256": "e48011cc0398b60e874123444f876a13c9a5c48a8658cd856c015cabe52a69ae"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:bd418a45abcb"
+              ],
+              "sha256": "fab4e552cd6a62b43566e3a43a24ef8e083d67bd62644f697b6ea317ab500f96"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "0d41e60aff56aa351f7cdd75bf3026286c30c86aa13acb0bd9da2ebe5dc69919"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "bb52f63407021abfcbcf479cbbdb648d18fb073328910d3acdc9dd03cf7e04fd"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "08ddf8d7b23889dfea2a5bef026aaab674f098f2ea38451bad65e488582a2f68"
+            }
+          },
+          "content_sha256": "abbe85316d070544dd99b6eaa4c062ec76bfe696f25dd826bb6083c0500c4253"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:85752008f60c",
+            "score": 4.466105596088759,
+            "horizon": "mid-term",
+            "text": "本周数据库迁移先写回归用例。",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:bd418a45abcb",
+            "score": 4.461700473416677,
+            "horizon": "short-term",
+            "text": "下一步核验数据库迁移。",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:9313589d6843",
+            "score": 4.457048621669058,
+            "horizon": "long-term",
+            "text": "数据库迁移使用 SQLite。",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_events": [
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "long-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "数据库迁移使用 SQLite。"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "mid-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "本周数据库迁移先写回归用例。"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "short-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "下一步核验数据库迁移。"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "long-term",
+          "action": "add",
+          "source": "worker_failure:synthetic",
+          "text": "数据库迁移失败日志不作为默认经验。"
+        }
+      ]
+    },
+    {
+      "name": "corrected",
+      "query": "database",
+      "operations": [
+        {
+          "text": "database OLD_RULE",
+          "horizon": "long-term"
+        },
+        {
+          "text": "database KEEP_RULE",
+          "horizon": "long-term"
+        },
+        {
+          "text": "database NEW_RULE",
+          "horizon": "long-term",
+          "supersedes_index": 0
+        }
+      ],
+      "expected_capture": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 3,
+        "short_term": "",
+        "summaries": {
+          "long-term": "Signals: database KEEP_RULE; database NEW_RULE",
+          "mid-term": ""
+        },
+        "context_status": "partial",
+        "context_reasons": [
+          "legacy_mixed_after_correction"
+        ],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "f7fd3ea3cd23a8800586883c91e35f2dc892e8c7eee71477e70720e769032a46",
+          "wal_event_count": 3,
+          "wal_bytes": 560,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:f16bbe265382",
+                "mem:032e231fb47c"
+              ],
+              "sha256": "82babe1c08a61ecbf349113e9e87996dbb45001449021b012558dc119fd1b408"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "withheld_after_correction",
+              "sha256": "a4e534abcc2c023fc2df01c9365c13f4c9178c9cf3d8c7a9aba7ef231b051302"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "withheld_after_correction",
+              "sha256": "748bba253b31347c92d5291854c8acce76479832e3ca3c019002049c12ce62e8"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "withheld_after_correction",
+              "sha256": "3bccd80c67c758487941c8b7b9ba5c6a140ff34324e4f54767b78a6e20693d0e"
+            }
+          },
+          "content_sha256": "57f633a94883497505c3c2f9d46320e95288ab5902d24ce2c4d0a5a36b46c97a"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:f16bbe265382",
+            "score": -0.20117973905426256,
+            "horizon": "long-term",
+            "text": "database KEEP_RULE",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:032e231fb47c",
+            "score": -0.20117973905426256,
+            "horizon": "long-term",
+            "text": "database NEW_RULE",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_validation": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 3,
+        "short_term": "",
+        "summaries": {
+          "long-term": "Signals: database KEEP_RULE; database NEW_RULE",
+          "mid-term": ""
+        },
+        "context_status": "partial",
+        "context_reasons": [
+          "legacy_mixed_after_correction"
+        ],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "f7fd3ea3cd23a8800586883c91e35f2dc892e8c7eee71477e70720e769032a46",
+          "wal_event_count": 3,
+          "wal_bytes": 560,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:f16bbe265382",
+                "mem:032e231fb47c"
+              ],
+              "sha256": "82babe1c08a61ecbf349113e9e87996dbb45001449021b012558dc119fd1b408"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "withheld_after_correction",
+              "sha256": "a4e534abcc2c023fc2df01c9365c13f4c9178c9cf3d8c7a9aba7ef231b051302"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "withheld_after_correction",
+              "sha256": "748bba253b31347c92d5291854c8acce76479832e3ca3c019002049c12ce62e8"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "withheld_after_correction",
+              "sha256": "3bccd80c67c758487941c8b7b9ba5c6a140ff34324e4f54767b78a6e20693d0e"
+            }
+          },
+          "content_sha256": "57f633a94883497505c3c2f9d46320e95288ab5902d24ce2c4d0a5a36b46c97a"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:f16bbe265382",
+            "score": -0.20117973905426256,
+            "horizon": "long-term",
+            "text": "database KEEP_RULE",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:032e231fb47c",
+            "score": -0.20117973905426256,
+            "horizon": "long-term",
+            "text": "database NEW_RULE",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_events": [
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "long-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database OLD_RULE"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "long-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database KEEP_RULE"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "long-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database NEW_RULE",
+          "supersedes": "mem:7e83689bb632"
+        }
+      ]
+    },
+    {
+      "name": "frozen_correction",
+      "query": "database",
+      "operations": [
+        {
+          "text": "database OLD_RULE",
+          "horizon": "long-term"
+        },
+        {
+          "text": "database KEEP_RULE",
+          "horizon": "long-term"
+        }
+      ],
+      "after_capture": [
+        {
+          "text": "database NEW_RULE",
+          "horizon": "long-term",
+          "supersedes_index": 0
+        }
+      ],
+      "expected_capture": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 2,
+        "short_term": "\n\nLegacy notes (unclassified):\n# architect Short-Term Memory\n\nProject: Configured Project\nRole: `architect`\n\n## Purpose\n\n- Current interrupted work, pickup notes, next actions, blockers, and recent handoffs live here.\n\n## Pickup Notes\n\n- No role-specific notes recorded yet.\n\n## Update Rules\n\n- Keep secrets out.\n- Prefer dated bullets with source references.\n- Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.",
+        "summaries": {
+          "long-term": "Signals: database OLD_RULE; database KEEP_RULE\n\nLegacy notes (unclassified):\nHeadings: architect Long-Term Memory; Purpose; Pickup Notes; Update Rules; Memory Events | Signals: Stable role-specific project facts, contracts, ownership rules, and durable conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.; database OLD_RULE Source: `synthetic-job/result.md`.; database KEEP_RULE Source: `synthetic-job/result.md`.",
+          "mid-term": "\n\nLegacy notes (unclassified):\nHeadings: architect Mid-Term Memory; Purpose; Pickup Notes; Update Rules | Signals: Active initiatives, in-progress decisions, current risks, and role conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary."
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "dd8e0d34d2e286dc5a7d033d52f0c79bfe8d965b1c7591e6e615c7f00351b729",
+          "wal_event_count": 2,
+          "wal_bytes": 351,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:7e83689bb632",
+                "mem:f16bbe265382"
+              ],
+              "sha256": "126ca8b5792fb2da7fd65a3be54e6c43ff5a9353dd8df289f51566a74ae43521"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "4e98566a6c694febd7f39dab746ff2d16bb0bbffb49b8dcfb19944ab93003567"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "748bba253b31347c92d5291854c8acce76479832e3ca3c019002049c12ce62e8"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "3bccd80c67c758487941c8b7b9ba5c6a140ff34324e4f54767b78a6e20693d0e"
+            }
+          },
+          "content_sha256": "f1a8b05d54b6f3a77e144e5283f905546843ff66508240d053bec2579de94881"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:7e83689bb632",
+            "score": -0.20117973905426256,
+            "horizon": "long-term",
+            "text": "database OLD_RULE",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:f16bbe265382",
+            "score": -0.20117973905426256,
+            "horizon": "long-term",
+            "text": "database KEEP_RULE",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_validation": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 2,
+        "short_term": "",
+        "summaries": {
+          "long-term": "",
+          "mid-term": ""
+        },
+        "context_status": "partial",
+        "context_reasons": [
+          "events_no_longer_active",
+          "wal_changed_after_capture"
+        ],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "dd8e0d34d2e286dc5a7d033d52f0c79bfe8d965b1c7591e6e615c7f00351b729",
+          "wal_event_count": 2,
+          "wal_bytes": 351,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:7e83689bb632",
+                "mem:f16bbe265382"
+              ],
+              "sha256": "126ca8b5792fb2da7fd65a3be54e6c43ff5a9353dd8df289f51566a74ae43521"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "4e98566a6c694febd7f39dab746ff2d16bb0bbffb49b8dcfb19944ab93003567"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "748bba253b31347c92d5291854c8acce76479832e3ca3c019002049c12ce62e8"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "3bccd80c67c758487941c8b7b9ba5c6a140ff34324e4f54767b78a6e20693d0e"
+            }
+          },
+          "content_sha256": "f1a8b05d54b6f3a77e144e5283f905546843ff66508240d053bec2579de94881"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:f16bbe265382",
+            "score": -0.20117973905426256,
+            "horizon": "long-term",
+            "text": "database KEEP_RULE",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_events": [
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "long-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database OLD_RULE"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "long-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database KEEP_RULE"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "long-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database NEW_RULE",
+          "supersedes": "mem:7e83689bb632"
+        }
+      ]
+    },
+    {
+      "name": "frozen_append",
+      "query": "database",
+      "operations": [
+        {
+          "text": "database KEEP_RULE",
+          "horizon": "mid-term"
+        }
+      ],
+      "after_capture": [
+        {
+          "text": "database LATER_RULE",
+          "horizon": "mid-term"
+        }
+      ],
+      "expected_capture": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 1,
+        "short_term": "\n\nLegacy notes (unclassified):\n# architect Short-Term Memory\n\nProject: Configured Project\nRole: `architect`\n\n## Purpose\n\n- Current interrupted work, pickup notes, next actions, blockers, and recent handoffs live here.\n\n## Pickup Notes\n\n- No role-specific notes recorded yet.\n\n## Update Rules\n\n- Keep secrets out.\n- Prefer dated bullets with source references.\n- Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.",
+        "summaries": {
+          "long-term": "\n\nLegacy notes (unclassified):\nHeadings: architect Long-Term Memory; Purpose; Pickup Notes; Update Rules | Signals: Stable role-specific project facts, contracts, ownership rules, and durable conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.",
+          "mid-term": "Signals: database KEEP_RULE\n\nLegacy notes (unclassified):\nHeadings: architect Mid-Term Memory; Purpose; Pickup Notes; Update Rules; Memory Events | Signals: Active initiatives, in-progress decisions, current risks, and role conventions live here.; No role-specific notes recorded yet.; Keep secrets out.; Prefer dated bullets with source references.; Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.; database KEEP_RULE Source: `synthetic-job/result.md`."
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "ac173be8e9fe6dcfc4e679516b8236094f0db743817070cf6327c7ff6dcae800",
+          "wal_event_count": 1,
+          "wal_bytes": 175,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:c73b33d608ec"
+              ],
+              "sha256": "cce8abd27ae1bacf179a561fc7ad7f9dc700c7cf180de4f40d7695568a5fd800"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "bc411a50c38c5d89d8badb63cf35ffaa78f2d779820ae47647ec16a005a54bdb"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "c99eb389a84b3f242afb53de7d7ce4183d132db6fdf85ef598398670c5a1ad34"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "3bccd80c67c758487941c8b7b9ba5c6a140ff34324e4f54767b78a6e20693d0e"
+            }
+          },
+          "content_sha256": "a580b1c82d995e86464e5576f14acbe7d47c47e2d90d250abf7211856e332270"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:c73b33d608ec",
+            "score": -0.2746530721670274,
+            "horizon": "mid-term",
+            "text": "database KEEP_RULE",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_validation": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 1,
+        "short_term": "",
+        "summaries": {
+          "long-term": "",
+          "mid-term": ""
+        },
+        "context_status": "partial",
+        "context_reasons": [
+          "wal_changed_after_capture"
+        ],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "ac173be8e9fe6dcfc4e679516b8236094f0db743817070cf6327c7ff6dcae800",
+          "wal_event_count": 1,
+          "wal_bytes": 175,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:c73b33d608ec"
+              ],
+              "sha256": "cce8abd27ae1bacf179a561fc7ad7f9dc700c7cf180de4f40d7695568a5fd800"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [],
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "bc411a50c38c5d89d8badb63cf35ffaa78f2d779820ae47647ec16a005a54bdb"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "c99eb389a84b3f242afb53de7d7ce4183d132db6fdf85ef598398670c5a1ad34"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "3bccd80c67c758487941c8b7b9ba5c6a140ff34324e4f54767b78a6e20693d0e"
+            }
+          },
+          "content_sha256": "a580b1c82d995e86464e5576f14acbe7d47c47e2d90d250abf7211856e332270"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:c73b33d608ec",
+            "score": -0.2746530721670274,
+            "horizon": "mid-term",
+            "text": "database KEEP_RULE",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_events": [
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "mid-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database KEEP_RULE"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "mid-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database LATER_RULE"
+        }
+      ]
+    },
+    {
+      "name": "hard_budgets",
+      "query": "database",
+      "max_short_chars": 137,
+      "operations": [
+        {
+          "text": "database LONG 中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中",
+          "horizon": "long-term"
+        },
+        {
+          "text": "database MID 字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字",
+          "horizon": "mid-term"
+        },
+        {
+          "text": "database SHORT 记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记",
+          "horizon": "short-term"
+        }
+      ],
+      "expected_capture": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 3,
+        "short_term": "- database SHORT 记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记\n[Short-term memory truncated]",
+        "summaries": {
+          "long-term": "Signals: database LONG 中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中\n[Memory context truncated]",
+          "mid-term": "Signals: database MID 字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字\n[Memory context truncated]"
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "654a57099f9109ee1ca6a4a3b4cbe5476e9f51b1195cbf3e641177159da8dbb5",
+          "wal_event_count": 3,
+          "wal_bytes": 40116,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:b465e52279f2"
+              ],
+              "sha256": "d3d330e5c367d65a5f5ea1b8dade4b05c69b21b63deda25c42f7ea2d285aa0ac"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:11f28d63dc19"
+              ],
+              "sha256": "0e0151ba036f67b9a49ba1ea33296025fae85156201856df433062f87004ee91"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:15482314da1d"
+              ],
+              "sha256": "215d2670234ff52ccafb0171b2d243afbc469354f8d497377ca254ec1ae35eb1"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "a7ed967a7276f795d616e99a8ba502ce9dd6e62fc2ffa9f9fb5a204793f49aab"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "b6c1af58bc48f80dbd5f8767edcf5c60615b26753334747a040c495c3b211b7e"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "756c4d00efe357e360efc8f51317a1053b10c097805180ac03953ee5e271e39d"
+            }
+          },
+          "content_sha256": "2c38ed8ecd28a236b0e5cfba0453f1387bb2f47677b18fab5b7dfe5e3ab09d5f"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:b465e52279f2",
+            "score": 0.06628801162096506,
+            "horizon": "long-term",
+            "text": "database LONG 中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中\n[Memory context truncated]",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:11f28d63dc19",
+            "score": 0.06628801162096506,
+            "horizon": "mid-term",
+            "text": "database MID 字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字\n[Memory context truncated]",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:15482314da1d",
+            "score": 0.06628801162096506,
+            "horizon": "short-term",
+            "text": "database SHORT 记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记\n[Memory context truncated]",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_validation": {
+        "role_key": "architect",
+        "paths": {
+          "long-term": "<PROJECT>/.goodteam/memory/roles/architect/long-term.md",
+          "mid-term": "<PROJECT>/.goodteam/memory/roles/architect/mid-term.md",
+          "short-term": "<PROJECT>/.goodteam/memory/roles/architect/short-term.md"
+        },
+        "event_count": 3,
+        "short_term": "- database SHORT 记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记\n[Short-term memory truncated]",
+        "summaries": {
+          "long-term": "Signals: database LONG 中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中\n[Memory context truncated]",
+          "mid-term": "Signals: database MID 字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字\n[Memory context truncated]"
+        },
+        "context_status": "available",
+        "context_reasons": [],
+        "provenance": {
+          "schema_version": "memory_pickup.v1",
+          "wal_sha256": "654a57099f9109ee1ca6a4a3b4cbe5476e9f51b1195cbf3e641177159da8dbb5",
+          "wal_event_count": 3,
+          "wal_bytes": 40116,
+          "generated_sources": {
+            "long-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:b465e52279f2"
+              ],
+              "sha256": "d3d330e5c367d65a5f5ea1b8dade4b05c69b21b63deda25c42f7ea2d285aa0ac"
+            },
+            "mid-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:11f28d63dc19"
+              ],
+              "sha256": "0e0151ba036f67b9a49ba1ea33296025fae85156201856df433062f87004ee91"
+            },
+            "short-term": {
+              "source_kind": "wal_generated",
+              "event_ids": [
+                "mem:15482314da1d"
+              ],
+              "sha256": "215d2670234ff52ccafb0171b2d243afbc469354f8d497377ca254ec1ae35eb1"
+            }
+          },
+          "legacy_sources": {
+            "long-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/long-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "a7ed967a7276f795d616e99a8ba502ce9dd6e62fc2ffa9f9fb5a204793f49aab"
+            },
+            "mid-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/mid-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "b6c1af58bc48f80dbd5f8767edcf5c60615b26753334747a040c495c3b211b7e"
+            },
+            "short-term": {
+              "source_kind": "legacy_mixed",
+              "path": ".goodteam/memory/roles/architect/short-term.md",
+              "status": "compatibility_unverified",
+              "sha256": "756c4d00efe357e360efc8f51317a1053b10c097805180ac03953ee5e271e39d"
+            }
+          },
+          "content_sha256": "2c38ed8ecd28a236b0e5cfba0453f1387bb2f47677b18fab5b7dfe5e3ab09d5f"
+        },
+        "relevant_events": [
+          {
+            "id": "mem:b465e52279f2",
+            "score": 0.06628801162096506,
+            "horizon": "long-term",
+            "text": "database LONG 中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中\n[Memory context truncated]",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:11f28d63dc19",
+            "score": 0.06628801162096506,
+            "horizon": "mid-term",
+            "text": "database MID 字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字\n[Memory context truncated]",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          },
+          {
+            "id": "mem:15482314da1d",
+            "score": 0.06628801162096506,
+            "horizon": "short-term",
+            "text": "database SHORT 记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记\n[Memory context truncated]",
+            "source": "synthetic-job/result.md",
+            "timestamp": "2026-01-02T03:04:05+00:00"
+          }
+        ]
+      },
+      "expected_events": [
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "long-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database LONG 中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "mid-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database MID 字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字字"
+        },
+        {
+          "timestamp": "2026-01-02T03:04:05+00:00",
+          "role_key": "architect",
+          "horizon": "short-term",
+          "action": "add",
+          "source": "synthetic-job/result.md",
+          "text": "database SHORT 记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记记"
+        }
+      ]
+    }
+  ]
+}
