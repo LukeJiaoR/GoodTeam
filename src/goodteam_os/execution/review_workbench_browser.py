@@ -576,6 +576,7 @@ def _decision_script() -> str:
   const validation = initial.evidence?.candidate_validation || {};
   const correction = initial.evidence?.correction_loop || {};
   const correctionButton = document.getElementById("correction-action");
+  const prepareWorkerButton = document.getElementById("prepare-correction-worker");
   const correctionStatus = document.getElementById("correction-status");
   let correctionPending = false;
   let decisionPending = false;
@@ -583,6 +584,7 @@ def _decision_script() -> str:
     if (correctionPending) return;
     correctionPending = true;
     correctionButton.disabled = true;
+    if (prepareWorkerButton) prepareWorkerButton.disabled = true;
     const action = correctionButton.dataset.action;
     const body = {project_root: projectRoot};
     if (action === "stop") body.loop_id = correction.loop_id;
@@ -593,6 +595,25 @@ def _decision_script() -> str:
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Correction request failed.");
+      window.location.reload();
+    } catch (error) {
+      correctionStatus.textContent = `${error.message} Refresh to inspect the saved state before retrying.`;
+    }
+  });
+  prepareWorkerButton?.addEventListener("click", async () => {
+    if (correctionPending) return;
+    correctionPending = true;
+    prepareWorkerButton.disabled = true;
+    if (correctionButton) correctionButton.disabled = true;
+    const body = {project_root: projectRoot, loop_id: correction.loop_id,
+      head: validation.candidate?.head_sha, validation_receipt: validation.receipt?.receipt_id,
+      operation_id: `correction-worker-${Number(correction.reserved_rounds || 0) + 1}`};
+    try {
+      const response = await fetch(`/api/executions/${encodeURIComponent(executionId)}/correction/prepare-worker`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Worker preparation failed.");
       window.location.reload();
     } catch (error) {
       correctionStatus.textContent = `${error.message} Refresh to inspect the saved state before retrying.`;
@@ -862,7 +883,11 @@ def _correction_loop_section(review: dict[str, Any], *, decision_actions_enabled
     if action:
         disabled = "" if decision_actions_enabled else " disabled"
         body += f'<button id="correction-action" data-action="{action}"{disabled}>{label}</button>'
+    if loop.get("available") and loop.get("status") == "awaiting_fix":
+        disabled = "" if decision_actions_enabled and _dict(loop.get("runtime_admission")).get("available") else " disabled"
+        body += f'<button id="prepare-correction-worker"{disabled}>Prepare isolated correction Worker (one round / up to 120 seconds)</button>'
     body += '<p id="correction-status" role="status"></p>'
-    body += '<p>Fix with your existing tools, commit a new candidate, then explicitly run the same local check. '
-    body += 'These controls do not launch a Worker, command, paid model, approval or merge.</p>'
+    body += '<p>Fix with your existing tools, or prepare a separate correction worktree and Worker input. '
+    body += 'Starting the configured runtime requires an explicit CLI invocation and cost acknowledgement. '
+    body += 'These controls do not launch a coding runtime, paid model, approval or merge. Recheck the committed candidate with the original explicit local command.</p>'
     return _section("Supervised correction loop", body)

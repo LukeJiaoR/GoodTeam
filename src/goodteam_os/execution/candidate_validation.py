@@ -64,7 +64,17 @@ class CandidateValidationService:
     def _root(self, execution_id):
         return self.store.root / execution_key(execution_id)
 
-    def validate(self, execution_id, *, operation_id, head_sha, argv, criteria, seconds=30):
+    def source_root(self, snapshot, request):
+        if not request.get("correction_worker"):
+            return self.project_root
+        from .correction_store import CorrectionAttemptStore
+        authority = CorrectionAttemptStore(self.project_root, request["correction_worker"])
+        value = authority.load()
+        if value.original.data != snapshot.data:
+            raise TaskInputError("correction_identity_mismatch")
+        return authority.workspace(value)
+
+    def validate(self, execution_id, *, operation_id, head_sha, argv, criteria, seconds=30, correction_worker=""):
         """Called only by an explicit local CLI action or trusted composition.
 
         Commands and criterion mappings are operator input, never extracted from
@@ -87,10 +97,13 @@ class CandidateValidationService:
         request = {"schema_version": "candidate_validation_plan.v1", "snapshot": snapshot.reference,
                    "operation_id": operation_id, "head_sha": head_sha, "argv": command, "cwd": ".",
                    "criteria": sorted(criteria), "seconds": seconds, "producer": "explicit_operator_cli"}
+        if correction_worker:
+            request["correction_worker"] = correction_worker
         root = self._root(execution_id)
         with role_lock(root, create=False) as present:
             if not present or self._snapshot(execution_id).data != snapshot.data:
                 raise TaskInputError("validation_input_missing")
+            source_root = self.source_root(snapshot, request)
             plan_path = root / ("validation-plan-" + key + ".json")
             plan = _read(plan_path)
             if plan is not None and plan.get("request") != request:
@@ -99,7 +112,7 @@ class CandidateValidationService:
                 if (_read(root / ("validation-started-" + key + ".json")) is not None
                         or _read(root / ("validation-result-" + key + ".json")) is not None):
                     raise TaskInputError("validation_plan_missing")
-                candidate = probe_candidate(self.project_root, head_sha)
+                candidate = probe_candidate(source_root, head_sha)
                 plan = {"request": request, "candidate": candidate}
                 _write(plan_path, plan)
             expected = {"operation_key": key, "plan_digest": digest(canonical_bytes(plan))}
@@ -107,7 +120,7 @@ class CandidateValidationService:
             result_path = root / ("validation-result-" + key + ".json")
             started, result = _read(started_path), _read(result_path)
             if result is not None:
-                probe_candidate(self.project_root, head_sha)
+                probe_candidate(source_root, head_sha)
                 result = self._verify_result(plan, expected, started, result)
                 from .correction_loop import CorrectionLoopService
                 # Historical reads cannot change the active correction round.
@@ -117,14 +130,16 @@ class CandidateValidationService:
             if started is not None:
                 raise TaskInputError("validation_attempt_indeterminate")
             # A resumed plan is checked again before entering the call boundary.
-            probe_candidate(self.project_root, head_sha)
+            probe_candidate(source_root, head_sha)
             from .correction_loop import CorrectionLoopService
             CorrectionLoopService(self.project_root).admit_validation(snapshot, plan, expected)
             _write(root / "validation-current.json", expected)
             _write(started_path, expected)
-            observed = run_explicit_command(command, self.project_root, seconds=seconds)
+            observed = run_explicit_command(command, source_root, seconds=seconds)
             try:
-                probe_candidate(self.project_root, head_sha)
+                probe_candidate(source_root, head_sha)
+                if self.source_root(snapshot, request) != source_root:
+                    raise TaskInputError("correction_workspace_mismatch")
                 if self._snapshot(execution_id).data != snapshot.data:
                     raise TaskInputError("validation_input_missing")
             except (OSError, ValueError) as exc:
@@ -184,7 +199,7 @@ class CandidateValidationService:
             _plan, result, _review = current
             if result["receipt_id"] != receipt_id or result["candidate"]["head_sha"] != head_sha:
                 raise TaskInputError("validation_review_mismatch")
-            probe_candidate(self.project_root, head_sha)
+            probe_candidate(self.source_root(snapshot, _plan["request"]), head_sha)
             review = _bound({"schema_version": "candidate_review_attestation.v1", "validation_receipt_id": receipt_id,
                              "candidate": result["candidate"], "reviewer": reviewer.strip(), "decision": decision,
                              "reason": reason.strip(), "producer": origin,
@@ -211,7 +226,7 @@ class CandidateValidationService:
                 observed = result["observation"]
                 reason, status = observed["reason"], observed["status"]
                 try:
-                    probe_candidate(self.project_root, result["candidate"]["head_sha"])
+                    probe_candidate(self.source_root(snapshot, plan["request"]), result["candidate"]["head_sha"])
                 except TaskInputError as exc:
                     status, reason = "unknown", exc.code
                 mode = "simulated" if snapshot.to_dict()["adapter"] in {"fake", "noop"} else "runtime_unverified"

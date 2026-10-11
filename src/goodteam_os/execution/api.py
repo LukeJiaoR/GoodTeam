@@ -124,6 +124,15 @@ class ExecutionAPI:
         from goodteam_os.execution.correction_loop import CorrectionLoopService
         return CorrectionLoopService(self.project_root).start(execution_id, **request)
 
+    def prepare_correction_worker(self, execution_id: str, **request) -> dict[str, Any]:
+        from .correction_worker import CorrectionWorkerService
+        return CorrectionWorkerService(self.project_root).prepare(execution_id, **request)
+
+    def run_correction_worker(self, execution_id: str, job_id: str, *, acknowledge_external_cost=False) -> dict[str, Any]:
+        from .correction_worker import CorrectionWorkerService
+        return CorrectionWorkerService(self.project_root).run(execution_id, job_id,
+            acknowledge_external_cost=acknowledge_external_cost)
+
     def stop_correction_loop(self, execution_id: str, *, loop_id: str) -> dict[str, Any]:
         from goodteam_os.execution.correction_loop import CorrectionLoopService
         return CorrectionLoopService(self.project_root).stop(execution_id, loop_id=loop_id)

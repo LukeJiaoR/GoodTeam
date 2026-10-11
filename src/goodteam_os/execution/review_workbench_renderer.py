@@ -328,5 +328,16 @@ def _render_correction_loop(value: dict[str, Any]) -> list[str]:
         "- Automatic provider invocations: 0; external cost unknown and not authorized by this loop",
         "- Acceptance: unknown; every fix and check still needs its existing explicit authority",
     ])
+    worker = value.get("worker") or {}
+    capability = value.get("runtime_admission") or {}
+    if capability:
+        lines.append(f"- Correction executor admission: {capability.get('status', 'blocked')} ({capability.get('reason', 'unknown')})")
+        if not capability.get("available"):
+            lines.append("- External correction executors are not yet admitted. Built-in fake/noop are simulation-only; cost acknowledgement cannot enable an unverified runtime.")
+    if worker:
+        lines.extend([f"- Correction Worker: {worker['job_id']} ({worker['status']})",
+            f"- Retained worktree: {worker['workspace']}",
+            f"- Explicit runtime budget: one invocation / {worker['max_seconds']} seconds",
+            "- Worker return is a host observation; provider acknowledgement and semantic acceptance remain unknown"])
     lines.extend(f"- Original constraint: {text}" for text in value['original_constraints'])
     return lines
