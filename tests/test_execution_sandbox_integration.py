@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,14 @@ from goodteam_os.execution.models import ExecutionRunStatus
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.workers import WorkerJobStore
 
-from tests.test_execution_orchestrator import FakeClock, FakeGitHubClient, _snapshot
+from tests.test_execution_orchestrator import FakeClock, FakeGitHubClient, _snapshot as _orchestrator_snapshot
+
+
+def _snapshot() -> GitHubIssueSnapshot:
+    # This suite requests #218; the shared orchestrator fixture represents #228.
+    # A source adapter must never silently return another issue's task.
+    return replace(_orchestrator_snapshot(), issue_number=218,
+                   url="https://github.com/LukeJiaoR/GoodTeam/issues/218")
 
 
 class FakeSandboxGitAdapter:

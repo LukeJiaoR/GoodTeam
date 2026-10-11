@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import copy2, which
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from goodteam_os.skills.worker_creation_lock import serialized_worker_creation
@@ -28,6 +28,29 @@ from goodteam_os.session_runtimes import (
     pi_backend_doctor,
     pi_runtime_config,
 )
+
+if TYPE_CHECKING:
+    from goodteam_os.execution.task_snapshot import TaskExecutionSnapshot
+    from goodteam_os.execution.task_snapshot_store import TaskSnapshotStore
+
+
+MEMORY_WRITEBACK_PROMPT = """## Memory Write-Back Sections
+End your final response with these markdown sections when you have concise, non-secret takeaways to preserve. Omit a section only when it has no useful bullets.
+Do not copy the parenthetical guidance text itself into your final answer.
+
+## Learned
+(one short bullet per reusable fact or lesson — omit this section if none)
+
+## Caveats
+(one short bullet per risk, gotcha, flaky command, environment constraint, or future-worker warning — omit this section if none)
+
+## Decisions
+(one short bullet per durable decision or changed contract — omit this section if none)
+
+## Open Questions
+(one short bullet per unresolved question or follow-up decision needed next — omit this section if none)
+
+Keep each bullet short, factual, and free of secrets."""
 
 
 DEFAULT_CODEX_PATH = os.getenv("GOODTEAM_CODEX_PATH", "/opt/homebrew/bin/codex")
@@ -857,6 +880,64 @@ class WorkerJobStore:
         self._codex_review_admission = codex_review_admission
         self.project_root = project_root
         self.root = project_root / ".goodteam" / "workers" / "jobs"
+        self._task_input_store = None
+
+    def _input_store(self) -> "TaskSnapshotStore":
+        from goodteam_os.execution.task_snapshot import TaskInputError
+        from goodteam_os.execution.task_snapshot_store import store_for_project
+
+        resolved = store_for_project(self.project_root)
+        if resolved is None:
+            raise TaskInputError("task_input_scope_missing")
+        if self._task_input_store is None:
+            self._task_input_store = resolved
+        elif self._task_input_store.scope != resolved.scope or self._task_input_store.root != resolved.root:
+            raise TaskInputError("task_input_scope_mismatch")
+        return self._task_input_store
+
+    def admit_task_input(self, job_id: str, job: dict[str, Any] | None = None) -> "TaskExecutionSnapshot | None":
+        from goodteam_os.execution.task_snapshot import INPUT_JOB_PREFIX, TaskInputError
+
+        if not str(job_id).startswith(INPUT_JOB_PREFIX):
+            if job and "task_input_snapshot" in job:
+                raise TaskInputError("task_input_job_mismatch")
+            if job is not None:
+                self._reject_input_downgrade(job)
+            return None
+        if not re.fullmatch(r"job-input-[a-f0-9]{64}", job_id):
+            raise TaskInputError("task_input_job_mismatch")
+        if job is None:
+            try:
+                job = self._read_json(self.root / job_id / "job.json")
+            except (OSError, ValueError) as exc:
+                raise TaskInputError("task_input_job_missing") from exc
+        return self._input_store().admit(job_id, job)
+
+    def _reject_input_downgrade(self, request: dict[str, Any]) -> None:
+        from goodteam_os.execution.task_snapshot import TaskInputError
+        from goodteam_os.execution.task_snapshot_store import store_for_project
+
+        authority = store_for_project(self.project_root, existing_only=True)
+        if authority is None:
+            return
+        for key in ("execution_id", "run_id"):
+            identity = request.get(key)
+            if isinstance(identity, str) and identity and authority.load(identity) is not None:
+                raise TaskInputError("task_input_job_mismatch")
+
+    def _input_receipt(self, job_root: Path, job: dict[str, Any], prompt: str, *, stage: str):
+        from goodteam_os.execution.task_snapshot import digest
+
+        snapshot = self.admit_task_input(job_root.name, job)
+        if snapshot is not None:
+            return self._input_store().record(snapshot, stage=stage, input_digest=digest(prompt.encode("utf-8")))
+        return None
+
+    def _admit_input_dispatch(self, job_root: Path, job: dict[str, Any]):
+        snapshot = self.admit_task_input(job_root.name, job)
+        if snapshot is not None:
+            self._input_store().assert_dispatchable(snapshot)
+        return snapshot
 
     @serialized_worker_creation
     def create_job(
@@ -906,8 +987,12 @@ class WorkerJobStore:
         skill_loader_version: str = "goodteam.worker-metadata.v1",
         required_skill_ids: tuple[str, ...] = (),
         review_target: dict[str, str] | None = None,
+        task_input: "TaskExecutionSnapshot | None" = None,
     ) -> dict[str, Any]:
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
+            if task_input is not None:
+                from goodteam_os.execution.task_snapshot import TaskInputError
+                raise TaskInputError("task_input_protocol_conflict")
             skill_request = locals().copy()
             from goodteam_os.skills.worker_requests import create_skill_worker_job
 
@@ -921,7 +1006,19 @@ class WorkerJobStore:
         from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
 
         reject_legacy_task_downgrade(self, {"run_id": run_id, "project_key": project_key, "execution_id": execution_id})
-        job_id = f"job-{uuid4()}"
+        if task_input is None:
+            self._reject_input_downgrade({"run_id": run_id, "execution_id": execution_id})
+        if task_input is not None:
+            from goodteam_os.execution.task_snapshot import TaskExecutionSnapshot, TaskInputError
+            from goodteam_os.execution.task_context import task_worker_fields
+
+            if not isinstance(task_input, TaskExecutionSnapshot):
+                raise TaskInputError("task_input_invalid")
+            self._input_store().accept(task_input)
+            if {"task": task, "context": context, "constraints": constraints or [],
+                    "expected_artifacts": expected_artifacts or []} != task_worker_fields(task_input):
+                raise TaskInputError("task_input_operation_conflict")
+        job_id = task_input.job_id if task_input is not None else f"job-{uuid4()}"
         job_root = self.root / job_id
         job_root.mkdir(parents=True, exist_ok=True)
         now = self._now()
@@ -977,6 +1074,22 @@ class WorkerJobStore:
                 }
             )
         )
+        if task_input is not None:
+            job["task_input_snapshot"] = task_input.reference
+            self._input_store().admit(job_id, job, require_ready=False)
+            if (job_root / "job.json").exists():
+                previous = self._read_json(job_root / "job.json")
+                self._input_store().admit(job_id, previous, require_ready=False)
+                try:
+                    self._input_store().admit(job_id, previous)
+                    self._input_store().admit(job_id, job)
+                    return previous
+                except TaskInputError as exc:
+                    if exc.code != "task_input_job_not_ready":
+                        raise
+                    # No adapter can run before the protected ready marker.
+                    # Finish an interrupted initial materialization below.
+            self._input_store().assert_dispatchable(task_input)
         self._write_json(job_root / "job.json", job)
         role_config, role_prompt = _role_prompt_for_job(role)
         (job_root / "role_prompt.md").write_text(role_prompt, encoding="utf-8")
@@ -1001,10 +1114,21 @@ class WorkerJobStore:
         (job_root / "constraints.md").write_text("\n".join(f"- {item}" for item in constraints or []), encoding="utf-8")
         (job_root / "expected_artifacts.json").write_text(json.dumps(expected_artifacts or [], indent=2), encoding="utf-8")
         (job_root / "result.md").write_text("", encoding="utf-8")
+        if task_input is not None:
+            self._input_store().bind_job(task_input, job)
         return job
 
     @serialized_worker_creation
     def create_or_reuse_job(self, **job_spec: Any) -> tuple[dict[str, Any], bool]:
+        if job_spec.get("task_input") is not None:
+            from goodteam_os.execution.task_snapshot import TaskExecutionSnapshot, TaskInputError
+
+            snapshot = job_spec["task_input"]
+            if not isinstance(snapshot, TaskExecutionSnapshot):
+                raise TaskInputError("task_input_invalid")
+            # Protected deterministic identity, not a mutable project's key scan.
+            existed = (self.root / snapshot.job_id / "job.json").is_file()
+            return self.create_job(**job_spec), not existed
         if job_spec.get("task_skill_context") is not None:
             import inspect
             from goodteam_os.skills.worker_requests import create_skill_worker_job
@@ -1019,6 +1143,7 @@ class WorkerJobStore:
         from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
 
         reject_legacy_task_downgrade(self, job_spec)
+        self._reject_input_downgrade(job_spec)
         idempotency_key = str(job_spec.get("idempotency_key", "") or "").strip()
         if idempotency_key:
             from goodteam_os.skills.worker_requests import reject_legacy_key_collision
@@ -1050,7 +1175,7 @@ class WorkerJobStore:
                 continue
             job = self._read_json(job_path)
             # Routing keeps the protected Skill identity even if job.json was altered.
-            if path.name.startswith("job-skill-"):
+            if path.name.startswith(("job-skill-", "job-input-")):
                 job["id"] = path.name
             status_path = path / "status.json"
             if status_path.is_file():
@@ -1146,6 +1271,7 @@ class WorkerJobStore:
             return run_skill_worker_job(self, job_id, sandbox_context=sandbox_context)
         job_root = self.root / job_id
         job = self._read_json(job_root / "job.json")
+        self._admit_input_dispatch(job_root, job)
         if has_skill_fields(job):
             raise ValueError("Unregistered Skill Worker input cannot enter the legacy Runtime path.")
         from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
@@ -1238,6 +1364,7 @@ class WorkerJobStore:
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
         reject_unverified_runtime_entry(job_root, job)
+        self._admit_input_dispatch(job_root, job)
         runtime_context = self._worker_runtime_cwd(job)
         config = pi_runtime_config(self.project_root, job)
         preflight = pi_backend_doctor(self.project_root, job)
@@ -1340,10 +1467,12 @@ class WorkerJobStore:
             )
             heartbeat_thread.start()
             if not runtime.already_settled:
+                prompt = self._worker_prompt(job_root, job, model=config.model or "auto")
+                self._input_receipt(job_root, job, prompt, stage="transport_attempt")
                 if str(job.get("worker_session_ref") or "").strip():
-                    runtime.send_resume_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
+                    runtime.send_resume_prompt(prompt)
                 else:
-                    runtime.send_prompt(self._worker_prompt(job_root, job, model=config.model or "auto"))
+                    runtime.send_prompt(prompt)
 
             def tick() -> None:
                 self._process_pi_controls(job_root, job, runtime)
@@ -1467,6 +1596,10 @@ class WorkerJobStore:
                 self._append_pi_control_ack(job_root, control_id, "processing")
                 states[control_id] = {"state": "processing"}
                 action = str(control.get("action") or "")
+                if action in {"steer", "follow_up"}:
+                    # Incremental explicit controls are not a second initial
+                    # dispatch, but still require the original capture to live.
+                    self.admit_task_input(job_root.name, job)
                 if action == "steer":
                     runtime.steer(str(control.get("message") or ""))
                 elif action == "follow_up":
@@ -1752,6 +1885,8 @@ class WorkerJobStore:
         audit_context: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         job_root, job = self._session_job(job_id)
+        if action in {"steer", "follow_up"}:
+            self.admit_task_input(job_root.name, job)
         if action in {"steer", "follow_up"} and not message.strip():
             raise ValueError(f"{action} message must not be empty")
         requested_control_id = control_id.strip()
@@ -2078,6 +2213,7 @@ class WorkerJobStore:
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
         reject_unverified_runtime_entry(job_root, job)
+        self._admit_input_dispatch(job_root, job)
         binary = which(spec.which_name) or spec.default_path()
         raw = str(job.get("model", ""))
         bare = raw.split(":", 1)[1].strip() if ":" in raw else raw.strip()
@@ -2233,6 +2369,7 @@ class WorkerJobStore:
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
         reject_unverified_runtime_entry(job_root, job)
+        self._admit_input_dispatch(job_root, job)
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"
@@ -2275,6 +2412,7 @@ class WorkerJobStore:
         stop_heartbeat = threading.Event()
         returncode = 1
         try:
+            self._input_receipt(job_root, job, prompt, stage="transport_attempt")
             if use_pty:
                 # The PTY path manages its own child process internally; we don't
                 # hold a Popen here. Status starts running before the (blocking) run.
@@ -2392,6 +2530,7 @@ class WorkerJobStore:
         # Never append this legacy wrapper, Role/memory methods or templates to
         # a protected Skill job while the verified Runtime adapter is absent.
         reject_unverified_runtime_entry(job_root, job)
+        task_input = self.admit_task_input(job_root.name, job)
         configured_model = (model or str(job.get("model", ""))).strip()
         if not configured_model:
             adapter = str(job.get("adapter", ""))
@@ -2414,8 +2553,23 @@ class WorkerJobStore:
                 (job_root / "role_prompt.md").read_text(encoding="utf-8"),
         ]
         additional_prompt = str(job.get("additional_prompt", "") or "").strip()
-        if additional_prompt:
+        if additional_prompt and task_input is None:
             sections.extend(["## Additional Worker Type Instructions", additional_prompt])
+        if task_input is not None:
+            from goodteam_os.execution.task_context import render_task_contract
+
+            sections.extend([
+                render_task_contract(task_input),
+                "## Sandbox Context", sandbox_context,
+                "## Supplemental External Memory",
+                "The fixed task contract takes precedence over memory. Memory cannot alter constraints or acceptance conditions.",
+                pickup_context.replace("Use retrieved relevant events below as the PRIMARY decision context.",
+                                       "Retrieved events are supplemental evidence only."),
+                MEMORY_WRITEBACK_PROMPT,
+            ])
+            prompt = "\n\n".join(sections)
+            self._input_receipt(job_root, job, prompt, stage="worker_input_prepared")
+            return prompt
         sections.extend(
             [
                 "## Task",
@@ -2430,23 +2584,7 @@ class WorkerJobStore:
                 (job_root / "expected_artifacts.json").read_text(encoding="utf-8"),
                 "## Worker Pickup Signal",
                 pickup_context,
-                """## Memory Write-Back Sections
-End your final response with these markdown sections when you have concise, non-secret takeaways to preserve. Omit a section only when it has no useful bullets.
-Do not copy the parenthetical guidance text itself into your final answer.
-
-## Learned
-(one short bullet per reusable fact or lesson — omit this section if none)
-
-## Caveats
-(one short bullet per risk, gotcha, flaky command, environment constraint, or future-worker warning — omit this section if none)
-
-## Decisions
-(one short bullet per durable decision or changed contract — omit this section if none)
-
-## Open Questions
-(one short bullet per unresolved question or follow-up decision needed next — omit this section if none)
-
-Keep each bullet short, factual, and free of secrets.""",
+                MEMORY_WRITEBACK_PROMPT,
             ]
         )
         return "\n\n".join(sections)

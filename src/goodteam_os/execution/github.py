@@ -199,13 +199,29 @@ def intake_github_issue(
     issue_ref: GitHubIssueRef,
     *,
     clock: Clock,
+    before_binding: Callable[[ExecutionTask], ExecutionTask] | None = None,
+    recovered_task: ExecutionTask | None = None,
 ) -> ExecutionTask | GitHubBinding:
     existing = binding_store.existing_for_issue(issue_ref.repo, issue_ref.issue_number)
     if existing is not None:
         return existing
 
-    snapshot = client.fetch_issue(issue_ref.repo, issue_ref.issue_number)
-    task = execution_task_from_github_issue(snapshot, clock=clock)
+    if recovered_task is not None:
+        if recovered_task.task_id != task_id_from_github_issue(issue_ref.repo, issue_ref.issue_number):
+            raise ValueError("Recovered issue input belongs to another task")
+        task = recovered_task
+    else:
+        snapshot = client.fetch_issue(issue_ref.repo, issue_ref.issue_number)
+        task = execution_task_from_github_issue(snapshot, clock=clock)
+    expected_task_id = task_id_from_github_issue(issue_ref.repo, issue_ref.issue_number)
+    if task.task_id != expected_task_id:
+        from goodteam_os.execution.task_snapshot import TaskInputError
+        raise TaskInputError("task_input_source_mismatch")
+    if before_binding is not None:
+        task = before_binding(task)
+        if task.task_id != expected_task_id:
+            from goodteam_os.execution.task_snapshot import TaskInputError
+            raise TaskInputError("task_input_source_mismatch")
     execution_id = execution_id_from_task(task.task_id)
     binding_store.write_binding(
         GitHubBinding(
