@@ -35,14 +35,9 @@ def _operation_records(service, snapshot, key):
     expected = {"operation_key": key, "plan_digest": digest(canonical_bytes(plan))}
     started = _read(root / ("validation-started-" + key + ".json"))
     result = _read(root / ("validation-result-" + key + ".json"))
-    review = _read(root / ("validation-review-" + key + ".json"))
     if result is not None:
         service._verify_result(plan, expected, started, result)
-    if review is not None and (result is None or review != _bound(review)
-            or review.get("validation_receipt_id") != result["receipt_id"]
-            or review.get("candidate") != result["candidate"]
-            or review.get("decision") not in {"approve", "request_changes", "reject"}):
-        raise TaskInputError("correction_evidence_invalid")
+    review = service._review(snapshot, plan, result) if result else None
     return plan, started, result, review
 
 
@@ -145,7 +140,7 @@ class CorrectionLoopService:
             if (result["receipt_id"] != receipt_id or result["candidate"]["head_sha"] != head_sha
                     or review is None or review.get("decision") != "request_changes"):
                 raise TaskInputError("correction_feedback_mismatch")
-            probe_candidate(self.validation.project_root, head_sha)
+            probe_candidate(self.validation.source_root(snapshot, plan["request"]), head_sha)
             initial = {"receipt_id": receipt_id, "head_sha": head_sha,
                        "operation_key": result["operation_key"], "review_id": review["receipt_id"],
                        "max_rounds": max_rounds, "wall_seconds": wall_seconds,
@@ -231,9 +226,20 @@ class CorrectionLoopService:
             raise TaskInputError("correction_input_mismatch")
         return authority, value
 
+    def _automatic_guard(self, snapshot, *, observe=True):
+        """All existing correction admission paths share automatic stop/bounds."""
+        root = self.validation._root(snapshot.execution_id)
+        if (_read(root / "automatic-review-start.json") is not None
+                or _read(root / "automatic-review-binding.json") is not None):
+            from .automatic_review import AutomaticCandidateReviewService
+            automatic = AutomaticCandidateReviewService(self.validation.project_root)
+            start, _context = automatic._load(snapshot)
+            automatic._guard(snapshot, start, observe=observe)
+
     def reserve_worker(self, value, *, publish=True):
         """Caller holds the execution lock; no Worker can run before this proof."""
         snapshot = value.original
+        self._automatic_guard(snapshot)
         state = self._load(snapshot)
         if state is None or state["loop_id"] != value.to_dict()["loop_id"]:
             raise TaskInputError("correction_identity_mismatch")
@@ -263,6 +269,7 @@ class CorrectionLoopService:
     def admit_worker_dispatch(self, value):
         snapshot = value.original
         with role_lock(self.validation._root(snapshot.execution_id), create=False):
+            self._automatic_guard(snapshot)
             state = self._load(snapshot)
             if state is None or not state["rounds"]:
                 raise TaskInputError("correction_state_unavailable")
@@ -281,6 +288,17 @@ class CorrectionLoopService:
     def _phase(self, snapshot, state, history):
         if state["stop_reason"]:
             return "needs_human", state["stop_reason"]
+        # A completed review is durable; budgets limit future work, not the
+        # lifetime of an already bound outcome. Freshness is checked in projection.
+        last_result, last_review = history[-1][2:]
+        if (last_result and last_review and last_review.get("decision") == "approve"
+                and last_result["observation"]["status"] == "passed"):
+            return "reviewed", ("candidate_review_policy_satisfied" if last_review.get("schema_version") == "candidate_machine_review.v1"
+                                else "candidate_human_review_recorded")
+        try:
+            self._automatic_guard(snapshot, observe=False)
+        except TaskInputError as exc:
+            return "needs_human", exc.code
         self._observe_clock(snapshot, state)
         if state["stop_reason"]:
             return "needs_human", state["stop_reason"]
@@ -305,7 +323,12 @@ class CorrectionLoopService:
         if review and review.get("decision") == "reject":
             return self._halt(snapshot, state, "correction_rejected")
         if review and review.get("decision") == "approve":
-            return "awaiting_human_acceptance", "semantic_acceptance_not_verified"
+            if result["observation"]["status"] != "passed":
+                return self._halt(snapshot, state, "correction_check_unknown")
+            return "reviewed", ("candidate_review_policy_satisfied" if review.get("schema_version") == "candidate_machine_review.v1"
+                                else "candidate_human_review_recorded")
+        if review and review.get("decision") == "inconclusive":
+            return "awaiting_review", "candidate_review_coverage_incomplete"
         if review is None:
             return "awaiting_review", "correction_review_required"
         if len(state["rounds"]) >= state["initial"]["max_rounds"]:
@@ -314,6 +337,7 @@ class CorrectionLoopService:
 
     def admit_validation(self, snapshot, plan, expected):
         """Under the existing validation lock, before its durable call marker."""
+        self._automatic_guard(snapshot)
         state = self._load(snapshot)
         if state is None:
             return
@@ -377,7 +401,7 @@ class CorrectionLoopService:
     def _project(self, snapshot, state):
         history = self._history(snapshot, state)
         phase, reason = self._phase(snapshot, state, history)
-        if phase in {"awaiting_review", "awaiting_human_acceptance"}:
+        if phase in {"awaiting_review", "reviewed"}:
             try:
                 probe_candidate(self.validation.source_root(snapshot, history[-1][0]["request"]),
                                 history[-1][0]["candidate"]["head_sha"])
@@ -401,8 +425,13 @@ class CorrectionLoopService:
                 "original_goal": snapshot.task.goal,
                 "original_constraints": snapshot.task.task_contract.constraints,
                 "reviewer": feedback.get("reviewer", ""), "review_decision": feedback.get("decision", ""),
-                "automatic_provider_invocations": 0, "external_cost": "unknown_not_authorized_by_loop",
-                "acceptance_status": "unknown", "verification": "unverified",
+                "automatic_provider_invocations": (None if _read(self.validation._root(snapshot.execution_id)
+                    / "automatic-review-start.json") is not None else 0),
+                "provider_invocation_count_status": "not_attested", "external_cost": "unknown_not_authorized_by_loop",
+                "acceptance_status": (("accepted_by_review_policy" if feedback.get("schema_version") == "candidate_machine_review.v1"
+                    else "human_recorded") if phase == "reviewed" else "unknown"), "verification": "unverified",
+                "semantic_verification": "judgment_not_independently_verified",
+                "validation_receipt_id": history[-1][2]["receipt_id"] if history[-1][2] else "",
                 "worker_job_id": state["rounds"][-1].get("worker_job_id", "") if state["rounds"] else "",
                 "worker": worker,
                 "runtime_admission": capability,
@@ -413,7 +442,7 @@ class CorrectionLoopService:
                         if not capability["available"] else "Explicitly start the admitted Worker once from the CLI; preparation does not invoke it."),
                     "awaiting_worker_result": "Inspect the running or unknown attempt; do not repeat its dispatch. A retained host return is required before recheck.",
                     "awaiting_review": "Review this exact candidate and its fresh check receipt.",
-                    "awaiting_human_acceptance": "A person must decide acceptance; approval text is not semantic verification.",
+                    "reviewed": "Candidate review is complete under the recorded policy or optional human decision. Continue the separately authorized delivery process.",
                     "needs_human": "Inspect the preserved evidence and resolve the stop; no automatic retry or paid invocation."}[phase]}
 
     def evidence(self, execution_id):
@@ -431,7 +460,9 @@ class CorrectionLoopService:
 
 def correction_evidence(project_root, execution_id):
     try:
-        return CorrectionLoopService(project_root).evidence(execution_id)
+        from .automatic_review import AutomaticCandidateReviewService
+        automatic = AutomaticCandidateReviewService(project_root).projection(execution_id)
+        return automatic if automatic is not None else CorrectionLoopService(project_root).evidence(execution_id)
     except (OSError, ValueError) as exc:
         return {"available": False, "status": "needs_human", "reason": exc.code if isinstance(exc, TaskInputError)
                 else "correction_state_unavailable", "acceptance_status": "unknown", "verification": "unverified"}

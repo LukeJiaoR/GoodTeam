@@ -179,11 +179,30 @@ class CandidateValidationService:
             raise TaskInputError("validation_attempt_indeterminate")
         started = _read(root / ("validation-started-" + key + ".json"))
         result = self._verify_result(plan, selected, started, result)
-        review = _read(root / ("validation-review-" + key + ".json"))
-        if review is not None and (review != _bound(review) or review.get("validation_receipt_id") != result["receipt_id"]
-                                   or review.get("candidate") != result["candidate"]):
-            raise TaskInputError("validation_review_invalid")
+        review = self._review(snapshot, plan, result)
         return plan, result, review
+
+    def _review(self, snapshot, plan, result):
+        """Human and machine history remain distinct; machine authority is re-read."""
+        root = self._root(snapshot.execution_id)
+        key = result["operation_key"]
+        human = _read(root / ("validation-review-" + key + ".json"))
+        machine = _read(root / ("validation-machine-review-" + key + ".json"))
+        if human is not None and (human != _bound(human)
+                or human.get("schema_version") != "candidate_review_attestation.v1"
+                or human.get("producer") not in {"explicit_operator_cli", "explicit_operator_workbench"}
+                or human.get("decision") not in {"approve", "request_changes", "reject"}
+                or human.get("validation_receipt_id") != result["receipt_id"]
+                or human.get("candidate") != result["candidate"]):
+            raise TaskInputError("validation_review_invalid")
+        committed = _read(root / ("validation-machine-committed-" + key + ".json"))
+        if (machine is not None or committed is not None) and (machine is None or committed != {
+                "validation_receipt_id": result["receipt_id"], "review_receipt_id": machine["receipt_id"]}):
+            raise TaskInputError("validation_review_invalid")
+        if machine is not None:
+            from .automatic_review import AutomaticCandidateReviewService
+            AutomaticCandidateReviewService(self.project_root).verify_receipt(snapshot, plan, result, machine)
+        return machine if machine is not None else human
 
     def attest_review(self, execution_id, *, receipt_id, head_sha, reviewer, decision, reason, origin="explicit_operator_cli"):
         if (origin not in {"explicit_operator_cli", "explicit_operator_workbench"}
@@ -196,7 +215,8 @@ class CandidateValidationService:
             current = self._current(snapshot)
             if current is None:
                 raise TaskInputError("validation_receipt_missing")
-            _plan, result, _review = current
+            _plan, result, _effective = current
+            _review = _read(root / ("validation-review-" + result["operation_key"] + ".json"))
             if result["receipt_id"] != receipt_id or result["candidate"]["head_sha"] != head_sha:
                 raise TaskInputError("validation_review_mismatch")
             probe_candidate(self.source_root(snapshot, _plan["request"]), head_sha)
@@ -230,8 +250,15 @@ class CandidateValidationService:
                 except TaskInputError as exc:
                     status, reason = "unknown", exc.code
                 mode = "simulated" if snapshot.to_dict()["adapter"] in {"fake", "noop"} else "runtime_unverified"
+                machine = review is not None and review.get("schema_version") == "candidate_machine_review.v1"
+                acceptance = ("accepted_by_review_policy" if machine else "human_recorded") if (
+                    status == "passed" and review and review.get("decision") == "approve") else "unknown"
+                human = _read(self._root(execution_id) / ("validation-review-" + result["operation_key"] + ".json"))
                 return {**fallback, "available": True, "check_status": status,
-                        "review_status": "operator_recorded" if review else "missing", "reason": reason,
+                        "acceptance_status": acceptance,
+                        "semantic_verification": "judgment_not_independently_verified",
+                        "human_review": human,
+                        "review_status": "machine_recorded" if machine else "operator_recorded" if review else "missing", "reason": reason,
                         "candidate": result["candidate"], "receipt": result, "review": review,
                         "task_execution_mode": mode, "command_name": Path(plan["request"]["argv"][0]).name,
                         "command_digest": digest(canonical_bytes(plan["request"]["argv"])), "cwd": ".",

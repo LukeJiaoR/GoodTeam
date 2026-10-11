@@ -74,7 +74,10 @@ goodteam execution validate-candidate \
 
 The selector chooses only the protected attempt's worktree. The check preserves
 the original argv/criteria and belongs to the **already reserved** round. A new
-bound review is required before another attempt. Original round/time/no-progress
+bound review is required before another attempt. The trusted
+[automatic candidate review controller](automatic-candidate-review.md) can
+consume that review without a manual attestation, while preserving this
+protocol's closed external-executor admission boundary. Original round/time/no-progress
 limits still apply. Repeated trees stop; successful exits and human labels do not
 verify semantic acceptance or authorize merge, deployment or verified memory.
 
@@ -124,7 +127,7 @@ against arbitrary same-UID writers racing directory replacement.
 
 Synthetic registered projects exercise actual Git worktrees, a real offline
 Python CLI subprocess through Worker prompt/receipt transport, a committed fix,
-actual recheck in that worktree and the bound review/human-handoff API/UI. Tests
+actual recheck in that worktree and the bound review-result API/UI. Tests
 inject a test-only runtime capability in code composition; there is no production
 flag exposing that capability. They do not prove Codex admission, paid-provider
 access or model coding quality. Additional tests cover single-dispatch contention,

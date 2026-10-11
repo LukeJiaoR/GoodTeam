@@ -13,11 +13,65 @@ def _bound_check(validation: dict, digest: str) -> bool:
             and bool(receipt.get("receipt_id")) and receipt.get("snapshot_digest") == digest
             and receipt.get("candidate") == candidate
             and isinstance(candidate.get("head_sha"), str)
-            and re.fullmatch(r"[a-f0-9]{40}", candidate["head_sha"]) is not None)
+            and re.fullmatch(r"(?:[a-f0-9]{40}|[a-f0-9]{64})", candidate["head_sha"]) is not None)
+
+
+def candidate_review_projection(validation: dict, *, bound: bool = True, snapshot: dict | None = None) -> dict:
+    """Separate an observed machine judgment from an optional human record.
+
+    The evidence service validates protected receipts. This presentation layer
+    additionally joins only the current check identities; it never grants
+    acceptance from an unbound decision or from a successful command alone.
+    """
+    receipt = validation.get("receipt") or {}
+    candidate = validation.get("candidate") or {}
+    bound = bound and _bound_check(validation, receipt.get("snapshot_digest", ""))
+    check = validation.get("check_status") if bound else "unknown"
+    check = check if check in {"passed", "failed"} else "unknown"
+    review = validation.get("review") or {}
+    matched = (bound and review.get("validation_receipt_id") == receipt.get("receipt_id")
+               and review.get("candidate") == candidate)
+    target = (review.get("provenance") or {}).get("target") or {}
+    machine = (matched and review.get("schema_version") == "candidate_machine_review.v1"
+               and review.get("producer") == "automatic_candidate_review_controller"
+               and validation.get("review_status") == "machine_recorded"
+               and (review.get("snapshot") or {}).get("payload_digest") == receipt.get("snapshot_digest")
+               and (snapshot is None or review.get("snapshot") == snapshot)
+               and isinstance(review.get("base_sha"), str)
+               and re.fullmatch(r"(?:[a-f0-9]{40}|[a-f0-9]{64})", review["base_sha"]) is not None
+               and target.get("base_sha") == review["base_sha"]
+               and target.get("head_sha") == candidate.get("head_sha"))
+    human = (matched and review.get("schema_version") == "candidate_review_attestation.v1"
+             and review.get("producer") in {"explicit_operator_cli", "explicit_operator_workbench"}
+             and validation.get("review_status") == "operator_recorded")
+    allowed = {"approve", "request_changes", "inconclusive"} if machine else {"approve", "request_changes", "reject"}
+    recorded = review.get("decision") if machine or human else None
+    recorded = recorded if recorded in allowed else "missing"
+    decision = recorded if check != "unknown" else "missing"
+    label = (f"{recorded} (historical; current applicability unknown)"
+             if recorded != "missing" and check == "unknown" else decision)
+    human_record = (validation.get("human_review") or {}) if machine else review if human else {}
+    human_decision = human_record.get("decision")
+    human_matches = (bound and human_record.get("schema_version") == "candidate_review_attestation.v1"
+                     and human_record.get("producer") in {"explicit_operator_cli", "explicit_operator_workbench"}
+                     and human_record.get("validation_receipt_id") == receipt.get("receipt_id")
+                     and human_record.get("candidate") == candidate
+                     and human_decision in {"approve", "request_changes", "reject"})
+    human_label = ((f"{human_decision} (historical; current applicability unknown)"
+                    if check == "unknown" else human_decision) if human_matches else "missing")
+    expected = "accepted_by_review_policy" if machine else "human_recorded" if human else "unknown"
+    acceptance = (expected if check == "passed" and decision == "approve"
+                  and validation.get("acceptance_status") == expected else "unknown")
+    return {"check_status": check, "recorded": recorded, "decision": decision,
+            "kind": "machine" if machine else "human" if human else "missing",
+            "machine_label": label if machine else "missing", "human_label": human_label,
+            "acceptance_status": acceptance,
+            "semantic_verification": ("judgment_not_independently_verified"
+                                      if recorded != "missing" else "unverified")}
 
 
 def current_result_details(evidence: dict) -> list[tuple[str, str]]:
-    """Present the existing protected observations; never advance workflow state.
+    """Present protected observations without advancing workflow or acceptance.
 
     The ledger's legacy decision/status may describe an older candidate. Keep
     those in the historical metadata rather than using them as a handoff.
@@ -31,23 +85,22 @@ def current_result_details(evidence: dict) -> list[tuple[str, str]]:
              and _bound_check(validation, digest))
     receipt = validation.get("receipt") or {}
     candidate = validation.get("candidate") or {}
-    check = validation.get("check_status") if bound else "unknown"
-    check = check if check in {"passed", "failed"} else "unknown"
-    human = validation.get("review") or {}
-    recorded = (human.get("decision") if bound
-                and human.get("validation_receipt_id") == receipt.get("receipt_id")
-                and human.get("candidate") == candidate else None)
-    recorded = recorded if recorded in {"approve", "request_changes", "reject"} else "missing"
-    decision = recorded if check != "unknown" else "missing"
-    human_label = (f"{recorded} (historical; current applicability unknown)"
-                   if recorded != "missing" and check == "unknown" else decision)
+    review = candidate_review_projection(validation, bound=bound, snapshot=captured.get("snapshot"))
+    check, decision, recorded = review["check_status"], review["decision"], review["recorded"]
+    acceptance = review["acceptance_status"]
     rows = [("Candidate checks", check),
             ("Latest checked head", candidate["head_sha"] if bound else "unavailable"),
             ("Check receipt", receipt["receipt_id"] if bound else "unavailable"),
-            ("Human record for this check", human_label),
-            ("Acceptance", "unknown (semantic acceptance is not verified)")]
+            ("Machine review for this check", review["machine_label"]),
+            ("Human record for this check", review["human_label"])]
     if bound:
         rows.append(("Task execution mode", validation.get("task_execution_mode", "unknown")))
+    record = validation.get("review") or {}
+    if review["kind"] != "missing":
+        rows.append(("Review producer", record["producer"]))
+        rows.append(("Review receipt", record.get("receipt_id", "unavailable")))
+        if review["kind"] == "machine":
+            rows.append(("Review base", record.get("base_sha", "unavailable")))
     reason = validation.get("reason") or ""
     if not bound:
         reason = reason or "no_matching_current_receipt"
@@ -59,21 +112,26 @@ def current_result_details(evidence: dict) -> list[tuple[str, str]]:
         loop_candidate = loop.get("candidate") or {}
         if loop_candidate != candidate:
             rows.append(("Correction candidate", loop_candidate.get("head_sha", "unavailable")))
-        # Evidence reads are separate observations. Do not combine a newer loop
-        # review state with an older receipt if a concurrent transition occurred.
-        mismatch = phase in {"awaiting_review", "awaiting_human_acceptance", "awaiting_fix"} and (
-            not bound or loop_candidate != candidate)
-        mismatch = mismatch or (phase in {"awaiting_review", "awaiting_human_acceptance"} and check == "unknown")
-        mismatch = mismatch or (phase == "awaiting_human_acceptance" and decision != "approve")
-        # During an explicit fix, the old check is expected to stop applying.
+        # Evidence reads are separate observations. A newer loop result cannot
+        # promote an older check, including a different receipt for one head.
+        current_phases = {"awaiting_review", "reviewed", "awaiting_fix"}
+        mismatch = phase in current_phases and (not bound or loop_candidate != candidate)
+        mismatch = mismatch or (phase in current_phases and loop.get("validation_receipt_id") is not None
+                                and loop["validation_receipt_id"] != receipt.get("receipt_id"))
+        mismatch = mismatch or (phase in {"awaiting_review", "reviewed"} and check == "unknown")
+        mismatch = mismatch or (phase == "reviewed" and (check != "passed" or decision != "approve"
+                                  or acceptance == "unknown" or loop.get("acceptance_status") != acceptance))
+        # During an explicit fix the old check is expected to stop applying.
         # Its still-bound request_changes record remains the reason for recheck.
         mismatch = mismatch or (phase == "awaiting_fix" and recorded != "request_changes")
-        mismatch = mismatch or (phase == "awaiting_review" and decision != "missing")
+        mismatch = mismatch or (phase == "awaiting_review" and decision not in {"missing", "inconclusive"})
+        if mismatch:
+            acceptance = "unknown"
         next_action = ("Refresh and inspect the preserved evidence; the correction and check observations do not match."
-                       if mismatch else loop.get("next_action"))
-        if not mismatch and phase == "awaiting_human_acceptance" and check == "failed" and decision == "approve":
-            next_action = "Inspect the failed check and recorded review; acceptance remains unresolved."
+                       if mismatch else "Inspect the retained machine review; it did not establish a review-policy decision."
+                       if phase == "awaiting_review" and decision == "inconclusive" else loop.get("next_action"))
     elif phase != "not_started":
+        acceptance = "unknown"
         next_action = "Inspect the preserved correction evidence; do not repeat an uncertain check or Worker dispatch."
     elif not bound or check == "unknown":
         next_action = ("Select a clean candidate and explicitly run its local check; no check is recorded yet."
@@ -84,10 +142,18 @@ def current_result_details(evidence: dict) -> list[tuple[str, str]]:
             "missing": "Review this exact candidate and its check receipt.",
             "request_changes": "Address the recorded feedback, then explicitly recheck a new candidate against the original task.",
             "reject": "Inspect the rejected candidate and feedback with the reviewer before continuing.",
-            "approve": "A person must decide acceptance against the original task; the recorded approval is not semantic verification.",
+            "inconclusive": "Inspect the retained machine review; it did not establish a review-policy decision.",
+            "approve": ("Candidate review policy is satisfied; inspect the retained evidence before any separately authorized delivery action."
+                        if acceptance == "accepted_by_review_policy" else
+                        "The optional human approval is recorded for the passed check; inspect the retained evidence before delivery."
+                        if acceptance == "human_recorded" else
+                        "Inspect the recorded review and its check binding; acceptance remains unresolved."),
         }[decision]
-        if check == "failed" and decision == "approve":
-            next_action = "Inspect the failed check and recorded review; acceptance remains unresolved."
+    if check == "failed" and decision == "approve":
+        acceptance = "unknown"
+        next_action = "Inspect the failed check and recorded review; acceptance remains unresolved."
+    rows.append(("Acceptance", acceptance if acceptance != "unknown" else "unknown (no applicable acceptance record)"))
+    rows.append(("Semantic verification", review["semantic_verification"]))
     if loop.get("reason"):
         rows.append(("Correction limitation", loop["reason"]))
     rows.append(("Next action", next_action or "Inspect the preserved evidence before continuing."))

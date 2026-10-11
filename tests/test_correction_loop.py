@@ -65,10 +65,10 @@ def test_real_fix_recheck_bound_ui_review_and_human_handoff(loop_context):
     assert code == 200 and recorded["acceptance_status"] == "unknown"
     assert recorded["human_record"]["producer"] == "explicit_operator_workbench"
     end = c.loop.evidence(c.execution_id)
-    assert end["status"] == "awaiting_human_acceptance" and end["completed_rounds"] == 1
+    assert end["status"] == "reviewed" and end["completed_rounds"] == 1
     assert end["automatic_provider_invocations"] == 0
     assert c.orchestrator.ledger.read_run(c.execution_id).status == "queued"
-    assert "awaiting_human_acceptance" in render_review_workbench_html(ExecutionAPI(c.project).get_review_workbench(c.execution_id))
+    assert "reviewed" in render_review_workbench_html(ExecutionAPI(c.project).get_review_workbench(c.execution_id))
 
 
 def test_start_replay_cannot_reset_budgets_or_feedback(loop_context):

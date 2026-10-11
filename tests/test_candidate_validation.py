@@ -169,7 +169,7 @@ def test_explicit_review_is_bound_but_does_not_verify_acceptance(candidate, caps
     attestation = json.loads(capsys.readouterr().out)
     assert attestation["independence"] == "not_authenticated"
     assert c.validation.evidence(c.execution_id)["review_status"] == "operator_recorded"
-    assert c.validation.evidence(c.execution_id)["acceptance_status"] == "unknown"
+    assert c.validation.evidence(c.execution_id)["acceptance_status"] == "human_recorded"
     with pytest.raises(TaskInputError, match="validation_review_mismatch"):
         c.validation.attest_review(c.execution_id, receipt_id="wrong", head_sha=c.head,
                                   reviewer="operator-reviewer", decision="approve", reason="Read it")

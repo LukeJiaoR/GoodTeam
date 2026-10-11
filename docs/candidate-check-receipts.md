@@ -2,8 +2,11 @@
 
 This slice adds one usable path from the original captured issue contract to an
 observed local command, an optional human record, and the existing Review
-Workbench. It does not implement general automatic acceptance or launch a model.
-The old workflow `completed` status remains separate from acceptance `unknown`.
+Workbench. Running a check does not launch a model or establish acceptance by
+itself. The separate [automatic candidate review controller](automatic-candidate-review.md)
+can consume an independent report and satisfy its captured review policy. The
+old workflow `completed` status remains separate from the current candidate's
+acceptance record.
 
 ## Run an explicitly chosen check
 
@@ -95,17 +98,20 @@ command. See `supervised-correction-loop.md` for the connected correction rounds
 ## Existing user-visible surfaces
 
 `ExecutionAPI.get_evidence()` includes `candidate_validation`, and original
-`task_input.acceptance_coverage` entries expose check and human-record status.
+`task_input.acceptance_coverage` entries expose check and review status.
 The existing `execution review` text, `/review-workbench/<execution_id>` HTML and
-workbench export display the exact head, check result, human record, remaining
-unknown acceptance and safe reason codes. They do not label a simulated task or
+workbench export display the exact head, check result, machine judgment, optional
+human record, current acceptance status and safe reason codes. They do not label a simulated task or
 a passing check as verified delivery. Simulation is derived from the protected
 original adapter (`fake`/`noop`); other adapters remain runtime-unverified here.
 
 Only the explicitly selected latest validation operation is the current view;
 prior immutable files remain history, not an automatically accumulated test
-matrix. Unmapped criteria stay unknown. Even a passed check with an approval
-record leaves semantic acceptance and overall verification unknown. No merge,
+matrix. Unmapped criteria stay unknown. A passed check plus a bound machine
+approval is `accepted_by_review_policy`; a passed check plus optional human
+approval is `human_recorded`. Failed or unknown checks cannot be overridden by
+approval. These are judgments with `semantic_verification=judgment_not_independently_verified`,
+not independent semantic proof; overall verification stays `unverified`. No merge,
 permission, memory-verified-experience or task-completion transition is granted.
 
 ## Verification boundary

@@ -7,7 +7,9 @@ from typing import Any
 
 from goodteam_os.execution.pr_diff_contract import relative_artifact_path
 from goodteam_os.execution.review_workbench_browser_sandbox import sandbox_section
-from goodteam_os.execution.review_workbench_coverage import acceptance_coverage_lines, current_result_details
+from goodteam_os.execution.review_workbench_coverage import (
+    acceptance_coverage_lines, candidate_review_projection, current_result_details,
+)
 from goodteam_os.execution.review_workbench_contract import (
     REVIEW_WORKBENCH_SCHEMA_VERSION,
 )
@@ -523,9 +525,19 @@ def _timeline_section(review: dict[str, Any]) -> str:
 
 def _decision_section(review: dict[str, Any], *, decision_actions_enabled: bool) -> str:
     decision = _dict(review.get("reviewer_decision"))
-    bound_review = _dict(_dict(_dict(review.get("evidence")).get("candidate_validation")).get("review"))
+    validation = _dict(_dict(review.get("evidence")).get("candidate_validation"))
+    selected_review = _dict(validation.get("review"))
+    bound_review = _dict(validation.get("human_review"))
+    if not bound_review and selected_review.get("schema_version") == "candidate_review_attestation.v1":
+        bound_review = selected_review
+    if candidate_review_projection(validation)["human_label"] == "missing":
+        bound_review = {}
     if bound_review:
         decision = {**bound_review, "available": True}
+    elif selected_review.get("schema_version") == "candidate_machine_review.v1":
+        # Machine provenance belongs in the candidate evidence, never in the
+        # optional human-attestation form or its reviewer field.
+        decision = {}
     disabled = "" if decision_actions_enabled and not bound_review else " disabled"
     note = (
         '<p class="action-note" id="decision-action-note">Ready to record through the local server route.</p>'
@@ -539,6 +551,7 @@ def _decision_section(review: dict[str, Any], *, decision_actions_enabled: bool)
         ]
     )
     body += note
+    body += "<p>A manual record is optional. It cannot override failed or unknown candidate checks.</p>"
     body += f"""
 <form id="review-decision-form" class="decision-form" data-actions-enabled="{str(decision_actions_enabled).lower()}">
   <label>Reviewer <input name="reviewer" value="{escape(_text(decision.get("reviewer")))}" autocomplete="off"{disabled}></label>
@@ -862,11 +875,12 @@ code, time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospa
 
 def _candidate_validation_section(review: dict[str, Any]) -> str:
     from goodteam_os.execution.review_workbench_renderer import _render_candidate_checks
-    value = _dict(_dict(review.get("evidence")).get("candidate_validation"))
+    evidence = _dict(review.get("evidence"))
+    value = _dict(evidence.get("candidate_validation"))
     body = "<ul>" + "".join("<li>" + escape(line.removeprefix("- ")) + "</li>"
-                           for line in _render_candidate_checks(value)) + "</ul>"
-    body += "<p>Checks passed / human record / acceptance unknown are separate observations. "
-    body += "No task acceptance, independent reviewer identity, or model success is inferred.</p>"
+                           for line in _render_candidate_checks(value, task_input=_dict(evidence.get("task_input")))) + "</ul>"
+    body += "<p>Check results, machine judgments and optional human records are separate observations. "
+    body += "Review-policy acceptance requires a passed check and a matching approval. Semantic judgment is not independently verified.</p>"
     return _section("Candidate validation", body)
 
 
@@ -884,7 +898,7 @@ def _correction_loop_section(review: dict[str, Any], *, decision_actions_enabled
     body = "<ul>" + "".join("<li>" + escape(line.removeprefix("- ")) + "</li>"
                            for line in _render_correction_loop(loop)) + "</ul>"
     action = ""
-    if loop.get("available") and loop.get("status") not in {"needs_human", "awaiting_human_acceptance"}:
+    if loop.get("available") and loop.get("loop_id") and loop.get("status") not in {"needs_human", "reviewed"}:
         action, label = "stop", "Stop further correction rounds"
     elif (loop.get("status") == "not_started" and validation.get("available")
           and validation.get("check_status") in {"passed", "failed"}
@@ -899,5 +913,5 @@ def _correction_loop_section(review: dict[str, Any], *, decision_actions_enabled
     body += '<p id="correction-status" role="status"></p>'
     body += '<p>Fix with your existing tools, or prepare a separate correction worktree and Worker input. '
     body += 'Starting the configured runtime requires an explicit CLI invocation and cost acknowledgement. '
-    body += 'These controls do not launch a coding runtime, paid model, approval or merge. Recheck the committed candidate with the original explicit local command.</p>'
+    body += 'These controls do not launch a coding runtime, paid model, automatic review or merge. Recheck the committed candidate with the original explicit local command.</p>'
     return _section("Supervised correction loop", body)
