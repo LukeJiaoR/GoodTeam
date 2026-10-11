@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import {
   confirmChangeIntent,
+  getTaskInputContext,
   discussChangeIntent,
   keepDiscussingChangeIntent,
   startChangeIntent,
@@ -72,4 +73,13 @@ test('includes raw initial feedback without dropping request cancellation', asyn
     project_key: 'DEMO', approval: 'prd', expected_artifact_version: 'v1', initial_text: initialText,
   });
   expect(fetch.mock.calls[0][1].signal).toBe(signal);
+});
+
+
+test('reads task input with exact encoded project/run scope, abort signal and no cache', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' });
+  vi.stubGlobal('fetch', fetch);
+  const signal = new AbortController().signal;
+  await getTaskInputContext('demo/project', 'run #1', { signal });
+  expect(fetch).toHaveBeenCalledWith('/api/projects/demo%2Fproject/runs/run%20%231/input-context', { signal, cache: 'no-store' });
 });

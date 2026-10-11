@@ -5841,7 +5841,11 @@ def handle_project_api_get(
     *, codex_review_admission: "CodexReviewAdmission | None" = None,
 ) -> tuple[int, dict[str, object]] | None:
     from goodteam_os.skills.review_api import handle_review_get
+    from goodteam_os.task_input_context import handle_task_input_get
 
+    task_input_response = handle_task_input_get(workspace, path)
+    if task_input_response is not None:
+        return task_input_response
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
     review_response = handle_review_get(workspace, path, **review_worker_kwargs(codex_review_admission))
     if review_response is not None:

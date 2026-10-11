@@ -100,23 +100,26 @@ class TaskSkillLockStore:
     publishes readiness only after every planned retention pin is durable.
     """
 
-    def __init__(self, root: Path, packages: SkillStore, *, worker_roots: tuple[Path, ...] = ()):
+    def __init__(self, root: Path, packages: SkillStore, *, worker_roots: tuple[Path, ...] = (), create: bool = True):
+        if type(create) is not bool:
+            raise SkillError("invalid_store_mode", "Store creation mode must be explicit.")
+        self._create_on_open = create
         self.root = Path(root).expanduser().absolute()
         self.packages = packages
         self.scope = packages.scope
         for worker_root in worker_roots:
             if self.root.resolve().is_relative_to(Path(worker_root).expanduser().resolve()):
                 raise SkillError("unsafe_store_root", "Task Skill locks must be outside Worker-writable roots.")
-        with directory(self.root, create=True) as root_fd:
-            with subdirectory(root_fd, self.scope.namespace, create=True) as namespace:
-                with subdirectory(namespace, "objects", create=True):
+        with directory(self.root, create=create) as root_fd:
+            with subdirectory(root_fd, self.scope.namespace, create=create) as namespace:
+                with subdirectory(namespace, "objects", create=create):
                     pass
 
     @contextmanager
     def _locked(self):
         with directory(self.root) as root_fd:
             with subdirectory(root_fd, self.scope.namespace) as fd:
-                lock = open_lock_file(fd, ".lock")
+                lock = open_lock_file(fd, ".lock", create=self._create_on_open)
                 try:
                     fcntl.flock(lock, fcntl.LOCK_EX)
                     yield fd

@@ -1,0 +1,25 @@
+.task-input-context { flex: 0 0 auto; min-width: 0; margin-bottom: .65rem; }
+.task-input-context__toggle { display: inline-flex; align-items: center; gap: .4rem; border: 0; background: transparent; color: var(--work-text-muted); padding: .35rem .2rem; font: inherit; font-size: .8rem; cursor: pointer; }
+.task-input-context__toggle[aria-expanded="true"] > svg:last-child { transform: rotate(180deg); }
+.task-input-context__panel { min-width: 0; margin-top: .35rem; border: 1px solid var(--work-border); border-radius: 12px; background: var(--work-material); color: var(--work-text); }
+.task-input-context__panel > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; padding: .65rem 1rem; border-bottom: 1px solid var(--work-border); }
+.task-input-context__panel h2, .task-input-context__panel h3 { margin: .55rem 0; font-size: .9rem; }
+.task-input-context__panel h4 { margin: .5rem 0; font-size: .85rem; }
+.task-input-context__panel button { max-width: 100%; white-space: normal; }
+.task-input-context__body { max-height: min(48vh, 38rem); overflow: auto; overscroll-behavior: contain; padding: .2rem 1rem 1rem; font-size: .85rem; line-height: 1.5; }
+.task-input-context__body p { margin: .5rem 0; }
+.task-input-context__request { font: inherit; white-space: pre-wrap; margin: .5rem 0 .85rem; padding: .7rem; border: 1px solid var(--work-border); border-radius: 8px; }
+.task-input-context__body :is(p, li, dd, code, pre, summary) { overflow-wrap: anywhere; }
+.task-input-context__body code { font-size: .75rem; white-space: pre-wrap; }
+.task-input-context__body dl { margin: .6rem 0; }
+.task-input-context__body dt { color: var(--work-text-muted); font-size: .78rem; }
+.task-input-context__body dd { margin: .15rem 0 .65rem; }
+.task-input-context__facts { display: flex; flex-wrap: wrap; gap: .4rem 2rem; }
+.task-input-context__subject, .task-input-context__provenance { border-top: 1px solid var(--work-border); padding: .65rem 0; }
+.task-input-context__body summary { cursor: pointer; }
+.task-input-context__method { padding: .3rem .75rem; border-left: 2px solid var(--work-border); }
+.task-input-context__provenance dd > code { display: block; }
+@media (max-width: 767px) {
+  .task-input-context__body { max-height: 45vh; padding-inline: .75rem; }
+  .task-input-context__panel > header { padding-inline: .75rem; }
+}

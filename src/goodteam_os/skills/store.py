@@ -75,7 +75,10 @@ def _remove_staging(parent_fd: int, name: str) -> None:
 
 class SkillStore:
     def __init__(self, root: Path, scope: SkillScope, *, limits: PackageLimits | None = None,
-                 worker_roots: tuple[Path, ...] = ()):
+                 worker_roots: tuple[Path, ...] = (), create: bool = True):
+        if type(create) is not bool:
+            raise SkillError("invalid_store_mode", "Store creation mode must be explicit.")
+        self._create_on_open = create
         self.root = Path(root).expanduser().absolute()
         self.scope = scope
         self.limits = limits or PackageLimits()
@@ -83,16 +86,16 @@ class SkillStore:
             if self.root.resolve().is_relative_to(Path(worker_root).expanduser().resolve()):
                 raise SkillError("unsafe_store_root", "Skill storage cannot be inside a declared Worker-writable root.")
         # No global home scanning or implicit source trust; only initialize our root.
-        with directory(self.root, create=True) as fd:
-            with subdirectory(fd, self.scope.namespace, create=True) as namespace:
-                with subdirectory(namespace, "objects", create=True):
+        with directory(self.root, create=create) as fd:
+            with subdirectory(fd, self.scope.namespace, create=create) as namespace:
+                with subdirectory(namespace, "objects", create=create):
                     pass
 
     @contextmanager
     def _locked(self) -> Iterator[int]:
         with directory(self.root) as root:
             with subdirectory(root, self.scope.namespace) as fd:
-                lock = open_lock_file(fd, ".lock")
+                lock = open_lock_file(fd, ".lock", create=self._create_on_open)
                 try:
                     fcntl.flock(lock, fcntl.LOCK_EX)
                     yield fd

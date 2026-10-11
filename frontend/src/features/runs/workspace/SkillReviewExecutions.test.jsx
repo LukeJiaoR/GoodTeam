@@ -458,3 +458,21 @@ describe('Read-only delivery evidence', () => {
     expect(screen.getByText('尚无绑定本任务及当前代码的独立验证记录。')).toBeVisible();
   });
 });
+
+
+it.each([false, true])('uses the existing read-witness validator in read-only delivery evidence (corrupt=%s)', async corrupt => {
+  const execution = readItem();
+  if (corrupt) execution.resource_reads[0].context_digest = 'foreign';
+  requestJson.mockResolvedValue({ ...list, start_available: true, reviews: [execution] });
+  render(<SkillReviewExecutions projectKey="DEMO" runId="run" language="en" mode="delivery" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Review evidence for this delivery' }));
+  if (corrupt) {
+    await screen.findByRole('alert');
+    expect(screen.queryByText('references/check.md')).not.toBeInTheDocument();
+  } else {
+    await screen.findByText('references/check.md');
+    expect(screen.getByText(/not proof of comprehension/)).toBeInTheDocument();
+  }
+  expect(screen.queryByRole('button', { name: /Start review|Retry with locked inputs|Cancel review/ })).not.toBeInTheDocument();
+  expect(requestJson.mock.calls.every(([, options]) => !options.method || options.method === 'GET')).toBe(true);
+});

@@ -22,6 +22,11 @@ export const getProjectRun = (projectKey, runId, { signal } = {}) => requestJson
   { signal },
 );
 
+export const getTaskInputContext = (projectKey, runId, { signal } = {}) => requestJson(
+  `/api/projects/${encodeURIComponent(projectKey)}/runs/${encodeURIComponent(runId)}/input-context`,
+  { signal, cache: 'no-store' },
+);
+
 export const getWorkflowGraph = (projectKey, { signal } = {}) => requestJson(
   `/api/workflow/graph?project=${encodeURIComponent(projectKey)}`,
   { signal },
@@ -92,6 +97,7 @@ export const runApi = {
   getProjectState,
   getProjectRun,
   getProjectRuns,
+  getTaskInputContext,
   getWorkflowGraph,
   keepDiscussingChangeIntent,
   retryRun,
