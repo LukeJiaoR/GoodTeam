@@ -7,6 +7,7 @@ from typing import Any
 
 from goodteam_os.execution.pr_diff_contract import relative_artifact_path
 from goodteam_os.execution.review_workbench_browser_sandbox import sandbox_section
+from goodteam_os.execution.review_workbench_coverage import acceptance_coverage_lines
 from goodteam_os.execution.review_workbench_contract import (
     REVIEW_WORKBENCH_SCHEMA_VERSION,
 )
@@ -63,6 +64,7 @@ def render_review_workbench_html(
     {_summary_section(review)}
     {_task_contract_section(review)}
     {_candidate_validation_section(review)}
+    {_acceptance_coverage_section(review)}
     {_correction_loop_section(review, decision_actions_enabled=decision_actions_enabled)}
     {_runtime_policy_section(review)}
     {_broker_status_section(review)}
@@ -864,6 +866,12 @@ def _candidate_validation_section(review: dict[str, Any]) -> str:
     body += "<p>Checks passed / human record / acceptance unknown are separate observations. "
     body += "No task acceptance, independent reviewer identity, or model success is inferred.</p>"
     return _section("Candidate validation", body)
+
+
+def _acceptance_coverage_section(review: dict[str, Any]) -> str:
+    lines = acceptance_coverage_lines(_dict(review.get("evidence")))
+    body = "<ul>" + "".join("<li>" + escape(line.removeprefix("- ")) + "</li>" for line in lines) + "</ul>"
+    return _section("Original acceptance coverage", body)
 
 
 def _correction_loop_section(review: dict[str, Any], *, decision_actions_enabled: bool) -> str:
