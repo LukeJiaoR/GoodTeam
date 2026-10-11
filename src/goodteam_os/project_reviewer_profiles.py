@@ -24,6 +24,42 @@ def normalize_reviewer_profile_config(target: Mapping[str, object]) -> dict[str,
     return configured
 
 
+def reviewer_profile_configuration_error(target: Mapping[str, object] | None) -> str:
+    """Validate evidence coverage without changing legacy execution normalization."""
+    if target is None:
+        return ""
+    if target.get("_reviewer_configuration_unavailable"):
+        return "Project reviewer configuration could not be read. Repair project reviewer settings before relying on approval advice."
+    if "reviewer_profiles" not in target:
+        return ""
+    invalid = "Reviewer profile configuration is invalid. Repair project reviewer settings before relying on approval advice."
+    raw = target["reviewer_profiles"]
+    if not isinstance(raw, Mapping):
+        return invalid
+    try:
+        phases = [str(phase).strip() for phase in raw]
+        if len(set(phases)) != len(phases):
+            return invalid
+        for phase, value in raw.items():
+            if not isinstance(value, (str, list, tuple)):
+                return invalid
+            if isinstance(value, (list, tuple)) and any(not isinstance(item, str) for item in value):
+                return invalid
+            if isinstance(value, str):
+                text = value.strip()
+                if text.startswith("[") and text.endswith("]"):
+                    text = text[1:-1].strip()
+                if text and any(not part.strip() for part in text.split(",")):
+                    return invalid
+            ids = _coerce_profile_ids(str(phase), value)
+            if len(set(ids)) != len(ids):
+                return "Reviewer profile configuration contains duplicate profiles. Repair project reviewer settings before relying on approval advice."
+        normalize_reviewer_profile_config(target)
+    except ValueError:
+        return invalid
+    return ""
+
+
 def reviewer_profiles_report(target: Mapping[str, object], *, backend_doctor: BackendDoctor) -> dict[str, object]:
     try:
         configured = normalize_reviewer_profile_config(target)

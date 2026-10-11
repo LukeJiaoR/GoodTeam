@@ -627,11 +627,17 @@ def _project_runtime_roots_for_state(*, state: AgileDevState | object | None, wo
     return roots
 
 
+class ProjectConfigNotFoundError(ValueError):
+    """No local project config exists; distinct from a broken configured project."""
+
+
 def _reviewer_target_for_state(*, workspace: Path, project_key: str) -> dict[str, object]:
     try:
         return dict(load_project_target(_project_config_for_key(workspace, project_key)))
-    except Exception:
+    except ProjectConfigNotFoundError:
         return {}
+    except Exception:
+        return {"_reviewer_configuration_unavailable": True}
 
 
 def _review_evidence_policy_config(target: Mapping[str, object]) -> object:
@@ -830,7 +836,11 @@ def build_approval_recommendation(
             artifact_path=str(review_dict.get("artifact_path", "") or ""),
             artifact_version=str(review_dict.get("artifact_version", "") or ""),
         ):
-            reasons.append({"kind": "missing_evidence", "text": "Current reviewer evidence is incomplete or inconsistent across the review team. Human review is required."})
+            projection = review_dict["multi_reviewer_projection"]
+            configuration_error = projection.get("configuration_error") if isinstance(projection, Mapping) else None
+            text = (configuration_error if isinstance(configuration_error, str) and configuration_error else
+                    "Current reviewer evidence is incomplete or inconsistent across the review team. Human review is required.")
+            reasons.append({"kind": "missing_evidence", "text": _mask_advisory_text(text)})
 
         messages = {}
         raw_messages = {}
@@ -5585,7 +5595,7 @@ def _project_config_for_key(workspace: Path, project_key: str) -> Path:
         if paths is not None:
             paths[cache_key] = fallback
         return fallback
-    raise ValueError(f"No local project config found for project: {key}")
+    raise ProjectConfigNotFoundError(f"No local project config found for project: {key}")
 
 
 def _project_target_and_root(
