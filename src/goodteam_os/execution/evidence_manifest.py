@@ -16,6 +16,7 @@ from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.memory_provenance import build_memory_provenance_projection
 from goodteam_os.execution.models import ExecutionRunStatus, LedgerEvent
 from goodteam_os.execution.runtime_policy import runtime_policy_manifest
+from goodteam_os.execution.task_input_evidence import task_input_evidence
 from goodteam_os.memory import RoleMemoryStore
 
 
@@ -40,6 +41,13 @@ def build_evidence_manifest(
         final_status=final_status,
         incomplete_reason=incomplete_reason,
     )
+    input_evidence = task_input_evidence(ledger.project_root, execution_id,
+                                        worker_job_id=str(run.worker_job_id) if run else "")
+    contract_manifest = _task_contract_manifest(task, captured=input_evidence.get("contract"))
+    if input_evidence["status"] == "unavailable":
+        contract_manifest = {**_task_contract_manifest(None), "fallback_warning": {
+            "code": input_evidence["reason"], "message": "The original captured task input is unavailable.",
+        }}
     manifest = {
         "schema_version": "execution_evidence_manifest.v1",
         "execution_id": execution_id,
@@ -47,7 +55,8 @@ def build_evidence_manifest(
         "source": source,
         "source_issue": source["issue_ref"],
         "github_ref": source["github_ref"],
-        "task_contract": _task_contract_manifest(task),
+        "task_contract": contract_manifest,
+        "task_input": input_evidence,
         "runtime_policy": runtime_policy_manifest(events),
         "github_broker_status": github_broker_status_manifest(run, events),
         "pr": _pr_manifest(pr_repo, pr_number, run, events),
@@ -66,9 +75,9 @@ def build_evidence_manifest(
     return json_ready(manifest)
 
 
-def _task_contract_manifest(task: Any) -> dict[str, Any]:
+def _task_contract_manifest(task: Any, *, captured: dict[str, Any] | None = None) -> dict[str, Any]:
     contract = getattr(task, "task_contract", None)
-    if contract is None:
+    if contract is None and captured is None:
         return {
             "available": False,
             "schema_version": "",
@@ -83,7 +92,7 @@ def _task_contract_manifest(task: Any) -> dict[str, Any]:
                 "message": "Legacy execution has no persisted task_contract.v1 data.",
             },
         }
-    payload = json_ready(contract)
+    payload = captured if captured is not None else json_ready(contract)
     return {
         "available": True,
         "schema_version": str(payload.get("schema_version", "")),

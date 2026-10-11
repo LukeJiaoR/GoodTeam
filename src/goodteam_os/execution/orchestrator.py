@@ -32,6 +32,8 @@ from goodteam_os.execution.pr_diff_contract import artifact_json_path
 from goodteam_os.execution.runtime_policy import build_runtime_policy
 from goodteam_os.execution.sandbox import SandboxGitAdapter, SandboxService
 from goodteam_os.execution.sandbox_surface import SANDBOX_SCHEMA_VERSION
+from goodteam_os.execution.task_snapshot import TaskExecutionSnapshot, TaskInputError
+from goodteam_os.execution.task_snapshot_store import store_for_project
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -70,17 +72,57 @@ class ExecutionOrchestrator:
             raise ValueError("A GitHubClient is required to intake a GitHub issue")
 
         issue_ref = GitHubIssueRef(repo=repo, issue_number=issue_number)
+        input_store = store_for_project(self.project_root)
+        expected_id = execution_id_from_task(task_id_from_github_issue(repo, issue_number))
+        captured = input_store.load(expected_id, allow_pending=True) if input_store else None
+        if captured is not None:
+            request = captured.to_dict()
+            if request["role"] != role or request["adapter"] != adapter:
+                raise TaskInputError("task_input_operation_conflict")
+            captured = input_store.commit(captured)
+
+        def capture_before_binding(task: ExecutionTask) -> ExecutionTask:
+            nonlocal captured
+            if input_store is None:
+                return task
+            # Default task input and custom Skill method authority stay distinct.
+            # A custom task keeps its original closed runtime protocol.
+            context, _key = self._issue_skill_context(task, execution_id=expected_id, task_id=task.task_id,
+                                                      repo=repo, issue_number=issue_number, role=role, adapter=adapter)
+            if context:
+                if captured is not None:
+                    raise TaskInputError("task_input_protocol_conflict")
+                return task
+            proposed = captured or TaskExecutionSnapshot.capture(task, scope=input_store.scope, role=role, adapter=adapter)
+            captured = input_store.commit(proposed)
+            return captured.task
+
         intake_result = intake_github_issue_adapter(
             self.github_client,
             self.binding_store,
             issue_ref,
             clock=self._clock,
+            before_binding=capture_before_binding,
+            recovered_task=captured.task if captured else None,
         )
-        task = intake_result if isinstance(intake_result, ExecutionTask) else None
+        task = captured.task if captured else (intake_result if isinstance(intake_result, ExecutionTask) else None)
         execution_id = _execution_id_from_intake_result(intake_result)
+        bound_input = input_store.load(execution_id) if input_store else None
+        if bound_input is not None:
+            if bound_input.execution_id != expected_id:
+                raise TaskInputError("task_input_job_mismatch")
+            captured, task = bound_input, bound_input.task
 
         existing_run = self.ledger.read_run(execution_id)
         if existing_run is not None:
+            original_input = self.worker_store.admit_task_input(existing_run.worker_job_id)
+            if original_input is not None:
+                _require_snapshot_run(original_input, existing_run, expected_id)
+                request = original_input.to_dict()
+                if request["role"] != role or request["adapter"] != adapter:
+                    raise TaskInputError("task_input_operation_conflict")
+            if captured is not None and (original_input is None or original_input.data != captured.data):
+                raise TaskInputError("task_input_job_mismatch")
             from goodteam_os.skills.worker_requests import is_skill_job_id, original_worker_request
             from goodteam_os.skills.models import SkillConflict, SkillError
 
@@ -106,6 +148,7 @@ class ExecutionOrchestrator:
             issue_number=issue_number,
             adapter=adapter,
             role=role,
+            task_input=captured,
         )
         self.ledger.create_run(run)
         self._append_intake_events(run, task=task, repo=repo, issue_number=issue_number, role=role)
@@ -115,6 +158,18 @@ class ExecutionOrchestrator:
         run = self.ledger.read_run(execution_id)
         if run is None:
             raise ValueError(f"Execution run not found: {execution_id}")
+
+        # Admission precedes sandbox creation and every adapter, including fake.
+        input_authority = store_for_project(self.project_root, existing_only=True)
+        original_input = input_authority.load(execution_id) if input_authority else None
+        admitted_input = self.worker_store.admit_task_input(run.worker_job_id)
+        for snapshot in (original_input, admitted_input):
+            if snapshot is not None:
+                _require_snapshot_run(snapshot, run, execution_id)
+        if original_input is not None and (admitted_input is None or admitted_input.data != original_input.data):
+            raise TaskInputError("task_input_job_mismatch")
+        if admitted_input is not None and run.status is ExecutionRunStatus.SUCCEEDED:
+            return run
 
         from goodteam_os.skills.worker_requests import is_skill_job_id
 
@@ -221,42 +276,40 @@ class ExecutionOrchestrator:
         issue_number: int,
         adapter: str,
         role: str,
+        task_input: TaskExecutionSnapshot | None = None,
     ) -> ExecutionRun:
-        from goodteam_os.skills.task_locks import TaskSkillIdentity
-        from goodteam_os.skills.task_start import capture_task_start, registered_project_scope
         from goodteam_os.skills.worker_requests import WORKER_METADATA_LOADER, subject_for_role
 
         # Intake already persisted the issue task. Recovery uses that original
         # body instead of manufacturing a shorter task from an existing binding.
         if task is None:
             task = self.ledger.read_task(execution_id)
-        scope = registered_project_scope(self.project_root)
+        context, key = self._issue_skill_context(task, execution_id=execution_id, task_id=task_id,
+                                                  repo=repo, issue_number=issue_number, role=role, adapter=adapter)
         skill_fields = {}
-        if scope is not None:
-            workspace, key = scope
-            context = capture_task_start(
-                workspace=workspace, project_key=key, worker_root=self.project_root,
-                task=TaskSkillIdentity("issue_execution", key, execution_id),
-                command_key=f"issue-start:{key}:{execution_id}",
-                confirmed_input={"task_id": task_id, "source": f"github:{repo.strip().lower()}#{issue_number}",
-                                 "task": _worker_task(task, repo=repo, issue_number=issue_number),
-                                 "context": _worker_context(task, repo=task.repo if task is not None else repo, issue_number=issue_number),
-                                 "role": role, "adapter": adapter},
-            )
-            if context:
-                skill_fields = {"task_skill_context": context, "skill_subject": subject_for_role(role),
-                                "skill_loader_version": WORKER_METADATA_LOADER,
-                                "project_key": key, "execution_id": execution_id,
-                                "idempotency_key": f"issue-worker:{key}:{execution_id}"}
+        if context:
+            if task_input is not None:
+                raise TaskInputError("task_input_protocol_conflict")
+            skill_fields = {"task_skill_context": context, "skill_subject": subject_for_role(role),
+                            "skill_loader_version": WORKER_METADATA_LOADER,
+                            "project_key": key, "execution_id": execution_id,
+                            "idempotency_key": f"issue-worker:{key}:{execution_id}"}
+        elif task_input is not None:
+            skill_fields = {"task_input": task_input, "execution_id": execution_id,
+                            "idempotency_key": task_input.to_dict()["operation_id"]}
+        input_fields = {"task": _worker_task(task, repo=repo, issue_number=issue_number),
+                        "context": _worker_context(task, repo=repo, issue_number=issue_number),
+                        "expected_artifacts": ["worker result"]}
+        if task_input is not None:
+            from goodteam_os.execution.task_context import task_worker_fields
+            input_fields = task_worker_fields(task_input)
         worker_job, _created = self.worker_store.create_or_reuse_job(
             **skill_fields,
+            **input_fields,
             run_id=execution_id,
             role=role,
             adapter=adapter,
-            task=_worker_task(task, repo=repo, issue_number=issue_number),
-            context=_worker_context(task, repo=repo, issue_number=issue_number),
-            task_source=f"github:{repo.strip()}#{issue_number}",
-            expected_artifacts=["worker result"],
+            task_source=f"github:{task_input.task.repo if task_input else repo.strip()}#{issue_number}",
         )
         timestamp = self._clock()
         return ExecutionRun(
@@ -270,6 +323,28 @@ class ExecutionOrchestrator:
             created_at=timestamp,
             updated_at=timestamp,
         )
+
+    def _issue_skill_context(
+        self, task: ExecutionTask | None, *, execution_id: str, task_id: str,
+        repo: str, issue_number: int, role: str, adapter: str,
+    ) -> tuple[dict[str, Any], str]:
+        from goodteam_os.skills.task_locks import TaskSkillIdentity
+        from goodteam_os.skills.task_start import capture_task_start, registered_project_scope
+
+        scope = registered_project_scope(self.project_root)
+        if scope is None:
+            return {}, ""
+        workspace, key = scope
+        context = capture_task_start(
+            workspace=workspace, project_key=key, worker_root=self.project_root,
+            task=TaskSkillIdentity("issue_execution", key, execution_id),
+            command_key=f"issue-start:{key}:{execution_id}",
+            confirmed_input={"task_id": task_id, "source": f"github:{repo.strip().lower()}#{issue_number}",
+                             "task": _worker_task(task, repo=repo, issue_number=issue_number),
+                             "context": _worker_context(task, repo=task.repo if task is not None else repo, issue_number=issue_number),
+                             "role": role, "adapter": adapter},
+        )
+        return context, key
 
     def _append_intake_events(
         self,
@@ -462,6 +537,15 @@ class ExecutionOrchestrator:
         )
 
 
+def _require_snapshot_run(snapshot: TaskExecutionSnapshot, run: ExecutionRun, caller_execution_id: str) -> None:
+    # Both directions matter: a captured task cannot route to a legacy job, and
+    # an uncaptured caller cannot borrow somebody else's captured job.
+    if (snapshot.execution_id != caller_execution_id or run.execution_id != caller_execution_id
+            or run.task_id != snapshot.task.task_id or run.worker_job_id != snapshot.job_id
+            or run.adapter != snapshot.to_dict()["adapter"]):
+        raise TaskInputError("task_input_job_mismatch")
+
+
 def _execution_id_from_intake_result(result: ExecutionTask | GitHubBinding) -> str:
     if isinstance(result, ExecutionTask):
         return execution_id_from_task(result.task_id)
@@ -505,6 +589,15 @@ def _sandbox_claim_inference(
     job_root = worker_store.root / run.worker_job_id
     worker_job = _find_worker_job(worker_store, run.worker_job_id) or {}
     task = ExecutionLedger(project_root).read_task(run.execution_id)
+    snapshot = worker_store.admit_task_input(run.worker_job_id)
+    if snapshot is not None:
+        task = snapshot.task
+        return infer_execution_path_claims(
+            task_text=task.body, context_text=task.goal,
+            expected_artifacts=task.task_contract.expected_artifacts,
+            existing_changed_files=_existing_changed_files(project_root, run.execution_id, worker_job),
+            task_contract=task.task_contract.to_dict(),
+        )
     return infer_execution_path_claims(
         task_text=_read_text(job_root / "task.md"),
         context_text=_read_text(job_root / "context.md"),
