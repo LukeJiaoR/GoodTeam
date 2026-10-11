@@ -1928,8 +1928,8 @@ class WorkerJobStore:
         if not packet_path.is_file():
             return []
         try:
-            packet = self._read_json(packet_path)
-        except (OSError, json.JSONDecodeError):
+            packet = RoleMemoryStore(self.project_root).validate_pickup_packet(self._read_json(packet_path))
+        except (OSError, UnicodeError, ValueError):
             return []
         relevant_events = packet.get("relevant_events")
         if not isinstance(relevant_events, list):
@@ -2454,11 +2454,11 @@ Keep each bullet short, factual, and free of secrets.""",
     def _render_worker_pickup_context(self, job_root: Path) -> str:
         packet_path = job_root / "role_pickup_packet.json"
         if not packet_path.is_file():
-            return "No pickup packet found."
+            return "Memory context: unavailable. Unavailable context reasons: pickup_missing."
         try:
-            packet = self._read_json(packet_path)
-        except (OSError, json.JSONDecodeError):
-            return "Pickup packet unreadable."
+            packet = RoleMemoryStore(self.project_root).validate_pickup_packet(self._read_json(packet_path))
+        except (OSError, UnicodeError, ValueError):
+            return "Memory context: unavailable. Unavailable context reasons: pickup_unreadable."
 
         relevant_events = packet.get("relevant_events")
         summaries = packet.get("summaries")
@@ -2466,6 +2466,9 @@ Keep each bullet short, factual, and free of secrets.""",
             "Use retrieved relevant events below as the PRIMARY decision context.",
             "Treat horizon summaries as display-only context.",
         ]
+        if packet.get("context_status") in {"partial", "unavailable"}:
+            lines.append(f"Memory context: {packet['context_status']}.")
+            lines.append("Unavailable context reasons: " + ", ".join(packet.get("context_reasons", [])))
         if isinstance(relevant_events, list) and relevant_events:
             lines.append("")
             lines.append("### Retrieved Relevant Events (Primary Signal)")
