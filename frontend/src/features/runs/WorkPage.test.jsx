@@ -474,6 +474,41 @@ test('keeps an active Operator mission on Work when workflow history has a stale
   expect(screen.queryByRole('heading', { name: 'Run history' })).not.toBeInTheDocument();
 });
 
+test.each(['operator_queue', 'task_assistant'])('keeps history row status scoped when %s is blocked', async (source) => {
+  const data = projectedWorkData({ active_run: null, state: { run_id: 'run-history' } });
+  data.team_workspace.mission = { id: 'other-mission', run_id: '', source, status: 'blocked' };
+  data.team_workspace.attention_request = { kind: 'blocker', reason: 'other_task_blocked', actions: [] };
+  data.team_workspace.execution_actors = [];
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-history', title: 'Completed history', status: 'completed' }] });
+
+  renderWorkPage('/projects/DEMO/work');
+
+  const navigation = screen.getByRole('navigation', { name: 'Project tasks' });
+  const row = await within(navigation).findByRole('button', { name: /Completed history/ });
+  expect(row.querySelector('small')).toHaveTextContent(translate('en', 'work.team.status.completed'));
+  expect(row.querySelector('small')).not.toHaveTextContent(translate('en', 'work.blocker.title'));
+});
+
+test('binds the blocked history badge to the active workflow mission rather than stale state', async () => {
+  const data = projectedWorkData({ state: { run_id: 'run-history' } });
+  data.team_workspace.attention_request = { kind: 'blocker', reason: 'current_task_blocked', actions: [] };
+  data.team_workspace.execution_actors = [];
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [
+    { run_id: 'run-history', title: 'Completed history', status: 'completed' },
+    { run_id: 'run-active', title: 'Current workflow', status: 'active' },
+  ] });
+
+  renderWorkPage('/projects/DEMO/work');
+
+  const navigation = screen.getByRole('navigation', { name: 'Project tasks' });
+  const previous = await within(navigation).findByRole('button', { name: /Completed history/ });
+  const current = within(navigation).getByRole('button', { name: /Current workflow/ });
+  expect(previous.querySelector('small')).toHaveTextContent(translate('en', 'work.team.status.completed'));
+  expect(current.querySelector('small')).toHaveTextContent(translate('en', 'work.blocker.title'));
+});
+
 test('opens Request changes as a durable Task Assistant discussion without review mutation', async () => {
   const refresh = vi.fn().mockResolvedValue({});
   const data = managerReviewData();

@@ -754,6 +754,9 @@ export default function WorkPage() {
   const currentRunId = data?.active_run
     ? (projectedMission?.source === 'workflow' ? projectedMission.run_id : data?.state?.run_id) || ''
     : '';
+  const currentWorkflowBlocked = Boolean(currentRunId && projectedMission?.source === 'workflow'
+    && !projectedMission.read_only && projectedWorkspace?.attention_request?.kind === 'blocker'
+    && !(projectedWorkspace.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working'));
   const currentRunTitle = projectedMission?.title || runTitle(data?.state, t);
   const selectedSummary = runHistory.find((item) => item.run_id === runId);
   const isHistorical = Boolean(runId && selectedSummary && selectedSummary.status !== 'active');
@@ -1061,7 +1064,7 @@ export default function WorkPage() {
     onClearContext: () => selectTask(''),
     taskManagementOpen,
     onManageTasks: () => setTaskManagementProject(projectKey),
-    taskNavigation: <TaskNavigation currentRunId={data.state?.run_id} currentBlocked={data.team_workspace?.attention_request?.kind === 'blocker' && !(data.team_workspace?.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working')} runs={runHistory} selectedRunId={runId} onSelect={selectTask}
+    taskNavigation: <TaskNavigation currentRunId={currentRunId} currentBlocked={currentWorkflowBlocked} runs={runHistory} selectedRunId={runId} onSelect={selectTask}
       assistant={data.project_assistant} busy={conversation.busy} onAction={handleAssistantAction} t={t}
       onClose={(event) => {
         setTaskManagementProject('');
