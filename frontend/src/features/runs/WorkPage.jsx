@@ -17,6 +17,7 @@ import useProjectState from './useProjectState';
 import CurrentWorkContext from './workspace/CurrentWorkContext.jsx';
 import useProjectConversation from './useProjectConversation';
 import TaskNavigation from './workspace/TaskNavigation';
+import TaskInputContext from './workspace/TaskInputContext';
 import { TimelineItem } from './workspace/ConversationTimeline';
 import TeamWorkspace, { ManagerMissionEntry } from './workspace/TeamWorkspace';
 import {
@@ -766,6 +767,11 @@ export default function WorkPage() {
   const contextTitle = isHistorical ? runTitle(selectedSummary, t) : currentRunTitle;
   const contextIsLoading = (isHistorical && (!historicalDetail || historyStatus !== 'ready'))
     || Boolean(runId && runId !== currentRunId && !isHistorical);
+  // Never infer an Operator/Assistant task's input scope from stale workflow state.
+  const inputContextRunId = !contextIsLoading && contextMission?.source === 'workflow'
+    && (!contextMission.project_key || contextMission.project_key === projectKey)
+    && contextMission.run_id && (!runId || contextMission.run_id === runId)
+    ? contextMission.run_id : '';
   const contextFreshness = status !== 'ready' ? status : contextIsLoading ? 'loading' : 'ready';
   const visibleTaskTitle = isHistorical ? contextTitle
     : projectedWorkspace?.proposed_task?.run_id ? currentRunTitle
@@ -1089,6 +1095,7 @@ export default function WorkPage() {
   return (
     <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
       {currentContext}
+      {inputContextRunId ? <TaskInputContext projectKey={projectKey} runId={inputContextRunId} language={language} t={t} /> : null}
       <details className="work-context-disclosure">
         <summary>{t('work.context.taskAndHistory')}</summary>
         <header className="product-page-header work-context-drawer">

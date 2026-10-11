@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => ({
   getDevLoop: vi.fn(),
   getMessages: vi.fn(),
   getProjectRun: vi.fn(),
+  getTaskInputContext: vi.fn(),
   getProjectRuns: vi.fn(),
   getProjectState: vi.fn(),
   keepDiscussingChangeIntent: vi.fn(),
@@ -68,6 +69,7 @@ vi.mock('./runApi', () => ({
     getDevLoop: mocks.getDevLoop,
     getMessages: mocks.getMessages,
     getProjectRun: mocks.getProjectRun,
+    getTaskInputContext: mocks.getTaskInputContext,
     getProjectRuns: mocks.getProjectRuns,
     getProjectState: mocks.getProjectState,
     keepDiscussingChangeIntent: mocks.keepDiscussingChangeIntent,
@@ -1132,4 +1134,75 @@ test('handles dispatch failure by displaying error without confirming dispatch',
   expect((await screen.findAllByText('Dispatch failed: worker capacity exceeded')).length).toBeGreaterThanOrEqual(1);
   expect(screen.queryByText(/Dispatched audit scan/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Confirm dispatch' })).toBeVisible();
+});
+
+
+test('opens exact current task inputs on demand without replacing an unsent project message', async () => {
+  mocks.useProjectState.mockReturnValue({ data: projectedWorkData(), status: 'ready', refresh: vi.fn() });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.getTaskInputContext.mockResolvedValue({
+    schema_version: 'goodteam.task-input-context.v1', project_key: 'DEMO', run_id: 'run-active',
+    task_kind: 'workflow_run', read_only: true, capture_status: 'locked', input_origin: 'task_start_lock',
+    input: { exact_request: '  Exact task input\nKeep this line.  ', source_type: 'user', delivery_mode: 'pull_request', delivery_standards: ['Add a regression test'] },
+    captured_at: '2026-10-11T10:00:00Z', team_revision: 3,
+    task_lock_ref: { id: 'task-lock-1', digest: `sha256:${'a'.repeat(64)}` }, subjects: [],
+  });
+  renderWorkPage();
+  const draft = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(draft, { target: { value: 'Still drafting this message' } });
+  expect(mocks.getTaskInputContext).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Task inputs and methods' }));
+  await waitFor(() => expect(mocks.getTaskInputContext).toHaveBeenCalledWith('DEMO', 'run-active', expect.objectContaining({ signal: expect.any(AbortSignal) })));
+  expect(screen.getByText(/Exact task input/).textContent).toBe('  Exact task input\nKeep this line.  ');
+  await userEvent.click(screen.getByRole('button', { name: 'Close task inputs and methods' }));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(draft);
+  expect(draft).toHaveValue('Still drafting this message');
+  expect(mocks.sendTaskAssistantMessage).not.toHaveBeenCalled();
+  expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
+});
+
+
+test.each(['operator_queue', 'task_assistant'])('never substitutes a stale workflow input record for %s', async source => {
+  const data = projectedWorkData();
+  data.team_workspace.mission = { ...data.team_workspace.mission, source, run_id: 'run-active' };
+  mocks.useProjectState.mockReturnValue({ data, status: 'ready', refresh: vi.fn() });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [] });
+  renderWorkPage('/projects/DEMO/work');
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalled());
+  expect(screen.queryByRole('button', { name: 'Task inputs and methods' })).not.toBeInTheDocument();
+  expect(mocks.getTaskInputContext).not.toHaveBeenCalled();
+});
+
+test('reads the selected historical input without borrowing the current run', async () => {
+  mocks.useProjectState.mockReturnValue({ data: projectedWorkData(), status: 'ready', refresh: vi.fn() });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [
+    { run_id: 'run-active', status: 'active' }, { run_id: 'run-history', status: 'archived' },
+  ] });
+  const history = projectedWorkData();
+  history.state.run_id = 'run-history';
+  history.team_workspace.mission = { ...history.team_workspace.mission, run_id: 'run-history', read_only: true };
+  mocks.getProjectRun.mockResolvedValue(history);
+  mocks.getTaskInputContext.mockResolvedValue({
+    schema_version: 'goodteam.task-input-context.v1', project_key: 'DEMO', run_id: 'run-history',
+    task_kind: 'workflow_run', read_only: true, capture_status: 'legacy_unverified', input_origin: 'workflow_state',
+    input: { exact_request: 'Archived workflow input', source_type: '', delivery_mode: '', delivery_standards: [] },
+    captured_at: '', team_revision: null, task_lock_ref: null, subjects: [],
+  });
+  renderWorkPage('/projects/DEMO/work/runs/run-history');
+  await userEvent.click(await screen.findByRole('button', { name: 'Task inputs and methods' }));
+  await screen.findByText('Archived workflow input');
+  expect(mocks.getTaskInputContext).toHaveBeenCalledWith('DEMO', 'run-history', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(mocks.getTaskInputContext).toHaveBeenCalledTimes(1);
+});
+
+
+test('does not fetch a workflow mission declared for another project', async () => {
+  const data = projectedWorkData();
+  data.team_workspace.mission.project_key = 'OTHER';
+  mocks.useProjectState.mockReturnValue({ data, status: 'ready', refresh: vi.fn() });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [] });
+  renderWorkPage('/projects/DEMO/work');
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalled());
+  expect(screen.queryByRole('button', { name: 'Task inputs and methods' })).not.toBeInTheDocument();
+  expect(mocks.getTaskInputContext).not.toHaveBeenCalled();
 });

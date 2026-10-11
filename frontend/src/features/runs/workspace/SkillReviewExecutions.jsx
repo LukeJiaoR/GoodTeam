@@ -193,6 +193,17 @@ function ReviewControl({ item, projectKey, runId, w, onRefresh, action }) {
     {error ? <p role="alert">{action === 'cancel' ? w.cancelFailed : w.retryFailed}</p> : null}</div>;
 }
 
+function ResourceReadEvidence({ item, w }) {
+  if (item.status !== 'received' || !item.report_available || item.cancel_requested || !item.resource_reads?.length) return null;
+  return <details><summary>{w.reads}</summary><p>{w.readBoundary}</p>
+    {item.resource_reads.map(read => <div key={read.item_id}>
+      <strong>{read.path}</strong><code>{read.version_id}</code>
+      <code>{read.resource_digest}</code><small>{read.item_id} · {read.size} bytes</small>
+      <code>{read.transcript_digest}</code>
+    </div>)}
+  </details>;
+}
+
 function DeliveryReviewEvidence({ item, projectKey, runId, w }) {
   const received = item.status === 'received' && item.report_available === true && !item.cancel_requested && !item.error_code;
   const observed = item.process_progress;
@@ -218,6 +229,7 @@ function DeliveryReviewEvidence({ item, projectKey, runId, w }) {
         <dt>{w.head}</dt><dd><code>{item.target.head_sha}</code></dd>
       </dl> : null}
     </details>
+    {received ? <ResourceReadEvidence item={item} w={w} /> : null}
     {received ? <ReviewReport item={item} projectKey={projectKey} runId={runId} w={w} /> : null}
   </article>;
 }
@@ -343,14 +355,7 @@ function ReviewPanel({ projectKey, runId, language, mode }) {
         <details><summary>{w.states}</summary><dl>{Object.entries(item.stages || {}).map(([stage, state]) => <div key={stage}>
           <dt>{stageWords[locale][stage] || stage}</dt><dd>{w[state] || w.unobserved}</dd>
         </div>)}</dl></details>
-        {item.status === 'received' && item.report_available && !item.cancel_requested && item.resource_reads?.length ?
-          <details><summary>{w.reads}</summary><p>{w.readBoundary}</p>
-            {item.resource_reads.map(read => <div key={read.item_id}>
-              <strong>{read.path}</strong><code>{read.version_id}</code>
-              <code>{read.resource_digest}</code><small>{read.item_id} · {read.size} bytes</small>
-              <code>{read.transcript_digest}</code>
-            </div>)}
-          </details> : null}
+        <ResourceReadEvidence item={item} w={w} />
         {item.cancel_requested === true && (['prepared', 'running', 'stopping'].includes(item.status) || item.control_status === 'stopping')
           ? <p role="status">{w.stopPending}</p> : null}
         {item.cancel_available === true && !item.cancel_requested && !item.report_available
