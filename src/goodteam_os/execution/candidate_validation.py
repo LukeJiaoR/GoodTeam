@@ -1,7 +1,8 @@
 """Explicit Operator CLI checks, durable host receipts and conservative outcome.
 
-No HTTP/model input invokes this writer. Human labels are operator attestations,
-not authenticated independent reviewer identities or semantic acceptance proof.
+The command writer is invoked only by explicit CLI/trusted composition. Exact
+Workbench forms may record human attestations, never execute commands. Labels
+are not authenticated independent identities or semantic acceptance proof.
 """
 from __future__ import annotations
 
@@ -102,17 +103,24 @@ class CandidateValidationService:
                 plan = {"request": request, "candidate": candidate}
                 _write(plan_path, plan)
             expected = {"operation_key": key, "plan_digest": digest(canonical_bytes(plan))}
-            _write(root / "validation-current.json", expected)
             started_path = root / ("validation-started-" + key + ".json")
             result_path = root / ("validation-result-" + key + ".json")
             started, result = _read(started_path), _read(result_path)
             if result is not None:
                 probe_candidate(self.project_root, head_sha)
-                return self._verify_result(plan, expected, started, result)
+                result = self._verify_result(plan, expected, started, result)
+                from .correction_loop import CorrectionLoopService
+                # Historical reads cannot change the active correction round.
+                if CorrectionLoopService(self.project_root)._load(snapshot) is None:
+                    _write(root / "validation-current.json", expected)
+                return result
             if started is not None:
                 raise TaskInputError("validation_attempt_indeterminate")
             # A resumed plan is checked again before entering the call boundary.
             probe_candidate(self.project_root, head_sha)
+            from .correction_loop import CorrectionLoopService
+            CorrectionLoopService(self.project_root).admit_validation(snapshot, plan, expected)
+            _write(root / "validation-current.json", expected)
             _write(started_path, expected)
             observed = run_explicit_command(command, self.project_root, seconds=seconds)
             try:
@@ -162,8 +170,9 @@ class CandidateValidationService:
             raise TaskInputError("validation_review_invalid")
         return plan, result, review
 
-    def attest_review(self, execution_id, *, receipt_id, head_sha, reviewer, decision, reason):
-        if (decision not in {"approve", "request_changes", "reject"}
+    def attest_review(self, execution_id, *, receipt_id, head_sha, reviewer, decision, reason, origin="explicit_operator_cli"):
+        if (origin not in {"explicit_operator_cli", "explicit_operator_workbench"}
+                or decision not in {"approve", "request_changes", "reject"}
                 or not all(isinstance(s, str) and s.strip() and len(s.encode()) <= 4096 for s in (reviewer, reason))):
             raise TaskInputError("validation_review_invalid")
         snapshot = self._snapshot(execution_id)
@@ -178,7 +187,7 @@ class CandidateValidationService:
             probe_candidate(self.project_root, head_sha)
             review = _bound({"schema_version": "candidate_review_attestation.v1", "validation_receipt_id": receipt_id,
                              "candidate": result["candidate"], "reviewer": reviewer.strip(), "decision": decision,
-                             "reason": reason.strip(), "producer": "explicit_operator_cli",
+                             "reason": reason.strip(), "producer": origin,
                              "reviewed_at": _review["reviewed_at"] if _review else now(),
                              "independence": "not_authenticated", "semantic_verification": "unverified"})
             path = root / ("validation-review-" + result["operation_key"] + ".json")

@@ -87,8 +87,10 @@ current. The record binds the selected command's mapped criteria, candidate,
 receipt and reviewer label. It is immutable/idempotent; a different judgment
 requires a new explicitly selected operation rather than rewriting history.
 The label is an Operator attestation, not an authenticated independent reviewer
-identity. Existing dashboard decisions, QA text and branch CI observations remain
-separate evidence and are not promoted into this record.
+identity. Unbound legacy dashboard decisions, QA text and branch CI observations remain
+separate evidence and are not promoted into this record. The exact-candidate
+Workbench form can now record the same bound human attestation; it cannot run a
+command. See `supervised-correction-loop.md` for the connected correction rounds.
 
 ## Existing user-visible surfaces
 

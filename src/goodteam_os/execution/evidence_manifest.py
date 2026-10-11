@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from goodteam_os.execution.candidate_validation import candidate_evidence
+from goodteam_os.execution.correction_loop import correction_evidence
 from goodteam_os.execution.evidence_manifest_extractors import (
     ci_observations,
     ci_summary,
@@ -67,6 +68,7 @@ def build_evidence_manifest(
         "task_contract": contract_manifest,
         "task_input": input_evidence,
         "candidate_validation": validation,
+        "correction_loop": correction_evidence(ledger.project_root, execution_id),
         "runtime_policy": runtime_policy_manifest(events),
         "github_broker_status": github_broker_status_manifest(run, events),
         "pr": _pr_manifest(pr_repo, pr_number, run, events),

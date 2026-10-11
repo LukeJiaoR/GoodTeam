@@ -63,6 +63,7 @@ def render_review_workbench_html(
     {_summary_section(review)}
     {_task_contract_section(review)}
     {_candidate_validation_section(review)}
+    {_correction_loop_section(review, decision_actions_enabled=decision_actions_enabled)}
     {_runtime_policy_section(review)}
     {_broker_status_section(review)}
     {_replay_graph_section(review)}
@@ -518,7 +519,10 @@ def _timeline_section(review: dict[str, Any]) -> str:
 
 def _decision_section(review: dict[str, Any], *, decision_actions_enabled: bool) -> str:
     decision = _dict(review.get("reviewer_decision"))
-    disabled = "" if decision_actions_enabled else " disabled"
+    bound_review = _dict(_dict(_dict(review.get("evidence")).get("candidate_validation")).get("review"))
+    if bound_review:
+        decision = {**bound_review, "available": True}
+    disabled = "" if decision_actions_enabled and not bound_review else " disabled"
     note = (
         '<p class="action-note" id="decision-action-note">Ready to record through the local server route.</p>'
         if decision_actions_enabled
@@ -569,6 +573,31 @@ def _decision_script() -> str:
   const executionId = initial.execution_id || "";
   const params = new URLSearchParams(window.location.search);
   const projectRoot = params.get("project_root") || "";
+  const validation = initial.evidence?.candidate_validation || {};
+  const correction = initial.evidence?.correction_loop || {};
+  const correctionButton = document.getElementById("correction-action");
+  const correctionStatus = document.getElementById("correction-status");
+  let correctionPending = false;
+  let decisionPending = false;
+  correctionButton?.addEventListener("click", async () => {
+    if (correctionPending) return;
+    correctionPending = true;
+    correctionButton.disabled = true;
+    const action = correctionButton.dataset.action;
+    const body = {project_root: projectRoot};
+    if (action === "stop") body.loop_id = correction.loop_id;
+    else { body.head = validation.candidate?.head_sha; body.validation_receipt = validation.receipt?.receipt_id; }
+    try {
+      const response = await fetch(`/api/executions/${encodeURIComponent(executionId)}/correction/${action}`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Correction request failed.");
+      window.location.reload();
+    } catch (error) {
+      correctionStatus.textContent = `${error.message} Refresh to inspect the saved state before retrying.`;
+    }
+  });
 
   function setStatus(message, state) {
     statusEl.textContent = message;
@@ -596,6 +625,7 @@ def _decision_script() -> str:
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (decisionPending) return;
     if (!projectRoot) {
       setStatus("project_root is required in the page URL.", "error");
       return;
@@ -607,11 +637,18 @@ def _decision_script() -> str:
       decision: String(formData.get("decision") || ""),
       reason: String(formData.get("reason") || ""),
     };
+    if (validation.available) {
+      body.head = validation.candidate?.head_sha;
+      body.validation_receipt = validation.receipt?.receipt_id;
+    }
     if ((body.decision === "request_changes" || body.decision === "reject") && !body.reason.trim()) {
       setStatus("Reason is required for Request Changes or Reject decisions.", "error");
       return;
     }
     setStatus("Recording decision...", "pending");
+    decisionPending = true;
+    const submitButton = form.querySelector("button[type=submit]");
+    submitButton.disabled = true;
     try {
       const response = await fetch(`/api/executions/${encodeURIComponent(executionId)}/review-workbench/decision`, {
         method: "POST",
@@ -621,10 +658,13 @@ def _decision_script() -> str:
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Decision request failed.");
       setStatus(`Decision ${payload.status}.`, "success");
+      if (body.validation_receipt) { window.location.reload(); return; }
+      submitButton.disabled = false;
+      decisionPending = false;
       updateCurrentDecision(payload.reviewer_decision);
       await refreshWorkbench();
     } catch (error) {
-      setStatus(error.message || "Decision request failed.", "error");
+      setStatus(`${error.message || "Decision request failed."} Refresh to inspect the saved state before retrying.`, "error");
     }
   });
 })();
@@ -803,3 +843,26 @@ def _candidate_validation_section(review: dict[str, Any]) -> str:
     body += "<p>Checks passed / human record / acceptance unknown are separate observations. "
     body += "No task acceptance, independent reviewer identity, or model success is inferred.</p>"
     return _section("Candidate validation", body)
+
+
+def _correction_loop_section(review: dict[str, Any], *, decision_actions_enabled: bool) -> str:
+    from goodteam_os.execution.review_workbench_renderer import _render_correction_loop
+    evidence = _dict(review.get("evidence"))
+    loop = _dict(evidence.get("correction_loop"))
+    validation = _dict(evidence.get("candidate_validation"))
+    body = "<ul>" + "".join("<li>" + escape(line.removeprefix("- ")) + "</li>"
+                           for line in _render_correction_loop(loop)) + "</ul>"
+    action = ""
+    if loop.get("available") and loop.get("status") not in {"needs_human", "awaiting_human_acceptance"}:
+        action, label = "stop", "Stop further correction rounds"
+    elif (loop.get("status") == "not_started" and validation.get("available")
+          and validation.get("check_status") in {"passed", "failed"}
+          and _dict(validation.get("review")).get("decision") == "request_changes"):
+        action, label = "start", "Start supervised correction (up to 3 rounds / 15 minutes)"
+    if action:
+        disabled = "" if decision_actions_enabled else " disabled"
+        body += f'<button id="correction-action" data-action="{action}"{disabled}>{label}</button>'
+    body += '<p id="correction-status" role="status"></p>'
+    body += '<p>Fix with your existing tools, commit a new candidate, then explicitly run the same local check. '
+    body += 'These controls do not launch a Worker, command, paid model, approval or merge.</p>'
+    return _section("Supervised correction loop", body)

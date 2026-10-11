@@ -120,6 +120,14 @@ class ExecutionAPI:
         from goodteam_os.execution.candidate_validation import CandidateValidationService
         return CandidateValidationService(self.project_root).attest_review(execution_id, **request)
 
+    def start_correction_loop(self, execution_id: str, **request) -> dict[str, Any]:
+        from goodteam_os.execution.correction_loop import CorrectionLoopService
+        return CorrectionLoopService(self.project_root).start(execution_id, **request)
+
+    def stop_correction_loop(self, execution_id: str, *, loop_id: str) -> dict[str, Any]:
+        from goodteam_os.execution.correction_loop import CorrectionLoopService
+        return CorrectionLoopService(self.project_root).stop(execution_id, loop_id=loop_id)
+
     def get_evidence(self, execution_id: str) -> dict[str, Any]:
         return ExecutionEvidenceService(
             self.project_root,

@@ -44,6 +44,9 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         f"Memory provenance: {_memory_integrity_label(integrity)}",
         f"Decision: {_decision_label(decision)}",
         "",
+        "Supervised correction loop:",
+        *_render_correction_loop(evidence.get("correction_loop", {})),
+        "",
         "Candidate checks (acceptance remains unknown):",
         *_render_candidate_checks(evidence.get("candidate_validation", {})),
         "",
@@ -306,4 +309,24 @@ def _render_candidate_checks(value: dict[str, Any]) -> list[str]:
         ])
     for item in value.get("criteria", []):
         lines.append(f"- Criterion {item['index']}: check {item['check_status']}; acceptance unknown")
+    return lines
+
+
+def _render_correction_loop(value: dict[str, Any]) -> list[str]:
+    lines = [f"- Status: {value.get('status', 'not_started')}"]
+    if value.get("reason"):
+        lines.append(f"- Reason: {value['reason']}")
+    if not value.get("available"):
+        return lines
+    lines.extend([
+        f"- Rounds reserved: {value['reserved_rounds']} / {value['max_rounds']}",
+        f"- Rounds checked: {value['completed_rounds']}",
+        f"- Candidate: {value['candidate']['head_sha']}",
+        f"- Original goal: {value['original_goal']}",
+        f"- Feedback: {value['feedback']}",
+        f"- Next action: {value['next_action']}",
+        "- Automatic provider invocations: 0; external cost unknown and not authorized by this loop",
+        "- Acceptance: unknown; every fix and check still needs its existing explicit authority",
+    ])
+    lines.extend(f"- Original constraint: {text}" for text in value['original_constraints'])
     return lines

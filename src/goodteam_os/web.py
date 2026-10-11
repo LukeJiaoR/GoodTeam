@@ -1342,6 +1342,36 @@ def _request_host_is_loopback(host: str) -> bool:
         return False
 
 
+def _protected_execution_origin_is_trusted(*, origin: str, request_host: str,
+                                         server_host: str, server_port: int, fetch_site: str = "") -> bool:
+    """The HTTP dashboard's exact origin, anchored to its configured listener.
+
+    Missing Origin is retained for explicit non-browser JSON clients; it is not
+    authenticated human approval. A browser cross-site marker is never trusted.
+    """
+    if fetch_site and fetch_site not in {"same-origin", "none"}:
+        return False
+    try:
+        target = urlparse("//" + request_host)
+        hostname = (target.hostname or "").lower()
+        configured = server_host.strip("[]").lower()
+        local_names = {"localhost", "127.0.0.1", "::1"}
+        allowed = local_names if configured in local_names or configured in {"0.0.0.0", "::"} else {configured}
+        if (hostname not in allowed or (target.port or 80) != server_port
+                or target.username is not None or target.password is not None
+                or target.path or target.query or target.fragment):
+            return False
+        if not origin:
+            return True
+        source = urlparse(origin)
+        return (source.scheme == "http" and source.hostname == hostname
+                and (source.port or 80) == (target.port or 80)
+                and source.username is None and source.password is None
+                and not source.path and not source.query and not source.fragment)
+    except ValueError:
+        return False
+
+
 def _native_picker_request_targets_local_server(*, request_host: str, port: int) -> bool:
     if not request_host:
         return False
@@ -6899,6 +6929,15 @@ def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, d
                 role=str(request.get("role", "implementation")),
             )
 
+        correction_match = re.fullmatch(r"/executions/([^/]+)/correction/(start|stop)", path)
+        if correction_match is not None:
+            api = ExecutionAPI(_execution_project_root_from_body(request))
+            execution_id, action = correction_match.groups()
+            if action == "stop":
+                return 200, api.stop_correction_loop(execution_id, loop_id=_required_str(request, "loop_id"))
+            return 200, api.start_correction_loop(execution_id,
+                receipt_id=_required_str(request, "validation_receipt"), head_sha=_required_str(request, "head"))
+
         decision_match = re.fullmatch(r"/executions/([^/]+)/review-workbench/decision", path)
         if decision_match is not None:
             return _record_review_workbench_decision(decision_match.group(1), request)
@@ -6927,6 +6966,14 @@ def _record_review_workbench_decision(
     reviewer = _required_str(request, "reviewer")
     reason = str(request.get("reason", "")).strip()
     api.replay(execution_id)
+    if request.get("validation_receipt") or request.get("head"):
+        # The same-origin form records an explicit human attestation only. It
+        # cannot execute commands, accept delivery or authenticate independence.
+        result = api.attest_candidate_review(execution_id,
+            receipt_id=_required_str(request, "validation_receipt"), head_sha=_required_str(request, "head"),
+            reviewer=reviewer, decision=decision, reason=reason, origin="explicit_operator_workbench")
+        return 200, {"status": "recorded", "execution_id": execution_id, "human_record": result,
+                     "acceptance_status": "unknown"}
     if decision == "approve":
         review = api.get_review_workbench(execution_id)
         workbench_status = str(review.get("status", "")).strip()
@@ -7825,7 +7872,7 @@ def serve(
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
             is_execution_path = normalized_path == "/executions/github/issues/intake" or bool(
-                re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision)", normalized_path)
+                re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision|correction/start|correction/stop)", normalized_path)
             )
 
             if not is_project_path and not is_skill_path and not is_execution_path and normalized_path not in {
@@ -7854,6 +7901,21 @@ def serve(
                     )
                 )
                 return
+            if re.fullmatch(r"/executions/[^/]+/(review-workbench/decision|correction/start|correction/stop)", normalized_path):
+                if not _protected_execution_origin_is_trusted(
+                    origin=str(self.headers.get("Origin", "")), request_host=str(self.headers.get("Host", "")),
+                    server_host=host, server_port=self.server.server_port,
+                    fetch_site=str(self.headers.get("Sec-Fetch-Site", "")),
+                ):
+                    self._send_api_error(ProjectApiError("same_origin_required",
+                        "Protected execution records require the configured GoodTeam origin.", 403,
+                        recovery=["retry_from_goodteam_origin"]))
+                    return
+                if str(self.headers.get("Content-Type", "")).split(";", 1)[0].strip().lower() != "application/json":
+                    self._send_api_error(ProjectApiError("json_content_type_required",
+                        "Protected execution requests require application/json.", 415,
+                        recovery=["send_json_request"]))
+                    return
             if is_skill_path:
                 try:
                     client = ipaddress.ip_address(str(self.client_address[0]))
