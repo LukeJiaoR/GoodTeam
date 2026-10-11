@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { translate } from '../../i18n';
@@ -214,4 +214,217 @@ test('a missing custom version blocks custom save but not explicit default resto
   expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
     mode: 'default', bindings: [], expected_binding_revision: 4,
   }), { expectedTeamRevision: 12 });
+});
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function configuredRole() {
+  return role({
+    bindingRevision: 4,
+    mode: 'custom',
+    status: 'configured',
+    items: [{
+      skill_id: skill.skill_id,
+      version_id: version.version_id,
+      package_digest: version.package_digest,
+      activation: 'on_demand',
+      enabled: false,
+    }],
+  });
+}
+
+function expectLibraryUnavailable() {
+  expect(screen.getByRole('button', { name: 'Save methods' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/No Skills are installed yet/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/configured Skill version is no longer available/)).not.toBeInTheDocument();
+}
+
+test('a pending library read cannot remove configured versions or submit a custom draft', async () => {
+  const user = userEvent.setup();
+  const read = deferred();
+  const { props } = renderDialog({
+    api: { getSkillLibrary: vi.fn().mockReturnValue(read.promise) },
+    role: configuredRole(),
+    currentTeamRevision: 12,
+  });
+
+  expectLibraryUnavailable();
+  await user.click(screen.getByRole('button', { name: 'Save methods' }));
+  expect(props.onSubmit).not.toHaveBeenCalled();
+  await act(async () => read.resolve({ skills: [skill] }));
+  expect(screen.getByRole('checkbox', { name: /custom-review/i })).toBeChecked();
+  await user.click(screen.getByRole('button', { name: 'Save methods' }));
+  expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith({
+    kind: 'set_role_skills', subject: 'role:code_review', mode: 'custom',
+    bindings: configuredRole().skillBinding.items, expected_binding_revision: 4,
+  }, { expectedTeamRevision: 12 });
+});
+
+test('library-only retry preserves pinned selections and the original CAS baseline across polling', async () => {
+  const user = userEvent.setup();
+  const retry = deferred();
+  const api = { getSkillLibrary: vi.fn()
+    .mockRejectedValueOnce(new Error('Library offline'))
+    .mockReturnValueOnce(retry.promise) };
+  const originalRole = configuredRole();
+  const { props, rerender } = renderDialog({ api, role: originalRole, currentTeamRevision: 12 });
+  await screen.findByRole('button', { name: 'Retry Skill Library' });
+  expectLibraryUnavailable();
+
+  rerender(<RoleSkillsDialog {...props} role={role({ bindingRevision: 9 })} currentTeamRevision={20} />);
+  await user.dblClick(screen.getByRole('button', { name: 'Retry Skill Library' }));
+  expect(api.getSkillLibrary).toHaveBeenCalledTimes(2);
+  expect(props.onRefresh).not.toHaveBeenCalled();
+  expect(screen.queryByText('Library offline')).not.toBeInTheDocument();
+  expectLibraryUnavailable();
+
+  // A newer installed version must not silently replace the pinned version or digest.
+  await act(async () => retry.resolve({ skills: [{ ...skill, versions: [version, {
+    ...version, version_id: 'version-' + '4'.repeat(64), package_digest: 'sha256:' + '5'.repeat(64),
+  }] }] }));
+  expect(screen.getByRole('radio', { name: /Custom Skills/i })).toBeChecked();
+  expect(screen.getByLabelText('Version')).toHaveValue(version.version_id);
+  expect(screen.getByLabelText('Loading')).toHaveValue('on_demand');
+  await user.click(screen.getByRole('button', { name: 'Save methods' }));
+  expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith({
+    kind: 'set_role_skills', subject: 'role:code_review', mode: 'custom',
+    bindings: originalRole.skillBinding.items, expected_binding_revision: 4,
+  }, { expectedTeamRevision: 12 });
+  expect(props.onRefresh).not.toHaveBeenCalled();
+});
+
+test.each([null, {}, { skills: null }, { skills: {} }, { skills: 'unavailable' }])(
+  'a malformed successful response is unavailable and can be retried: %j', async (payload) => {
+    const user = userEvent.setup();
+    const api = { getSkillLibrary: vi.fn()
+      .mockResolvedValueOnce(payload)
+      .mockResolvedValueOnce({ skills: [skill] }) };
+    const { props } = renderDialog({ api, role: configuredRole(), currentTeamRevision: 12 });
+    await screen.findByRole('button', { name: 'Retry Skill Library' });
+    expectLibraryUnavailable();
+    await user.click(screen.getByRole('button', { name: 'Retry Skill Library' }));
+    await screen.findByRole('checkbox', { name: /custom-review/i });
+    await user.click(screen.getByRole('button', { name: 'Save methods' }));
+    expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      bindings: configuredRole().skillBinding.items, expected_binding_revision: 4,
+    }), { expectedTeamRevision: 12 });
+    expect(props.onRefresh).not.toHaveBeenCalled();
+  },
+);
+
+test('only a valid empty library permits removal of a confirmed missing binding', async () => {
+  const user = userEvent.setup();
+  const read = deferred();
+  const { props } = renderDialog({
+    api: { getSkillLibrary: vi.fn().mockReturnValue(read.promise) },
+    role: configuredRole(), currentTeamRevision: 12,
+  });
+  expectLibraryUnavailable();
+  await act(async () => read.resolve({ skills: [] }));
+  expect(screen.getByRole('button', { name: 'Save methods' })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: 'Remove' }));
+  expect(props.onSubmit).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Save methods' }));
+  expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    mode: 'custom', bindings: [], expected_binding_revision: 4,
+  }), { expectedTeamRevision: 12 });
+});
+
+test.each(['pending', 'failed'])('default restoration is available with a %s library read', async (state) => {
+  const user = userEvent.setup();
+  const read = deferred();
+  const api = { getSkillLibrary: vi.fn().mockReturnValue(read.promise) };
+  const { props } = renderDialog({ api, role: configuredRole(), currentTeamRevision: 12 });
+  if (state === 'failed') await act(async () => read.reject(new Error('Library offline')));
+  expectLibraryUnavailable();
+  await user.click(screen.getByRole('radio', { name: /GoodTeam default methods/i }));
+  await user.click(screen.getByRole('button', { name: 'Restore default methods' }));
+  expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    mode: 'default', bindings: [], expected_binding_revision: 4,
+  }), { expectedTeamRevision: 12 });
+  expect(api.getSkillLibrary).toHaveBeenCalledOnce();
+  expect(props.onRefresh).not.toHaveBeenCalled();
+});
+
+test('refresh current configuration does not retry the library; a library retry retains that explicit baseline', async () => {
+  const user = userEvent.setup();
+  const api = { getSkillLibrary: vi.fn()
+    .mockRejectedValueOnce(new Error('Library offline'))
+    .mockResolvedValueOnce({ skills: [skill] }) };
+  const onRefresh = vi.fn().mockResolvedValue(refreshedState(5, 13));
+  const { props } = renderDialog({ api, onRefresh, role: configuredRole(), currentTeamRevision: 12 });
+  await screen.findByRole('button', { name: 'Retry Skill Library' });
+  await user.click(screen.getByRole('button', { name: 'Refresh current' }));
+  expect(api.getSkillLibrary).toHaveBeenCalledOnce();
+  expectLibraryUnavailable();
+  await user.click(screen.getByRole('button', { name: 'Retry Skill Library' }));
+  await screen.findByRole('checkbox', { name: /custom-review/i });
+  await user.click(screen.getByRole('button', { name: 'Save methods' }));
+  expect(onRefresh).toHaveBeenCalledOnce();
+  expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    bindings: configuredRole().skillBinding.items, expected_binding_revision: 5,
+  }), { expectedTeamRevision: 13 });
+});
+
+test.each(['resolve', 'reject'])('an obsolete library request cannot %s over a newer read', async (settle) => {
+  const user = userEvent.setup();
+  const oldRead = deferred();
+  const oldApi = { getSkillLibrary: vi.fn().mockReturnValue(oldRead.promise) };
+  const newRead = deferred();
+  const newApi = { getSkillLibrary: vi.fn().mockReturnValue(newRead.promise) };
+  const { props, rerender } = renderDialog({ api: oldApi, role: configuredRole(), currentTeamRevision: 12 });
+  const oldSignal = oldApi.getSkillLibrary.mock.calls[0][0].signal;
+  rerender(<RoleSkillsDialog {...props} api={newApi} />);
+  expect(oldSignal.aborted).toBe(true);
+  await act(async () => newRead.resolve({ skills: [skill] }));
+  await act(async () => oldRead[settle](settle === 'resolve' ? { skills: [] } : new Error('Late failure')));
+  expect(screen.getByRole('checkbox', { name: /custom-review/i })).toBeChecked();
+  expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry Skill Library' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Save methods' }));
+  expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    bindings: configuredRole().skillBinding.items, expected_binding_revision: 4,
+  }), { expectedTeamRevision: 12 });
+});
+
+test('changing the library client invalidates a previous ready result until its new read succeeds', async () => {
+  const nextRead = deferred();
+  const { props, rerender } = renderDialog({ role: configuredRole() });
+  await screen.findByRole('checkbox', { name: /custom-review/i });
+  const api = { getSkillLibrary: vi.fn().mockReturnValue(nextRead.promise) };
+  rerender(<RoleSkillsDialog {...props} api={api} />);
+  expectLibraryUnavailable();
+  expect(screen.queryByRole('checkbox', { name: /custom-review/i })).not.toBeInTheDocument();
+  await act(async () => nextRead.reject(new Error('New library unavailable')));
+  expectLibraryUnavailable();
+  expect(props.onSubmit).not.toHaveBeenCalled();
+});
+
+test('closing aborts a pending retry and reopening ignores its late response', async () => {
+  const user = userEvent.setup();
+  const retry = deferred();
+  const api = { getSkillLibrary: vi.fn()
+    .mockRejectedValueOnce(new Error('Library offline'))
+    .mockReturnValueOnce(retry.promise)
+    .mockResolvedValueOnce({ skills: [skill] }) };
+  const first = renderDialog({ api, role: configuredRole() });
+  await user.click(await screen.findByRole('button', { name: 'Retry Skill Library' }));
+  const retrySignal = api.getSkillLibrary.mock.calls[1][0].signal;
+  await user.click(screen.getByRole('button', { name: 'Close role methods' }));
+  expect(first.props.onClose).toHaveBeenCalledOnce();
+  first.unmount();
+  expect(retrySignal.aborted).toBe(true);
+  const reopened = renderDialog({ api, role: configuredRole() });
+  await screen.findByRole('checkbox', { name: /custom-review/i });
+  await act(async () => retry.resolve({ skills: [] }));
+  expect(screen.getByRole('checkbox', { name: /custom-review/i })).toBeChecked();
+  expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+  expect(first.props.onSubmit).not.toHaveBeenCalled();
+  expect(reopened.props.onSubmit).not.toHaveBeenCalled();
 });

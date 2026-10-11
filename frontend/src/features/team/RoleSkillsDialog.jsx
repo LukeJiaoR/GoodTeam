@@ -4,6 +4,8 @@ import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import useTeamDialog from './useTeamDialog';
 
+const EMPTY_SKILLS = [];
+
 function findVersion(skill, versionId) {
   return (skill?.versions || []).find((version) => version.version_id === versionId) || null;
 }
@@ -50,10 +52,9 @@ export default function RoleSkillsDialog({
   }));
   const [mode, setMode] = useState(role.skillBinding.mode || 'default');
   const [selections, setSelections] = useState(() => initialSelections(role));
-  const [library, setLibrary] = useState({ skills: [] });
-  const [loadError, setLoadError] = useState(null);
+  const [libraryAttempt, setLibraryAttempt] = useState(0);
+  const [libraryResult, setLibraryResult] = useState(null);
   const [refreshError, setRefreshError] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const handleKeyDown = useTeamDialog(dialogRef, closeRef, () => {
     if (!saving && !refreshing) onClose();
@@ -61,20 +62,36 @@ export default function RoleSkillsDialog({
 
   useEffect(() => {
     const controller = new AbortController();
-    api.getSkillLibrary({ signal: controller.signal })
-      .then((payload) => {
-        if (!controller.signal.aborted) {
-          setLibrary({ ...payload, skills: Array.isArray(payload?.skills) ? payload.skills : [] });
+    const readLibrary = async () => {
+      try {
+        const payload = await api.getSkillLibrary({ signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(payload?.skills)) {
+          setLibraryResult({ api, attempt: libraryAttempt, status: 'error', error: { code: 'invalid_response' } });
+          return;
         }
-      })
-      .catch((caught) => { if (!controller.signal.aborted) setLoadError(caught); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+        setLibraryResult({ api, attempt: libraryAttempt, status: 'ready', skills: payload.skills });
+      } catch (caught) {
+        if (!controller.signal.aborted) {
+          setLibraryResult({ api, attempt: libraryAttempt, status: 'error', error: caught || {} });
+        }
+      }
+    };
+    readLibrary();
     return () => controller.abort();
-  }, [api]);
+  }, [api, libraryAttempt]);
 
+  // Only a successful response for this read can classify installed/missing
+  // versions. Retrying the Library must never adopt a new Team/CAS baseline.
+  const currentLibrary = libraryResult?.api === api && libraryResult.attempt === libraryAttempt
+    ? libraryResult : null;
+  const libraryReady = currentLibrary?.status === 'ready';
+  const loading = !currentLibrary;
+  const loadError = currentLibrary?.status === 'error' ? currentLibrary.error : null;
+  const librarySkills = libraryReady ? currentLibrary.skills : EMPTY_SKILLS;
   const installedById = useMemo(
-    () => new Map(library.skills.map((skill) => [skill.skill_id, skill])),
-    [library.skills],
+    () => new Map(librarySkills.map((skill) => [skill.skill_id, skill])),
+    [librarySkills],
   );
   const staleBaseline = openedBindingRevision !== role.skillBinding.bindingRevision;
 
@@ -113,12 +130,12 @@ export default function RoleSkillsDialog({
   };
 
   const selectedIds = new Set(Object.keys(selections));
-  const missingSelections = Object.values(selections).filter((item) => {
+  const missingSelections = libraryReady ? Object.values(selections).filter((item) => {
     const skill = installedById.get(item.skillId);
     return !skill || !findVersion(skill, item.versionId);
-  });
+  }) : [];
   const submitBlocked = saving || refreshing
-    || (mode === 'custom' && (loading || Boolean(loadError) || missingSelections.length > 0));
+    || (mode === 'custom' && (!libraryReady || missingSelections.length > 0));
 
   const submit = (event) => {
     event.preventDefault();
@@ -205,7 +222,6 @@ export default function RoleSkillsDialog({
 
         <div className="team-skills-dialog__body">
           {error ? <ProductError error={error} t={t} /> : null}
-          {loadError ? <ProductError error={loadError} t={t} /> : null}
           {refreshError ? <ProductError error={refreshError} t={t} /> : null}
 
           <div className="team-skills-dialog__status">
@@ -274,8 +290,26 @@ export default function RoleSkillsDialog({
                 </div>
               </div>
 
-              {loading ? <p role="status">{t('product.states.loading')}</p> : null}
-              {!loading && !library.skills.length ? <p>{t('team.roleSkills.noInstalled')}</p> : null}
+              {loading ? <p role="status">{t('team.roleSkills.libraryLoading')}</p> : null}
+              {loadError ? (
+                <div>
+                  <ProductError
+                    error={loadError.code === 'invalid_response'
+                      ? { ...loadError, message: t('team.roleSkills.invalidLibrary') } : loadError}
+                    t={t}
+                  />
+                  <p>{t('team.roleSkills.libraryUnavailable')}</p>
+                  <Button
+                    variant="secondary"
+                    disabled={saving || refreshing}
+                    onClick={() => setLibraryAttempt((attempt) => attempt + 1)}
+                  >
+                    <RefreshCw aria-hidden="true" size={14} />
+                    {t('team.roleSkills.retryLibrary')}
+                  </Button>
+                </div>
+              ) : null}
+              {libraryReady && !librarySkills.length ? <p>{t('team.roleSkills.noInstalled')}</p> : null}
 
               {missingSelections.length ? (
                 <div className="team-skills-dialog__missing" role="alert">
@@ -306,7 +340,7 @@ export default function RoleSkillsDialog({
               ) : null}
 
               <ul className="team-skills-dialog__list">
-                {library.skills.map((skill) => {
+                {librarySkills.map((skill) => {
                   const selected = selections[skill.skill_id];
                   const version = selected ? findVersion(skill, selected.versionId) : latestVersion(skill);
                   return (
@@ -365,7 +399,7 @@ export default function RoleSkillsDialog({
                 })}
               </ul>
 
-              {!Object.keys(selections).length && !loading ? (
+              {libraryReady && !Object.keys(selections).length ? (
                 <p className="team-skills-dialog__empty-warning">{t('team.roleSkills.emptyCustom')}</p>
               ) : null}
             </section>

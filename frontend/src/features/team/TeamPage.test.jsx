@@ -474,7 +474,7 @@ test('failed refresh drops the previous catalog instead of serving stale models'
   await user.click(await within(dialog).findByRole('button', { name: 'Refresh models' }));
   await waitFor(() => expect(mocks.getAgents).toHaveBeenCalledTimes(2));
   expect([...within(dialog).getByLabelText('Model').options].map((item) => item.value)).toEqual(['', 'gpt-5.6-sol']);
-  expect(within(dialog).getByText('Model discovery is unavailable. Refresh the list or enter a model ID.')).toBeInTheDocument();
+  expect(mocks.sendTeamCommands).not.toHaveBeenCalled();
   expect(within(dialog).getByLabelText('Reasoning depth')).toBeDisabled();
 });
 

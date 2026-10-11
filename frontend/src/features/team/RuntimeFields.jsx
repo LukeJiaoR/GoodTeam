@@ -10,7 +10,15 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
   const changeSelection = (patch) => setDraft(changeRuntimeSelection(draft, patch, agents, defaultProvider));
   const effortLabel = (value) => t(`team.dialog.reasoning${value[0].toUpperCase()}${value.slice(1)}`);
   const currentUnsupported = draft.reasoningDepth !== 'default' && !options.reasoningDepths.includes(draft.reasoningDepth);
-  const unavailable = !agentsLoading && (!options.agent || ['unavailable', 'unsupported'].includes(options.agent.models_source));
+  const catalogUnconfirmed = !options.agent || ['unavailable', 'unsupported'].includes(options.agent.models_source);
+  const catalogMessage = agentsLoading ? 'team.dialog.catalogLoading'
+    : !options.agent ? 'team.dialog.catalogUnknown'
+      : options.agent.models_source === 'unsupported' ? 'team.dialog.catalogUnsupported'
+        : options.agent.models_source === 'unavailable' ? 'team.dialog.catalogUnavailable' : null;
+  // Backend-authored local diagnostics are plain text, never markup or actions.
+  const diagnosticHint = typeof options.agent?.hint === 'string' ? options.agent.hint.trim() : '';
+  const diagnosticFallback = options.agent?.available === false ? 'team.config.notInstalled'
+    : options.agent?.ready === false ? 'team.config.notReady' : null;
 
   return (
     <section className="team-runtime-fields" aria-label={t('team.config.runtime')}>
@@ -29,8 +37,9 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
           }}>
             {providers.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
           </select>
-          {options.agent?.available === false ? <small className="team-field-warning">{t('team.config.notInstalled')}</small>
-            : options.agent?.ready === false ? <small className="team-field-warning">{t('team.config.notReady')}</small> : null}
+          {!agentsLoading && (diagnosticHint || diagnosticFallback) ? <small className={options.agent?.ready === false ? 'team-field-warning' : undefined}>
+            {t('team.config.localDiagnostic')}: {diagnosticHint || t(diagnosticFallback)}
+          </small> : null}
         </label>
         <div className="team-model-field">
           <label>
@@ -48,18 +57,19 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
           <button type="button" className="team-text-button" onClick={() => setCustomModel(!customModel)}>
             {t(customModel ? 'team.config.chooseModel' : 'team.config.customModel')}
           </button>
-          {unavailable ? <small role="status">{t('team.config.catalogFallback')}</small> : null}
+          {catalogMessage ? <small role="status">{t(catalogMessage)}</small> : null}
         </div>
         <label>
           <span>{t('team.dialog.reasoning')}</span>
           <select aria-label={t('team.dialog.reasoning')} disabled={!options.reasoningDepths.length && !currentUnsupported} value={draft.reasoningDepth} onChange={(event) => setDraft({ ...draft, reasoningDepth: event.target.value })}>
             <option value="default">{t('team.dialog.reasoningDefault')}</option>
-            {currentUnsupported ? <option value={draft.reasoningDepth} disabled>{effortLabel(draft.reasoningDepth)} · {t('team.dialog.reasoningUnavailable')}</option> : null}
+            {currentUnsupported ? <option value={draft.reasoningDepth} disabled>{effortLabel(draft.reasoningDepth)} · {t(agentsLoading || catalogUnconfirmed ? 'team.dialog.reasoningUnconfirmed' : 'team.dialog.reasoningUnavailable')}</option> : null}
             {options.reasoningDepths.map((depth) => <option key={depth} value={depth}>{effortLabel(depth)}</option>)}
           </select>
-          {!options.reasoningDepths.length ? <small>{t('team.config.reasoningAutomatic')}</small> : null}
+          {!agentsLoading && !catalogUnconfirmed && !currentUnsupported && !options.reasoningDepths.length ? <small>{t('team.config.reasoningAutomatic')}</small> : null}
         </label>
       </div>
+      <small className="team-runtime-fields__note">{t('team.config.localCheckScope')}</small>
       {prompt ? (
         <details className="team-runtime-advanced" open={promptOpen} onToggle={(event) => setPromptOpen(event.currentTarget.open)}>
           <summary>{t('team.config.advanced')}</summary>

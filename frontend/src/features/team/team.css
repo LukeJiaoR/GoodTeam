@@ -346,6 +346,7 @@
   align-items: center;
   min-height: 2.35rem;
 }
+.team-role-workers__status { display: grid; gap: 0.25rem; justify-items: start; padding-block: 0.35rem; }
 .team-role-workers strong { overflow: hidden; font-size: 0.82rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .team-role-workers__runtime { overflow: hidden; color: var(--product-text-muted); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
 .team-role-workers__actions { display: inline-flex; gap: 0.25rem; justify-self: end; }
@@ -380,7 +381,8 @@
 .team-runtime-fields__grid > :last-child { grid-column: 1 / -1; }
 .team-runtime-fields label { align-content: start; }
 .team-runtime-fields :is(input, select, textarea) { width: 100%; min-width: 0; min-height: 2.75rem; }
-.team-runtime-fields small { display: block; color: var(--product-text-muted); font-size: 0.75rem; line-height: 1.5; }
+.team-runtime-fields small { display: block; color: var(--product-text-muted); font-size: 0.75rem; line-height: 1.5; overflow-wrap: anywhere; }
+.team-runtime-fields__note { margin-top: 1rem; }
 .team-runtime-fields .team-field-warning { color: var(--product-warning); }
 .team-text-button { display: inline-flex; align-items: center; justify-content: flex-start; gap: 0.4rem; padding: 0.3rem 0; border: 0; color: var(--product-accent-strong); background: transparent; font: inherit; font-size: 0.75rem; cursor: pointer; }
 .team-text-button:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 0.2rem; }
