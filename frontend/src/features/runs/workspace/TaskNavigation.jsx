@@ -29,13 +29,18 @@ function QueuedTask({ task, busy, canSelect, onAction, t }) {
 
 export default function TaskNavigation({ currentRunId, currentBlocked = false, runs, selectedRunId, onSelect, onClose, assistant, busy, onAction, t }) {
   const queued = assistant?.queued_tasks || [];
-  return <nav id="project-task-navigation" className="project-task-navigation" aria-label={t('assistant.project.tasks')}>
+  return <nav id="project-task-navigation" className="project-task-navigation" aria-label={t('assistant.project.tasks')} onKeyDown={(event) => {
+    if (event.key === 'Escape' && onClose && globalThis.matchMedia?.('(max-width: 767px)').matches) {
+      event.preventDefault();
+      onClose(event);
+    }
+  }}>
     <div className="project-task-navigation__heading">
-      <strong>{t('work.manager.manageTasks')}</strong>
+      <strong>{t('assistant.project.tasks')}</strong>
       {onClose ? <button type="button" className="project-task-navigation__close" aria-label={t('assistant.project.closeTasks')} onClick={onClose}><X size={16} aria-hidden="true" /></button> : null}
     </div>
     <button type="button" aria-current={!selectedRunId ? 'page' : undefined} onClick={() => onSelect('')}>{t('assistant.project.projectContext')}</button>
-    {runs.length ? <ul>{runs.map((run) => <li key={run.run_id}>
+    {runs.length ? <ul>{runs.map((run) => <li key={run.run_id} data-state={run.status}>
       <button type="button" aria-current={selectedRunId === run.run_id ? 'page' : undefined} onClick={() => onSelect(run.run_id)}>
         <span title={run.idea}>{String(run.title || run.idea || run.run_id).split('\n')[0].slice(0, 120)}</span><small>{run.status === 'archived' ? t('assistant.project.archived') : currentBlocked && run.run_id === currentRunId ? t('work.blocker.title') : statusText(run.status, t)}</small>
       </button>

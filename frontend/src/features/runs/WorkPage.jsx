@@ -1061,16 +1061,15 @@ export default function WorkPage() {
     onClearContext: () => selectTask(''),
     taskManagementOpen,
     onManageTasks: () => setTaskManagementProject(projectKey),
-    taskNavigation: taskManagementOpen ? <TaskNavigation currentRunId={data.state?.run_id} currentBlocked={data.team_workspace?.attention_request?.kind === 'blocker' && !(data.team_workspace?.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working')} runs={runHistory} selectedRunId={runId} onSelect={selectTask}
+    taskNavigation: <TaskNavigation currentRunId={data.state?.run_id} currentBlocked={data.team_workspace?.attention_request?.kind === 'blocker' && !(data.team_workspace?.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working')} runs={runHistory} selectedRunId={runId} onSelect={selectTask}
       assistant={data.project_assistant} busy={conversation.busy} onAction={handleAssistantAction} t={t}
       onClose={(event) => {
         setTaskManagementProject('');
         focusWorkContext(event.currentTarget.closest('.product-work-page'), 'composer', { reducedMotion });
-      }} /> : null,
+      }} />,
   };
 
-  return (
-    <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
+  const currentContext = (
       <CurrentWorkContext
         projectKey={projectKey}
         projectName={projectName}
@@ -1082,6 +1081,11 @@ export default function WorkPage() {
         reducedMotion={reducedMotion}
         t={t}
       />
+  );
+
+  return (
+    <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
+      {currentContext}
       <details className="work-context-disclosure">
         <summary>{t('work.context.taskAndHistory')}</summary>
         <header className="product-page-header work-context-drawer">

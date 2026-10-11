@@ -41,7 +41,7 @@ test('task context opens explicitly on desktop and narrow screens', async ({ pag
 
 test('assistant settings save in place while the conversation and draft remain', async ({ page, fixture }, testInfo) => {
   await importProject(page, fixture);
-  await expect(page.getByRole('navigation', { name: 'Project tasks', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Project tasks', exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Continue this after configuration.');
   const url = page.url();
   await expect(page.locator('.team-manager-conversation .assistant-runtime')).toHaveCount(0);
@@ -88,12 +88,33 @@ test('running workspace keeps the composer usable on short and narrow screens', 
     await expect(input).toBeVisible();
     await input.fill('Keep this draft while inspecting progress.');
     const navigation = page.getByRole('navigation', { name: 'Project tasks', exact: true });
-    await expect(navigation).toHaveCount(0);
-    await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
-    await expect(navigation).toBeVisible();
-    await navigation.getByRole('button', { name: 'Close task list', exact: true }).click();
-    await expect(navigation).toHaveCount(0);
-    await expect(input).toBeFocused();
+    await input.evaluate(node => { node.dataset.continuity = 'same-composer'; });
+    if (viewport.width < 768) {
+      await expect(navigation).toBeHidden();
+      await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
+      await expect(navigation).toBeVisible();
+      await navigation.getByRole('button', { name: 'Close task list', exact: true }).click();
+      await expect(navigation).toBeHidden();
+      await expect(input).toBeFocused();
+      // Keyboard dismissal follows the same return-to-composer path.
+      await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
+      await navigation.getByRole('button', { name: 'Close task list', exact: true }).focus();
+      await page.keyboard.press('Escape');
+      await expect(navigation).toBeHidden();
+      await expect(input).toBeFocused();
+    } else {
+      await expect(navigation).toBeVisible();
+      await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
+      await expect(navigation).toBeFocused();
+      const execution = page.locator('.team-execution-disclosure');
+      const wasOpen = await execution.evaluate(node => node.open);
+      await execution.locator(':scope > summary').click();
+      await expect(execution).toHaveJSProperty('open', !wasOpen);
+      await execution.locator(':scope > summary').click();
+      await expect(execution).toHaveJSProperty('open', wasOpen);
+      await input.focus();
+    }
+    await expect(input).toHaveAttribute('data-continuity', 'same-composer');
     await expect(input).toHaveValue('Keep this draft while inspecting progress.');
     const conversationBox = await page.locator('.team-manager-conversation').boundingBox();
     expect(conversationBox.height).toBeGreaterThanOrEqual(90);

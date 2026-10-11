@@ -34,10 +34,11 @@ export default function ProductLayout() {
   })();
   const isProjectsRoute = pathname === '/projects';
   const isWorkRoute = Boolean(projectKey && /^\/projects\/[^/]+\/(?:team|work|review|knowledge)(?:\/|$)/.test(pathname));
+  const isTaskRoute = Boolean(projectKey && /^\/projects\/[^/]+\/work(?:\/|$)/.test(pathname));
   const workNavClass = ({ isActive }) => `product-work-navigation__link${isActive ? ' is-active' : ''}`;
   return (
     <ToastProvider>
-      <div className={`product-shell${isWorkRoute || isProjectsRoute ? ' product-shell--neumorphic' : ''}${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}`}>
+      <div className={`product-shell${isWorkRoute || isProjectsRoute ? ' product-shell--neumorphic' : ''}${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}${isTaskRoute ? ' product-shell--task-workspace' : ''}`}>
         <a className="product-skip-link" href="#main-content">{t('product.navigation.skipToContent')}</a>
         <header className={`product-chrome${isWorkRoute ? ' product-work-chrome' : ''}`}>
           <div className="product-chrome__inner">

@@ -70,7 +70,7 @@ export const WORK_CONTEXT_TARGETS = {
   composer: { tab: 'manager', selector: '.team-manager-dock textarea, .work-start-panel textarea' },
   outcomes: { tab: 'outcomes', selector: '.team-pane--outcomes' },
   execution: { tab: 'execution', selector: '.team-pane--execution' },
-  tasks: { tab: 'execution', selector: '#project-task-navigation' },
+  tasks: { tab: 'manager', selector: '#project-task-navigation' },
 };
 
 export function focusWorkContext(root, target, { reducedMotion = false } = {}) {
@@ -80,11 +80,17 @@ export function focusWorkContext(root, target, { reducedMotion = false } = {}) {
   const scope = root.dataset.contextScope;
   const tab = root.querySelector(`#team-tab-${destination.tab}`);
   // The existing mobile controller owns which pane is visible.
-  if (tab && tab.getAttribute('aria-selected') === 'false') tab.click();
+  if (tab && globalThis.matchMedia?.('(max-width: 767px)')?.matches
+      && tab.getAttribute('aria-selected') === 'false') tab.click();
   globalThis.requestAnimationFrame(() => {
     if (!root.isConnected || root.dataset.contextScope !== scope) return;
     const node = root.querySelector(destination.selector);
     if (!node || node.closest('[hidden], [inert]')) return;
+    // Reveal existing execution details before focusing an actor or blocker.
+    // This changes disclosure only; it never dispatches work.
+    const executionDetails = node.matches('.team-pane--execution')
+      ? node.querySelector('.team-execution-disclosure') : node.closest('.team-execution-disclosure');
+    if (executionDetails) executionDetails.open = true;
     node.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'nearest' });
     if (!node.matches('input, textarea, button, a[href]')) node.setAttribute('tabindex', '-1');
     node.focus?.({ preventScroll: true });
