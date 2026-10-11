@@ -12,42 +12,98 @@ deploy, or write verified experience into memory. Production external correction
 executors remain blocked by the existing [correction admission boundary](correction-worker-attempts.md).
 An admitted Reviewer is not an admitted coding Worker.
 
+## Local CLI entry and resumption
+
+Run the explicitly selected local candidate check and independent review in one
+invocation. Supply the original exact base once and an existing task-bound
+Reviewer policy:
+
+```bash
+goodteam execution validate-candidate \
+  --project-root /path/to/registered/project \
+  --execution-id EXECUTION_ID --head FULL_CHECKED_HEAD_COMMIT_ID \
+  --operation-id candidate-check-1 --criterion 0 --criterion 1 \
+  --review-base FULL_ORIGINAL_BASE_COMMIT_ID \
+  --trusted-codex-review-policy /private/existing-task-policy.json \
+  -- python -m pytest tests/test_feature.py
+```
+
+The CLI passes the returned host-check receipt and head directly into automatic
+review, then advances the chain. There is no receipt-copying step or mandatory
+human attestation. Reviewer adapter/model come from the already composed
+Trusted/Local Codex policy. `--local-codex-policy` selects the existing local
+policy route instead; these flags do not create a policy, broaden task scope,
+change native configuration, or grant runtime admission. An embedded Operator
+can pass the same existing typed `codex_review_admission` to `cli.main` instead
+of passing a policy path. Other authority implementations retain the explicit
+`ExecutionAPI.start_automatic_review` selection interface below.
+
+The policy must already authorize the exact registered task identity
+`direct_task / PROJECT_KEY / candidate-review:<original snapshot payload digest>`
+and Worker root. A policy for a workflow review is not interchangeable. No policy
+is inferred from the issue, Worker output, project settings or persisted PASS
+markers. Existing version, task, model, revocation and runtime-budget checks are
+unchanged. An unavailable or mismatched runtime returns its real blocker.
+
+`--review-base` must be a full exact commit SHA. GoodTeam does not guess it from
+current `main`, `HEAD`, sandbox defaults or an issue. The original command and
+criterion mapping remain explicit local Operator inputs; issue text and review
+findings cannot supply commands. Without an automatic start or composed Reviewer,
+`validate-candidate` still supports the standalone check-only path described in
+[candidate check receipts](candidate-check-receipts.md).
+
+Continue an existing automatic task without re-entering its base, command,
+criteria, head, receipt, model or budgets:
+
+```bash
+goodteam execution continue-automatic-review \
+  --project-root /path/to/registered/project --execution-id EXECUTION_ID \
+  --trusted-codex-review-policy /private/existing-task-policy.json
+
+goodteam execution stop-automatic-review \
+  --project-root /path/to/registered/project --execution-id EXECUTION_ID
+```
+
+Continuation reads the frozen inputs and retained results. It cannot change the
+original model or reset the budget; repeating a completed check/review does not
+invoke it again. A terminal recorded result can be reopened or continued without
+recomposing an admission. Missing or unknown outcomes remain blocked, rather than
+retrying a provider invocation. Production correction executors remain unadmitted;
+`--acknowledge-external-cost` cannot remove that blocker.
+
+The Workbench displays automatic mode and the actual next step even after a
+correction journal exists. Its optional human record remains available, but
+supervised start/prepare controls are not shown for automatic tasks. Reading or
+exporting the Workbench never dispatches work. No HTTP command executor was added.
+
 ## Trusted application entry points
 
-First run the explicitly selected local candidate check described in
-[candidate check receipts](candidate-check-receipts.md). Its original command and
-criterion mapping are the only command inputs reused during correction. Issue
-text, a review finding and mutable project configuration cannot supply commands.
+`ExecutionAPI(project_root, codex_review_admission=existing_authority)` carries
+the same typed startup dependency into the automatic Reviewer. Its local-entry
+method `validate_and_review_candidate(execution_id, review_base=exact_base,
+operation_id=..., head_sha=..., argv=..., criteria=...)` combines validation,
+start and advance as above.
 
-Prepare the coordinator through `ExecutionAPI`:
+Callers that already hold a receipt can still use the separate methods:
 
 ```python
 from pathlib import Path
 from goodteam_os.execution.api import ExecutionAPI
 
-api = ExecutionAPI(Path("/path/to/registered/project"))
-prepared = api.start_automatic_review(
-    "EXECUTION_ID",
-    base_sha="FULL_EXPLICIT_BASE_COMMIT_ID",
-    receipt_id="EXACT_VALIDATION_RECEIPT_ID",
-    head_sha="FULL_CHECKED_HEAD_COMMIT_ID",
-    reviewer_adapter="codex",
-    reviewer_model="ALREADY_ADMITTED_MODEL",
-    max_rounds=3,
-    wall_seconds=900,
-    fix_seconds=120,
+# existing_authority is the already admitted, exact-task startup dependency.
+api = ExecutionAPI(Path("/path/to/registered/project"), codex_review_admission=existing_authority)
+api.start_automatic_review(
+    "EXECUTION_ID", base_sha="FULL_EXPLICIT_BASE_COMMIT_ID",
+    receipt_id="EXACT_VALIDATION_RECEIPT_ID", head_sha="FULL_CHECKED_HEAD_COMMIT_ID",
+    reviewer_adapter="codex", reviewer_model="ALREADY_ADMITTED_MODEL",
+    max_rounds=3, wall_seconds=900, fix_seconds=120,
 )
 result = api.advance_automatic_review("EXECUTION_ID")
 ```
 
-`start_automatic_review` captures the exact caller-selected base, check receipt,
-head, original task and review policy. It prepares input but does not launch a
-Reviewer. The example adapter/model are caller choices, not a runtime grant; the
-existing authority must admit their execution. `advance_automatic_review` is an
-explicit synchronous trusted-application call that drives the already-authorized
-producer/consumer sequence until accepted, unresolved, stopped or blocked. No new
-HTTP command executor or browser dispatch control is provided. Reading the
-Workbench or exporting it does not dispatch any work.
+`start_automatic_review` freezes input without launching a Reviewer. `advance`
+drives the already-authorized producer/consumer sequence until accepted,
+unresolved, stopped or blocked. Adapter/model selection is not a runtime grant.
 
 Defaults are three correction rounds, a 900-second coordinator wall budget and
 120 seconds per correction attempt. Limits are five rounds, 3,600 coordinator

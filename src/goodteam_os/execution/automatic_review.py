@@ -57,11 +57,29 @@ def policy_decision(policy, result, report):
 
 
 class AutomaticCandidateReviewService:
-    def __init__(self, project_root, *, clock=None):
+    def __init__(self, project_root, *, clock=None, codex_review_admission=None):
         self.project_root = Path(project_root).resolve()
         self.validation = CandidateValidationService(self.project_root)
-        self.workers = WorkerJobStore(self.project_root)
+        self.workers = WorkerJobStore(self.project_root, codex_review_admission=codex_review_admission)
         self.clock = clock or time.time
+
+    def configuration(self, execution_id):
+        """Read the frozen start, including incomplete-start recovery; never admit work."""
+        snapshot = self.validation._snapshot(execution_id)
+        root = self.validation._root(execution_id)
+        with role_lock(root, create=False):
+            saved = _read(root / "automatic-review-start.json")
+            if saved is None:
+                if _read(root / "automatic-review-binding.json") is not None:
+                    raise TaskInputError("automatic_review_binding_missing")
+                return None
+            if (saved != _bound(saved) or saved.get("schema_version") != SCHEMA
+                    or saved.get("snapshot") != snapshot.reference
+                    or saved.get("policy") != review_policy(snapshot)):
+                raise TaskInputError("automatic_review_binding_invalid")
+            if _read(root / "automatic-review-binding.json") is not None:
+                self._load(snapshot)
+            return saved
 
     def _confirmation(self, snapshot, start):
         return {"schema_version": SCHEMA, "original": snapshot.to_dict(), "start": start,
@@ -374,9 +392,10 @@ class AutomaticCandidateReviewService:
     def projection(self, execution_id):
         """Read-only overlay for the existing execution/correction evidence.
 
-        None means this execution has no automatic start, or its existing
-        correction journal already provides the current nonterminal projection.
-        No clocks, task locks, jobs, outcomes or cancellation records are written.
+        None means this execution has no automatic start. Existing correction
+        details are retained with the automatic coordinator's actual next step.
+        No automatic clock, task lock, job, outcome or cancellation record is
+        written. The existing correction projection retains its clock observation.
         """
         fallback = {"available": False, "automatic": True, "status": "needs_human",
                     "reason": "automatic_review_binding_missing", "loop_id": "",
@@ -408,9 +427,9 @@ class AutomaticCandidateReviewService:
                     semantic_verification="judgment_not_independently_verified")
                 probe_candidate(self.validation.source_root(snapshot, plan["request"]), result["candidate"]["head_sha"])
                 if review and review["decision"] == "approve" and result["observation"]["status"] == "passed":
-                    # Existing loop projection retains its Worker/round details.
+                    # Keep the automatic mode with the existing Worker/round details.
                     if state:
-                        return None
+                        return self._loop_projection(snapshot, state)
                     return {**fallback, "status": "reviewed", "reason": "candidate_review_policy_satisfied",
                         "acceptance_status": "accepted_by_review_policy" if review.get("schema_version") == MACHINE_SCHEMA else "human_recorded",
                         "next_action": "Candidate review is complete. Continue the separately authorized delivery process."}
@@ -431,7 +450,7 @@ class AutomaticCandidateReviewService:
                     return {**fallback, "reason": "correction_time_budget_exhausted"}
                 if state:
                     self._check_loop_binding(start, state)
-                    return None
+                    return self._loop_projection(snapshot, state)
                 if review:
                     return {**fallback, "status": "awaiting_fix" if review["decision"] == "request_changes" else "needs_human",
                             "reason": review["reason"], "feedback": review["reason"],
@@ -453,6 +472,18 @@ class AutomaticCandidateReviewService:
             cause = exc.__cause__ if isinstance(exc, MemoryStorageError) else exc
             return {**fallback, "available": False,
                     "reason": getattr(cause, "code", "automatic_review_store_unavailable")}
+
+    def _loop_projection(self, snapshot, state):
+        value = CorrectionLoopService(self.project_root)._project(snapshot, state)
+        value["automatic"] = True
+        phase = value["status"]
+        if phase in {"awaiting_fix", "awaiting_worker"} and not value["runtime_admission"]["available"]:
+            value["next_action"] = "Automatic correction is blocked by runtime admission. Preserve the evidence until a supported executor is available."
+        elif phase in {"awaiting_fix", "awaiting_recheck", "awaiting_review"}:
+            value["next_action"] = "Continue automatic review from the CLI using the frozen base, checks and Reviewer selection."
+        elif phase == "awaiting_worker" and value["runtime_admission"]["available"]:
+            value["next_action"] = "Continue automatic review with the correction cost acknowledgement to run the prepared Worker."
+        return value
 
     def stop(self, execution_id):
         snapshot = self.validation._snapshot(execution_id)
