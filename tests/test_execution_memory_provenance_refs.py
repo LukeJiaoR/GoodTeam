@@ -161,6 +161,8 @@ def test_missing_memory_event_is_returned_as_broken_ref(tmp_path):
     ref = manifest["memory_provenance_refs"][0]
     assert ref["status"] == "missing_memory_event"
     assert ref["issues"] == ["missing_memory_event"]
+    assert manifest["memory_provenance_integrity"]["memory_context_status"] == "unavailable"
+    assert manifest["memory_provenance_integrity"]["memory_context_reasons"] == ["wal_unreadable"]
     assert ref["memory_event_id"] == finalized["memory_event_id"]
     assert ref["ledger_event_id"] == finalized["ledger_event_id"]
     assert manifest["memory_provenance_integrity"]["complete"] is False

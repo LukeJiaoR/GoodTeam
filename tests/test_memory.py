@@ -333,7 +333,7 @@ def test_retrieve_relevant_events_excludes_superseded_event(tmp_path):
     assert "Use v2 rollout checklist for release gating." in texts
 
 
-def test_rebuild_role_memory_excludes_superseded_events_in_projection(tmp_path):
+def test_rebuild_preserves_legacy_audit_but_excludes_superseded_machine_summary(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
     store = RoleMemoryStore(project_root)
@@ -351,10 +351,12 @@ def test_rebuild_role_memory_excludes_superseded_events_in_projection(tmp_path):
         supersedes=store._event_id(first),
     )
 
-    store.rebuild_role_memory("planner", "Planner", "AI Content Studio")
+    rebuilt = store.rebuild_role_memory("planner", "Planner", "AI Content Studio")
     content = store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
-    assert "status=v1 shape" not in content
-    assert "status=v2 shape" in content
+    assert "status=v1 shape" in content and "status=v2 shape" in content
+    assert "status=v1 shape" not in rebuilt["horizons"]["mid-term"]["summary"]
+    assert "status=v2 shape" in rebuilt["horizons"]["mid-term"]["summary"]
+    assert rebuilt["projection_policy"] == "wal_generated_legacy_preserved"
 
 
 def test_embedding_cache_is_projection_and_regenerates_after_delete(tmp_path):
@@ -493,7 +495,8 @@ def test_role_memory_store_rebuilds_memory_from_events(tmp_path):
 
     assert rebuilt["event_count"] == 1
     assert "Frontend auth tasks depend" in store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
-    assert "Corrupted" not in store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
+    assert store.memory_path("planner", "mid-term").read_text(encoding="utf-8").startswith("# Corrupted\n")
+    assert "Corrupted" not in rebuilt["horizons"]["mid-term"]["summary"]
 
 
 def test_memory_index_includes_integrity_marker_and_happy_path_skips_rebuild(tmp_path):
@@ -541,10 +544,12 @@ def test_pickup_ignores_tampered_index_without_rewriting_legacy_notes(tmp_path):
     stale_index = store.read_memory_index("planner")
     stale_index["integrity"]["events_sha256"] = "deadbeef"
     store.index_path("planner").write_text(json.dumps(stale_index, indent=2), encoding="utf-8")
+    before_pickup = store.memory_path("planner", "mid-term").read_bytes()
 
     packet = store.build_pickup_packet("planner")
     mid_content = store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
-    assert mid_content == "# Corrupted\n"
+    assert mid_content.encode("utf-8") == before_pickup
+    assert mid_content.startswith("# Corrupted\n")
     assert "Frontend auth tasks depend" in packet["summaries"]["mid-term"]
     assert packet["event_count"] == 1
 
