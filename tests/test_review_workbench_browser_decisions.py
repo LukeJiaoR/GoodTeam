@@ -354,6 +354,7 @@ def _capture_dashboard_requests(workspace: Path, monkeypatch):
                 self.server = type("Server", (), {"server_port": 8788})()
                 self.headers = {
                     "Content-Length": str(len(raw_body)),
+                    "Content-Type": "application/json",
                     "Host": "127.0.0.1:8788",
                     "Origin": "http://127.0.0.1:8788",
                 }

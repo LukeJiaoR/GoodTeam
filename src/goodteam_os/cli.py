@@ -210,6 +210,17 @@ def build_parser() -> argparse.ArgumentParser:
     review_decision.add_argument("--reason", default="")
     review_decision.add_argument("--validation-receipt", default="")
     review_decision.add_argument("--head", default="")
+    correction = execution_subparsers.add_parser("start-correction-loop")
+    correction.add_argument("--execution-id", required=True)
+    correction.add_argument("--project-root", type=Path, required=True)
+    correction.add_argument("--head", required=True)
+    correction.add_argument("--validation-receipt", required=True)
+    correction.add_argument("--max-rounds", type=int, default=3)
+    correction.add_argument("--wall-seconds", type=int, default=900)
+    stop_correction = execution_subparsers.add_parser("stop-correction-loop")
+    stop_correction.add_argument("--execution-id", required=True)
+    stop_correction.add_argument("--project-root", type=Path, required=True)
+    stop_correction.add_argument("--loop-id", required=True)
     validate = execution_subparsers.add_parser("validate-candidate")
     validate.add_argument("--execution-id", required=True)
     validate.add_argument("--project-root", type=Path, required=True)
@@ -564,6 +575,11 @@ def _run_execution_command(args: argparse.Namespace) -> dict[str, object]:
         return api.replay(args.execution_id)
     if args.execution_command == "review":
         return api.get_review_workbench(args.execution_id)
+    if args.execution_command == "start-correction-loop":
+        return api.start_correction_loop(args.execution_id, receipt_id=args.validation_receipt, head_sha=args.head,
+                                         max_rounds=args.max_rounds, wall_seconds=args.wall_seconds)
+    if args.execution_command == "stop-correction-loop":
+        return api.stop_correction_loop(args.execution_id, loop_id=args.loop_id)
     if args.execution_command == "validate-candidate":
         command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
         return api.validate_candidate(args.execution_id, operation_id=args.operation_id, head_sha=args.head,
