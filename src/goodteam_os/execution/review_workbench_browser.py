@@ -897,6 +897,17 @@ def _correction_loop_section(review: dict[str, Any], *, decision_actions_enabled
     validation = _dict(evidence.get("candidate_validation"))
     body = "<ul>" + "".join("<li>" + escape(line.removeprefix("- ")) + "</li>"
                            for line in _render_correction_loop(loop)) + "</ul>"
+    if loop.get("automatic"):
+        body += '<p>Automatic review uses the frozen original base, check command, criteria and Reviewer selection. '
+        body += 'Human attestation is optional. Opening this page does not start work.</p>'
+        if loop.get("status") not in {"reviewed", "needs_human"}:
+            command = 'goodteam execution continue-automatic-review --execution-id ' + str(review.get("execution_id", ""))
+            body += '<p>Resume from the local CLI with the same project root and already admitted Reviewer: <code>'
+            body += escape(command + ' --project-root /path/to/project') + '</code>. '
+            body += 'Correction runtime cost acknowledgement cannot enable an unadmitted executor.</p>'
+        body += '<p>To stop subsequent admissions, use <code>goodteam execution stop-automatic-review</code> '
+        body += 'with the same execution ID and project root. This does not cancel an already running Reviewer.</p>'
+        return _section("Automatic candidate review", body)
     action = ""
     if loop.get("available") and loop.get("loop_id") and loop.get("status") not in {"needs_human", "reviewed"}:
         action, label = "stop", "Stop further correction rounds"

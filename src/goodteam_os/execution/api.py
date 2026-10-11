@@ -32,7 +32,11 @@ class ExecutionAPI:
         github_client: GitHubClient | None = None,
         clock: Clock | None = None,
         sandbox_git_adapter: SandboxGitAdapter | None = None,
+        codex_review_admission=None,
     ):
+        from goodteam_os.skills.codex_runtime import review_worker_kwargs
+
+        self.review_runtime_kwargs = review_worker_kwargs(codex_review_admission)
         self.project_root = Path(project_root)
         self.github_client = github_client
         self.clock = clock
@@ -115,6 +119,54 @@ class ExecutionAPI:
         from goodteam_os.execution.candidate_validation import CandidateValidationService
         return CandidateValidationService(self.project_root).validate(execution_id, **request)
 
+    def validate_and_review_candidate(self, execution_id: str, *, review_base="",
+                                      acknowledge_external_cost=False, **request) -> dict[str, Any]:
+        """Local CLI entry: reuse its exact check receipt without an approval handoff.
+
+        The startup authority supplies selection, never task/issue/model text.
+        Resumption preserves the first base, Reviewer and budgets.
+        """
+        import os
+        import shutil
+        from .automatic_review import AutomaticCandidateReviewService
+        from .task_snapshot import TaskInputError
+
+        service = AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs)
+        saved = service.configuration(execution_id)
+        selected = None
+        if saved is not None:
+            if review_base and review_base != saved["base_sha"]:
+                raise TaskInputError("automatic_review_already_started")
+            command = list(request["argv"])
+            if command:
+                command[0] = command[0] if Path(command[0]).is_absolute() else shutil.which(command[0], path=os.defpath)
+            contract = {"argv": command, "criteria": sorted(request["criteria"]), "seconds": request.get("seconds", 30)}
+            if contract != saved["validation_contract"]:
+                raise TaskInputError("correction_check_changed")
+        elif review_base or self.review_runtime_kwargs:
+            if not review_base:
+                raise ValueError("--review-base must name the original exact base for the first automatic review")
+            from goodteam_os.skills.codex_local import LocalCodexReviewAdmission
+            from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
+
+            admission = self.review_runtime_kwargs.get("codex_review_admission")
+            if not isinstance(admission, (LocalCodexReviewAdmission, TrustedCodexReviewAdmission)):
+                raise ValueError("Automatic CLI start requires an already composed local or trusted Codex Reviewer policy")
+            selected = {"reviewer_adapter": "codex", "reviewer_model": admission.policy["model"]}
+        result = self.validate_candidate(execution_id, **request)
+        if saved is None and selected is None:
+            return result
+        if saved is not None:
+            # Idempotently complete a start interrupted before its task binding.
+            service.start(execution_id, **{key: saved[key] for key in
+                ("base_sha", "reviewer_adapter", "reviewer_model", "max_rounds", "wall_seconds", "fix_seconds")},
+                receipt_id=saved["initial_receipt"], head_sha=saved["initial_head"])
+        else:
+            service.start(execution_id, base_sha=review_base, receipt_id=result["receipt_id"],
+                          head_sha=result["candidate"]["head_sha"], **selected)
+        return {**result, "automatic_review": service.advance(execution_id,
+            acknowledge_external_cost=acknowledge_external_cost)}
+
     def attest_candidate_review(self, execution_id: str, **request) -> dict[str, Any]:
         """Record an explicit Operator attestation, not authenticated independence."""
         from goodteam_os.execution.candidate_validation import CandidateValidationService
@@ -123,16 +175,16 @@ class ExecutionAPI:
     def start_automatic_review(self, execution_id: str, **request) -> dict[str, Any]:
         """Trusted composition only; captures exact base and original policy."""
         from .automatic_review import AutomaticCandidateReviewService
-        return AutomaticCandidateReviewService(self.project_root).start(execution_id, **request)
+        return AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs).start(execution_id, **request)
 
     def advance_automatic_review(self, execution_id: str, *, acknowledge_external_cost=False) -> dict[str, Any]:
         from .automatic_review import AutomaticCandidateReviewService
-        return AutomaticCandidateReviewService(self.project_root).advance(
+        return AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs).advance(
             execution_id, acknowledge_external_cost=acknowledge_external_cost)
 
     def stop_automatic_review(self, execution_id: str) -> dict[str, Any]:
         from .automatic_review import AutomaticCandidateReviewService
-        return AutomaticCandidateReviewService(self.project_root).stop(execution_id)
+        return AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs).stop(execution_id)
 
     def start_correction_loop(self, execution_id: str, **request) -> dict[str, Any]:
         from goodteam_os.execution.correction_loop import CorrectionLoopService

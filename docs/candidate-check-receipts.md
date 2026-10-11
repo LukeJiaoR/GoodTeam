@@ -3,7 +3,9 @@
 This slice adds one usable path from the original captured issue contract to an
 observed local command, an optional human record, and the existing Review
 Workbench. Running a check does not launch a model or establish acceptance by
-itself. The separate [automatic candidate review controller](automatic-candidate-review.md)
+itself. Add the original `--review-base` and an already admitted Reviewer policy
+to the same CLI invocation to start and advance the
+[automatic candidate review controller](automatic-candidate-review.md), which
 can consume an independent report and satisfy its captured review policy. The
 old workflow `completed` status remains separate from the current candidate's
 acceptance record.

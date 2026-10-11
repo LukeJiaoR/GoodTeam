@@ -55,7 +55,7 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         f"Memory provenance: {_memory_integrity_label(integrity)}",
         f"Legacy review record: {_decision_label(decision)}",
         "",
-        "Supervised correction loop:",
+        "Automatic candidate review:" if evidence.get("correction_loop", {}).get("automatic") else "Supervised correction loop:",
         *_render_correction_loop(evidence.get("correction_loop", {})),
         "",
         "Candidate checks and review judgment:",
@@ -357,6 +357,8 @@ def _render_correction_loop(value: dict[str, Any]) -> list[str]:
     if value.get("reason"):
         lines.append(f"- Reason: {value['reason']}")
     if not value.get("available"):
+        if value.get("next_action"):
+            lines.append(f"- Next action: {value['next_action']}")
         return lines
     lines.extend([
         f"- Rounds reserved: {value['reserved_rounds']} / {value['max_rounds']}",

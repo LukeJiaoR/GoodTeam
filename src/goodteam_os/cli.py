@@ -241,6 +241,18 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Zero-based original acceptance criterion; mapping is not semantic proof")
     validate.add_argument("--seconds", type=int, default=30)
     validate.add_argument("--correction-worker", default="", help="Protected correction job selecting its isolated candidate worktree")
+    validate.add_argument("--review-base", default="", help="Original exact base SHA; starts and advances automatic review with the admitted Reviewer.")
+    continue_review = execution_subparsers.add_parser("continue-automatic-review", help="Resume the frozen automatic review without re-entering its inputs")
+    continue_review.add_argument("--execution-id", required=True)
+    continue_review.add_argument("--project-root", type=Path, required=True)
+    for automatic_command in (validate, continue_review):
+        automatic_command.add_argument("--local-codex-policy", type=Path, help="Existing task-bound local Reviewer policy.")
+        automatic_command.add_argument("--trusted-codex-review-policy", type=Path, help="Existing task-bound trusted native Reviewer policy.")
+        automatic_command.add_argument("--acknowledge-external-cost", action="store_true",
+            help="Acknowledge correction runtime cost within the frozen budget; does not grant runtime admission.")
+    stop_review = execution_subparsers.add_parser("stop-automatic-review", help="Stop subsequent automatic review and correction admissions")
+    stop_review.add_argument("--execution-id", required=True)
+    stop_review.add_argument("--project-root", type=Path, required=True)
     validate.add_argument("argv", nargs=argparse.REMAINDER)
     export_review_workbench = execution_subparsers.add_parser("export-review-workbench")
     export_review_workbench.add_argument("--execution-id", required=True)
@@ -271,8 +283,10 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         from goodteam_os.skills.codex_local import LocalCodexReviewAdmission
 
         codex_review_admission = LocalCodexReviewAdmission(local_policy)
-    if codex_review_admission is not None and args.command not in {"dispatch", "serve"}:
-        raise ValueError("This Codex Reviewer composition is supported only by direct dispatch and serve.")
+    automatic_entry = args.command == "execution" and args.execution_command in {
+        "validate-candidate", "continue-automatic-review"}
+    if codex_review_admission is not None and args.command not in {"dispatch", "serve"} and not automatic_entry:
+        raise ValueError("This Codex Reviewer composition is supported only by direct dispatch and serve, plus automatic review entry points.")
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
 
     runtime_kwargs = review_worker_kwargs(codex_review_admission)
@@ -511,7 +525,7 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         return 0
     if args.command == "execution":
         try:
-            payload = _run_execution_command(args)
+            payload = _run_execution_command(args, **runtime_kwargs)
         except ValueError as exc:
             print(f"execution: {exc}", file=sys.stderr)
             return 2
@@ -568,8 +582,10 @@ def _print_service_status(payload: dict[str, object]) -> None:
             print(f"Last failure: {active.get('last_failure_class', '') or 'none'}")
 
 
-def _run_execution_command(args: argparse.Namespace) -> dict[str, object]:
-    api = ExecutionAPI(args.project_root)
+def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=None) -> dict[str, object]:
+    from goodteam_os.skills.codex_runtime import review_worker_kwargs
+
+    api = ExecutionAPI(args.project_root, **review_worker_kwargs(codex_review_admission))
     if args.execution_command == "intake-github-issue":
         return api.intake_github_issue(
             repo=args.repo,
@@ -601,8 +617,13 @@ def _run_execution_command(args: argparse.Namespace) -> dict[str, object]:
     if args.execution_command == "validate-candidate":
         command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
         optional = {"correction_worker": args.correction_worker} if args.correction_worker else {}
-        return api.validate_candidate(args.execution_id, operation_id=args.operation_id, head_sha=args.head,
-                                      argv=command, criteria=args.criterion, seconds=args.seconds, **optional)
+        return api.validate_and_review_candidate(args.execution_id, operation_id=args.operation_id, head_sha=args.head,
+            argv=command, criteria=args.criterion, seconds=args.seconds, review_base=args.review_base,
+            acknowledge_external_cost=args.acknowledge_external_cost, **optional)
+    if args.execution_command == "continue-automatic-review":
+        return api.advance_automatic_review(args.execution_id, acknowledge_external_cost=args.acknowledge_external_cost)
+    if args.execution_command == "stop-automatic-review":
+        return api.stop_automatic_review(args.execution_id)
     if args.execution_command == "record-review-decision":
         if args.validation_receipt or args.head:
             if not args.validation_receipt or not args.head:
