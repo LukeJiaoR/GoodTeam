@@ -3,7 +3,10 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
+from goodteam_os.project_reviewer_profiles import (
+    normalize_reviewer_profile_config,
+    reviewer_profile_configuration_error,
+)
 from goodteam_os.review_policy import evaluate_review_evidence_policy
 from goodteam_os.review_provenance import (
     REVIEW_ROLES_BY_APPROVAL,
@@ -99,6 +102,7 @@ def build_multi_reviewer_projection(
         "can_human_override": True,
         "operator_message": AGGREGATE_OPERATOR_MESSAGE,
         "configured_profile_ids": [profile.profile_id for profile in profiles],
+        "configuration_error": reviewer_profile_configuration_error(reviewer_target),
         "aggregate_policy": _aggregate_policy(reviewers),
         "reviewers": reviewers,
     }
@@ -116,6 +120,8 @@ def projection_supports_approval(
 ) -> bool:
     """Reconcile aggregate, configured coverage and current evidence for advice only."""
     if not isinstance(projection, Mapping) or projection.get("approval") != approval or not run_id:
+        return False
+    if projection.get("configuration_error") != "":
         return False
     profiles = projection.get("configured_profile_ids")
     reviewers = projection.get("reviewers")
