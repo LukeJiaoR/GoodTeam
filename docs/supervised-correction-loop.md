@@ -3,7 +3,9 @@
 The existing issue-execution Review Workbench now connects exact human feedback
 to a bounded sequence of new candidates and actual local checks. This is a
 supervised review → fix → recheck → review path. It does not yet dispatch a new
-autonomous coding Worker. A person uses the existing coding tools to make the
+autonomous production coding Worker. The optional [correction host protocol](correction-worker-attempts.md)
+now provides separate attempt inputs/worktrees and simulation-only execution;
+external executor admission remains blocked. A person uses the existing coding tools to make the
 fix and commit it; this loop preserves the original task, feedback and evidence
 while guarding the subsequent check rounds.
 
@@ -107,8 +109,9 @@ edit-and-revert are outside this application's guarantees.
 The old Work workflow's fix planner and issue execution are different identities.
 This feature does not attach the nearest Work run or claim their contracts have
 already been unified. It also does not reopen or redispatch a captured Worker
-whose prior transport may have run. That requires an explicit future-attempt
-contract rather than a status change here.
+whose prior transport may have run. The separate correction-attempt contract requires retained return evidence, a
+new bounded identity, and its own supported executor admission. It never changes
+the original job status to redispatch it.
 
 ## Verification
 

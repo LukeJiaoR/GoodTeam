@@ -221,6 +221,17 @@ def build_parser() -> argparse.ArgumentParser:
     stop_correction.add_argument("--execution-id", required=True)
     stop_correction.add_argument("--project-root", type=Path, required=True)
     stop_correction.add_argument("--loop-id", required=True)
+    prepare_worker = execution_subparsers.add_parser("prepare-correction-worker")
+    for flag in ("execution-id", "loop-id", "head", "validation-receipt", "operation-id"):
+        prepare_worker.add_argument("--" + flag, required=True)
+    prepare_worker.add_argument("--project-root", type=Path, required=True)
+    prepare_worker.add_argument("--max-seconds", type=int, default=120)
+    run_worker = execution_subparsers.add_parser("run-correction-worker")
+    run_worker.add_argument("--execution-id", required=True)
+    run_worker.add_argument("--project-root", type=Path, required=True)
+    run_worker.add_argument("--job-id", required=True)
+    run_worker.add_argument("--acknowledge-external-cost", action="store_true",
+        help="Explicitly authorize one configured runtime attempt within its captured time budget; provider cost is unknown, not dollar-capped")
     validate = execution_subparsers.add_parser("validate-candidate")
     validate.add_argument("--execution-id", required=True)
     validate.add_argument("--project-root", type=Path, required=True)
@@ -229,6 +240,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--criterion", type=int, action="append", required=True,
                           help="Zero-based original acceptance criterion; mapping is not semantic proof")
     validate.add_argument("--seconds", type=int, default=30)
+    validate.add_argument("--correction-worker", default="", help="Protected correction job selecting its isolated candidate worktree")
     validate.add_argument("argv", nargs=argparse.REMAINDER)
     export_review_workbench = execution_subparsers.add_parser("export-review-workbench")
     export_review_workbench.add_argument("--execution-id", required=True)
@@ -580,10 +592,17 @@ def _run_execution_command(args: argparse.Namespace) -> dict[str, object]:
                                          max_rounds=args.max_rounds, wall_seconds=args.wall_seconds)
     if args.execution_command == "stop-correction-loop":
         return api.stop_correction_loop(args.execution_id, loop_id=args.loop_id)
+    if args.execution_command == "prepare-correction-worker":
+        return api.prepare_correction_worker(args.execution_id, loop_id=args.loop_id, head_sha=args.head,
+            receipt_id=args.validation_receipt, operation_id=args.operation_id, max_seconds=args.max_seconds)
+    if args.execution_command == "run-correction-worker":
+        return api.run_correction_worker(args.execution_id, args.job_id,
+            acknowledge_external_cost=args.acknowledge_external_cost)
     if args.execution_command == "validate-candidate":
         command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+        optional = {"correction_worker": args.correction_worker} if args.correction_worker else {}
         return api.validate_candidate(args.execution_id, operation_id=args.operation_id, head_sha=args.head,
-                                      argv=command, criteria=args.criterion, seconds=args.seconds)
+                                      argv=command, criteria=args.criterion, seconds=args.seconds, **optional)
     if args.execution_command == "record-review-decision":
         if args.validation_receipt or args.head:
             if not args.validation_receipt or not args.head:

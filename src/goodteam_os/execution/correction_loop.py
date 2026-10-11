@@ -21,7 +21,8 @@ MAX_ROUNDS = 5
 MAX_WALL_SECONDS = 3600
 HALT_REASONS = {"correction_no_progress", "correction_stopped_by_operator",
                 "correction_time_budget_exhausted", "correction_round_budget_exhausted",
-                "correction_rejected", "correction_check_unknown", "correction_attempt_indeterminate"}
+                "correction_rejected", "correction_check_unknown", "correction_attempt_indeterminate",
+                "correction_worker_failed"}
 
 
 def _operation_records(service, snapshot, key):
@@ -86,11 +87,18 @@ class CorrectionLoopService:
             raise TaskInputError("correction_state_unavailable")
         keys = {initial["operation_key"]}
         for entry in state["rounds"]:
-            if (not isinstance(entry, dict) or set(entry) != {"ordinal", "operation_key", "plan_digest"}
+            if (not isinstance(entry, dict) or set(entry) not in (
+                    {"ordinal", "operation_key", "plan_digest"}, {"ordinal", "operation_key", "plan_digest", "worker_job_id"})
                     or any(not isinstance(entry.get(k), str) or re.fullmatch(r"[a-f0-9]{64}", entry[k]) is None
                            for k in ("operation_key", "plan_digest"))):
                 raise TaskInputError("correction_state_unavailable")
-            keys.add(entry["operation_key"])
+            if "worker_job_id" in entry:
+                authority, _value = self._worker_input(snapshot, entry)
+                checked = _read(authority.root / "check-binding.json")
+                if checked is not None:
+                    keys.add(checked.get("operation_key"))
+            else:
+                keys.add(entry["operation_key"])
         # Commit-once reservations retain the high-water round independently of
         # the mutable journal and selected historical validation receipt.
         for ordinal in range(1, MAX_ROUNDS + 1):
@@ -192,12 +200,83 @@ class CorrectionLoopService:
         for ordinal, entry in enumerate(state["rounds"], 1):
             if entry.get("ordinal") != ordinal or entry.get("operation_key") in keys:
                 raise TaskInputError("correction_state_unavailable")
-            records = _operation_records(self.validation, snapshot, entry["operation_key"])
-            if digest(canonical_bytes(records[0])) != entry["plan_digest"]:
+            if "worker_job_id" in entry:
+                authority, value = self._worker_input(snapshot, entry)
+                if (value.to_dict()["loop_id"] != state["loop_id"]
+                        or value.to_dict()["review"] != history[-1][3]
+                        or value.to_dict()["candidate"] != history[-1][2]["candidate"]):
+                    raise TaskInputError("correction_identity_mismatch")
+                checked = _read(authority.root / "check-binding.json")
+                if checked is None:
+                    if ordinal != len(state["rounds"]):
+                        raise TaskInputError("correction_state_unavailable")
+                    keys.add(entry["operation_key"])
+                    continue
+            else:
+                checked = entry
+            records = _operation_records(self.validation, snapshot, checked["operation_key"])
+            if digest(canonical_bytes(records[0])) != checked["plan_digest"]:
                 raise TaskInputError("correction_evidence_invalid")
             keys.add(entry["operation_key"])
             history.append(records)
         return history
+
+    def _worker_input(self, snapshot, entry):
+        from .correction_store import CorrectionAttemptStore
+        authority = CorrectionAttemptStore(self.validation.project_root, entry["worker_job_id"])
+        value = authority.load()
+        if (value.original.data != snapshot.data or value.payload_digest != entry["plan_digest"]
+                or value.to_dict()["ordinal"] != entry["ordinal"]
+                or digest(value.to_dict()["operation_id"].encode()) != entry["operation_key"]):
+            raise TaskInputError("correction_input_mismatch")
+        return authority, value
+
+    def reserve_worker(self, value, *, publish=True):
+        """Caller holds the execution lock; no Worker can run before this proof."""
+        snapshot = value.original
+        state = self._load(snapshot)
+        if state is None or state["loop_id"] != value.to_dict()["loop_id"]:
+            raise TaskInputError("correction_identity_mismatch")
+        entry = {"ordinal": value.to_dict()["ordinal"], "operation_key": digest(value.to_dict()["operation_id"].encode()),
+                 "plan_digest": value.payload_digest, "worker_job_id": value.job_id}
+        if entry in state["rounds"]:
+            return
+        if entry["operation_key"] in {state["initial"]["operation_key"], *(row["operation_key"] for row in state["rounds"])}:
+            raise TaskInputError("correction_operation_conflict")
+        history = self._history(snapshot, state)
+        if entry["operation_key"] in {digest(record[0]["request"]["operation_id"].encode()) for record in history}:
+            raise TaskInputError("correction_operation_conflict")
+        if value.to_dict()["review"] != history[-1][3] or value.to_dict()["candidate"] != history[-1][2]["candidate"]:
+            raise TaskInputError("correction_feedback_mismatch")
+        phase, reason = self._phase(snapshot, state, history)
+        if phase != "awaiting_fix" or entry["ordinal"] != len(state["rounds"]) + 1:
+            raise TaskInputError(reason)
+        remaining = state["initial"]["started_at"] + state["initial"]["wall_seconds"] - self._observe_clock(snapshot, state)
+        if state["stop_reason"] or value.to_dict()["max_seconds"] > remaining:
+            raise TaskInputError("correction_time_budget_exhausted")
+        if publish:
+            _write(self.validation._root(snapshot.execution_id) / f"correction-round-{entry['ordinal']}.json",
+                   {"loop_id": state["loop_id"], "snapshot": snapshot.reference, "round": entry})
+            state["rounds"].append(entry)
+            self._save(snapshot, state)
+
+    def admit_worker_dispatch(self, value):
+        snapshot = value.original
+        with role_lock(self.validation._root(snapshot.execution_id), create=False):
+            state = self._load(snapshot)
+            if state is None or not state["rounds"]:
+                raise TaskInputError("correction_state_unavailable")
+            entry = state["rounds"][-1]
+            if entry.get("worker_job_id") != value.job_id or entry["plan_digest"] != value.payload_digest:
+                raise TaskInputError("correction_identity_mismatch")
+            self._history(snapshot, state)
+            current = self._observe_clock(snapshot, state)
+            if state["stop_reason"]:
+                raise TaskInputError(state["stop_reason"])
+            authority, _ = self._worker_input(snapshot, entry)
+            if _read(authority.root / "check-binding.json") is not None:
+                raise TaskInputError("correction_worker_already_checked")
+            return state["initial"]["started_at"] + state["initial"]["wall_seconds"] - current
 
     def _phase(self, snapshot, state, history):
         if state["stop_reason"]:
@@ -205,6 +284,16 @@ class CorrectionLoopService:
         self._observe_clock(snapshot, state)
         if state["stop_reason"]:
             return "needs_human", state["stop_reason"]
+        if state["rounds"] and "worker_job_id" in state["rounds"][-1]:
+            authority, value = self._worker_input(snapshot, state["rounds"][-1])
+            if _read(authority.root / "check-binding.json") is None:
+                started, outcome = authority.outcome(value)
+                if outcome is None:
+                    return ("awaiting_worker_result", "correction_worker_outcome_unknown") if started else (
+                        "awaiting_worker", "correction_worker_prepared")
+                if outcome["status"] != "completed":
+                    return self._halt(snapshot, state, "correction_worker_failed")
+                return "awaiting_recheck", "correction_worker_returned"
         _plan, started, result, review = history[-1]
         if result is None:
             return self._halt(snapshot, state, "correction_attempt_indeterminate") if started else ("awaiting_recheck", "correction_check_prepared")
@@ -230,6 +319,15 @@ class CorrectionLoopService:
             return
         history = self._history(snapshot, state)
         latest = state["rounds"][-1] if state["rounds"] else None
+        worker_authority = None
+        if latest and "worker_job_id" in latest:
+            worker_authority, value = self._worker_input(snapshot, latest)
+            checked = _read(worker_authority.root / "check-binding.json")
+            if (checked is None or checked.get("operation_key") == expected["operation_key"]) and plan["request"].get("correction_worker") != value.job_id:
+                raise TaskInputError("correction_workspace_mismatch")
+            if checked is not None and checked.get("operation_key") != expected["operation_key"]:
+                worker_authority = None
+            latest = checked
         if latest and latest["operation_key"] == expected["operation_key"]:
             if latest["plan_digest"] != expected["plan_digest"]:
                 raise TaskInputError("correction_evidence_invalid")
@@ -244,7 +342,7 @@ class CorrectionLoopService:
                 raise TaskInputError("correction_time_budget_exhausted")
             return
         phase, reason = self._phase(snapshot, state, history)
-        if phase != "awaiting_fix":
+        if phase != ("awaiting_recheck" if worker_authority and latest is None else "awaiting_fix"):
             raise TaskInputError(reason)
         original = history[0][0]["request"]
         if (plan["request"]["argv"] != original["argv"] or plan["request"]["criteria"] != original["criteria"]):
@@ -256,6 +354,11 @@ class CorrectionLoopService:
         remaining = state["initial"]["started_at"] + state["initial"]["wall_seconds"] - self._observe_clock(snapshot, state)
         if state["stop_reason"] or plan["request"]["seconds"] > remaining:
             raise TaskInputError("correction_time_budget_exhausted")
+        if worker_authority and latest is None:
+            _write(worker_authority.root / "check-binding.json", expected)
+            return
+        if plan["request"].get("correction_worker"):
+            raise TaskInputError("correction_identity_mismatch")
         entry = {"ordinal": len(state["rounds"]) + 1, **expected}
         _write(self.validation._root(snapshot.execution_id) / f"correction-round-{entry['ordinal']}.json",
                {"loop_id": state["loop_id"], "snapshot": snapshot.reference, "round": entry})
@@ -276,10 +379,20 @@ class CorrectionLoopService:
         phase, reason = self._phase(snapshot, state, history)
         if phase in {"awaiting_review", "awaiting_human_acceptance"}:
             try:
-                probe_candidate(self.validation.project_root, history[-1][0]["candidate"]["head_sha"])
+                probe_candidate(self.validation.source_root(snapshot, history[-1][0]["request"]),
+                                history[-1][0]["candidate"]["head_sha"])
             except TaskInputError as exc:
                 phase, reason = "needs_human", exc.code
         feedback = history[-1][3] or {}
+        from .correction_input import correction_runtime_capability
+        capability = correction_runtime_capability(snapshot.to_dict()["adapter"])
+        worker = {}
+        if state["rounds"] and "worker_job_id" in state["rounds"][-1]:
+            authority, value = self._worker_input(snapshot, state["rounds"][-1])
+            started, outcome = authority.outcome(value)
+            worker = {"job_id": value.job_id, "workspace": value.workspace_relative,
+                "status": outcome["status"] if outcome else "outcome_unknown" if started else "prepared",
+                "max_invocations": 1, "max_seconds": value.to_dict()["max_seconds"], "provider_receipt": "unknown"}
         return {"available": True, "loop_id": state["loop_id"], "status": phase, "reason": reason,
                 "completed_rounds": sum(row[2] is not None for row in history[1:]),
                 "reserved_rounds": len(state["rounds"]), "max_rounds": state["initial"]["max_rounds"],
@@ -290,8 +403,15 @@ class CorrectionLoopService:
                 "reviewer": feedback.get("reviewer", ""), "review_decision": feedback.get("decision", ""),
                 "automatic_provider_invocations": 0, "external_cost": "unknown_not_authorized_by_loop",
                 "acceptance_status": "unknown", "verification": "unverified",
+                "worker_job_id": state["rounds"][-1].get("worker_job_id", "") if state["rounds"] else "",
+                "worker": worker,
+                "runtime_admission": capability,
                 "next_action": {"awaiting_fix": "Fix and commit a new candidate with your existing tools, then explicitly rerun the same check.",
-                    "awaiting_recheck": "Resume the exact prepared local check; no call was recorded.",
+                    "awaiting_recheck": ("Inspect the committed candidate in the retained worktree. Explicitly run the original local check with --correction-worker " + worker["job_id"]
+                        if reason == "correction_worker_returned" else "Resume the exact prepared local check; no call was recorded."),
+                    "awaiting_worker": ("The captured executor lacks a verified correction admission. Keep this prepared worktree for inspection; continue manual correction or wait for a supported executor."
+                        if not capability["available"] else "Explicitly start the admitted Worker once from the CLI; preparation does not invoke it."),
+                    "awaiting_worker_result": "Inspect the running or unknown attempt; do not repeat its dispatch. A retained host return is required before recheck.",
                     "awaiting_review": "Review this exact candidate and its fresh check receipt.",
                     "awaiting_human_acceptance": "A person must decide acceptance; approval text is not semantic verification.",
                     "needs_human": "Inspect the preserved evidence and resolve the stop; no automatic retry or paid invocation."}[phase]}

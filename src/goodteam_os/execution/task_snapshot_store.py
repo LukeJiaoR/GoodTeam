@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any
 
+from goodteam_os.skills.filesystem import directory
 from goodteam_os.memory_storage import atomic_write, read_bytes, role_lock
 
 from .task_context import render_task_contract
@@ -33,6 +35,21 @@ _REQUEST_FIELDS = (
 def _job_binding(snapshot: TaskExecutionSnapshot, job: dict[str, Any]) -> bytes:
     return canonical_bytes({"snapshot": snapshot.reference,
                             "request": {key: job.get(key) for key in _REQUEST_FIELDS}})
+
+
+def host_return_record(snapshot, dispatch, status, output_digest):
+    if status not in {"completed", "failed"} or re.fullmatch(r"[a-f0-9]{64}", output_digest) is None:
+        raise TaskInputError("task_input_host_return_invalid")
+    value = {"input": snapshot.reference, "dispatch": dispatch, "status": status,
+             "output_digest": output_digest, "observation": "host_worker_return", "provider_receipt": "unknown"}
+    return {**value, "receipt_id": "host-return:" + digest(canonical_bytes(value))}
+
+
+def _correction_present(root):
+    # Any retained proof means the original transport is no longer fresh. One
+    # missing required marker cannot erase the loop, reservation or attempt.
+    with directory(root) as fd:
+        return any(name.startswith("correction-") for name in os.listdir(fd))
 
 
 def _project_bucket(project_root: Path) -> Path:
@@ -173,6 +190,8 @@ class TaskSnapshotStore:
             current = self._read(root) if present else None
             if current is None or current.data != snapshot.data:
                 raise TaskInputError("task_input_snapshot_missing")
+            if stage == "transport_attempt" and _correction_present(root):
+                raise TaskInputError("task_input_correction_active")
             if stage == "transport_attempt" and read_bytes(root / "dispatch.json", maximum=4096) is not None:
                 raise TaskInputError("task_input_transport_indeterminate")
             receipts = self._receipts(root, snapshot)
@@ -208,6 +227,8 @@ class TaskSnapshotStore:
             current = self._read(root) if present else None
             if current is None or current.data != snapshot.data:
                 raise TaskInputError("task_input_snapshot_missing")
+            if _correction_present(root):
+                raise TaskInputError("task_input_correction_active")
             if read_bytes(root / "dispatch.json", maximum=4096) is not None:
                 raise TaskInputError("task_input_transport_indeterminate")
             if any(item["stage"] == "transport_attempt" for item in self._receipts(root, snapshot)):
@@ -246,6 +267,37 @@ class TaskSnapshotStore:
             if current is None or current.data != snapshot.data:
                 raise TaskInputError("task_input_snapshot_missing")
             return self._receipts(root, snapshot)
+
+    def record_host_return(self, snapshot, *, status, output_digest):
+        root = self.root / execution_key(snapshot.execution_id)
+        with _storage_errors(), role_lock(root, create=False):
+            self.accept(snapshot)
+            self._receipts(root, snapshot)
+            dispatch_raw = read_bytes(root / "dispatch.json", maximum=4096)
+            if dispatch_raw is None:
+                return None  # Synthetic/no-transport legacy completion stays unchanged.
+            record = host_return_record(snapshot, json.loads(dispatch_raw), status, output_digest)
+            previous = read_bytes(root / "host-return.json", maximum=16384)
+            if previous is not None and previous != canonical_bytes(record):
+                raise TaskInputError("task_input_host_return_conflict")
+            if previous is None:
+                atomic_write(root / "host-return.json", canonical_bytes(record), maximum=16384)
+            return record
+
+    def host_return(self, snapshot):
+        root = self.root / execution_key(snapshot.execution_id)
+        with _storage_errors(), role_lock(root, create=False):
+            self.accept(snapshot)
+            self._receipts(root, snapshot)
+            dispatch_raw = read_bytes(root / "dispatch.json", maximum=4096)
+            raw = read_bytes(root / "host-return.json", maximum=16384)
+            if raw is None:
+                return None
+            value = json.loads(raw)
+            if dispatch_raw is None or value != host_return_record(snapshot, json.loads(dispatch_raw),
+                    value.get("status"), value.get("output_digest", "")):
+                raise TaskInputError("task_input_host_return_invalid")
+            return value
 
 
 def store_for_project(project_root: Path, *, existing_only: bool = False) -> TaskSnapshotStore | None:

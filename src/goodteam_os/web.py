@@ -6929,12 +6929,16 @@ def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, d
                 role=str(request.get("role", "implementation")),
             )
 
-        correction_match = re.fullmatch(r"/executions/([^/]+)/correction/(start|stop)", path)
+        correction_match = re.fullmatch(r"/executions/([^/]+)/correction/(start|stop|prepare-worker)", path)
         if correction_match is not None:
             api = ExecutionAPI(_execution_project_root_from_body(request))
             execution_id, action = correction_match.groups()
             if action == "stop":
                 return 200, api.stop_correction_loop(execution_id, loop_id=_required_str(request, "loop_id"))
+            if action == "prepare-worker":
+                return 200, api.prepare_correction_worker(execution_id, loop_id=_required_str(request, "loop_id"),
+                    receipt_id=_required_str(request, "validation_receipt"), head_sha=_required_str(request, "head"),
+                    operation_id=_required_str(request, "operation_id"))
             return 200, api.start_correction_loop(execution_id,
                 receipt_id=_required_str(request, "validation_receipt"), head_sha=_required_str(request, "head"))
 
@@ -7872,7 +7876,7 @@ def serve(
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
             is_execution_path = normalized_path == "/executions/github/issues/intake" or bool(
-                re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision|correction/start|correction/stop)", normalized_path)
+                re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision|correction/start|correction/stop|correction/prepare-worker)", normalized_path)
             )
 
             if not is_project_path and not is_skill_path and not is_execution_path and normalized_path not in {
@@ -7901,7 +7905,7 @@ def serve(
                     )
                 )
                 return
-            if re.fullmatch(r"/executions/[^/]+/(review-workbench/decision|correction/start|correction/stop)", normalized_path):
+            if re.fullmatch(r"/executions/[^/]+/(review-workbench/decision|correction/start|correction/stop|correction/prepare-worker)", normalized_path):
                 if not _protected_execution_origin_is_trusted(
                     origin=str(self.headers.get("Origin", "")), request_host=str(self.headers.get("Host", "")),
                     server_host=host, server_port=self.server.server_port,
