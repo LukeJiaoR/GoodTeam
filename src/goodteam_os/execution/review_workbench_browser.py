@@ -7,7 +7,7 @@ from typing import Any
 
 from goodteam_os.execution.pr_diff_contract import relative_artifact_path
 from goodteam_os.execution.review_workbench_browser_sandbox import sandbox_section
-from goodteam_os.execution.review_workbench_coverage import acceptance_coverage_lines
+from goodteam_os.execution.review_workbench_coverage import acceptance_coverage_lines, current_result_details
 from goodteam_os.execution.review_workbench_contract import (
     REVIEW_WORKBENCH_SCHEMA_VERSION,
 )
@@ -59,7 +59,7 @@ def render_review_workbench_html(
     <header class="page-header">
       <p class="eyebrow">GoodTeam Review Workbench</p>
       <h1>Review Workbench - {escape(execution_id)}</h1>
-      <span class="status-pill">{escape(status or "unknown")}</span>
+      <span class="status-pill">Recorded execution: {escape(status or "unknown")}</span>
     </header>
     {_summary_section(review)}
     {_task_contract_section(review)}
@@ -91,21 +91,23 @@ def _summary_section(review: dict[str, Any]) -> str:
     integrity = _dict(review.get("memory_provenance_integrity"))
     return _section(
         "Execution summary",
-        _details(
+        _details(current_result_details(evidence))
+        + "<details><summary>Recorded execution metadata (may describe an earlier candidate)</summary>"
+        + _details(
             [
                 ("Execution ID", review.get("execution_id")),
-                ("Status", review.get("status")),
+                ("Recorded execution status", review.get("status")),
                 ("Source issue", review.get("source_issue") or "n/a"),
                 ("PR", pr.get("ref") or "n/a"),
                 ("Branch", pr.get("branch_name") or "n/a"),
-                ("Commit", pr.get("commit_sha") or "n/a"),
+                ("Recorded PR commit", pr.get("commit_sha") or "n/a"),
                 ("CI", ci.get("state") or "unavailable"),
                 ("Review observations", _review_observation_label(review_summary)),
                 ("Memory provenance", _memory_integrity_label(integrity)),
-                ("Decision", _decision_label(_dict(review.get("reviewer_decision")))),
+                ("Legacy review record", _decision_label(_dict(review.get("reviewer_decision")))),
                 ("Sandbox", _sandbox_label(_dict(review.get("sandbox")))),
             ]
-        ),
+        ) + "</details>",
     )
 
 
