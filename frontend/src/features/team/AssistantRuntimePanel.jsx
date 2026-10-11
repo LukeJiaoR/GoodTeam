@@ -15,12 +15,12 @@ export default function AssistantRuntimePanel({ data, projectKey, onClose, refre
   useEffect(() => {
     const controller = new AbortController();
     api.getSettingsAgents({ signal: controller.signal })
-      .then((payload) => { if (!controller.signal.aborted) setAgents(payload.agents || []); })
-      .catch((caught) => { if (!controller.signal.aborted) setError(caught); })
+      .then((payload) => { if (!controller.signal.aborted) setAgents(Array.isArray(payload?.agents) ? payload.agents : []); })
+      .catch((caught) => { if (!controller.signal.aborted) { setAgents([]); setError(caught); } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [api, revision]);
-  const reloadAgents = () => { setLoading(true); setError(null); setRevision((value) => value + 1); };
+  const reloadAgents = () => { setLoading(true); setAgents([]); setError(null); setRevision((value) => value + 1); };
   const save = async (commands) => {
     if (pending.current) return;
     pending.current = true;

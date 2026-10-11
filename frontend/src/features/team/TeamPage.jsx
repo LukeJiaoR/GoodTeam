@@ -295,6 +295,7 @@ export default function TeamPage({ api = settingsApi }) {
           <div>
             <h2 id="team-roster-title">{t('team.rolesTitle')}</h2>
             <p>{t('team.rolesDescription')}</p>
+            <p>{t('team.dispatchable.scope')}</p>
           </div>
 
         </div>
@@ -323,7 +324,12 @@ export default function TeamPage({ api = settingsApi }) {
                           <ul className="team-role-workers">
                             {role.workers.map((worker) => (
                               <li key={worker.id}>
-                                <StatusBadge tone={worker.lifecycle === 'active' ? 'active' : 'neutral'}>{t(`team.lifecycle.${worker.lifecycle}`)}</StatusBadge>
+                                <span className="team-role-workers__status">
+                                  <StatusBadge tone="neutral">{t(`team.lifecycle.${worker.lifecycle}`)}</StatusBadge>
+                                  <StatusBadge tone={worker.dispatchable ? 'active' : 'neutral'}>
+                                    {t(worker.dispatchable ? 'team.dispatchable.passed' : 'team.dispatchable.notPassed')}
+                                  </StatusBadge>
+                                </span>
                                 <strong>{worker.name}</strong>
                                 <span className="team-role-workers__runtime">{worker.provider} · {worker.model || t('team.dialog.inheritModel')}</span>
                                 <span className="team-role-workers__actions">
