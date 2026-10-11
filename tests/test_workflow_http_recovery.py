@@ -7,7 +7,7 @@ from urllib.error import URLError
 
 import pytest
 
-from workflow_http_helpers import RecoveryServer, approval_body, decisions, prepare_security_gate
+from workflow_http_helpers import RecoveryServer, approval_body, decisions, prepare_security_gate, retry_body
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ def test_killed_approval_recovers_after_real_process_restart(recovery, phase, re
     assert operation_id == interrupted["state"]["pending_transition"]["id"]
     assert before["worker_jobs"] == interrupted["worker_jobs"]
     assert_unchanged_execution(server, interrupted)
-    resumed = server.ok("/api/retry", {"project_key": "RECOVERY"})
+    resumed = server.ok("/api/retry", retry_body(server.state()))
     assert "await_release_approval" == resumed["next_node"]
     assert [] == resumed["blockers"]
     assert [operation_id] == [item["workflow_operation_id"] for item in security_decisions(server)]
@@ -85,7 +85,7 @@ def test_cross_process_requests_share_authority_and_duplicate_approval_replays(r
                 live = peer.state()
                 assert "executing" == live["state"]["pending_transition"]["status"]
                 assert before["worker_jobs"] == live["worker_jobs"]
-                for endpoint, body in [("/api/approve", binding), ("/api/retry", {"project_key": "RECOVERY"})]:
+                for endpoint, body in [("/api/approve", binding), ("/api/retry", retry_body(server.state()))]:
                     status, error = peer.request(endpoint, body)
                     assert 400 == status
                     assert "busy" in error["message"]
@@ -115,13 +115,13 @@ def test_worker_timeout_requires_explicit_retry_and_retains_decision(recovery):
     assert "timed out after 1 seconds" in failed_jobs[0]["summary"]
     original = security_decisions(server)
     assert_unchanged_execution(server, blocked)
-    resumed = server.ok("/api/retry", {"project_key": "RECOVERY"})
+    resumed = server.ok("/api/retry", retry_body(server.state()))
     assert "await_release_approval" == resumed["next_node"]
     assert original == security_decisions(server)
     recovered = server.state()
     assert any(job["status"] == "completed" and job["role"] == "implementation" for job in recovered["worker_jobs"])
     assert any(job["id"] == failed_jobs[0]["id"] and job["status"] == "failed" for job in recovered["worker_jobs"])
     assert all(job["adapter"] == "fake" for job in recovered["worker_jobs"])
-    status, _error = server.request("/api/retry", {"project_key": "RECOVERY"})
-    assert 400 == status
+    status, _error = server.request("/api/retry", retry_body(server.state()))
+    assert 409 == status and _error["code"] == "retry_not_available"
     assert_unchanged_execution(server, recovered)

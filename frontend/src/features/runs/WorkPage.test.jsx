@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('../reviews/ReviewPage', () => ({ default: ({ selectedReviewId, onClose }) => (
@@ -94,8 +94,8 @@ function TranslationOutlet() {
   );
 }
 
-function renderWorkPage(initialEntry = '/projects/DEMO/work/runs/run-active') {
-  return render(
+function workPageElement(initialEntry = '/projects/DEMO/work/runs/run-active') {
+  return (
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route element={<TranslationOutlet />}>
@@ -104,8 +104,12 @@ function renderWorkPage(initialEntry = '/projects/DEMO/work/runs/run-active') {
           <Route path="/projects/:projectKey/review/:approval" element={<div data-testid="full-review-page">Full review workbench</div>} />
         </Route>
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+}
+
+function renderWorkPage(initialEntry) {
+  return render(workPageElement(initialEntry));
 }
 
 afterEach(() => {
@@ -1205,4 +1209,144 @@ test('does not fetch a workflow mission declared for another project', async () 
   await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalled());
   expect(screen.queryByRole('button', { name: 'Task inputs and methods' })).not.toBeInTheDocument();
   expect(mocks.getTaskInputContext).not.toHaveBeenCalled();
+});
+
+function retryWorkData({ runId = 'run-active', revision = 'a', attemptId = 'attempt-original', mode = 'retry_implementation' } = {}) {
+  const data = projectedWorkData();
+  data.state.run_id = runId;
+  data.team_workspace.mission = { ...data.team_workspace.mission, id: runId, run_id: runId, status: 'blocked' };
+  data.team_workspace.execution_actors = [];
+  data.team_workspace.attention_request = {
+    id: 'workflow-blocked', kind: 'blocker', target_id: runId,
+    reason: `Failure evidence for ${attemptId}`, actions: ['retry'], refs: [attemptId],
+  };
+  data.worker_jobs = [{ id: attemptId, status: 'failed', updated_at: '2026-10-11T12:00:00Z' }];
+  data.retry_target = {
+    schema_version: 'workflow-retry-target.v1', project_key: 'DEMO', run_id: runId,
+    version: `sha256:${revision.repeat(64)}`, available: true, mode, reason: '',
+    attempts: [{ id: attemptId, role: 'implementation', status: 'failed', attempt: 1, retry_attempt: 0 }],
+    active_attempt_ids: [],
+  };
+  return data;
+}
+
+test.each([
+  ['missing', data => { delete data.retry_target; }],
+  ['wrong project', data => { data.retry_target.project_key = 'OTHER'; }],
+  ['wrong run', data => { data.retry_target.run_id = 'run-other'; }],
+  ['invalid version', data => { data.retry_target.version = ''; }],
+  ['unavailable', data => { data.retry_target.available = false; }],
+  ['active attempt', data => { data.retry_target.available = false; data.retry_target.reason = 'active_attempt'; data.retry_target.active_attempt_ids = ['still-running']; }],
+  ['unknown attempt', data => { data.retry_target.available = false; data.retry_target.reason = 'attempt_unknown'; }],
+  ['assistant mission', data => { data.team_workspace.mission.source = 'task_assistant'; }],
+])('does not send workflow retry with %s binding', async (_case, invalidate) => {
+  const data = retryWorkData();
+  invalidate(data);
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  renderWorkPage();
+  const retryButton = screen.getByRole('button', { name: 'Retry failed stage' });
+  expect(retryButton).toBeDisabled();
+  await userEvent.click(retryButton);
+  expect(mocks.retryRun).not.toHaveBeenCalled();
+});
+
+test.each(['retry_target_changed', 'run_binding_mismatch', 'retry_attempt_active', 'retry_attempt_unknown'])('pins submitted retry evidence and draft through %s until explicit successful refresh', async (code) => {
+  const original = retryWorkData();
+  const replacement = retryWorkData({
+    runId: code === 'run_binding_mismatch' ? 'run-replacement' : 'run-active', revision: 'b', attemptId: 'attempt-new',
+  });
+  const refresh = vi.fn().mockResolvedValue(null);
+  mocks.useProjectState.mockReturnValue({ data: original, error: null, refresh, status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  let rejectRetry;
+  mocks.retryRun.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRetry = reject; }));
+  const view = renderWorkPage('/projects/DEMO/work');
+  const draft = 'Keep this unsent investigation note.\n  Preserve whitespace.';
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message', exact: true }), { target: { value: draft } });
+  fireEvent.click(screen.getByRole('button', { name: 'Retry failed stage' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Retry failed stage' }));
+  expect(mocks.retryRun).toHaveBeenCalledTimes(1);
+  expect(mocks.retryRun).toHaveBeenCalledWith('DEMO', original.retry_target);
+
+  // A poll can replace the entire current run while the displayed request is in flight.
+  mocks.useProjectState.mockReturnValue({ data: replacement, error: null, refresh, status: 'ready' });
+  view.rerender(workPageElement('/projects/DEMO/work'));
+  expect(screen.getByText('attempt-original', { selector: 'code' })).toBeInTheDocument();
+  expect(screen.queryByText('attempt-new', { selector: 'code' })).not.toBeInTheDocument();
+  await act(async () => { rejectRetry({ code, message: 'Server target changed' }); });
+  expect(refresh).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Retry failed stage' })).toBeDisabled();
+  expect(screen.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue(draft);
+  expect(screen.getByText('Failure evidence for attempt-original', { selector: 'pre' })).toBeInTheDocument();
+  expect(screen.queryByText('Failure evidence for attempt-new', { selector: 'pre' })).not.toBeInTheDocument();
+  expect(screen.getByText(translate('en', `work.retry.conflict.${code}`))).toBeInTheDocument();
+
+  // Even another ready poll cannot dismiss a conflict or unlock another submission.
+  view.rerender(workPageElement('/projects/DEMO/work'));
+  await userEvent.click(screen.getByRole('button', { name: 'Retry failed stage' }));
+  expect(mocks.retryRun).toHaveBeenCalledTimes(1);
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh recovery evidence' }));
+  expect(screen.getByRole('button', { name: 'Retry failed stage' })).toBeDisabled();
+  expect(screen.getByText('attempt-original', { selector: 'code' })).toBeInTheDocument();
+
+  refresh.mockResolvedValue(replacement);
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: replacement.state.run_id, status: 'active' }] });
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh recovery evidence' }));
+  expect(screen.getByRole('button', { name: 'Retry failed stage' })).toBeEnabled();
+  expect(screen.getByText('attempt-new', { selector: 'code' })).toBeInTheDocument();
+  expect(screen.queryByText('attempt-original', { selector: 'code' })).not.toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue(draft);
+  expect(mocks.retryRun).toHaveBeenCalledTimes(1);
+  mocks.retryRun.mockResolvedValueOnce({ retried: true });
+  await userEvent.click(screen.getByRole('button', { name: 'Retry failed stage' }));
+  expect(mocks.retryRun).toHaveBeenLastCalledWith('DEMO', replacement.retry_target);
+});
+
+test('keeps an accepted retry locked when refreshed execution evidence is unavailable', async () => {
+  const data = retryWorkData({ mode: 'resume_transition' });
+  const refresh = vi.fn().mockResolvedValue(null);
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh, status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.retryRun.mockResolvedValueOnce({ retried: true });
+  renderWorkPage();
+  await userEvent.click(screen.getByRole('button', { name: 'Resume interrupted stage' }));
+  expect(mocks.retryRun).toHaveBeenCalledWith('DEMO', data.retry_target);
+  expect(screen.getByRole('button', { name: 'Resume interrupted stage' })).toBeDisabled();
+  expect(screen.getByText(translate('en', 'work.retry.conflict.retry_refresh_required'))).toBeInTheDocument();
+});
+
+test('does not retarget an old run route to the replacement current run', async () => {
+  const replacement = retryWorkData({ runId: 'run-replacement', revision: 'b', attemptId: 'attempt-new' });
+  mocks.useProjectState.mockReturnValue({ data: replacement, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [
+    { run_id: 'run-active', status: 'active' }, { run_id: 'run-replacement', status: 'active' },
+  ] });
+  renderWorkPage('/projects/DEMO/work/runs/run-active');
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalled());
+  expect(screen.queryByRole('button', { name: 'Retry failed stage' })).not.toBeInTheDocument();
+  expect(mocks.retryRun).not.toHaveBeenCalled();
+});
+
+test('ignores a late retry conflict after navigating to another run and returning', async () => {
+  const data = retryWorkData();
+  const historical = retryWorkData({ runId: 'run-history', attemptId: 'history-attempt' });
+  historical.team_workspace.mission.read_only = true;
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn().mockResolvedValue(data), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [
+    { run_id: 'run-active', status: 'active' }, { run_id: 'run-history', status: 'archived' },
+  ] });
+  mocks.getProjectRun.mockResolvedValue(historical);
+  let rejectRetry;
+  mocks.retryRun.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRetry = reject; }));
+  renderWorkPage();
+  await screen.findByRole('combobox', { name: 'Select run' });
+  fireEvent.click(screen.getByRole('button', { name: 'Retry failed stage' }));
+  fireEvent.change(screen.getByRole('combobox', { name: 'Select run' }), { target: { value: 'run-history' } });
+  await waitFor(() => expect(screen.getByTestId('location-path')).toHaveTextContent('/runs/run-history'));
+  await act(async () => { rejectRetry({ code: 'retry_target_changed' }); });
+  expect(screen.queryByRole('button', { name: 'Refresh recovery evidence' })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Select run' }), { target: { value: 'run-active' } });
+  expect(await screen.findByRole('button', { name: 'Retry failed stage' })).toBeEnabled();
+  expect(mocks.retryRun).toHaveBeenCalledTimes(1);
 });

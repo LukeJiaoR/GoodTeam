@@ -110,6 +110,12 @@ def approval_body(data, gate, *, note="Model-free recovery fixture: continue wit
             "expected_artifact_version": review["artifact_version"]}
 
 
+def retry_body(data):
+    target = data["retry_target"]
+    return {"project_key": target["project_key"], "expected_run_id": target["run_id"],
+            "expected_retry_version": target["version"]}
+
+
 def decisions(server):
     return [item for item in server.state()["action_items"] if item["action"] == "approval_decided"]
 

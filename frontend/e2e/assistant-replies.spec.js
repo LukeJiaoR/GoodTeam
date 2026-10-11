@@ -88,23 +88,8 @@ test('execution blocker lives in the task pane with collapsed diagnostics', asyn
   await page.locator('#team-tab-manager').click();
   await page.locator('.conversation-blocker-notice').getByRole('button', { name: 'View task' }).click();
   await expect(task.locator('.task-blocker')).toBeVisible();
-  let retryRequests = 0;
-  let rejectRetry;
-  const retryGate = new Promise(resolve => { rejectRetry = resolve; });
-  await page.route('**/api/retry', async route => {
-    retryRequests += 1;
-    expect(route.request().postDataJSON().project_key).toBe(fixture.key);
-    await retryGate;
-    await route.fulfill({ status: 409, json: { code: 'invalid_request', message: 'Task state changed. Refresh before retrying.' } });
-  });
-  await task.getByRole('button', { name: 'Retry execution', exact: true }).click();
-  await expect(task.getByRole('button', { name: 'Retry execution', exact: true })).toBeDisabled();
-  await expect(task.getByRole('status')).toContainText('Requesting a retry');
-  rejectRetry();
-  await expect(task.getByRole('alert')).toContainText('Retry failed: Task state changed.');
-  expect(retryRequests).toBe(1);
-  const expectedHttpError = fixture.errors.indexOf('Failed to load resource: the server responded with a status of 409 (Conflict)');
-  if (expectedHttpError !== -1) fixture.errors.splice(expectedHttpError, 1);
+  await expect(task.getByRole('button', { name: 'Retry failed stage', exact: true })).toBeDisabled();
+  await expect(task).toContainText('Recovery identity is unavailable for this view.');
 });
 
 test('server receipt clears sent input while a reply is pending', async ({ page, fixture }) => {
@@ -155,7 +140,7 @@ test('running execution replaces the stale blocker and prevents retry after relo
   const task = page.locator('.task-blocker');
   await expect(task.getByRole('heading', { name: 'Execution in progress' })).toBeVisible();
   await expect(task.getByRole('button', { name: 'Execution in progress' })).toBeDisabled();
-  await expect(task.getByRole('button', { name: 'Retry execution' })).toHaveCount(0);
+  await expect(task.getByRole('button', { name: 'Retry failed stage' })).toHaveCount(0);
   await expect(page.locator('.conversation-blocker-notice')).toContainText('A Worker has started');
   await expect(task.getByText('old failure', { exact: true })).not.toBeVisible();
 });

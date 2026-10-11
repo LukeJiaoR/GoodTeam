@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Button from '../../../components/ui/Button';
+import WorkflowRetryAction from './WorkflowRetryAction';
 import StatusBadge from '../../../components/ui/StatusBadge';
 import { routes } from '../../../lib/routing/routes';
 import { translated } from './presentationUtils';
@@ -22,6 +23,7 @@ export function TaskAttention({
   onKeepDiscussingChangeIntent,
   onReview,
   onRetry,
+  retry,
   onStartChangeIntent,
   projectKey,
   t,
@@ -52,7 +54,7 @@ export function TaskAttention({
       <details><summary>{t('work.blocker.details')}</summary><pre>{attention.reason}</pre></details>
       {error ? <p role="alert">{t('work.blocker.retryFailed')} {error.message || String(error)}</p> : null}
       {busy === 'retry' ? <p role="status">{t('work.blocker.retrying')}</p> : null}
-      {(attention.actions || []).includes('retry') && onRetry ? <Button busy={busy === 'retry'} onClick={onRetry}>{t('work.blocker.retry')}</Button> : null}
+      {(attention.actions || []).includes('retry') && onRetry ? <WorkflowRetryAction retry={retry} busy={busy === 'retry'} onRetry={onRetry} t={t} /> : null}
     </section>
   );
   const actions = new Set(attention.actions || []);
@@ -112,7 +114,7 @@ export function TaskAttention({
           </Link>
         ) : null}
         {actions.has('retry') ? (
-          <Button busy={busy === 'retry'} onClick={onRetry}>{t('work.actions.retryBlocked')}</Button>
+          <WorkflowRetryAction retry={retry} busy={busy === 'retry'} onRetry={onRetry} t={t} />
         ) : null}
       </div>
       {intent?.status === 'discussing' ? (

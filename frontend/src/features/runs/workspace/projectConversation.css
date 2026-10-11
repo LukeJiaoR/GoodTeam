@@ -66,6 +66,8 @@
 .work-workspace-shell .task-blocker details { margin: .75rem 0; font-size: .8rem; }
 .work-workspace-shell .task-blocker summary { cursor: pointer; color: var(--work-text-muted); }
 .work-workspace-shell .task-blocker pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
+.work-workspace-shell .work-retry-action { min-width: 0; overflow-wrap: anywhere; }
+.work-workspace-shell .work-retry-action ul { padding-left: 1.25rem; font-size: .8rem; line-height: 1.6; }
 
 .work-workspace-shell .team-attention[data-kind="approval"] { max-width: min(92%, 40rem); padding: 1.1rem 1.25rem; border: 1px solid var(--work-border); box-shadow: none; background: var(--work-material); }
 .work-workspace-shell .approval-decision-summary { display: grid; gap: .85rem; color: var(--work-text); font-size: .875rem; line-height: 1.6; }

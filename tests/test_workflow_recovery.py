@@ -45,6 +45,12 @@ def decide(workspace, gate, **kwargs):
                                decision=kwargs.pop("decision", "approved"), **kwargs)
 
 
+def retry_binding(workspace):
+    state = StateStore(workspace).read_project_current("RECOVERY")
+    return {"expected_run_id": state.run_id,
+            "expected_retry_version": web.workflow_retry_target(workspace, state)["version"]}
+
+
 def test_concurrent_approval_is_rejected_before_second_dispatch(tmp_path, monkeypatch):
     state = gate_state(tmp_path, "release")
     entered, release = Event(), Event()
@@ -91,7 +97,7 @@ def test_execution_exception_preserves_approval_and_retry_does_not_redecide(tmp_
     assert "blocked" == state.next_node
     assert "interrupted" == state.pending_transition["status"]
     monkeypatch.setattr(web, "advance_approved_workflow", original)
-    result = web.retry_blocked_workflow(workspace=tmp_path, project_key="RECOVERY")
+    result = web.retry_blocked_workflow(workspace=tmp_path, project_key="RECOVERY", **retry_binding(tmp_path))
     assert "complete" == result["current_node"]
     assert [] == result["blockers"]
     actions = web.build_action_items(tmp_path, "RECOVERY")
@@ -115,7 +121,7 @@ def test_restart_recovers_recorded_decision_without_requiring_another_approval(t
     recovered = web.resolve_dashboard_state(tmp_path, "RECOVERY")
     assert "blocked" == recovered.next_node
     assert "interrupted" == recovered.pending_transition["status"]
-    assert "complete" == web.retry_blocked_workflow(workspace=tmp_path, project_key="RECOVERY")["current_node"]
+    assert "complete" == web.retry_blocked_workflow(workspace=tmp_path, project_key="RECOVERY", **retry_binding(tmp_path))["current_node"]
 
 
 def test_failed_action_append_is_recoverable_without_losing_decision(tmp_path, monkeypatch):
@@ -126,7 +132,7 @@ def test_failed_action_append_is_recoverable_without_losing_decision(tmp_path, m
         decide(tmp_path, "release")
     assert ApprovalDecision.APPROVED == StateStore(tmp_path).read_project_current("RECOVERY").approvals["release"]
     monkeypatch.setattr(web, "append_action", original)
-    assert "complete" == web.retry_blocked_workflow(workspace=tmp_path, project_key="RECOVERY")["current_node"]
+    assert "complete" == web.retry_blocked_workflow(workspace=tmp_path, project_key="RECOVERY", **retry_binding(tmp_path))["current_node"]
     assert 1 == sum(item["action"] == "approval_decided" for item in web.build_action_items(tmp_path, "RECOVERY"))
 
 
@@ -162,7 +168,7 @@ def test_failed_fix_blocks_and_retry_keeps_successful_qa_evidence(tmp_path, monk
     monkeypatch.setattr(graph, "run_implementation_workers", lambda *a, **k: [
         {"role": "qa", "status": "completed", "summary": "Regression verified", "result_path": str(evidence)},
     ])
-    retried = web.retry_blocked_workflow(workspace=tmp_path, project_key="RECOVERY")
+    retried = web.retry_blocked_workflow(workspace=tmp_path, project_key="RECOVERY", **retry_binding(tmp_path))
     assert "await_code_review_approval" == retried["next_node"]
     assert [] == retried["blockers"]
     result = decide(tmp_path, "code_review")
