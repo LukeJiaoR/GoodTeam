@@ -21,30 +21,27 @@ def build_memory_provenance_projection(
     incomplete_reason: str,
 ) -> dict[str, Any]:
     source = memory_source(execution_id)
-    memory_events = _memory_events_by_id(memory_store, source)
+    unavailable = False
+    try:
+        snapshot = memory_store._read_events(PROVENANCE_ROLE)
+        memory_events = {memory_store._event_id(event): event for event in snapshot if event.get("source") == source}
+        active_ids = {memory_store._event_id(event) for event in memory_store._active_events(snapshot)}
+    except (OSError, UnicodeError, ValueError):
+        # Ledger links remain inspectable when their memory source is lost.
+        # Never reconstruct event bodies from old projections or report complete.
+        unavailable = True
+        memory_events, active_ids = {}, set()
     closure_events = _closure_events(events)
-    refs = _refs_from_closures(memory_store, closure_events, memory_events, execution_id, source)
-    refs.extend(_orphan_refs(memory_store, memory_events, refs, execution_id, source))
-    return {
-        "refs": refs,
-        "integrity": _integrity(refs, closure_events, memory_events, final_status, incomplete_reason),
-    }
+    refs = _refs_from_closures(active_ids, closure_events, memory_events, execution_id, source)
+    refs.extend(_orphan_refs(active_ids, memory_events, refs, execution_id, source))
+    integrity = _integrity(refs, closure_events, memory_events, final_status, incomplete_reason)
+    if unavailable:
+        integrity.update(complete=False, memory_context_status="unavailable", memory_context_reasons=["wal_unreadable"])
+    return {"refs": refs, "integrity": integrity}
 
 
 def memory_source(execution_id: str) -> str:
     return f"execution:{execution_id}:{MEMORY_SOURCE_SUFFIX}"
-
-
-def _memory_events_by_id(
-    memory_store: RoleMemoryStore,
-    source: str,
-) -> dict[str, dict[str, Any]]:
-    events: dict[str, dict[str, Any]] = {}
-    for event in memory_store._read_events(PROVENANCE_ROLE):
-        if event.get("source") != source:
-            continue
-        events[memory_store._event_id(event)] = event
-    return events
 
 
 def _closure_events(events: list[LedgerEvent]) -> list[LedgerEvent]:
@@ -52,7 +49,7 @@ def _closure_events(events: list[LedgerEvent]) -> list[LedgerEvent]:
 
 
 def _refs_from_closures(
-    memory_store: RoleMemoryStore,
+    active_ids: set[str],
     closure_events: list[LedgerEvent],
     memory_events: dict[str, dict[str, Any]],
     execution_id: str,
@@ -75,7 +72,7 @@ def _refs_from_closures(
                 created_at=event.created_at,
                 timestamp=_memory_value(memory_event, "timestamp"),
                 supersedes=_memory_value(memory_event, "supersedes"),
-                is_superseded=_is_superseded(memory_store, memory_event_id, memory_event),
+                is_superseded=memory_event is not None and memory_event_id not in active_ids,
                 status=_status_for_issues(issues),
                 issues=issues,
             )
@@ -84,7 +81,7 @@ def _refs_from_closures(
 
 
 def _orphan_refs(
-    memory_store: RoleMemoryStore,
+    active_ids: set[str],
     memory_events: dict[str, dict[str, Any]],
     refs: list[dict[str, Any]],
     execution_id: str,
@@ -107,7 +104,7 @@ def _orphan_refs(
                 created_at="",
                 timestamp=str(event.get("timestamp", "")),
                 supersedes=str(event.get("supersedes", "")),
-                is_superseded=_is_superseded(memory_store, memory_event_id, event),
+                is_superseded=memory_event_id not in active_ids,
                 status="orphan_memory_event",
                 issues=["missing_ledger_link"],
             )
@@ -235,16 +232,3 @@ def _memory_value(memory_event: dict[str, Any] | None, key: str) -> str:
     if memory_event is None:
         return ""
     return str(memory_event.get(key, ""))
-
-
-def _is_superseded(
-    memory_store: RoleMemoryStore,
-    memory_event_id: str,
-    memory_event: dict[str, Any] | None,
-) -> bool:
-    if memory_event is None:
-        return False
-    info = memory_store.event_supersede_info(memory_event_id)
-    if info is None:
-        return False
-    return bool(info.get("is_superseded", False))

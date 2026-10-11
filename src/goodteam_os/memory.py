@@ -1,9 +1,12 @@
 import hashlib
 import json
 import re
-import stat
 from datetime import UTC, datetime
 from pathlib import Path
+
+from .memory_storage import (
+    MAX_WAL_BYTES, MemoryStorageError, atomic_write, read_bytes, role_lock, serialized_role,
+)
 
 try:  # BM25 is a declared dependency; degrade gracefully if unavailable.
     from rank_bm25 import BM25Okapi
@@ -23,7 +26,7 @@ MEMORY_CONTEXT_REASONS = frozenset({
     "wal_unreadable", "wal_changed_during_read", "wal_changed_after_capture",
     "legacy_mixed_after_correction", "legacy_source_unreadable", "legacy_changed_during_read",
     "legacy_changed_after_capture", "source_unreadable", "pickup_unverifiable",
-    "events_no_longer_active", "retrieval_unavailable",
+    "events_no_longer_active", "retrieval_unavailable", "history_unverifiable",
 })
 COSINE_FLOOR = 0.05  # keep weak/noisy matches out while retaining clear semantic hits
 
@@ -85,11 +88,20 @@ def _wal_prefix_matches(raw: bytes, count: int, digest: str, size: int | None = 
         return True
     for line in raw.splitlines(keepends=True):
         seen += bool(line.strip())
+        # A pre-upgrade WAL may end in a complete JSON record without a final
+        # newline. Appending the separator preserves those exact old bytes.
+        before_line = prefix_digest.copy()
         prefix_digest.update(line)
         if seen > count:
             return False
         if seen == count and prefix_digest.hexdigest() == digest:
             return True
+        if seen == count and line.endswith(b"\n"):
+            for ending in (1, 2) if line.endswith(b"\r\n") else (1,):
+                candidate = before_line.copy()
+                candidate.update(line[:-ending])
+                if candidate.hexdigest() == digest:
+                    return True
     return False
 
 
@@ -216,6 +228,7 @@ class RoleMemoryStore:
     def embeddings_path(self, role_key: str) -> Path:
         return self.role_root(role_key) / "embeddings.jsonl"
 
+    @serialized_role
     def ensure_role_memory(
         self,
         role_key: str,
@@ -224,17 +237,15 @@ class RoleMemoryStore:
     ) -> dict[str, Path]:
         paths = {horizon: self.memory_path(role_key, horizon) for horizon in MEMORY_HORIZONS}
         for horizon, path in paths.items():
-            if path.is_file():
+            if read_bytes(path) is not None:
                 continue
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
+            atomic_write(path,
                 self._default_memory_content(
                     role_key=role_key,
                     role_name=role_name,
                     project_name=project_name,
                     horizon=horizon,
-                ),
-                encoding="utf-8",
+                ).encode("utf-8"),
             )
         return paths
 
@@ -252,20 +263,57 @@ class RoleMemoryStore:
             for role in roles
         }
 
+    def _empty_role_memory(self, role_key: str) -> dict[str, object]:
+        return {
+            "role_key": role_key, "source_kind": "legacy_mixed", "machine_context": False,
+            "paths": {horizon: str(self.memory_path(role_key, horizon)) for horizon in MEMORY_HORIZONS},
+            "content": {horizon: "" for horizon in MEMORY_HORIZONS}, "summary": "",
+        }
+
+    def _empty_memory_index(self, role_key: str) -> dict[str, object]:
+        empty_hash = hashlib.sha256(b"").hexdigest()
+        return {
+            "role_key": role_key, "event_count": 0, "events_path": str(self.event_path(role_key)),
+            "integrity": {"event_count": 0, "events_sha256": empty_hash},
+            "projection_policy": "wal_generated_legacy_preserved",
+            "horizons": {horizon: {
+                "path": str(self.memory_path(role_key, horizon)), "source_kind": "wal_generated",
+                "event_ids": [], "sha256": empty_hash, "chars": 0, "summary": "",
+                "summary_sha256": empty_hash, "updated_at": "",
+            } for horizon in MEMORY_HORIZONS},
+        }
+
+    def _empty_wal_snapshot(self, role_key: str, *, checkpoint=None):
+        if checkpoint is not None and not _wal_prefix_matches(b"", *checkpoint):
+            raise MemoryStorageError("memory_history_checkpoint_mismatch")
+        return [], hashlib.sha256(b"").hexdigest(), b""
+
+    def _empty_memory_sources(self, role_key: str):
+        return self._empty_wal_snapshot(role_key), {horizon: b"" for horizon in MEMORY_HORIZONS}
+
+    def _empty_embedding_rows(self, role_key: str) -> list[dict]:
+        return []
+
+    def _empty_legacy_source_matches(self, role_key: str, horizon: str, source: dict) -> bool:
+        return source.get("sha256") == hashlib.sha256(b"").hexdigest()
+
+    @serialized_role(create=False, missing="_empty_role_memory")
     def read_role_memory(self, role_key: str) -> dict[str, object]:
         paths = {horizon: self.memory_path(role_key, horizon) for horizon in MEMORY_HORIZONS}
         content = {
-            horizon: path.read_text(encoding="utf-8") if path.is_file() else ""
+            horizon: (read_bytes(path) or b"").decode("utf-8")
             for horizon, path in paths.items()
         }
         combined = "\n\n".join(value for value in content.values() if value)
         return {
             "role_key": role_key,
+            "source_kind": "legacy_mixed", "machine_context": False,
             "paths": {horizon: str(path) for horizon, path in paths.items()},
             "content": content,
             "summary": summarize_markdown(combined),
         }
 
+    @serialized_role
     def append_memory_event(
         self,
         role_key: str,
@@ -276,6 +324,10 @@ class RoleMemoryStore:
         action: str = "add",
         supersedes: str = "",
     ) -> dict[str, str]:
+        for value in (role_key, horizon, text, source, action, supersedes):
+            if not isinstance(value, str):
+                raise ValueError("Memory event fields must be strings.")
+            value.encode("utf-8")
         if horizon not in MEMORY_HORIZONS:
             raise ValueError(f"Unknown memory horizon: {horizon}")
         if action != "add":
@@ -285,8 +337,11 @@ class RoleMemoryStore:
         if not isinstance(supersedes, str):
             raise ValueError("Memory event supersedes must be a string.")
 
+        all_events, _, raw = self._wal_snapshot(role_key)
+        # Persist the last verified prefix before any new WAL commit. This
+        # independent anchor survives missing/corrupt derived index files.
+        self._write_checkpoint(role_key, all_events, raw)
         self.ensure_role_memory(role_key)
-        all_events = self._read_events(role_key)
         supersedes_value = supersedes.strip()
         for existing in all_events:
             if (
@@ -297,6 +352,9 @@ class RoleMemoryStore:
                 and str(existing.get("text", "")) == text.strip()
                 and str(existing.get("supersedes", "")) == supersedes_value
             ):
+                # A previous process may have died after WAL commit and before
+                # publication. A retry repairs projections without duplicating.
+                self.rebuild_role_memory(role_key)
                 return existing
         event = {
             "timestamp": datetime.now(UTC).isoformat(),
@@ -308,48 +366,64 @@ class RoleMemoryStore:
         }
         if supersedes_value:
             event["supersedes"] = supersedes_value
-        event_path = self.event_path(role_key)
-        event_path.parent.mkdir(parents=True, exist_ok=True)
-        with event_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event) + "\n")
-        self._append_event_to_memory(role_key, event)
-        self.refresh_memory_index(role_key)
+        separator = b"\n" if raw and not raw.endswith(b"\n") else b""
+        committed = raw + separator + (json.dumps(event) + "\n").encode("utf-8")
+        atomic_write(self.event_path(role_key), committed, maximum=MAX_WAL_BYTES)
+        self._write_checkpoint(role_key, [*all_events, event], committed)
+        self.rebuild_role_memory(role_key)
         return event
 
+    def checkpoint_path(self, role_key: str) -> Path:
+        return self.role_root(role_key) / "checkpoint.json"
+
+    def _write_checkpoint(self, role_key: str, events: list[dict], raw: bytes) -> None:
+        self._write_json(self.checkpoint_path(role_key), {
+            "schema_version": "memory_checkpoint.v1", "event_count": len(events),
+            "events_sha256": hashlib.sha256(raw).hexdigest(), "wal_bytes": len(raw),
+        })
+
+    @serialized_role
     def refresh_memory_index(self, role_key: str) -> dict[str, object]:
+        events, digest, raw = self._wal_snapshot(role_key)
+        self._write_checkpoint(role_key, events, raw)
         self.ensure_role_memory(role_key)
-        events = self._read_events(role_key)
-        event_count, events_sha256 = self._wal_integrity(role_key, events=events)
+        active = self._normal_retrieval_events(self._active_events(events))
         horizons = {}
         for horizon in MEMORY_HORIZONS:
             path = self.memory_path(role_key, horizon)
-            content = path.read_text(encoding="utf-8") if path.is_file() else ""
+            content = (read_bytes(path) or b"").decode("utf-8")
+            selected = [event for event in active if event["horizon"] == horizon][:12]
+            generated = _bounded_context("\n".join(f"- {event['text']}" for event in selected), PICKUP_SUMMARY_CHARS)
+            summary = _bounded_context(summarize_markdown(generated), PICKUP_SUMMARY_CHARS)
             horizons[horizon] = {
-                "path": str(path),
+                "path": str(path), "source_kind": "wal_generated",
+                "event_ids": [self._event_id(event) for event in selected],
                 "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-                "chars": len(content),
-                "summary": summarize_markdown(content),
+                "chars": len(content), "summary": summary,
+                "summary_sha256": hashlib.sha256(summary.encode("utf-8")).hexdigest(),
                 "updated_at": datetime.now(UTC).isoformat(),
             }
         index = {
-            "role_key": role_key,
-            "event_count": len(events),
+            "role_key": role_key, "event_count": len(events),
             "events_path": str(self.event_path(role_key)),
-            "integrity": {
-                "event_count": event_count,
-                "events_sha256": events_sha256,
-            },
+            "integrity": {"event_count": len(events), "events_sha256": digest},
             "horizons": horizons,
+            "projection_policy": "wal_generated_legacy_preserved",
         }
         self._write_json(self.index_path(role_key), index)
         return index
 
+    @serialized_role(create=False, missing="_empty_memory_index")
     def read_memory_index(self, role_key: str) -> dict[str, object]:
-        path = self.index_path(role_key)
-        if not path.is_file():
-            return self.rebuild_role_memory(role_key)
-        index = json.loads(path.read_text(encoding="utf-8"))
-        if not self._projection_matches_wal(role_key, index):
+        # Validate before attempting repair: losing an index must not erase
+        # checkpoint evidence or make a truncated WAL authoritative.
+        self._wal_snapshot(role_key)
+        try:
+            raw = read_bytes(self.index_path(role_key))
+            index = json.loads(raw) if raw is not None else None
+        except (UnicodeError, ValueError):
+            index = None
+        if not isinstance(index, dict) or not self._projection_matches_wal(role_key, index):
             return self.rebuild_role_memory(role_key)
         return index
 
@@ -412,7 +486,7 @@ class RoleMemoryStore:
         if not query.strip():
             return []
         query_tokens = tokenize(query)
-        events = self._read_events(role_key)
+        events, digest, _ = self._wal_snapshot(role_key)
         events = self._active_events(events)
         events = self._normal_retrieval_events(events)
         if horizons:
@@ -420,6 +494,8 @@ class RoleMemoryStore:
         if not events:
             return []
         ranked = self._rank_events(role_key, query, query_tokens=query_tokens, events=events)
+        if not self._wal_snapshot_matches(role_key, digest):
+            raise MemoryStorageError("memory_revision_changed_retry")
         results: list[dict[str, object]] = []
         for score, event in ranked:
             results.append(self._retrieval_result(float(score), event))
@@ -432,7 +508,7 @@ class RoleMemoryStore:
         if limit_value == 0:
             return []
 
-        events = self._read_events(str(role_key))
+        events, digest, _ = self._wal_snapshot(str(role_key))
         if not events:
             return []
 
@@ -445,17 +521,12 @@ class RoleMemoryStore:
         else:
             selected = sorted(events, key=lambda event: str(event.get("timestamp", "")), reverse=True)[:limit_value]
 
+        if not self._wal_snapshot_matches(str(role_key), digest):
+            raise MemoryStorageError("memory_revision_changed_retry")
         return [self._browse_result(event, active_ids=active_ids) for event in selected]
 
     def _wal_bytes(self, role_key: str) -> bytes:
-        path = self.event_path(role_key)
-        try:
-            info = path.lstat()
-        except FileNotFoundError:
-            return b""
-        if not stat.S_ISREG(info.st_mode):
-            raise ValueError("Memory WAL is not a regular file")
-        return path.read_bytes()
+        return read_bytes(self.event_path(role_key), maximum=MAX_WAL_BYTES) or b""
 
     def _has_wal_history(self, role_key: str) -> bool:
         """Use old artifacts only as loss evidence, never as fallback context.
@@ -467,8 +538,9 @@ class RoleMemoryStore:
         """
         index_path = self.index_path(role_key)
         try:
-            if index_path.exists():
-                index = json.loads(index_path.read_text(encoding="utf-8"))
+            raw = read_bytes(index_path)
+            if raw is not None:
+                index = json.loads(raw)
                 integrity = index.get("integrity") if isinstance(index, dict) else None
                 if (not isinstance(integrity, dict) or type(index.get("event_count")) is not int
                         or index["event_count"] != 0 or type(integrity.get("event_count")) is not int
@@ -477,8 +549,9 @@ class RoleMemoryStore:
                     return True
             for horizon in MEMORY_HORIZONS:
                 path = self.memory_path(role_key, horizon)
-                if path.exists() and any(line.strip() == "## Memory Events"
-                                         for line in path.read_text(encoding="utf-8").splitlines()):
+                raw = read_bytes(path)
+                if raw is not None and any(line.strip() == "## Memory Events"
+                                         for line in raw.decode("utf-8").splitlines()):
                     return True
         except (OSError, UnicodeError, ValueError):
             return True
@@ -486,7 +559,7 @@ class RoleMemoryStore:
 
     def _wal_checkpoint(self, role_key: str) -> tuple[int, str] | None:
         try:
-            index = json.loads(self.index_path(role_key).read_text(encoding="utf-8"))
+            index = json.loads(read_bytes(self.index_path(role_key)) or b"null")
         except (OSError, UnicodeError, ValueError):
             return None
         integrity = index.get("integrity") if isinstance(index, dict) else None
@@ -499,6 +572,22 @@ class RoleMemoryStore:
             return None
         return count, digest
 
+    def _storage_checkpoint(self, role_key: str) -> tuple[int, str, int] | None:
+        raw = read_bytes(self.checkpoint_path(role_key))
+        if raw is None:
+            return None
+        try:
+            checkpoint = json.loads(raw)
+        except (UnicodeError, ValueError) as exc:
+            raise MemoryStorageError("memory_checkpoint_unreadable") from exc
+        if (not isinstance(checkpoint, dict) or checkpoint.get("schema_version") != "memory_checkpoint.v1"
+                or type(checkpoint.get("event_count")) is not int or checkpoint["event_count"] < 0
+                or not _sha256_value(checkpoint.get("events_sha256"))
+                or type(checkpoint.get("wal_bytes")) is not int or checkpoint["wal_bytes"] < 0):
+            raise MemoryStorageError("memory_checkpoint_unreadable")
+        return checkpoint["event_count"], checkpoint["events_sha256"], checkpoint["wal_bytes"]
+
+    @serialized_role(create=False, missing="_empty_wal_snapshot")
     def _wal_snapshot(self, role_key: str, *, checkpoint: tuple[int, str, int] | None = None) -> tuple[list[dict[str, str]], str, bytes]:
         raw = self._wal_bytes(role_key)
         events = [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
@@ -516,7 +605,12 @@ class RoleMemoryStore:
                     value.encode("utf-8")
         # Available checkpoints detect truncation/rewrites, not an external
         # rollback of the WAL and every piece of historical evidence together.
+        durable = self._storage_checkpoint(role_key)
         known = self._wal_checkpoint(role_key)
+        if raw.strip() and durable is None and known is None:
+            raise MemoryStorageError("memory_history_unverifiable_restore_checkpoint_or_confirm_import")
+        if durable is not None and not _wal_prefix_matches(raw, *durable):
+            raise MemoryStorageError("memory_history_checkpoint_mismatch")
         if known is not None and not _wal_prefix_matches(raw, *known):
             raise ValueError("Memory WAL does not preserve its known history")
         if checkpoint is not None and not _wal_prefix_matches(raw, *checkpoint):
@@ -524,10 +618,8 @@ class RoleMemoryStore:
         return events, hashlib.sha256(raw).hexdigest(), raw
 
     def _wal_snapshot_matches(self, role_key: str, digest: str) -> bool:
-        raw = self._wal_bytes(role_key)
-        if not raw.strip() and self._has_wal_history(role_key):
-            return False
-        return hashlib.sha256(raw).hexdigest() == digest
+        _, current, _ = self._wal_snapshot(role_key)
+        return current == digest
 
     def _empty_pickup(self, role_key: str, reason: str) -> dict[str, object]:
         return {
@@ -535,6 +627,17 @@ class RoleMemoryStore:
             "summaries": {"long-term": "", "mid-term": ""}, "relevant_events": [],
             "context_status": "unavailable", "context_reasons": [reason],
         }
+
+    @serialized_role(create=False, missing="_empty_memory_sources")
+    def _capture_memory_sources(self, role_key: str):
+        snapshot = self._wal_snapshot(role_key)
+        legacy = {}
+        for horizon in MEMORY_HORIZONS:
+            try:
+                legacy[horizon] = read_bytes(self.memory_path(role_key, horizon)) or b""
+            except (OSError, ValueError):
+                legacy[horizon] = None
+        return snapshot, legacy
 
     def build_pickup_packet(
         self,
@@ -548,10 +651,14 @@ class RoleMemoryStore:
 
         Generated text depends on one WAL snapshot. Legacy markdown has no
         event-level provenance, so any correction makes it unsafe to inject.
-        This is optimistic read validation, not a cross-process transaction.
+        Files are captured under the role lock; scoring runs outside it and
+        the captured revision is checked again before context is returned.
         """
         try:
-            events, digest, wal_bytes = self._wal_snapshot(role_key)
+            (events, digest, wal_bytes), legacy_bytes = self._capture_memory_sources(role_key)
+        except MemoryStorageError as exc:
+            reason = "history_unverifiable" if str(exc).startswith(("memory_history_unverifiable", "memory_checkpoint_unreadable")) else "wal_unreadable"
+            return self._empty_pickup(role_key, reason)
         except (OSError, UnicodeError, ValueError):
             return self._empty_pickup(role_key, "wal_unreadable")
         active = self._normal_retrieval_events(self._active_events(events))
@@ -580,12 +687,14 @@ class RoleMemoryStore:
             source = {"source_kind": "legacy_mixed", "path": str(path.relative_to(self.project_root)),
                       "status": "withheld_after_correction" if has_correction else "compatibility_unverified"}
             try:
-                raw = path.read_bytes() if path.is_file() else b""
+                raw = legacy_bytes[horizon]
+                if raw is None:
+                    raise ValueError("Legacy memory source unavailable")
                 source["sha256"] = hashlib.sha256(raw).hexdigest()
                 if not has_correction:
                     content = self._normal_pickup_content(raw.decode("utf-8"))
                     legacy = content if horizon == "short-term" else summarize_markdown(content)
-            except (OSError, UnicodeError):
+            except (OSError, UnicodeError, ValueError):
                 source["status"] = "unavailable"
                 reasons.append("legacy_source_unreadable")
             legacy_sources[horizon] = source
@@ -622,21 +731,28 @@ class RoleMemoryStore:
                 relevant.append(result)
             packet["relevant_events"] = relevant
         try:
-            if not self._wal_snapshot_matches(role_key, digest):
-                return self._empty_pickup(role_key, "wal_changed_during_read")
-            if any(source.get("status") == "compatibility_unverified"
-                   and not self._legacy_source_matches(role_key, horizon, source)
-                   for horizon, source in legacy_sources.items()):
-                return self._empty_pickup(role_key, "legacy_changed_during_read")
+            with role_lock(self.role_root(role_key), create=False) as present:
+                if not present:
+                    empty_digest = hashlib.sha256(b"").hexdigest()
+                    if digest != empty_digest or any(source.get("sha256") != empty_digest for source in legacy_sources.values()):
+                        return self._empty_pickup(role_key, "source_unreadable")
+                else:
+                    if not self._wal_snapshot_matches(role_key, digest):
+                        return self._empty_pickup(role_key, "wal_changed_during_read")
+                    if any(source.get("status") == "compatibility_unverified"
+                           and not self._legacy_source_matches(role_key, horizon, source)
+                           for horizon, source in legacy_sources.items()):
+                        return self._empty_pickup(role_key, "legacy_changed_during_read")
         except (OSError, ValueError):
             return self._empty_pickup(role_key, "source_unreadable")
         packet["provenance"]["content_sha256"] = _pickup_content_digest(packet)
         return packet
 
+    @serialized_role(create=False, missing="_empty_legacy_source_matches")
     def _legacy_source_matches(self, role_key: str, horizon: str, source: dict) -> bool:
         # Derive the local path; never follow a path supplied by a saved packet.
         path = self.memory_path(role_key, horizon)
-        raw = path.read_bytes() if path.is_file() else b""
+        raw = read_bytes(path) or b""
         return source.get("sha256") == hashlib.sha256(raw).hexdigest()
 
     def _pickup_provenance_valid(self, role_key: str, packet: dict) -> bool:
@@ -680,6 +796,9 @@ class RoleMemoryStore:
             checkpoint = (provenance["wal_event_count"], provenance["wal_sha256"], provenance["wal_bytes"])
         try:
             events, digest, _ = self._wal_snapshot(role_key, checkpoint=checkpoint)
+        except MemoryStorageError as exc:
+            reason = "history_unverifiable" if str(exc).startswith(("memory_history_unverifiable", "memory_checkpoint_unreadable")) else "wal_unreadable"
+            return self._empty_pickup(role_key, reason)
         except (OSError, UnicodeError, ValueError):
             return self._empty_pickup(role_key, "wal_unreadable")
         active = {self._event_id(event): event
@@ -747,30 +866,23 @@ class RoleMemoryStore:
             return self._empty_pickup(role_key, "source_unreadable")
         return result
 
+    @serialized_role
     def rebuild_role_memory(
         self,
         role_key: str,
         role_name: str = "",
         project_name: str = "",
     ) -> dict[str, object]:
-        events = self._read_events(role_key)
-        events = self._active_events(events)
-        root = self.role_root(role_key)
-        root.mkdir(parents=True, exist_ok=True)
-        for horizon in MEMORY_HORIZONS:
-            self.memory_path(role_key, horizon).write_text(
-                self._default_memory_content(
-                    role_key=role_key,
-                    role_name=role_name,
-                    project_name=project_name,
-                    horizon=horizon,
-                ),
-                encoding="utf-8",
-            )
-        for event in events:
-            self._append_event_to_memory(role_key, event)
-        index = self.refresh_memory_index(role_key)
-        return index
+        """Repair generated views while retaining mixed legacy/human bytes.
+
+        Old event text may remain in markdown for audit. Machine summaries and
+        pickup context depend only on active WAL events after a correction.
+        """
+        events, _, raw = self._wal_snapshot(role_key)
+        self._write_checkpoint(role_key, events, raw)
+        self.ensure_role_memory(role_key, role_name, project_name)
+        self._repair_memory_projection(role_key, self._active_events(events))
+        return self.refresh_memory_index(role_key)
 
     def _default_memory_content(
         self,
@@ -812,26 +924,38 @@ Role: `{role_key}`
 - Move stable facts upward from short-term to mid-term or long-term when they stop being temporary.
 """
 
+    @serialized_role
     def _append_event_to_memory(self, role_key: str, event: dict[str, str]) -> None:
-        path = self.memory_path(role_key, str(event["horizon"]))
-        if not path.is_file():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                self._default_memory_content(
-                    role_key=role_key,
-                    role_name=role_key,
-                    project_name="",
-                    horizon=str(event["horizon"]),
-                ),
-                encoding="utf-8",
-            )
-        source = f" Source: `{event['source']}`." if event.get("source") else ""
-        entry = f"\n## Memory Events\n\n- {event['text']}{source}\n"
-        content = path.read_text(encoding="utf-8")
-        if "## Memory Events\n" in content:
-            path.write_text(content.rstrip() + f"\n- {event['text']}{source}\n", encoding="utf-8")
-        else:
-            path.write_text(content.rstrip() + entry, encoding="utf-8")
+        self._repair_memory_projection(role_key, [event])
+
+    def _repair_memory_projection(self, role_key: str, events: list[dict[str, str]]) -> None:
+        # Batch replay once per horizon, rather than rewrite the entire markdown
+        # for every WAL event. The lock is owned by append/rebuild callers.
+        for horizon in MEMORY_HORIZONS:
+            path = self.memory_path(role_key, horizon)
+            raw = read_bytes(path)
+            if raw is None:
+                raw = self._default_memory_content(role_key=role_key, role_name=role_key,
+                                                   project_name="", horizon=horizon).encode("utf-8")
+            content = raw.decode("utf-8")
+            section = content.split("\n## Memory Events\n", 1)[-1]
+            lines = set(section.splitlines())
+            rendered = "\n" + section + ("" if section.endswith("\n") else "\n")
+            additions = []
+            for event in events:
+                if event["horizon"] != horizon:
+                    continue
+                source = f" Source: `{event['source']}`." if event.get("source") else ""
+                entry = f"- {event['text']}{source}"
+                if entry in lines or ("\n" in entry and "\n" + entry + "\n" in rendered):
+                    continue
+                additions.append(entry + "\n")
+                lines.add(entry)
+            if not additions:
+                continue
+            separator = "" if not content or content.endswith("\n") else "\n"
+            heading = "" if "## Memory Events\n" in content else "\n## Memory Events\n\n"
+            atomic_write(path, raw + (separator + heading + "".join(additions)).encode("utf-8"))
 
     def _event_id(self, event: dict[str, object]) -> str:
         identity_payload = {key: event.get(key) for key in IDENTITY_FIELDS}
@@ -933,18 +1057,9 @@ Role: `{role_key}`
         embed_dim = getattr(self.embedder, "dim", None)
         cache_path = self.embeddings_path(role_key)
         cached: dict[str, list[float]] = {}
-        if cache_path.is_file():
-            for line in cache_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                if row.get("model") != model_name:
-                    continue
-                event_id = str(row.get("id", ""))
-                vector = row.get("vector", [])
-                if not event_id or not isinstance(vector, list):
-                    continue
-                cached[event_id] = [float(value) for value in vector]
+        for row in self._embedding_rows(role_key):
+            if row.get("model") == model_name:
+                cached[str(row["id"])] = row["vector"]
 
         event_ids = [self._event_id(event) for event in events]
         missing_ids: list[str] = []
@@ -959,20 +1074,36 @@ Role: `{role_key}`
             vectors = self.embedder(missing_texts)
             if len(vectors) != len(missing_ids):
                 raise ValueError("Embedder returned a vector count that does not match inputs.")
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with cache_path.open("a", encoding="utf-8") as handle:
-                for event_id, vector in zip(missing_ids, vectors):
-                    normalized = [float(value) for value in vector]
-                    cached[event_id] = normalized
-                    payload = {
-                        "id": event_id,
-                        "model": model_name,
-                        "dim": int(embed_dim) if embed_dim is not None else len(normalized),
-                        "vector": normalized,
-                    }
-                    handle.write(json.dumps(payload) + "\n")
+            additions = []
+            for event_id, vector in zip(missing_ids, vectors):
+                normalized = [float(value) for value in vector]
+                cached[event_id] = normalized
+                additions.append({"id": event_id, "model": model_name,
+                                  "dim": int(embed_dim) if embed_dim is not None else len(normalized),
+                                  "vector": normalized})
+            # Merge only after model work has completed, under the same role
+            # lock as all file publication. This cache never authorizes events.
+            with role_lock(self.role_root(role_key)):
+                rows = {(row["model"], row["id"]): row for row in self._embedding_rows(role_key)}
+                rows.update({(row["model"], row["id"]): row for row in additions})
+                raw = "".join(json.dumps(row) + "\n" for row in rows.values()).encode("utf-8")
+                atomic_write(cache_path, raw, maximum=MAX_WAL_BYTES)
 
         return [cached[event_id] for event_id in event_ids]
+
+    @serialized_role(create=False, missing="_empty_embedding_rows")
+    def _embedding_rows(self, role_key: str) -> list[dict]:
+        raw = read_bytes(self.embeddings_path(role_key), maximum=MAX_WAL_BYTES) or b""
+        try:
+            rows = [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
+            valid = []
+            for row in rows:
+                if (isinstance(row, dict) and isinstance(row.get("id"), str)
+                        and isinstance(row.get("model"), str) and isinstance(row.get("vector"), list)):
+                    valid.append({**row, "vector": [float(value) for value in row["vector"]]})
+            return valid
+        except (UnicodeError, ValueError, TypeError):
+            return []  # Derived cache only; valid WAL remains authoritative.
 
     def _cosine(self, left: list[float], right: list[float]) -> float:
         if not left or not right:
@@ -985,46 +1116,30 @@ Role: `{role_key}`
         return dot / (left_norm * right_norm)
 
     def _read_events(self, role_key: str) -> list[dict[str, str]]:
-        path = self.event_path(role_key)
-        if not path.is_file():
-            return []
-        events = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            events.append(json.loads(line))
-        return events
+        return self._wal_snapshot(role_key)[0]
 
-    def _wal_integrity(
-        self,
-        role_key: str,
-        *,
-        events: list[dict[str, str]] | None = None,
-    ) -> tuple[int, str]:
-        if events is None:
-            events = self._read_events(role_key)
-        path = self.event_path(role_key)
-        if not path.is_file():
-            return len(events), hashlib.sha256(b"").hexdigest()
-        return len(events), hashlib.sha256(path.read_bytes()).hexdigest()
+    def _wal_integrity(self, role_key: str, *, events=None) -> tuple[int, str]:
+        snapshot, digest, _ = self._wal_snapshot(role_key)
+        return len(snapshot), digest
 
     def _projection_matches_wal(self, role_key: str, index: dict[str, object]) -> bool:
+        events, digest, _ = self._wal_snapshot(role_key)
         integrity = index.get("integrity")
-        if not isinstance(integrity, dict):
+        if (not isinstance(integrity, dict) or integrity.get("event_count") != len(events)
+                or index.get("event_count") != len(events) or integrity.get("events_sha256") != digest
+                or index.get("projection_policy") != "wal_generated_legacy_preserved"):
             return False
-        stored_count = integrity.get("event_count")
-        if not isinstance(stored_count, int):
+        horizons = index.get("horizons")
+        if not isinstance(horizons, dict):
             return False
-        events = self._read_events(role_key)
-        live_count = len(events)
-        if stored_count != live_count:
-            return False
-        stored_sha = integrity.get("events_sha256")
-        if not isinstance(stored_sha, str):
-            return False
-        _, live_sha = self._wal_integrity(role_key, events=events)
-        return stored_sha == live_sha
+        for horizon in MEMORY_HORIZONS:
+            source = horizons.get(horizon)
+            raw = read_bytes(self.memory_path(role_key, horizon)) or b""
+            if (not isinstance(source, dict) or source.get("sha256") != hashlib.sha256(raw).hexdigest()
+                    or source.get("source_kind") != "wal_generated" or not isinstance(source.get("summary"), str)
+                    or source.get("summary_sha256") != hashlib.sha256(source["summary"].encode("utf-8")).hexdigest()):
+                return False
+        return True
 
     def _write_json(self, path: Path, payload: dict[str, object]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        atomic_write(path, json.dumps(payload, indent=2).encode("utf-8"))
