@@ -1398,6 +1398,7 @@ export const zhCN = {
   'knowledge.memory.events': '{{count}} 条事件',
   'knowledge.memory.search': '搜索此角色的记忆',
   'knowledge.memory.inspector': '事件检查器',
+  'knowledge.memory.superseded': '已被后续记忆替代',
   'knowledge.memory.crossTitle': '跨项目记忆',
   'knowledge.memory.crossDescription': '使用当前角色在明确选择的项目范围内检索。',
   'knowledge.memory.scope': '项目范围',

@@ -1398,6 +1398,7 @@ export const en = {
   'knowledge.memory.events': '{{count}} events',
   'knowledge.memory.search': 'Search this role’s memory',
   'knowledge.memory.inspector': 'Event inspector',
+  'knowledge.memory.superseded': 'Superseded',
   'knowledge.memory.crossTitle': 'Cross-project memory',
   'knowledge.memory.crossDescription': 'Search an explicit project scope using the selected role.',
   'knowledge.memory.scope': 'Project scope',
