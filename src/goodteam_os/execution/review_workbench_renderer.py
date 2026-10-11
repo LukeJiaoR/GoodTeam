@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from goodteam_os.execution.review_workbench_coverage import acceptance_coverage_lines, check_metadata_lines
+
 
 def render_review_workbench(review: dict[str, Any]) -> str:
     evidence = dict(review.get("evidence", {}))
@@ -49,6 +51,9 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         "",
         "Candidate checks (acceptance remains unknown):",
         *_render_candidate_checks(evidence.get("candidate_validation", {})),
+        "",
+        "Original acceptance coverage:",
+        *acceptance_coverage_lines(evidence),
         "",
         "Expected artifacts:",
         *_render_contract_artifacts(contract),
@@ -298,6 +303,7 @@ def _render_candidate_checks(value: dict[str, Any]) -> list[str]:
              "- Acceptance: unknown (command success and human mapping are not semantic proof)"]
     if value.get("reason"):
         lines.append(f"- Reason: {value['reason']}")
+    lines.extend(check_metadata_lines(value))
     review = value.get("review")
     if isinstance(review, dict):
         lines.extend([
@@ -307,8 +313,6 @@ def _render_candidate_checks(value: dict[str, Any]) -> list[str]:
             f"- Reviewer independence: {review.get('independence', 'not_authenticated')}",
             f"- Review semantic verification: {review.get('semantic_verification', 'unverified')}",
         ])
-    for item in value.get("criteria", []):
-        lines.append(f"- Criterion {item['index']}: check {item['check_status']}; acceptance unknown")
     return lines
 
 
