@@ -14,7 +14,8 @@ MEMORY_HORIZONS = ("long-term", "mid-term", "short-term")
 IDENTITY_FIELDS = ("timestamp", "role_key", "horizon", "action", "source", "text")
 COSINE_FLOOR = 0.05  # keep weak/noisy matches out while retaining clear semantic hits
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_TOKEN_RE = re.compile(r"[^\W_]+")
+_HAN_RE = re.compile(r"([\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f]+)")
 
 
 def slug(value: str) -> str:
@@ -42,13 +43,27 @@ def summarize_markdown(content: str) -> str:
 
 
 def tokenize(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text.lower())
+    # Han text usually has no word-separating spaces. Character/bigram terms
+    # allow phrase lookup inside a sentence without a downloaded segmenter.
+    # Other Unicode words retain their boundaries, including mixed Latin/Han.
+    tokens = []
+    for part in _HAN_RE.split(text.casefold()):
+        if _HAN_RE.fullmatch(part):
+            tokens.extend(part)
+            tokens.extend(part[index:index + 2] for index in range(len(part) - 1))
+        else:
+            tokens.extend(_TOKEN_RE.findall(part))
+    return tokens
 
 
 def _bm25_scores(corpus: list[list[str]], query_tokens: list[str]) -> list[float]:
     """Rank corpus docs against the query. Uses BM25 when available, else a
     deterministic token-overlap score so retrieval still works (and stays
     testable) without the optional wheel."""
+    if not query_tokens or not any(corpus):
+        # BM25 cannot compute average document length/IDF for a zero-term
+        # corpus. Punctuation-only notes and queries are valid empty results.
+        return [0.0] * len(corpus)
     if BM25Okapi is not None:
         return list(BM25Okapi(corpus).get_scores(query_tokens))
     wanted = set(query_tokens)
@@ -331,13 +346,17 @@ class RoleMemoryStore:
         top_k: int = 5,
         horizons: tuple[str, ...] | None = None,
     ) -> list[dict[str, object]]:
-        """Return the top-K events most relevant to ``query``, ranked by BM25.
+        """Return top-K events by lexical or explicitly configured semantic relevance.
+
+        Multi-character Han queries rank lexical term coverage before a bounded
+        BM25 tie-break; other lexical queries retain BM25 ranking. Scores are
+        retrieval ordering signals, not confidence or proof the memory was used.
 
         Each result carries a stable ``mem:<id>`` handle so artifacts can cite
         the exact event a fact came from (grounded citations, M8)."""
-        query_tokens = tokenize(query)
-        if not query_tokens:
+        if not query.strip():
             return []
+        query_tokens = tokenize(query)
         events = self._read_events(role_key)
         events = self._active_events(events)
         events = self._normal_retrieval_events(events)
@@ -555,17 +574,29 @@ Role: `{role_key}`
             candidates = [(score, event) for score, event in scored if score >= COSINE_FLOOR]
             return sorted(candidates, key=lambda pair: pair[0], reverse=True)
 
+        han_phrase_query = any(len(token) > 1 and _HAN_RE.fullmatch(token) for token in query_tokens)
+        if han_phrase_query:
+            # A shared character such as 库 must not make 库房 relevant to
+            # 数据库迁移. Keep single-character lookup for a one-character query.
+            query_tokens = [token for token in query_tokens
+                            if len(token) != 1 or not _HAN_RE.fullmatch(token)]
         corpus = [tokenize(str(event.get("text", ""))) for event in events]
         scores = _bm25_scores(corpus, query_tokens)
         wanted = set(query_tokens)
         # Gate relevance on token overlap (BM25 gives terms that appear in every
         # document a zero/negative IDF, which would drop legitimate matches in a
         # tiny corpus); use the BM25 score only to rank the overlapping events.
-        candidates = [
-            (score, event)
-            for score, event, doc in zip(scores, events, corpus)
-            if wanted.intersection(doc)
-        ]
+        candidates = []
+        for score, event, doc in zip(scores, events, corpus):
+            overlap = wanted.intersection(doc)
+            if not overlap:
+                continue
+            if han_phrase_query:
+                # Phrase coverage precedes BM25's small-corpus negative-IDF
+                # length bias. The fractional score is only a bounded tie-break,
+                # not confidence; it cannot outrank another matched query term.
+                score = len(overlap) + 0.5 + score / (2 * (1 + abs(score)))
+            candidates.append((score, event))
         return sorted(candidates, key=lambda pair: pair[0], reverse=True)
 
     def _embed_events(self, role_key: str, events: list[dict[str, str]]) -> list[list[float]] | None:
