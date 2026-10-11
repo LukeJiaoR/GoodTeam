@@ -12,6 +12,7 @@ import time
 import pytest
 
 from goodteam_os import cli, service
+from goodteam_os.skills import codex_local
 from goodteam_os.skills.codex_local import DISABLED_FEATURES, LocalCodexReviewAdmission, inspect_local_codex
 from goodteam_os.skills.models import SkillError, content_digest
 from goodteam_os.skills.review_results import ReviewResultStore
@@ -65,6 +66,58 @@ def local_host(ctx, *, body="", output=None):
                           + body + "\nsys.stdout.buffer.write(" + repr(raw) + ")\nsys.stdout.buffer.flush()\n")
     executable.chmod(0o700)
     return executable, home
+
+
+def test_unsupported_version_fails_before_reading_selected_configuration(ctx, monkeypatch):
+    executable, home = local_host(ctx)
+    executable.write_text(executable.read_text().replace("codex-cli 0.160.0", "codex-cli 0.159.2"))
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("An unsupported binary must not inspect configuration or login metadata")
+
+    monkeypatch.setattr(codex_local, "_selection", forbidden)
+    with pytest.raises(SkillError) as failure:
+        inspect_local_codex(executable, home, "explicit-test-model")
+    assert failure.value.code == "local_codex_version_unsupported"
+
+
+def test_unsafe_binary_fails_before_executing_or_reading_configuration(ctx, monkeypatch):
+    executable, home = local_host(ctx)
+    executable.chmod(0o722)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("An unsafe executable must not run or inspect configuration")
+
+    monkeypatch.setattr(codex_local, "_selection", forbidden)
+    monkeypatch.setattr(codex_local.subprocess, "run", forbidden)
+    with pytest.raises(SkillError) as failure:
+        inspect_local_codex(executable, home, "explicit-test-model")
+    assert failure.value.code == "local_codex_binary_unsafe"
+
+
+@pytest.mark.parametrize("command", ["--version", "features"])
+def test_binary_drift_during_inspection_cannot_return_a_selection(ctx, monkeypatch, command):
+    executable, home = local_host(ctx)
+    run = codex_local.subprocess.run
+    select = codex_local._selection
+    selections = []
+
+    def capture(*args, **kwargs):
+        result = run(*args, **kwargs)
+        if command in args[0]:
+            executable.write_text(executable.read_text() + "\n# Changed during metadata inspection\n")
+        return result
+
+    def selection(*args, **kwargs):
+        selections.append(args)
+        return select(*args, **kwargs)
+
+    monkeypatch.setattr(codex_local.subprocess, "run", capture)
+    monkeypatch.setattr(codex_local, "_selection", selection)
+    with pytest.raises(SkillError) as failure:
+        inspect_local_codex(executable, home, "explicit-test-model")
+    assert failure.value.code == "local_codex_selection_changed"
+    assert len(selections) == (0 if command == "--version" else 1)
 
 
 def ready(ctx, *, task="local-review", model="explicit-test-model", **changes):

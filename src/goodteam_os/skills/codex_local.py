@@ -175,7 +175,12 @@ def _inspect_features(identity):
 
 
 def inspect_local_codex(codex, home, model):
-    identity = _selection(codex, home, model)
+    # Reject an unsafe, unsupported or changing executable before touching the
+    # selected user's configuration/login metadata. Inspection is available even
+    # when production admission is closed, so its prerequisite order matters.
+    codex = Path(codex).absolute()
+    before = _binary_stamp(codex)
+    binary_digest = _binary_digest(codex)
     try:
         result = subprocess.run([str(codex), "--version"], env={"PATH": "/usr/bin:/bin"},
                                 capture_output=True, timeout=10, check=False)
@@ -183,7 +188,12 @@ def inspect_local_codex(codex, home, model):
         raise SkillError("local_codex_binary_unavailable", "Codex version inspection failed.") from exc
     if result.returncode or result.stdout.strip() != ("codex-cli " + VERSION).encode():
         raise SkillError("local_codex_version_unsupported", "This adapter supports exactly Codex 0.160.0.")
+    if _binary_stamp(codex) != before:
+        raise SkillError("local_codex_selection_changed", "The selected executable changed during inspection.")
+    identity = _selection(codex, home, model, binary_digest=binary_digest)
     gates = _inspect_features(identity)
+    if _binary_stamp(codex) != before:
+        raise SkillError("local_codex_selection_changed", "The selected executable changed during inspection.")
     return {"adapter": ADAPTER, "binary_version": VERSION, "binary_digest": identity["binary_digest"],
             "selection_digest": content_digest(_bytes(identity)), "model": model, "existing_login_present": True,
             "model_turns_started": 0, "provider_request_count": None,
