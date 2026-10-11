@@ -208,6 +208,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     review_decision.add_argument("--reviewer", required=True)
     review_decision.add_argument("--reason", default="")
+    review_decision.add_argument("--validation-receipt", default="")
+    review_decision.add_argument("--head", default="")
+    validate = execution_subparsers.add_parser("validate-candidate")
+    validate.add_argument("--execution-id", required=True)
+    validate.add_argument("--project-root", type=Path, required=True)
+    validate.add_argument("--head", required=True)
+    validate.add_argument("--operation-id", required=True)
+    validate.add_argument("--criterion", type=int, action="append", required=True,
+                          help="Zero-based original acceptance criterion; mapping is not semantic proof")
+    validate.add_argument("--seconds", type=int, default=30)
+    validate.add_argument("argv", nargs=argparse.REMAINDER)
     export_review_workbench = execution_subparsers.add_parser("export-review-workbench")
     export_review_workbench.add_argument("--execution-id", required=True)
     export_review_workbench.add_argument("--project-root", type=Path, required=True)
@@ -553,7 +564,17 @@ def _run_execution_command(args: argparse.Namespace) -> dict[str, object]:
         return api.replay(args.execution_id)
     if args.execution_command == "review":
         return api.get_review_workbench(args.execution_id)
+    if args.execution_command == "validate-candidate":
+        command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+        return api.validate_candidate(args.execution_id, operation_id=args.operation_id, head_sha=args.head,
+                                      argv=command, criteria=args.criterion, seconds=args.seconds)
     if args.execution_command == "record-review-decision":
+        if args.validation_receipt or args.head:
+            if not args.validation_receipt or not args.head:
+                raise ValueError("Both --validation-receipt and --head are required")
+            return api.attest_candidate_review(args.execution_id, receipt_id=args.validation_receipt,
+                                              head_sha=args.head, reviewer=args.reviewer,
+                                              decision=args.decision, reason=args.reason)
         return api.record_review_decision(
             args.execution_id,
             args.decision,

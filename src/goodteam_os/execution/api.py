@@ -110,6 +110,16 @@ class ExecutionAPI:
             clock=self.clock,
         ).finalize_provenance(execution_id)
 
+    def validate_candidate(self, execution_id: str, **request) -> dict[str, Any]:
+        """Explicit local Operator action; deliberately not exposed by HTTP POST."""
+        from goodteam_os.execution.candidate_validation import CandidateValidationService
+        return CandidateValidationService(self.project_root).validate(execution_id, **request)
+
+    def attest_candidate_review(self, execution_id: str, **request) -> dict[str, Any]:
+        """Record an explicit Operator attestation, not authenticated independence."""
+        from goodteam_os.execution.candidate_validation import CandidateValidationService
+        return CandidateValidationService(self.project_root).attest_review(execution_id, **request)
+
     def get_evidence(self, execution_id: str) -> dict[str, Any]:
         return ExecutionEvidenceService(
             self.project_root,

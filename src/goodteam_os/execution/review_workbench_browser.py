@@ -62,6 +62,7 @@ def render_review_workbench_html(
     </header>
     {_summary_section(review)}
     {_task_contract_section(review)}
+    {_candidate_validation_section(review)}
     {_runtime_policy_section(review)}
     {_broker_status_section(review)}
     {_replay_graph_section(review)}
@@ -792,3 +793,13 @@ code, time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospa
   .diff-line-number { width: 42px; }
 }
 """
+
+
+def _candidate_validation_section(review: dict[str, Any]) -> str:
+    from goodteam_os.execution.review_workbench_renderer import _render_candidate_checks
+    value = _dict(_dict(review.get("evidence")).get("candidate_validation"))
+    body = "<ul>" + "".join("<li>" + escape(line.removeprefix("- ")) + "</li>"
+                           for line in _render_candidate_checks(value)) + "</ul>"
+    body += "<p>Checks passed / human record / acceptance unknown are separate observations. "
+    body += "No task acceptance, independent reviewer identity, or model success is inferred.</p>"
+    return _section("Candidate validation", body)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from goodteam_os.execution.candidate_validation import candidate_evidence
 from goodteam_os.execution.evidence_manifest_extractors import (
     ci_observations,
     ci_summary,
@@ -43,6 +44,14 @@ def build_evidence_manifest(
     )
     input_evidence = task_input_evidence(ledger.project_root, execution_id,
                                         worker_job_id=str(run.worker_job_id) if run else "")
+    validation = candidate_evidence(ledger.project_root, execution_id)
+    checks = {item["index"]: item for item in validation.get("criteria", [])}
+    for index, item in enumerate(input_evidence.get("acceptance_coverage", [])):
+        item["check_status"] = checks.get(index, {}).get("check_status", "unknown")
+        item["review_status"] = validation.get("review_status", "missing") if index in checks else "missing"
+        if index in checks:
+            item["evidence"] = [validation["receipt"]["receipt_id"]]
+            item["reason"] = "semantic_acceptance_not_verified"
     contract_manifest = _task_contract_manifest(task, captured=input_evidence.get("contract"))
     if input_evidence["status"] == "unavailable":
         contract_manifest = {**_task_contract_manifest(None), "fallback_warning": {
@@ -57,6 +66,7 @@ def build_evidence_manifest(
         "github_ref": source["github_ref"],
         "task_contract": contract_manifest,
         "task_input": input_evidence,
+        "candidate_validation": validation,
         "runtime_policy": runtime_policy_manifest(events),
         "github_broker_status": github_broker_status_manifest(run, events),
         "pr": _pr_manifest(pr_repo, pr_number, run, events),
