@@ -120,6 +120,20 @@ class ExecutionAPI:
         from goodteam_os.execution.candidate_validation import CandidateValidationService
         return CandidateValidationService(self.project_root).attest_review(execution_id, **request)
 
+    def start_automatic_review(self, execution_id: str, **request) -> dict[str, Any]:
+        """Trusted composition only; captures exact base and original policy."""
+        from .automatic_review import AutomaticCandidateReviewService
+        return AutomaticCandidateReviewService(self.project_root).start(execution_id, **request)
+
+    def advance_automatic_review(self, execution_id: str, *, acknowledge_external_cost=False) -> dict[str, Any]:
+        from .automatic_review import AutomaticCandidateReviewService
+        return AutomaticCandidateReviewService(self.project_root).advance(
+            execution_id, acknowledge_external_cost=acknowledge_external_cost)
+
+    def stop_automatic_review(self, execution_id: str) -> dict[str, Any]:
+        from .automatic_review import AutomaticCandidateReviewService
+        return AutomaticCandidateReviewService(self.project_root).stop(execution_id)
+
     def start_correction_loop(self, execution_id: str, **request) -> dict[str, Any]:
         from goodteam_os.execution.correction_loop import CorrectionLoopService
         return CorrectionLoopService(self.project_root).start(execution_id, **request)

@@ -112,9 +112,9 @@ def test_real_worker_fix_and_same_round_recheck_in_independent_worktree(worker_c
     assert checked["observation"]["status"] == "passed"
     c.validation.attest_review(c.execution_id, receipt_id=checked["receipt_id"], head_sha=head,
         reviewer="operator", decision="approve", reason="Inspect offline candidate")
-    assert c.loop.evidence(c.execution_id)["status"] == "awaiting_human_acceptance"
+    assert c.loop.evidence(c.execution_id)["status"] == "reviewed"
     assert c.loop.evidence(c.execution_id)["reserved_rounds"] == 1
-    assert c.loop.evidence(c.execution_id)["acceptance_status"] == "unknown"
+    assert c.loop.evidence(c.execution_id)["acceptance_status"] == "human_recorded"
     rows = authority.receipts(value)
     emitted = json.loads((c.service.workers.root / job_id / "result.md").read_text())
     assert {row["input_digest"] for row in rows} == {emitted["prompt_digest"]}

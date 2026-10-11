@@ -5,6 +5,7 @@ from typing import Any
 from goodteam_os.execution.review_workbench_coverage import (
     acceptance_coverage_lines,
     check_metadata_lines,
+    candidate_review_projection,
     current_result_details,
 )
 
@@ -57,8 +58,8 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         "Supervised correction loop:",
         *_render_correction_loop(evidence.get("correction_loop", {})),
         "",
-        "Candidate checks (acceptance remains unknown):",
-        *_render_candidate_checks(evidence.get("candidate_validation", {})),
+        "Candidate checks and review judgment:",
+        *_render_candidate_checks(evidence.get("candidate_validation", {}), task_input=evidence.get("task_input", {})),
         "",
         "Original acceptance coverage:",
         *acceptance_coverage_lines(evidence),
@@ -303,24 +304,51 @@ def _decision_label(decision: dict[str, Any]) -> str:
     return f"{decision.get('decision', '')} by {decision.get('reviewer', '')}"
 
 
-def _render_candidate_checks(value: dict[str, Any]) -> list[str]:
+def _render_candidate_checks(value: dict[str, Any], *, task_input: dict | None = None) -> list[str]:
     candidate = value.get("candidate", {})
+    snapshot = (task_input or {}).get("snapshot") or {}
+    bound = (task_input is None or (task_input.get("available") is True
+             and task_input.get("status") in {"snapshot_committed", "partial"}
+             and snapshot.get("payload_digest") == (value.get("receipt") or {}).get("snapshot_digest")))
+    projected = candidate_review_projection(value, bound=bound, snapshot=snapshot if task_input is not None else None)
     lines = [f"- Head: {candidate.get('head_sha', 'unavailable')}",
-             f"- Checks: {value.get('check_status', 'unknown')}",
-             f"- Human record: {value.get('review_status', 'missing')}",
-             "- Acceptance: unknown (command success and human mapping are not semantic proof)"]
+             f"- Checks: {projected['check_status']}",
+             f"- Machine review: {projected['machine_label']}",
+             f"- Human record: {projected['human_label']}",
+             f"- Acceptance: {projected['acceptance_status']}",
+             f"- Review semantic verification: {projected['semantic_verification']}"]
     if value.get("reason"):
         lines.append(f"- Reason: {value['reason']}")
     lines.extend(check_metadata_lines(value))
     review = value.get("review")
-    if isinstance(review, dict):
+    if isinstance(review, dict) and projected["kind"] != "missing":
+        kind = "Machine" if projected["kind"] == "machine" else "Human"
         lines.extend([
-            f"- Human decision: {review.get('decision', 'unknown')}",
-            f"- Reviewer label: {review.get('reviewer', 'unknown')}",
+            f"- {kind} decision: {projected['recorded']}",
+            f"- Review schema: {review['schema_version']}",
+            f"- Review producer: {review['producer']}",
+            f"- Review receipt: {review.get('receipt_id', 'unavailable')}",
             f"- Review reason: {review.get('reason', '')}",
             f"- Reviewer independence: {review.get('independence', 'not_authenticated')}",
-            f"- Review semantic verification: {review.get('semantic_verification', 'unverified')}",
         ])
+        if projected["kind"] == "machine":
+            provenance = review.get("provenance") or {}
+            runtime = provenance.get("runtime") or {}
+            lines.extend([f"- Original input digest: {(review.get('snapshot') or {}).get('payload_digest', 'unavailable')}",
+                          f"- Review base: {review.get('base_sha', 'unavailable')}",
+                          f"- Registered Reviewer job: {provenance.get('job_id', 'unavailable')}",
+                          f"- Review report digest: {provenance.get('report_digest', 'unavailable')}",
+                          f"- Reviewer adapter: {runtime.get('adapter', 'unavailable')}",
+                          f"- Reviewer model: {runtime.get('model', 'unavailable')}",
+                          f"- Reviewer runtime verification: {provenance.get('runtime_verification', 'unavailable')}"])
+            human = value.get("human_review") or {}
+            if projected["human_label"] != "missing":
+                lines.extend([f"- Optional human reviewer label: {human.get('reviewer', 'unknown')}",
+                              f"- Optional human record receipt: {human.get('receipt_id', 'unavailable')}",
+                              f"- Human attestation semantic verification: {human.get('semantic_verification', 'unverified')}"])
+        else:
+            lines.extend([f"- Reviewer label: {review.get('reviewer', 'unknown')}",
+                          f"- Human attestation semantic verification: {review.get('semantic_verification', 'unverified')}"])
     return lines
 
 
@@ -337,8 +365,9 @@ def _render_correction_loop(value: dict[str, Any]) -> list[str]:
         f"- Original goal: {value['original_goal']}",
         f"- Feedback: {value['feedback']}",
         f"- Next action: {value['next_action']}",
-        "- Automatic provider invocations: 0; external cost unknown and not authorized by this loop",
-        "- Acceptance: unknown; every fix and check still needs its existing explicit authority",
+        f"- Loop-owned provider invocations: {value.get('automatic_provider_invocations', 'unknown')}; external cost: {value.get('external_cost', 'unknown')}",
+        f"- Recorded loop acceptance: {value.get('acceptance_status', 'unknown')}",
+        f"- Semantic verification: {value.get('semantic_verification', 'unverified')}",
     ])
     worker = value.get("worker") or {}
     capability = value.get("runtime_admission") or {}
@@ -350,6 +379,6 @@ def _render_correction_loop(value: dict[str, Any]) -> list[str]:
         lines.extend([f"- Correction Worker: {worker['job_id']} ({worker['status']})",
             f"- Retained worktree: {worker['workspace']}",
             f"- Explicit runtime budget: one invocation / {worker['max_seconds']} seconds",
-            "- Worker return is a host observation; provider acknowledgement and semantic acceptance remain unknown"])
+            "- Worker return is a host observation; its return alone does not establish provider acknowledgement or candidate acceptance"])
     lines.extend(f"- Original constraint: {text}" for text in value['original_constraints'])
     return lines
