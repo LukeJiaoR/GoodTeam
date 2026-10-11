@@ -44,6 +44,9 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         f"Memory provenance: {_memory_integrity_label(integrity)}",
         f"Decision: {_decision_label(decision)}",
         "",
+        "Candidate checks (acceptance remains unknown):",
+        *_render_candidate_checks(evidence.get("candidate_validation", {})),
+        "",
         "Expected artifacts:",
         *_render_contract_artifacts(contract),
         "",
@@ -282,3 +285,25 @@ def _decision_label(decision: dict[str, Any]) -> str:
     if not decision.get("available"):
         return "none"
     return f"{decision.get('decision', '')} by {decision.get('reviewer', '')}"
+
+
+def _render_candidate_checks(value: dict[str, Any]) -> list[str]:
+    candidate = value.get("candidate", {})
+    lines = [f"- Head: {candidate.get('head_sha', 'unavailable')}",
+             f"- Checks: {value.get('check_status', 'unknown')}",
+             f"- Human record: {value.get('review_status', 'missing')}",
+             "- Acceptance: unknown (command success and human mapping are not semantic proof)"]
+    if value.get("reason"):
+        lines.append(f"- Reason: {value['reason']}")
+    review = value.get("review")
+    if isinstance(review, dict):
+        lines.extend([
+            f"- Human decision: {review.get('decision', 'unknown')}",
+            f"- Reviewer label: {review.get('reviewer', 'unknown')}",
+            f"- Review reason: {review.get('reason', '')}",
+            f"- Reviewer independence: {review.get('independence', 'not_authenticated')}",
+            f"- Review semantic verification: {review.get('semantic_verification', 'unverified')}",
+        ])
+    for item in value.get("criteria", []):
+        lines.append(f"- Criterion {item['index']}: check {item['check_status']}; acceptance unknown")
+    return lines
