@@ -1,5 +1,5 @@
 import { PackageOpen, RefreshCw, X } from 'lucide-react';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import useTeamDialog from './useTeamDialog';
@@ -21,36 +21,49 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
   const previewAttempt = useRef(null);
-  const [library, setLibrary] = useState({ skills: [] });
+  const [libraryAttempt, setLibraryAttempt] = useState(0);
+  const [libraryResult, setLibraryResult] = useState(null);
   const [sourcePath, setSourcePath] = useState('');
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
-  const [busy, setBusy] = useState('loading');
+  const [busy, setBusy] = useState('');
   const mutating = busy === 'preview' || busy === 'install';
   const handleKeyDown = useTeamDialog(dialogRef, closeRef, () => { if (!mutating) onClose(); });
-
-  const refreshLibrary = useCallback(async ({ signal } = {}) => {
-    const payload = await api.getSkillLibrary({ signal });
-    setLibrary({ ...payload, skills: Array.isArray(payload?.skills) ? payload.skills : [] });
-  }, [api]);
 
   useEffect(() => {
     const controller = new AbortController();
     api.getSkillLibrary({ signal: controller.signal })
       .then((payload) => {
         if (!controller.signal.aborted) {
-          setLibrary({ ...payload, skills: Array.isArray(payload?.skills) ? payload.skills : [] });
+          if (!Array.isArray(payload?.skills)) throw Object.assign(new Error(), { code: 'invalid_response' });
+          setLibraryResult({ api, attempt: libraryAttempt, status: 'ready', skills: payload.skills, hasSnapshot: true });
         }
       })
-      .catch((caught) => { if (!controller.signal.aborted) setError(caught); })
-      .finally(() => { if (!controller.signal.aborted) setBusy(''); });
+      .catch((caught) => {
+        if (!controller.signal.aborted) setLibraryResult(previous => ({
+          api, attempt: libraryAttempt, status: 'error', error: caught || {},
+          skills: previous?.api === api ? previous.skills : [],
+          hasSnapshot: previous?.api === api && previous.hasSnapshot,
+        }));
+      });
     return () => controller.abort();
-  }, [api]);
+  }, [api, libraryAttempt]);
+
+  // Only this read's successful response can establish that the library is
+  // empty. Keep earlier same-API data visible as a labelled, older snapshot.
+  const snapshot = libraryResult?.api === api ? libraryResult : null;
+  const currentLibrary = snapshot?.attempt === libraryAttempt ? snapshot : null;
+  const libraryLoading = !currentLibrary;
+  const libraryReady = currentLibrary?.status === 'ready';
+  const libraryError = currentLibrary?.status === 'error' ? currentLibrary.error : null;
+  const skills = snapshot?.skills || [];
+  const refreshLibrary = () => { if (!busy && !libraryLoading) setLibraryAttempt(attempt => attempt + 1); };
+  const controlsBusy = Boolean(busy) || libraryLoading;
 
   const submitPreview = async (event) => {
     event.preventDefault();
     const path = sourcePath.trim();
-    if (!path || busy) return;
+    if (!path || controlsBusy) return;
     setError(null);
     setBusy('preview');
     if (previewAttempt.current?.path !== path) {
@@ -68,13 +81,14 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
   };
 
   const install = async () => {
-    if (!preview?.proposal_id || busy) return;
+    if (!preview?.proposal_id || controlsBusy) return;
     setBusy('install');
     setError(null);
     try {
       const result = await api.installLocalSkill(preview.proposal_id);
       setPreview(result);
-      await refreshLibrary();
+      // Installation succeeded even if the follow-up library read fails.
+      setLibraryAttempt(attempt => attempt + 1);
     } catch (caught) {
       if (caught?.code === 'proposal_expired') {
         previewAttempt.current = null;
@@ -127,11 +141,11 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
                   if (previewAttempt.current?.path !== event.target.value.trim()) previewAttempt.current = null;
                 }}
                 placeholder={t('team.skills.pathPlaceholder')}
-                disabled={Boolean(busy)}
+                disabled={controlsBusy}
                 autoComplete="off"
               />
             </label>
-            <Button type="submit" disabled={!sourcePath.trim() || Boolean(busy)} busy={busy === 'preview'}>
+            <Button type="submit" disabled={!sourcePath.trim() || controlsBusy} busy={busy === 'preview'}>
               {t('team.skills.preview')}
             </Button>
           </form>
@@ -168,7 +182,7 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
               {preview.status === 'installed' ? (
                 <p className="skill-library__installed" role="status">{t('team.skills.installedNotBound')}</p>
               ) : (
-                <Button onClick={install} disabled={Boolean(busy)} busy={busy === 'install'}>{t('team.skills.install')}</Button>
+                <Button onClick={install} disabled={controlsBusy} busy={busy === 'install'}>{t('team.skills.install')}</Button>
               )}
             </section>
           ) : null}
@@ -179,18 +193,16 @@ export default function SkillLibraryPanel({ api, onClose, t }) {
                 <h3 id="skill-library-installed">{t('team.skills.installedTitle')}</h3>
                 <p>{t('team.skills.installedDescription')}</p>
               </div>
-              <button className="team-icon-button" type="button" disabled={Boolean(busy)} onClick={() => {
-                setBusy('loading');
-                setError(null);
-                refreshLibrary().catch(setError).finally(() => setBusy(''));
-              }} aria-label={t('team.skills.refresh')}>
+              <button className="team-icon-button" type="button" disabled={controlsBusy} onClick={refreshLibrary} aria-label={t('team.skills.refresh')}>
                 <RefreshCw aria-hidden="true" size={15} />
               </button>
             </div>
-            {busy === 'loading' && !library.skills.length ? <p role="status">{t('product.states.loading')}</p> : null}
-            {!busy && !library.skills.length ? <p className="skill-library__empty">{t('team.skills.empty')}</p> : null}
+            {libraryLoading ? <p role="status">{t('product.states.loading')}</p> : null}
+            {!libraryReady && snapshot?.hasSnapshot ? <p role="status">{t('team.skills.libraryStale')}</p> : null}
+            {libraryError ? <ProductError error={libraryError} onRetry={!controlsBusy ? refreshLibrary : undefined} t={t} /> : null}
+            {libraryReady && !skills.length ? <p className="skill-library__empty">{t('team.skills.empty')}</p> : null}
             <ul>
-              {library.skills.map((skill) => {
+              {skills.map((skill) => {
                 const version = skill.versions?.at(-1);
                 return (
                   <li key={skill.skill_id}>
