@@ -50,7 +50,11 @@ export const sendTaskAssistantMessage = (projectKey, body, options) => jsonPost(
 export const taskAssistantAction = (projectKey, body, options) => jsonPost(
   `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/actions`, body, options,
 );
-export const retryRun = (projectKey, options) => jsonPost('/api/retry', { project_key: projectKey }, options);
+export const retryRun = (projectKey, expectedTarget = {}, options) => jsonPost('/api/retry', {
+  project_key: projectKey,
+  expected_run_id: expectedTarget.run_id,
+  expected_retry_version: expectedTarget.version,
+}, options);
 export const terminateRun = (projectKey, expectedRunId, options) => jsonPost('/api/terminate', {
   project_key: projectKey, expected_run_id: expectedRunId,
 }, options);

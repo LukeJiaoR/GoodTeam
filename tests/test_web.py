@@ -4005,6 +4005,13 @@ def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient
     assert "Evidence sufficient: `False`" in Path(payload["artifacts"]["staging_report"]).read_text(encoding="utf-8")
 
 
+def workflow_retry_binding(workspace, key="CONTENTOPS"):
+    from goodteam_os.web import workflow_retry_target
+    state = StateStore(workspace).read_project_current(key)
+    return {"expected_run_id": state.run_id,
+            "expected_retry_version": workflow_retry_target(workspace, state)["version"]}
+
+
 def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_path, monkeypatch):
     project = tmp_path / "contentops"
     for repo in ["docs", "backend", "frontend"]:
@@ -4086,7 +4093,7 @@ def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_pa
         },
     )
 
-    payload = retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS")
+    payload = retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS", **workflow_retry_binding(tmp_path))
 
     assert run_jobs["count"] == 0
     assert payload["current_node"] == "staging_review_gate"
@@ -4160,7 +4167,7 @@ def test_retry_blocked_workflow_reruns_workers_to_release_gate(tmp_path, monkeyp
 
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
 
-    payload = retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS")
+    payload = retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS", **workflow_retry_binding(tmp_path))
 
     assert payload["current_node"] == "release_review_gate"
     assert payload["next_node"] == "await_release_approval"
@@ -4215,7 +4222,7 @@ def test_retry_blocked_workflow_refreshes_role_models_before_dispatch(tmp_path, 
 
     monkeypatch.setattr("goodteam_os.web.advance_approved_workflow", fake_advance_approved_workflow)
 
-    payload = retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS")
+    payload = retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS", **workflow_retry_binding(tmp_path))
 
     assert payload["role_models"]["implementation"]["primary"] == "codex:gpt-5.6-sol"
     assert payload["role_models"]["qa"]["primary"] == "codex:gpt-5.6-sol"
@@ -4229,9 +4236,9 @@ def test_retry_blocked_workflow_rejects_non_blocked_run(tmp_path, current_node, 
     StateStore(tmp_path).write_project_current(state)
 
     try:
-        retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS")
+        retry_blocked_workflow(workspace=tmp_path, project_key="CONTENTOPS", **workflow_retry_binding(tmp_path))
     except ValueError as exc:
-        assert "not blocked" in str(exc)
+        assert getattr(exc, "code", "") == "retry_not_available"
     else:
         raise AssertionError("Expected retry to reject non-blocked run")
 

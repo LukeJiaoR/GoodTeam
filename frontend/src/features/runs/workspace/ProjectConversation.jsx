@@ -37,6 +37,7 @@ export default function ProjectConversation({
   onKeepDiscussingChangeIntent,
   onReview,
   onRetry,
+  retry,
   onConfirmTask,
   onContinuePreparation,
   onStart,
@@ -184,6 +185,7 @@ export default function ProjectConversation({
               onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
               onReview={onReview}
               onRetry={onRetry}
+              retry={retry}
               onStartChangeIntent={onStartChangeIntent}
               projectKey={projectKey}
               t={t}

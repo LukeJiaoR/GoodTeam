@@ -5,10 +5,25 @@ import {
   discussChangeIntent,
   keepDiscussingChangeIntent,
   startChangeIntent,
+  retryRun,
 } from './runApi';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+test('retries only the displayed run and retry version without dropping cancellation', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' });
+  vi.stubGlobal('fetch', fetch);
+  const signal = new AbortController().signal;
+  const version = `sha256:${'a'.repeat(64)}`;
+  await retryRun('DEMO', { run_id: 'run-displayed', version, attempts: [{ id: 'job-displayed' }] }, { signal });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch.mock.calls[0][0]).toBe('/api/retry');
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    project_key: 'DEMO', expected_run_id: 'run-displayed', expected_retry_version: version,
+  });
+  expect(fetch.mock.calls[0][1].signal).toBe(signal);
 });
 
 test('posts the durable Intent Commit conversation steps with exact target binding', async () => {

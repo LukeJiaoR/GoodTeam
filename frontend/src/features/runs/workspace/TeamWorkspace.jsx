@@ -353,6 +353,7 @@ function TeamWorkspace({
   onInspect,
   onKeepDiscussingChangeIntent,
   onRetry,
+  retry,
   onConfirmTask,
   onContinuePreparation,
   onStart,
@@ -548,6 +549,7 @@ function TeamWorkspace({
           onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
           onReview={attentionReviewTask ? reviewAttentionOutcome : onOpenReview && attention?.target_id ? () => onOpenReview(attention.target_id) : undefined}
           onRetry={onRetry}
+          retry={retry}
           onConfirmTask={onConfirmTask}
           onContinuePreparation={onContinuePreparation}
           onStart={onStart}
@@ -565,7 +567,7 @@ function TeamWorkspace({
           onClearContext={onClearContext}
         />
         {!composing ? <ExecutionPane
-          blocker={attention?.kind === 'blocker' ? <TaskAttention attention={attention} activeJobs={activeJobs} error={error} jobs={data.worker_jobs || []} projectKey={projectKey} busy={busy} onRetry={readOnly ? undefined : onRetry} t={t} /> : null}
+          blocker={attention?.kind === 'blocker' ? <TaskAttention attention={attention} activeJobs={activeJobs} error={error} jobs={data.worker_jobs || []} projectKey={projectKey} busy={busy} onRetry={readOnly ? undefined : onRetry} retry={retry} t={t} /> : null}
           task={mission}
           mobile={mobileWorkspace}
           controls={!readOnly && (workspace.capabilities || []).some((item) => item.action === 'cancel_mission')

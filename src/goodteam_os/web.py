@@ -10,7 +10,7 @@ import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, UTC
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -2542,7 +2542,8 @@ def _build_project_work_state(workspace: Path, project_key: str) -> dict[str, ob
 
     project_config = _project_config_for_key(workspace, project_key)
     start_context = build_start_console_context(workspace, project_config=project_config)
-    state = resolve_dashboard_state(workspace, project_key=project_key)
+    retry_state = resolve_dashboard_state(workspace, project_key=project_key, include_display_hints=False)
+    state = _dashboard_state_view(retry_state)
     project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
     task_assistant_session = (
         TaskAssistantService(workspace, project_config=project_config).session(project_key, project_root)
@@ -2596,6 +2597,9 @@ def _build_project_work_state(workspace: Path, project_key: str) -> dict[str, ob
         "smoke_run_items": build_smoke_run_items(workspace),
         "agile_board": agile_board,
         "worker_jobs": worker_jobs,
+        # Team projection can migrate configuration; version its final config
+        # against the same persisted state, not the display-only revision hint.
+        "retry_target": workflow_retry_target(workspace, retry_state),
         "delivery_summary": build_delivery_summary(workspace, state=state, jobs=worker_job_records, worker_root=project_root),
         "team_workspace": team_workspace,
         "project_assistant": build_project_assistant(
@@ -3270,15 +3274,19 @@ def workflow_steps_for_state(state: AgileDevState | None) -> list[dict[str, str]
     return workflow_steps_for_source(source_type)
 
 
-def resolve_dashboard_state(workspace: Path, project_key: str = "") -> AgileDevState | None:
+def _dashboard_state_view(state):
+    if state is not None and state.next_node.startswith("revise_") and not state.blockers:
+        return replace(state, blockers=["Changes requested; retry to apply the recorded revision."])
+    return state
+
+
+def resolve_dashboard_state(workspace: Path, project_key: str = "", *, include_display_hints: bool = True) -> AgileDevState | None:
     store = StateStore(workspace)
     if project_key:
         state = store.read_project_current(project_key)
         if state is not None and state.pending_transition.get("status") in {"recording", "executing"}:
             return recover_transition(workspace, project_key)
-        if state is not None and state.next_node.startswith("revise_") and not state.blockers:
-            state.blockers = ["Changes requested; retry to apply the recorded revision."]
-        return state
+        return _dashboard_state_view(state) if include_display_hints else state
     return store.read_current()
 
 
@@ -4752,13 +4760,67 @@ def regenerate_rfc_review_gate(
     return state
 
 
-@serialized_workflow
-def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, object]:
-    key = normalize_project_key(project_key)
-    state_store = StateStore(workspace)
-    state = state_store.read_project_current(key)
+def _workflow_retry_context(workspace, state):
+    from goodteam_os.workflow_revisions import project_config_for_state
+
+    config = project_config_for_state(state, workspace)
+    target = load_project_target(config) if config is not None else {}
+    root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    jobs = WorkerJobStore(root).list_jobs() if root is not None else []
+    context = {"config": str(config) if config else "", "root": str(root) if root else "",
+               "config_digest": hashlib.sha256(config.read_bytes()).hexdigest() if config else ""}
+    return config, jobs, context
+
+
+def workflow_retry_target(workspace, state):
+    from goodteam_os.workflow_retry import build_retry_target
+
     if state is None:
-        raise ValueError(f"No active run for project: {key}")
+        return None
+    _config, jobs, context = _workflow_retry_context(workspace, state)
+    return build_retry_target(state, jobs=jobs, actions=build_action_items(workspace, state.project_key),
+                              execution_context=context)
+
+
+def retry_blocked_workflow(*, workspace: Path, project_key: str,
+                           expected_run_id: str | None = None,
+                           expected_retry_version: str | None = None) -> dict[str, object]:
+    from goodteam_os.workflow_retry import build_retry_target
+
+    key = normalize_project_key(project_key)
+    if not isinstance(expected_run_id, str) or not expected_run_id.strip() or not isinstance(expected_retry_version, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_retry_version):
+        raise ProjectApiError("retry_binding_required", "Refresh and select the exact task attempt to retry.", 400,
+                              recovery=["refresh"])
+    with workflow_guard(workspace, key):
+        state = StateStore(workspace).read_project_current(key)
+        # Binding failures must not enter the recovery exception handler: it
+        # would interrupt the replacement run's still-active transition.
+        if state is None or state.run_id != expected_run_id or state.project_key != key:
+            raise ProjectApiError("run_binding_mismatch", "The active task changed. Refresh before retrying.", 409,
+                                  recovery=["refresh"])
+        config, jobs, context = _workflow_retry_context(workspace, state)
+        target = build_retry_target(state, jobs=jobs, actions=build_action_items(workspace, key),
+                                    execution_context=context)
+        if target["version"] != expected_retry_version:
+            raise ProjectApiError("retry_target_changed", "The task stage or attempt changed. Refresh before retrying.", 409,
+                                  recovery=["refresh"])
+        if not target["available"]:
+            code = {"active_attempt": "retry_attempt_active", "attempt_unknown": "retry_attempt_unknown"}.get(target["reason"], "retry_not_available")
+            raise ProjectApiError(code, "This task cannot be retried from the displayed attempt. Refresh to inspect its current state.", 409,
+                                  recovery=["refresh"])
+        append_action(workspace, run_id=state.run_id, project_key=key, actor="human",
+                      action="blocked_workflow_retry_started", before_node=state.next_node,
+                      workflow_operation_id=uuid4().hex,
+                      client_context={"expected_retry_version": expected_retry_version, "retry_mode": target["mode"]})
+        try:
+            return _retry_bound_workflow(workspace=workspace, key=key, state=state, project_config=config)
+        except Exception:
+            interrupt_transition(workspace, key)
+            raise
+
+
+def _retry_bound_workflow(*, workspace, key, state, project_config):
+    state_store = StateStore(workspace)
     if state.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
         from goodteam_os.workflow_revisions import resume_transition
 
@@ -4778,12 +4840,6 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str) -> dict[str, ob
         raise ValueError(f"Current run is not blocked at implementation: {key}")
 
     before_node = state.next_node
-    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-    if project_config is None or not project_config.is_file():
-        try:
-            project_config = _project_config_for_key(workspace, key)
-        except ValueError:
-            project_config = None
     state.role_models = refresh_state_role_models(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
@@ -8174,6 +8230,8 @@ def serve(
                     result = retry_blocked_workflow(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
+                        expected_run_id=request.get("expected_run_id"),
+                        expected_retry_version=request.get("expected_retry_version"),
                     )
                 elif normalized_path == "/generate-prd":
                     result = generate_prd(
