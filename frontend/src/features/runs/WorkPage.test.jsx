@@ -353,6 +353,7 @@ test('does not infer outcome data from a shared role when task identity is absen
   renderWorkPage();
 
   const execution = screen.getByRole('region', { name: 'Execution' });
+  await userEvent.click(execution.querySelector('.team-execution-disclosure > summary'));
   expect(within(execution).getByText('Trace the current worker signal')).toBeVisible();
   expect(within(execution).queryByText('Architecture A')).not.toBeInTheDocument();
   expect(within(execution).queryByText('Architecture B')).not.toBeInTheDocument();
@@ -459,6 +460,7 @@ test('keeps an active Operator mission on Work when workflow history has a stale
   renderWorkPage('/projects/DEMO/work');
 
   expect(await screen.findByRole('region', { name: 'Task Assistant' })).toBeVisible();
+  await userEvent.click(document.querySelector('.team-execution-disclosure > summary'));
   expect(screen.getByText('Keep the current Operator mission visible through review.')).toBeVisible();
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work');
   if (!document.querySelector('.work-context-disclosure').open) fireEvent.click(screen.getByText('Task & history'));

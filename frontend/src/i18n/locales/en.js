@@ -1,4 +1,9 @@
 export const en = {
+  "work.evidence.title": "Execution evidence",
+  "work.evidence.open": "Open bound execution",
+  "work.evidence.readOnly": "Inspect the recorded execution. This link does not establish successful delivery.",
+  "work.evidence.unavailable": "No bound execution evidence link is available for this task. Review any delivery records below.",
+
   "work.approvalCard.pending": "A delivery is awaiting your review.",
   "work.approvalCard.view": "Review delivery",
 

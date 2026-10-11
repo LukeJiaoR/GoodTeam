@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   ChevronRight,
   FileCheck2,
+  ExternalLink,
 } from 'lucide-react';
 import StatusBadge from '../../../components/ui/StatusBadge';
 import {
@@ -18,6 +19,7 @@ import ManagerMissionEntry from './ConversationComposer';
 import { conversationTimeline } from './conversationFeedback';
 import DeliverySummary from './DeliverySummary';
 import SkillReviewExecutions from './SkillReviewExecutions';
+import { executionEvidenceHref } from './executionEvidence';
 
 const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
 const MOBILE_TEAM_QUERY = '(max-width: 767px)';
@@ -94,18 +96,23 @@ function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
 }
 
 
-function ExecutionPane({ actors, navigation, blocker, controls, reviews, task, projectScoped, reducedMotion, sectionProps, t }) {
+function ExecutionPane({ actors, blocker, controls, task, mobile, reducedMotion, sectionProps, t }) {
+  const [expanded, setExpanded] = useState(Boolean(blocker) || mobile);
   return (
-    <section className="team-pane team-pane--execution" aria-label={t(projectScoped ? 'assistant.project.tasks' : 'work.team.execution')} {...sectionProps}>
-      <header className="team-pane__header">
-        <div>
-          <h2 id="team-execution-title">{t(projectScoped ? 'assistant.project.tasks' : 'work.team.execution')}</h2>
-          <span className="team-pane__eyebrow">{t(projectScoped ? 'assistant.project.taskHelp' : 'work.team.liveExecution')}</span>
-        </div>
-        <span className="team-pane__count">{t('work.team.workerCount', { count: actors.length })}</span>
-      </header>
-      {navigation}
-      {task && !projectScoped ? <div className="project-task-identity"><small>{t('work.team.execution')}</small><strong>{task.objective || task.title}</strong></div> : null}
+    <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')} {...sectionProps}>
+      <details className="team-execution-disclosure" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+        <summary className="team-pane__header">
+          <span className="team-execution-heading">
+            <strong id="team-execution-title">{t('work.team.execution')}</strong>
+            <span className="team-pane__eyebrow">{t('work.team.workerCount', { count: actors.length })}</span>
+          </span>
+          <span className="team-execution-heading__status">
+            {task?.status ? <StatusBadge tone={tone(task.status)}>{statusText(task.status, t)}</StatusBadge> : null}
+            <ChevronRight aria-hidden="true" size={16} />
+          </span>
+        </summary>
+        <div className="team-execution-body">
+      {task?.objective && task.objective !== task.title ? <p className="project-task-identity">{task.objective}</p> : null}
       {blocker}
       {actors.length ? (
         <ol className="team-actor-list">
@@ -133,7 +140,8 @@ function ExecutionPane({ actors, navigation, blocker, controls, reviews, task, p
           })}
         </ol>
       ) : <p className="team-pane__empty">{t('work.team.executionEmpty')}</p>}
-      {reviews}
+        </div>
+      </details>
       {controls}
     </section>
   );
@@ -141,6 +149,8 @@ function ExecutionPane({ actors, navigation, blocker, controls, reviews, task, p
 
 function OutcomesPane({
   approval,
+  mission,
+  reviews,
   historical,
   deliverySummary,
   language,
@@ -154,6 +164,7 @@ function OutcomesPane({
   sectionProps,
   t,
 }) {
+  const evidenceHref = executionEvidenceHref(mission);
   return (
     <section className="team-pane team-pane--outcomes" aria-label={t('work.team.outcomes')} {...sectionProps}>
       <header className="team-pane__header">
@@ -165,6 +176,13 @@ function OutcomesPane({
       </header>
       <div className="team-outcomes-scroll">
       {approval}
+      <section className="team-execution-evidence" aria-label={t('work.evidence.title')}>
+        <h3>{t('work.evidence.title')}</h3>
+        {evidenceHref ? <>
+          <a href={evidenceHref}>{t('work.evidence.open')}<ExternalLink size={14} aria-hidden="true" /></a>
+          <p>{t('work.evidence.readOnly')}</p>
+        </> : <p>{t('work.evidence.unavailable')}</p>}
+      </section>
       <DeliverySummary summary={deliverySummary} historical={historical} language={language} t={t} />
       {outcomes.length ? (
         <ol className="team-outcome-list">
@@ -252,6 +270,7 @@ function OutcomesPane({
           })}
         </ol>
       ) : !deliverySummary ? <p className="team-pane__empty">{t('work.team.noResults')}</p> : null}
+      {reviews}
       </div>
     </section>
   );
@@ -501,11 +520,15 @@ function TeamWorkspace({
         aria-label={t('work.team.workspace')}
         data-read-only={readOnly ? 'true' : undefined}
       >
+        <aside className="team-task-sidebar" hidden={mobileWorkspace && !taskManagementOpen}>
+          {taskNavigation}
+        </aside>
+        <div className="team-workspace-center">
         <ProjectConversation
           executionRunning={activeJobs.length > 0}
           canManageTasks={!composing}
-          taskManagementOpen={taskManagementOpen}
-          onManageTasks={onManageTasks}
+          taskManagementOpen={!mobileWorkspace || taskManagementOpen}
+          onManageTasks={() => { if (mobileWorkspace) onManageTasks?.(); }}
           onConfigureRuntime={onConfigureRuntime}
           acceptedMessage={conversationDelivery && conversationDelivery.projectKey === projectKey && !conversationDelivery.intentId
             && (conversationDelivery.contextKey || '').startsWith('message:')
@@ -544,17 +567,18 @@ function TeamWorkspace({
         {!composing ? <ExecutionPane
           blocker={attention?.kind === 'blocker' ? <TaskAttention attention={attention} activeJobs={activeJobs} error={error} jobs={data.worker_jobs || []} projectKey={projectKey} busy={busy} onRetry={readOnly ? undefined : onRetry} t={t} /> : null}
           task={mission}
-          projectScoped={projectAssistant?.schema_version === 'project_assistant.v1'}
-          navigation={taskNavigation}
+          mobile={mobileWorkspace}
           controls={!readOnly && (workspace.capabilities || []).some((item) => item.action === 'cancel_mission')
             ? <TaskRunControls key={mission?.run_id || mission?.id} busy={busy} canCancel onTerminate={onTerminate} t={t} /> : null}
           actors={(workspace.execution_actors || []).filter((actor) => actor.role !== 'orchestrator')}
           reducedMotion={reducedMotion}
-          reviews={<SkillReviewExecutions projectKey={projectKey} runId={mission?.run_id} language={language} />}
           sectionProps={sectionProps('execution')}
           t={t}
         /> : null}
+        </div>
         {!composing ? <OutcomesPane
+          mission={mission}
+          reviews={<SkillReviewExecutions projectKey={projectKey} runId={mission?.run_id} language={language} />}
           approval={attention?.kind === 'approval' ? <TaskAttention
             attention={attention} busy={busy} onConfirmChangeIntent={onConfirmChangeIntent}
             onDecide={readOnly ? undefined : onDecide} onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}

@@ -500,96 +500,33 @@
 .work-workspace-shell .work-dispatch-result { margin: 0.6rem 0 0; color: var(--work-success); font-size: 0.85rem; }
 
 .work-workspace-shell {
-  --work-bg: #f4f7fc;
-  --work-surface: #ffffff;
-  --work-surface-muted: #eef3fb;
-  --work-surface-sunken: #e7edf7;
-  --work-material: #edf2f8;
-  --work-material-deep: #e8eef6;
   --work-highlight: #ffffff;
   --work-shadow: #8090aa;
-  --work-border: #d9e2ef;
-  --work-border-strong: #b7c5d8;
-  --work-text: #102044;
-  --work-text-muted: #5d6b85;
-  --work-accent: #315efb;
-  --work-accent-strong: #2147c8;
-  --work-accent-soft: #e8eeff;
-  --work-success: #157347;
   --work-warning: #8a6200;
   --work-danger: #b13f4a;
   --work-on-accent: #ffffff;
-  --work-focus: #315efb;
-  --work-radius: 12px;
   --work-ease: cubic-bezier(0.23, 1, 0.32, 1);
   --work-motion-press: 140ms;
   --work-motion-reveal: 220ms;
-  --work-led-working: #315efb;
-  --work-led-reviewing: #2147c8;
-  --work-led-fixing: #315efb;
   --work-led-waiting: #6f7f98;
   --work-led-up-next: #a8b3c3;
   --work-led-blocked: #b13f4a;
-  --work-led-completed: #157347;
   --work-led-stopped: #7d899c;
-  --work-shadow-raised:
-    -8px -8px 22px color-mix(in srgb, var(--work-highlight) 88%, transparent),
-    8px 10px 24px color-mix(in srgb, var(--work-shadow) 22%, transparent);
-  --work-shadow-soft:
-    -4px -4px 12px color-mix(in srgb, var(--work-highlight) 82%, transparent),
-    4px 5px 12px color-mix(in srgb, var(--work-shadow) 18%, transparent);
-  --work-shadow-compact:
-    -3px -3px 7px color-mix(in srgb, var(--work-highlight) 74%, transparent),
-    3px 4px 8px color-mix(in srgb, var(--work-shadow) 18%, transparent);
-  --work-shadow-inset:
-    inset 3px 3px 7px color-mix(in srgb, var(--work-shadow) 20%, transparent),
-    inset -3px -3px 7px color-mix(in srgb, var(--work-highlight) 82%, transparent);
   min-width: 0;
   color: var(--work-text);
   background: var(--work-material);
 }
 
 .dark .work-workspace-shell {
-  --work-bg: #0e1420;
-  --work-surface: #151d2b;
-  --work-surface-muted: #202a3b;
-  --work-surface-sunken: #0b111b;
-  --work-material: #182231;
-  --work-material-deep: #141d2b;
   --work-highlight: #3e4c61;
   --work-shadow: #030812;
-  --work-border: #2d3b50;
-  --work-border-strong: #485a73;
-  --work-text: #f2f6ff;
-  --work-text-muted: #a9b5c7;
-  --work-accent: #86a1ff;
-  --work-accent-strong: #b3c2ff;
-  --work-accent-soft: #1b2b59;
-  --work-success: #65c18c;
   --work-warning: #e7bd5f;
   --work-danger: #ef8b93;
   --work-on-accent: #0c1530;
-  --work-focus: #86a1ff;
-  --work-led-working: #86a1ff;
-  --work-led-reviewing: #b3c2ff;
-  --work-led-fixing: #86a1ff;
   --work-led-waiting: #a9b5c7;
   --work-led-up-next: #637086;
   --work-led-blocked: #ef8b93;
-  --work-led-completed: #65c18c;
   --work-led-stopped: #7b8799;
-  --work-shadow-raised:
-    -10px -10px 24px color-mix(in srgb, var(--work-highlight) 38%, transparent),
-    10px 12px 28px color-mix(in srgb, var(--work-shadow) 58%, transparent);
-  --work-shadow-soft:
-    -6px -6px 14px color-mix(in srgb, var(--work-highlight) 32%, transparent),
-    6px 7px 17px color-mix(in srgb, var(--work-shadow) 52%, transparent);
-  --work-shadow-compact:
-    -3px -3px 7px color-mix(in srgb, var(--work-highlight) 28%, transparent),
-    3px 4px 8px color-mix(in srgb, var(--work-shadow) 48%, transparent);
-  --work-shadow-inset:
-    inset 4px 4px 9px color-mix(in srgb, var(--work-shadow) 58%, transparent),
-    inset -4px -4px 9px color-mix(in srgb, var(--work-highlight) 30%, transparent);
 }
 
 .work-workspace-shell .product-work-page {
@@ -860,19 +797,6 @@
 
 .work-workspace-shell .team-mobile-nav {
   display: none;
-}
-
-.work-workspace-shell .team-workspace {
-  display: grid;
-  grid-template-areas: "execution manager outcomes";
-  grid-template-columns: minmax(15rem, 0.82fr) minmax(24rem, 1.35fr) minmax(17rem, 0.95fr);
-  gap: clamp(0.8rem, 1.2vw, 1.25rem);
-  min-width: 0;
-  padding: clamp(0.8rem, 1.25vw, 1.2rem);
-  background: var(--work-material);
-  border: 0;
-  border-radius: 28px;
-  box-shadow: var(--work-shadow-raised);
 }
 
 .work-workspace-shell .team-pane {
@@ -1515,19 +1439,6 @@
 @keyframes work-status-led-breathe {
   0%, 100% { transform: scale(0.92); opacity: 0.72; }
   50% { transform: scale(1.08); opacity: 1; }
-}
-
-.work-workspace-shell .team-workspace {
-  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.3fr) minmax(0, 1fr);
-  height: max(26rem, calc(100dvh - 15rem));
-  min-height: 26rem;
-  gap: 1rem;
-  padding: 1rem;
-  overflow: visible;
-  box-shadow:
-    inset 1px 1px 0 color-mix(in srgb, var(--work-highlight) 54%, transparent),
-    inset -1px -1px 0 color-mix(in srgb, var(--work-shadow) 10%, transparent),
-    var(--work-shadow-raised);
 }
 
 .work-workspace-shell .team-pane {
@@ -2247,13 +2158,6 @@
 }
 
 /* 新拟物材质：统一左上光源，浮起表示容器，下沉表示输入或选中。 */
-.work-workspace-shell .team-workspace {
-  padding: 0;
-  gap: clamp(1.1rem, 1.8vw, 2rem);
-  background: transparent;
-  border-radius: 0;
-  box-shadow: none;
-}
 
 .work-workspace-shell .team-pane {
   background: var(--work-material);

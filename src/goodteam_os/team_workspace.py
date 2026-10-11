@@ -11,6 +11,7 @@ import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlencode
 
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.models import ExecutionRun, ExecutionTask, LedgerEvent
@@ -304,6 +305,7 @@ def build_team_workspace(
             )
             return _merge_task_assistant_session(_build_operator_workspace(
                 queue_item=queue_item,
+                project_root=project_root,
                 task=task,
                 run=run,
                 events=events,
@@ -1874,9 +1876,43 @@ def _operator_execution_details(
     return task, run, events
 
 
+def _operator_execution_evidence_href(
+    project_root: Path | None,
+    queue_item: Mapping[str, object],
+    task: ExecutionTask | None,
+    run: ExecutionRun | None,
+) -> str:
+    """Link only the current queue item's joined execution, without creating evidence.
+
+    Workflow run IDs and queue-only placeholders are not execution records. A
+    missing or inconsistent ledger must remain unlinked rather than opening a
+    different task's workbench or implying that a candidate has been reviewed.
+    """
+    execution_id = _text(queue_item.get("execution_id"))
+    repository = _text(queue_item.get("repository_identity"))
+    if (
+        project_root is None
+        or not _safe_path_segment(execution_id)
+        or task is None
+        or run is None
+        or run.execution_id != execution_id
+        or not _text(task.task_id)
+        or run.task_id != task.task_id
+        or not repository
+        or _text(task.repo).casefold() != repository.casefold()
+    ):
+        return ""
+    issue_number = _integer(_mapping(queue_item.get("metadata")).get("issue_number"))
+    if issue_number and task.issue_number != issue_number:
+        return ""
+    query = urlencode({"project_root": str(project_root.resolve())})
+    return f"/review-workbench/{quote(execution_id, safe='')}?{query}"
+
+
 def _build_operator_workspace(
     *,
     queue_item: Mapping[str, object],
+    project_root: Path | None,
     task: ExecutionTask | None,
     run: ExecutionRun | None,
     events: Sequence[LedgerEvent],
@@ -1947,6 +1983,9 @@ def _build_operator_workspace(
             "id": mission_id,
             "run_id": "",
             "execution_id": execution_id,
+            "execution_evidence_href": _operator_execution_evidence_href(
+                project_root, queue_item, task, run,
+            ),
             "project_key": _text(queue_item.get("project_key")),
             "source": "operator_queue",
             "title": title,

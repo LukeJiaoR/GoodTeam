@@ -1,4 +1,7 @@
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+import json
 
 import pytest
 
@@ -1724,6 +1727,7 @@ def test_operator_queue_keeps_mission_visible_across_post_execution_lifecycle(
         "id": item["id"],
         "run_id": "",
         "execution_id": execution_id,
+        "execution_evidence_href": first["mission"]["execution_evidence_href"],
         "project_key": "GOODTEAM",
         "source": "operator_queue",
         "title": "Manager-centered team interaction",
@@ -1734,6 +1738,10 @@ def test_operator_queue_keeps_mission_visible_across_post_execution_lifecycle(
         "updated_at": first["mission"]["updated_at"],
     }
     assert first["outcome_tasks"][0]["id"] == "task-375"
+    evidence_url = urlsplit(first["mission"]["execution_evidence_href"])
+    assert evidence_url.scheme == evidence_url.netloc == ""
+    assert evidence_url.path == f"/review-workbench/{execution_id}"
+    assert parse_qs(evidence_url.query) == {"project_root": [str(project_root.resolve())]}
     assert first["outcome_tasks"][0]["status"] == expected_status
     assert first["outcome_tasks"][0]["status_reason"] == f"operator_{phase}"
     assert first["outcome_tasks"][0]["acceptance_criteria"] == [
@@ -1782,6 +1790,72 @@ def test_operator_queue_remains_authoritative_when_joined_ledger_is_malformed(tm
     assert projection["mission"]["phase"] == "review_ready"
     assert projection["mission"]["title"] == "Manager-centered team interaction"
     assert projection["execution_actors"][0]["source"] == "operator_queue"
+    assert projection["mission"]["execution_evidence_href"] == ""
+
+
+@pytest.mark.parametrize(
+    ("filename", "field", "value"),
+    [
+        ("run.json", "execution_id", "another-execution"),
+        ("run.json", "task_id", "another-task"),
+        ("task.json", "repo", "Other/Repository"),
+        ("task.json", "repo", None),
+        ("task.json", "issue_number", 999),
+    ],
+)
+def test_operator_evidence_link_rejects_mismatched_ledger(
+    tmp_path: Path, filename: str, field: str, value: object,
+) -> None:
+    project_root, state_dir, _, execution_id = _operator_projection_fixture(tmp_path, "review_ready")
+    path = ExecutionLedger(project_root).executions_root / execution_id / filename
+    payload = json.loads(path.read_text())
+    payload[field] = value
+    path.write_text(json.dumps(payload))
+
+    projection = build_team_workspace(
+        state=None, workflow_active=False, project_root=project_root,
+        project_key="GOODTEAM", operator_state_dir=state_dir,
+    )
+
+    assert projection["mission"]["execution_evidence_href"] == ""
+
+
+def test_operator_evidence_link_requires_project_root_and_existing_ledger(tmp_path: Path) -> None:
+    project_root, state_dir, _, execution_id = _operator_projection_fixture(tmp_path, "executing")
+    for root in (None, tmp_path / "different-project"):
+        projection = build_team_workspace(
+            state=None, workflow_active=False, project_root=root,
+            project_key="GOODTEAM", operator_state_dir=state_dir,
+        )
+        assert projection["mission"]["execution_evidence_href"] == ""
+
+    (ExecutionLedger(project_root).executions_root / execution_id / "run.json").unlink()
+    projection = build_team_workspace(
+        state=None, workflow_active=False, project_root=project_root,
+        project_key="GOODTEAM", operator_state_dir=state_dir,
+    )
+    assert projection["mission"]["execution_evidence_href"] == ""
+
+
+def test_operator_evidence_link_opens_the_existing_workbench_with_encoded_root(tmp_path: Path) -> None:
+    from goodteam_os.web import handle_review_workbench_page_get
+
+    fixture_root = tmp_path / "project root & 中文"
+    fixture_root.mkdir()
+    project_root, state_dir, _, execution_id = _operator_projection_fixture(fixture_root, "review_ready")
+    projection = build_team_workspace(
+        state=None, workflow_active=False, project_root=project_root,
+        project_key="GOODTEAM", operator_state_dir=state_dir,
+    )
+    before = {path: path.read_bytes() for path in project_root.rglob("*") if path.is_file()}
+    link = urlsplit(projection["mission"]["execution_evidence_href"])
+
+    status, html = handle_review_workbench_page_get(link.path, parse_qs(link.query))
+
+    assert status == 200
+    assert execution_id in html
+    assert "Manager-centered team interaction" in html
+    assert {path: path.read_bytes() for path in project_root.rglob("*") if path.is_file()} == before
 
 
 def test_running_execution_without_an_active_operator_queue_is_not_a_mission(tmp_path: Path) -> None:

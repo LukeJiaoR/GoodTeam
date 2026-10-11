@@ -1,4 +1,9 @@
 export const zhCN = {
+  "work.evidence.title": "执行依据",
+  "work.evidence.open": "查看已绑定的执行",
+  "work.evidence.readOnly": "查看执行记录；此链接不代表交付已成功。",
+  "work.evidence.unavailable": "当前任务尚无已绑定的执行依据链接，可查看下方已有交付记录。",
+
   "work.approvalCard.pending": "有一项交付等待你审阅。",
   "work.approvalCard.view": "查看待审交付",
 

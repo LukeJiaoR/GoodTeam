@@ -20,6 +20,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': 'http://127.0.0.1:8788',
+      '/review-workbench': 'http://127.0.0.1:8788',
       '/start': 'http://127.0.0.1:8788',
       '/approve': 'http://127.0.0.1:8788',
       '/artifact': 'http://127.0.0.1:8788',

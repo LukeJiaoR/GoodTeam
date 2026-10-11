@@ -24,15 +24,6 @@
 }
 
 @media (max-width: 1100px) {
-  .work-workspace-shell .team-workspace {
-    grid-template-areas:
-      "manager manager"
-      "execution outcomes";
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 1100px) {
   .work-workspace-shell .team-pane--manager {
     min-height: 28rem;
   }
@@ -108,14 +99,6 @@
 }
 
 @media (max-width: 767px) {
-  .work-workspace-shell .team-workspace {
-    display: block;
-    padding: 0.55rem;
-    border-radius: 20px;
-  }
-}
-
-@media (max-width: 767px) {
   .work-workspace-shell .team-pane {
     min-height: calc(100dvh - 18rem);
     border-radius: 18px;
@@ -157,14 +140,6 @@
 }
 
 @media (max-width: 1100px) and (min-width: 768px) {
-  .work-workspace-shell .team-workspace {
-    grid-template-areas:
-      "manager manager"
-      "execution outcomes";
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    height: auto;
-    min-height: 0;
-  }
 
   .work-workspace-shell .team-pane--manager {
     min-height: 34rem;
@@ -177,10 +152,6 @@
 }
 
 @media (max-width: 767px) {
-  .work-workspace-shell .team-workspace {
-    height: auto;
-    min-height: 0;
-  }
 
   .work-workspace-shell .team-pane {
     min-height: min(42rem, calc(100dvh - 15rem));
@@ -229,16 +200,6 @@
       "facts"
       "selector";
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .work-workspace-shell .team-workspace {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas:
-      "manager manager"
-      "execution outcomes";
-    height: auto;
-    min-height: 0;
-    overflow: visible;
   }
 
   .work-workspace-shell .team-pane--manager {
@@ -323,18 +284,6 @@
     border: 0;
     border-radius: 50%;
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--work-accent) 10%, transparent);
-  }
-
-  .work-workspace-shell .team-workspace {
-    display: block;
-    height: auto;
-    min-height: 0;
-    overflow: visible;
-    padding: 0 0 calc(4.5rem + env(safe-area-inset-bottom));
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
   }
 
   .work-workspace-shell .team-pane {
@@ -553,5 +502,4 @@
     width: 100%;
     margin-bottom: .75rem;
   }
-  .work-workspace-shell .team-workspace { padding-bottom: 0; }
 }
