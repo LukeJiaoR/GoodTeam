@@ -1,0 +1,21 @@
+.product-shell .memory-provenance { border-radius: 14px; box-shadow: 0 1px 3px #20212408; }
+.memory-provenance > header { display: flex; justify-content: space-between; align-items: start; gap: 1rem; }
+.memory-provenance > header h3, .memory-provenance > header p { margin: 0 0 .35rem; }
+.memory-provenance > header p, .memory-provenance__boundary { color: var(--product-text-muted); font-size: 12px; line-height: 1.6; }
+.memory-provenance__status { font-size: 13px; font-weight: 600; }
+.memory-provenance__status[data-superseded='true'] { color: var(--product-text-muted); }
+.memory-provenance__text { margin: 1rem 0; padding: .85rem 1rem; background: var(--product-surface-muted); border-left: 3px solid var(--product-border); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-provenance dl { display: grid; gap: .6rem; }
+.memory-provenance dl > div { display: grid; grid-template-columns: minmax(6rem, .35fr) minmax(0, 1fr); gap: 1rem; font-size: 13px; }
+.memory-provenance dt { color: var(--product-text-muted); }
+.memory-provenance dd { margin: 0; overflow-wrap: anywhere; }
+.memory-provenance details, .memory-provenance > section { margin-top: 1rem; border-top: 1px solid var(--product-border); padding-top: .8rem; }
+.memory-provenance summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.product-shell .knowledge-memory .memory-provenance section button { width: auto; display: inline; padding: .2rem 0; border: 0; color: var(--product-accent-strong); overflow-wrap: anywhere; }
+.memory-provenance button:focus-visible, .memory-provenance summary:focus-visible { outline: 2px solid var(--product-focus); outline-offset: 3px; }
+.memory-provenance__hit-source { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; color: var(--product-text-muted); font-size: 12px; }
+.memory-provenance__hit-source span { overflow-wrap: anywhere; }
+.memory-provenance__notice { color: var(--product-text-muted); font-size: 12px; line-height: 1.6; }
+@media (max-width: 600px) { .memory-provenance > header { flex-wrap: wrap; } .memory-provenance dl > div { grid-template-columns: 1fr; gap: .2rem; } }
+
+.product-shell .knowledge-memory .memory-provenance > header > button { width: auto; display: inline-flex; border: 1px solid var(--product-border); text-align: center; }
