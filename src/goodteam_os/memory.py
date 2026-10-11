@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,6 +13,18 @@ except ImportError:  # pragma: no cover - exercised only without the optional wh
 
 MEMORY_HORIZONS = ("long-term", "mid-term", "short-term")
 IDENTITY_FIELDS = ("timestamp", "role_key", "horizon", "action", "source", "text")
+# Prompt-facing characters are capped independently of WAL size. Valid UTF-8
+# takes at most four bytes per character, so these also bound encoded bytes.
+PICKUP_SUMMARY_CHARS = 600
+PICKUP_SHORT_CHARS = 1600
+PICKUP_EVENT_CHARS = 1600
+PICKUP_RELEVANT_CHARS = 4000
+MEMORY_CONTEXT_REASONS = frozenset({
+    "wal_unreadable", "wal_changed_during_read", "wal_changed_after_capture",
+    "legacy_mixed_after_correction", "legacy_source_unreadable", "legacy_changed_during_read",
+    "legacy_changed_after_capture", "source_unreadable", "pickup_unverifiable",
+    "events_no_longer_active", "retrieval_unavailable",
+})
 COSINE_FLOOR = 0.05  # keep weak/noisy matches out while retaining clear semantic hits
 
 _TOKEN_RE = re.compile(r"[^\W_]+")
@@ -40,6 +53,48 @@ def summarize_markdown(content: str) -> str:
     if bullets:
         parts.append("Signals: " + "; ".join(bullets))
     return " | ".join(parts) if parts else content.strip()[:600]
+
+
+
+def _bounded_context(text: str, limit: int, marker: str = "[Memory context truncated]") -> str:
+    """Hard character/UTF-8 bounds, including the marker, for prompt text."""
+    if len(text) <= limit and len(text.encode("utf-8")) <= limit * 4:
+        return text
+    suffix = "\n" + marker
+    return text[:max(0, limit - len(suffix))] + suffix[:limit]
+
+
+def _pickup_content_digest(packet: dict[str, object]) -> str:
+    content = {key: packet.get(key) for key in ("role_key", "short_term", "summaries", "relevant_events", "event_count", "context_status", "context_reasons")}
+    provenance = packet.get("provenance")
+    content["provenance"] = {key: value for key, value in provenance.items() if key != "content_sha256"} if isinstance(provenance, dict) else provenance
+    return hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _wal_prefix_matches(raw: bytes, count: int, digest: str, size: int | None = None) -> bool:
+    """Check an available append-only checkpoint, including its exact bytes."""
+    if size is not None:
+        prefix = raw[:size]
+        return (len(prefix) == size and sum(bool(line.strip()) for line in prefix.splitlines()) == count
+                and hashlib.sha256(prefix).hexdigest() == digest)
+    # Old indexes have count+digest but no byte length. Preserve blank lines
+    # while finding that record boundary; never reserialize historical JSON.
+    prefix_digest = hashlib.sha256()
+    seen = 0
+    if count == 0 and hashlib.sha256(b"").hexdigest() == digest:
+        return True
+    for line in raw.splitlines(keepends=True):
+        seen += bool(line.strip())
+        prefix_digest.update(line)
+        if seen > count:
+            return False
+        if seen == count and prefix_digest.hexdigest() == digest:
+            return True
+    return False
+
+
+def _sha256_value(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None
 
 
 def tokenize(text: str) -> list[str]:
@@ -392,34 +447,305 @@ class RoleMemoryStore:
 
         return [self._browse_result(event, active_ids=active_ids) for event in selected]
 
+    def _wal_bytes(self, role_key: str) -> bytes:
+        path = self.event_path(role_key)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return b""
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("Memory WAL is not a regular file")
+        return path.read_bytes()
+
+    def _has_wal_history(self, role_key: str) -> bool:
+        """Use old artifacts only as loss evidence, never as fallback context.
+
+        Legacy-only roles may never have had a WAL. A prior nonempty index or
+        generated event section means an empty/missing WAL cannot prove that
+        history (including corrections) is absent. Unreadable evidence also
+        cannot authorize that downgrade.
+        """
+        index_path = self.index_path(role_key)
+        try:
+            if index_path.exists():
+                index = json.loads(index_path.read_text(encoding="utf-8"))
+                integrity = index.get("integrity") if isinstance(index, dict) else None
+                if (not isinstance(integrity, dict) or type(index.get("event_count")) is not int
+                        or index["event_count"] != 0 or type(integrity.get("event_count")) is not int
+                        or integrity["event_count"] != 0
+                        or integrity.get("events_sha256") != hashlib.sha256(b"").hexdigest()):
+                    return True
+            for horizon in MEMORY_HORIZONS:
+                path = self.memory_path(role_key, horizon)
+                if path.exists() and any(line.strip() == "## Memory Events"
+                                         for line in path.read_text(encoding="utf-8").splitlines()):
+                    return True
+        except (OSError, UnicodeError, ValueError):
+            return True
+        return False
+
+    def _wal_checkpoint(self, role_key: str) -> tuple[int, str] | None:
+        try:
+            index = json.loads(self.index_path(role_key).read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            return None
+        integrity = index.get("integrity") if isinstance(index, dict) else None
+        if not isinstance(integrity, dict):
+            return None
+        count, digest = integrity.get("event_count"), integrity.get("events_sha256")
+        if (type(count) is not int or count < 0 or type(index.get("event_count")) is not int
+                or index["event_count"] != count
+                or not _sha256_value(digest)):
+            return None
+        return count, digest
+
+    def _wal_snapshot(self, role_key: str, *, checkpoint: tuple[int, str, int] | None = None) -> tuple[list[dict[str, str]], str, bytes]:
+        raw = self._wal_bytes(role_key)
+        events = [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
+        if not events and self._has_wal_history(role_key):
+            raise ValueError("Memory WAL history is unavailable")
+        for event in events:
+            if (not isinstance(event, dict)
+                    or any(not isinstance(event.get(key), str) for key in IDENTITY_FIELDS)
+                    or slug(event["role_key"]) != slug(role_key)
+                    or event["horizon"] not in MEMORY_HORIZONS or event["action"] != "add"
+                    or not isinstance(event.get("supersedes", ""), str)):
+                raise ValueError("Invalid memory WAL event")
+            for value in event.values():
+                if isinstance(value, str):
+                    value.encode("utf-8")
+        # Available checkpoints detect truncation/rewrites, not an external
+        # rollback of the WAL and every piece of historical evidence together.
+        known = self._wal_checkpoint(role_key)
+        if known is not None and not _wal_prefix_matches(raw, *known):
+            raise ValueError("Memory WAL does not preserve its known history")
+        if checkpoint is not None and not _wal_prefix_matches(raw, *checkpoint):
+            raise ValueError("Memory WAL does not preserve the captured history")
+        return events, hashlib.sha256(raw).hexdigest(), raw
+
+    def _wal_snapshot_matches(self, role_key: str, digest: str) -> bool:
+        raw = self._wal_bytes(role_key)
+        if not raw.strip() and self._has_wal_history(role_key):
+            return False
+        return hashlib.sha256(raw).hexdigest() == digest
+
+    def _empty_pickup(self, role_key: str, reason: str) -> dict[str, object]:
+        return {
+            "role_key": role_key, "event_count": 0, "short_term": "",
+            "summaries": {"long-term": "", "mid-term": ""}, "relevant_events": [],
+            "context_status": "unavailable", "context_reasons": [reason],
+        }
+
     def build_pickup_packet(
         self,
         role_key: str,
         *,
-        max_short_chars: int = 1600,
+        max_short_chars: int = PICKUP_SHORT_CHARS,
         query: str = "",
         top_k: int = 5,
     ) -> dict[str, object]:
-        index = self.read_memory_index(role_key)
-        short_path = self.memory_path(role_key, "short-term")
-        short_content = short_path.read_text(encoding="utf-8") if short_path.is_file() else ""
-        short_content = self._normal_pickup_content(short_content)
-        if len(short_content) > max_short_chars:
-            short_content = short_content[:max_short_chars] + "\n\n[Short-term memory truncated]"
-        horizons = dict(index.get("horizons", {}))
-        packet: dict[str, object] = {
+        """Derive bounded machine context without rewriting mixed human notes.
+
+        Generated text depends on one WAL snapshot. Legacy markdown has no
+        event-level provenance, so any correction makes it unsafe to inject.
+        This is optimistic read validation, not a cross-process transaction.
+        """
+        try:
+            events, digest, wal_bytes = self._wal_snapshot(role_key)
+        except (OSError, UnicodeError, ValueError):
+            return self._empty_pickup(role_key, "wal_unreadable")
+        active = self._normal_retrieval_events(self._active_events(events))
+        has_correction = any(event.get("supersedes", "").strip() for event in events)
+        reasons = ["legacy_mixed_after_correction"] if has_correction else []
+        legacy_sources = {}
+        generated_sources = {}
+        summaries = {}
+        short_content = ""
+        short_limit = min(PICKUP_SHORT_CHARS, max(0, int(max_short_chars)))
+        for horizon in MEMORY_HORIZONS:
+            horizon_events = [event for event in active if event["horizon"] == horizon]
+            # Preserve the existing 12-bullet summary budget and add a hard
+            # UTF-8 cap. These dependency IDs do not claim every fact was used.
+            selected = horizon_events if horizon == "short-term" else horizon_events[:12]
+            generated = "\n".join(f"- {event['text']}" for event in selected)
+            generated = _bounded_context(generated, short_limit if horizon == "short-term" else PICKUP_SUMMARY_CHARS)
+            if horizon != "short-term":
+                generated = _bounded_context(summarize_markdown(generated), PICKUP_SUMMARY_CHARS)
+            generated_sources[horizon] = {
+                "source_kind": "wal_generated", "event_ids": [self._event_id(event) for event in selected],
+                "sha256": hashlib.sha256(generated.encode("utf-8")).hexdigest(),
+            }
+            path = self.memory_path(role_key, horizon)
+            legacy = ""
+            source = {"source_kind": "legacy_mixed", "path": str(path.relative_to(self.project_root)),
+                      "status": "withheld_after_correction" if has_correction else "compatibility_unverified"}
+            try:
+                raw = path.read_bytes() if path.is_file() else b""
+                source["sha256"] = hashlib.sha256(raw).hexdigest()
+                if not has_correction:
+                    content = self._normal_pickup_content(raw.decode("utf-8"))
+                    legacy = content if horizon == "short-term" else summarize_markdown(content)
+            except (OSError, UnicodeError):
+                source["status"] = "unavailable"
+                reasons.append("legacy_source_unreadable")
+            legacy_sources[horizon] = source
+            combined = generated + ("\n\nLegacy notes (unclassified):\n" + legacy if legacy else "")
+            if horizon == "short-term":
+                short_content = _bounded_context(combined, short_limit, "[Short-term memory truncated]")
+            else:
+                summaries[horizon] = _bounded_context(combined, PICKUP_SUMMARY_CHARS)
+        packet = {
             "role_key": role_key,
             "paths": {horizon: str(self.memory_path(role_key, horizon)) for horizon in MEMORY_HORIZONS},
-            "event_count": int(index.get("event_count", 0)),
-            "short_term": short_content,
-            "summaries": {
-                "long-term": dict(horizons.get("long-term", {})).get("summary", ""),
-                "mid-term": dict(horizons.get("mid-term", {})).get("summary", ""),
-            },
+            "event_count": len(events), "short_term": short_content, "summaries": summaries,
+            "context_status": "partial" if reasons else "available",
+            "context_reasons": sorted(set(reasons)),
+            "provenance": {"schema_version": "memory_pickup.v1", "wal_sha256": digest,
+                           "wal_event_count": len(events), "wal_bytes": len(wal_bytes),
+                           "generated_sources": generated_sources, "legacy_sources": legacy_sources},
         }
         if query.strip():
-            packet["relevant_events"] = self.retrieve_relevant_events(role_key, query, top_k=top_k)
+            try:
+                ranked = self._rank_events(role_key, query, query_tokens=tokenize(query), events=active) if active else []
+            except (OSError, UnicodeError, ValueError, TypeError):
+                ranked = []
+                packet["context_status"] = "partial"
+                packet["context_reasons"] = sorted(set(reasons + ["retrieval_unavailable"]))
+            relevant = []
+            remaining = PICKUP_RELEVANT_CHARS
+            for score, event in ranked[:max(0, top_k)]:
+                if remaining <= 0:
+                    break
+                result = self._retrieval_result(score, event)
+                result["text"] = _bounded_context(str(result["text"]), min(PICKUP_EVENT_CHARS, remaining))
+                remaining -= len(result["text"])
+                relevant.append(result)
+            packet["relevant_events"] = relevant
+        try:
+            if not self._wal_snapshot_matches(role_key, digest):
+                return self._empty_pickup(role_key, "wal_changed_during_read")
+            if any(source.get("status") == "compatibility_unverified"
+                   and not self._legacy_source_matches(role_key, horizon, source)
+                   for horizon, source in legacy_sources.items()):
+                return self._empty_pickup(role_key, "legacy_changed_during_read")
+        except (OSError, ValueError):
+            return self._empty_pickup(role_key, "source_unreadable")
+        packet["provenance"]["content_sha256"] = _pickup_content_digest(packet)
         return packet
+
+    def _legacy_source_matches(self, role_key: str, horizon: str, source: dict) -> bool:
+        # Derive the local path; never follow a path supplied by a saved packet.
+        path = self.memory_path(role_key, horizon)
+        raw = path.read_bytes() if path.is_file() else b""
+        return source.get("sha256") == hashlib.sha256(raw).hexdigest()
+
+    def _pickup_provenance_valid(self, role_key: str, packet: dict) -> bool:
+        provenance = packet.get("provenance")
+        if (not isinstance(provenance, dict) or provenance.get("schema_version") != "memory_pickup.v1"
+                or not _sha256_value(provenance.get("wal_sha256"))
+                or type(provenance.get("wal_event_count")) is not int or provenance["wal_event_count"] < 0
+                or type(provenance.get("wal_bytes")) is not int or provenance["wal_bytes"] < 0
+                or provenance.get("content_sha256") != _pickup_content_digest(packet)):
+            return False
+        for key in ("legacy_sources", "generated_sources"):
+            if not isinstance(provenance.get(key), dict) or set(provenance[key]) != set(MEMORY_HORIZONS):
+                return False
+        for horizon in MEMORY_HORIZONS:
+            legacy = provenance["legacy_sources"][horizon]
+            generated = provenance["generated_sources"][horizon]
+            if (not isinstance(legacy, dict) or legacy.get("source_kind") != "legacy_mixed"
+                    or legacy.get("status") not in ("compatibility_unverified", "withheld_after_correction", "unavailable")
+                    or legacy.get("path") != str(self.memory_path(role_key, horizon).relative_to(self.project_root))
+                    or (legacy["status"] != "unavailable" and not _sha256_value(legacy.get("sha256")))):
+                return False
+            if (not isinstance(generated, dict) or generated.get("source_kind") != "wal_generated"
+                    or not _sha256_value(generated.get("sha256")) or not isinstance(generated.get("event_ids"), list)
+                    or any(not isinstance(event_id, str) or re.fullmatch(r"mem:[a-f0-9]{12}", event_id) is None
+                           for event_id in generated["event_ids"])):
+                return False
+        return True
+
+    def validate_pickup_packet(self, packet: object) -> dict[str, object]:
+        """Filter a frozen packet; never retrieve or add a newer fact at use time."""
+        if not isinstance(packet, dict):
+            return self._empty_pickup("", "pickup_unverifiable")
+        role_key = packet.get("role_key")
+        if not isinstance(role_key, str) or not role_key:
+            return self._empty_pickup("", "pickup_unverifiable")
+        provenance = packet.get("provenance")
+        checkpoint = None
+        if (isinstance(provenance, dict) and _sha256_value(provenance.get("wal_sha256"))
+                and type(provenance.get("wal_event_count")) is int and provenance["wal_event_count"] >= 0
+                and type(provenance.get("wal_bytes")) is int and provenance["wal_bytes"] >= 0):
+            checkpoint = (provenance["wal_event_count"], provenance["wal_sha256"], provenance["wal_bytes"])
+        try:
+            events, digest, _ = self._wal_snapshot(role_key, checkpoint=checkpoint)
+        except (OSError, UnicodeError, ValueError):
+            return self._empty_pickup(role_key, "wal_unreadable")
+        active = {self._event_id(event): event
+                  for event in self._normal_retrieval_events(self._active_events(events))}
+        result = dict(packet)
+        original = packet.get("relevant_events", [])
+        relevant = original if isinstance(original, list) else []
+        retained = []
+        remaining = PICKUP_RELEVANT_CHARS
+        for event in relevant:
+            if not isinstance(event, dict) or remaining <= 0:
+                continue
+            event_id = event.get("id")
+            source = active.get(event_id) if isinstance(event_id, str) else None
+            text = event.get("text")
+            if not source or not isinstance(text, str) or not text:
+                continue
+            # An ID alone does not attest a saved body. Accept an exact event
+            # text or the bounded prefix emitted at capture, never substitute
+            # the current event's text into a historical packet.
+            if text != source["text"] and text != _bounded_context(source["text"], len(text)):
+                continue
+            if any(key in event and event[key] != source[key] for key in ("horizon", "source", "timestamp")):
+                continue
+            retained.append({**event, "text": _bounded_context(text, min(PICKUP_EVENT_CHARS, remaining))})
+            remaining -= len(retained[-1]["text"])
+        result["relevant_events"] = retained
+        original_reasons = packet.get("context_reasons", [])
+        reasons = [reason for reason in original_reasons if isinstance(reason, str) and reason in MEMORY_CONTEXT_REASONS] if isinstance(original_reasons, list) else []
+        invalidate = False
+        if not self._pickup_provenance_valid(role_key, packet):
+            reasons.append("pickup_unverifiable")
+            invalidate = True
+        elif provenance.get("wal_sha256") != digest:
+            reasons.append("wal_changed_after_capture")
+            invalidate = True
+        else:
+            try:
+                sources = provenance.get("legacy_sources")
+                if not isinstance(sources, dict) or set(sources) != set(MEMORY_HORIZONS):
+                    raise ValueError("Invalid legacy source manifest")
+                if any(not isinstance(source, dict) for source in sources.values()):
+                    raise ValueError("Invalid legacy source manifest")
+                if any(source.get("status") == "compatibility_unverified"
+                       and not self._legacy_source_matches(role_key, horizon, source)
+                       for horizon, source in sources.items()):
+                    reasons.append("legacy_changed_after_capture")
+                    invalidate = True
+            except (OSError, ValueError):
+                reasons.append("legacy_source_unreadable")
+                invalidate = True
+        if len(retained) != len(relevant):
+            reasons.append("events_no_longer_active")
+            invalidate = True
+        if invalidate:
+            result["summaries"] = {"long-term": "", "mid-term": ""}
+            result["short_term"] = ""
+        result["context_reasons"] = sorted(set(reasons))
+        result["context_status"] = ("unavailable" if packet.get("context_status") == "unavailable"
+                                    else "partial" if reasons else "available")
+        try:
+            if not self._wal_snapshot_matches(role_key, digest):
+                return self._empty_pickup(role_key, "wal_changed_during_read")
+        except (OSError, ValueError):
+            return self._empty_pickup(role_key, "source_unreadable")
+        return result
 
     def rebuild_role_memory(
         self,

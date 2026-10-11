@@ -526,7 +526,7 @@ def test_memory_index_includes_integrity_marker_and_happy_path_skips_rebuild(tmp
     assert called["value"] is False
 
 
-def test_read_and_pickup_rebuild_when_index_is_tampered(tmp_path):
+def test_pickup_ignores_tampered_index_without_rewriting_legacy_notes(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
     store = RoleMemoryStore(project_root)
@@ -544,10 +544,12 @@ def test_read_and_pickup_rebuild_when_index_is_tampered(tmp_path):
 
     packet = store.build_pickup_packet("planner")
     mid_content = store.memory_path("planner", "mid-term").read_text(encoding="utf-8")
-    assert "Frontend auth tasks depend" in mid_content
-    assert "Corrupted" not in mid_content
+    assert mid_content == "# Corrupted\n"
+    assert "Frontend auth tasks depend" in packet["summaries"]["mid-term"]
     assert packet["event_count"] == 1
 
+    # Explicit index maintenance remains a separate operation; pickup reads
+    # no longer destructively rebuild mixed human/generated markdown.
     rebuilt_index = store.read_memory_index("planner")
     expected_sha = hashlib.sha256(store.event_path("planner").read_bytes()).hexdigest()
     assert rebuilt_index["integrity"]["events_sha256"] == expected_sha

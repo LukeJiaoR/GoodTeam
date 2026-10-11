@@ -7399,6 +7399,8 @@ def build_memory_overview(project_root: Path | None, project_key: str) -> dict[s
             },
             "short_term": str(packet.get("short_term", "")),
             "event_count": int(packet.get("event_count", 0)),
+            "context_status": packet.get("context_status", "unavailable"),
+            "context_reasons": packet.get("context_reasons", []),
         }
         latest_job = latest_jobs.get(role_key)
         if latest_job is not None:
