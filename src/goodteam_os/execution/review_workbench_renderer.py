@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from goodteam_os.execution.review_workbench_coverage import acceptance_coverage_lines, check_metadata_lines
+from goodteam_os.execution.review_workbench_coverage import (
+    acceptance_coverage_lines,
+    check_metadata_lines,
+    current_result_details,
+)
 
 
 def render_review_workbench(review: dict[str, Any]) -> str:
@@ -19,11 +23,15 @@ def render_review_workbench(review: dict[str, Any]) -> str:
     replay_graph = dict(review.get("execution_replay_graph", {}))
     lines = [
         f"Execution: {review.get('execution_id', '')}",
-        f"Status: {review.get('status', '')}",
+        "Current result and next step:",
+        *(f"{label}: {value}" for label, value in current_result_details(evidence)),
+        "",
+        "Recorded execution metadata (may describe an earlier candidate):",
+        f"Recorded execution status: {review.get('status', '')}",
         f"Issue: {review.get('source_issue', '') or 'n/a'}",
         f"PR: {pr.get('ref', '') or 'n/a'}",
         f"Branch: {pr.get('branch_name', '') or 'n/a'}",
-        f"Commit: {pr.get('commit_sha', '') or 'n/a'}",
+        f"Recorded PR commit: {pr.get('commit_sha', '') or 'n/a'}",
         f"Task contract: {_contract_label(contract)}",
         f"Contract summary: {contract.get('summary', '') or 'n/a'}",
         f"Runtime policy: {_runtime_policy_label(runtime_policy)}",
@@ -44,7 +52,7 @@ def render_review_workbench(review: dict[str, Any]) -> str:
             f"{review_summary.get('comments', 0)} comments"
         ),
         f"Memory provenance: {_memory_integrity_label(integrity)}",
-        f"Decision: {_decision_label(decision)}",
+        f"Legacy review record: {_decision_label(decision)}",
         "",
         "Supervised correction loop:",
         *_render_correction_loop(evidence.get("correction_loop", {})),
