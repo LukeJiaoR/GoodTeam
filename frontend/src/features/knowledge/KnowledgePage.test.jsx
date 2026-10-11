@@ -13,6 +13,11 @@ function pending() {
   return { promise, resolve };
 }
 
+const emptyCrossResult = {
+  results: [],
+  coverage: { status: 'complete', sources: [{ project_key: 'OTHER', status: 'searched', match_count: 0 }] },
+};
+
 function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -249,7 +254,7 @@ test('loading and partial memory remain distinct from an empty store', async () 
 });
 
 test('cross-query retry reissues the failed search rather than only reloading local events', async () => {
-  const search = vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockRejectedValueOnce(new Error('Cross search unavailable')).mockResolvedValueOnce({ results: [] });
+  const search = vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockRejectedValueOnce(new Error('Cross search unavailable')).mockResolvedValueOnce(emptyCrossResult);
   open('&cross_q=backup&scope=OTHER');
   fireEvent.click(await screen.findByRole('button', { name: 'knowledge.memory.crossSearch' }));
   await screen.findByText('Cross search unavailable');
@@ -281,7 +286,7 @@ test('source remains open after opening with a whitespace-padded query', async (
 
 test('cross search preserves an unresolved source failure and recovery', async () => {
   knowledgeApi.getMemoryEvent.mockRejectedValue(new Error('Source failure must remain recoverable'));
-  vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockResolvedValue({ results: [] });
+  vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockResolvedValue(emptyCrossResult);
   open(`&role=architect&cross_q=backup&scope=OTHER&event=${encodeURIComponent(contract.detail.id)}`);
   await screen.findByText('Source failure must remain recoverable');
   fireEvent.click(screen.getByRole('button', { name: 'knowledge.memory.crossSearch' }));
@@ -294,7 +299,7 @@ test('cross search preserves an unresolved source failure and recovery', async (
 
 test('separate failed source and cross-query reads both remain recoverable', async () => {
   knowledgeApi.getMemoryEvent.mockRejectedValueOnce(new Error('Source read failed')).mockResolvedValue(contract.detail);
-  const search = vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockRejectedValueOnce(new Error('Cross read failed')).mockResolvedValue({ results: [] });
+  const search = vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockRejectedValueOnce(new Error('Cross read failed')).mockResolvedValue(emptyCrossResult);
   open(`&role=architect&cross_q=backup&scope=OTHER&event=${encodeURIComponent(contract.detail.id)}`);
   await screen.findByText('Source read failed');
   fireEvent.click(screen.getByRole('button', { name: 'knowledge.memory.crossSearch' }));
@@ -307,4 +312,138 @@ test('separate failed source and cross-query reads both remain recoverable', asy
   expect(search).toHaveBeenCalledTimes(2);
   expect(screen.queryByText('Source read failed')).not.toBeInTheDocument();
   expect(screen.queryByText('Cross read failed')).not.toBeInTheDocument();
+});
+
+test('mixed cross-project coverage keeps successful hits and identifies the unreadable source', async () => {
+  knowledgeApi.getKnowledgeProjects.mockResolvedValue({ projects: ['OTHER', 'BROKEN'].map(project_key => ({ project: { project_key } })) });
+  vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockResolvedValue({
+    results: [{ id: `OTHER:${contract.detail.id}`, mem_id: contract.detail.id, project_key: 'OTHER', text: 'Usable cross-project memory' }],
+    coverage: { status: 'partial', sources: [
+      { project_key: 'OTHER', status: 'searched', match_count: 1 },
+      { project_key: 'BROKEN', status: 'unavailable', reason: 'memory_unreadable' },
+    ] },
+  });
+  open('&cross_q=backup&scope=OTHER,BROKEN');
+  fireEvent.click(await screen.findByRole('button', { name: 'knowledge.memory.crossSearch' }));
+  const coverage = await screen.findByRole('region', { name: 'knowledge.memory.crossCoverage' });
+  expect(within(coverage).getByText('knowledge.memory.crossCoveragePartial')).toBeVisible();
+  expect(within(coverage).getByText('OTHER').closest('li')).toHaveTextContent('knowledge.memory.crossSourceMatches');
+  expect(within(coverage).getByText('BROKEN').closest('li')).toHaveTextContent('knowledge.memory.crossMemoryUnreadable');
+  expect(screen.getByText('Usable cross-project memory')).toBeVisible();
+  expect(screen.queryByText('knowledge.memory.crossEmpty')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'knowledge.memory.openSource' }));
+  await screen.findByRole('complementary', { name: 'knowledge.memory.inspector' });
+  expect(knowledgeApi.getMemoryEvent).toHaveBeenLastCalledWith('OTHER', contract.detail.id, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+});
+
+test.each([
+  ['unavailable', 'memory_unreadable', 'crossCoverageUnavailable', 'crossMemoryUnreadable'],
+  ['unavailable', 'source_unavailable', 'crossCoverageUnavailable', 'crossSourceUnavailable'],
+  ['not_searched', 'not_requested', 'crossCoverageNotSearched', 'crossSourceNotSearched'],
+])('cross-search %s/%s cannot be mistaken for a healthy empty result', async (status, reason, summary, sourceLabel) => {
+  vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockResolvedValue({ results: [], coverage: { status, sources: [{ project_key: 'OTHER', status, reason }] } });
+  open('&cross_q=backup&scope=OTHER');
+  fireEvent.click(await screen.findByRole('button', { name: 'knowledge.memory.crossSearch' }));
+  const coverage = await screen.findByRole('region', { name: 'knowledge.memory.crossCoverage' });
+  expect(within(coverage).getByText(`knowledge.memory.${summary}`)).toBeVisible();
+  expect(within(coverage).getByText('OTHER').closest('li')).toHaveTextContent(`knowledge.memory.${sourceLabel}`);
+  expect(screen.queryByText('knowledge.memory.crossEmpty')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'knowledge.memory.crossRetry' })).toBeEnabled();
+});
+
+test.each([
+  undefined,
+  { status: 'complete', sources: 'invalid' },
+  { status: 'complete', sources: [{ project_key: 'FOREIGN', status: 'searched', match_count: 0 }] },
+  { status: 'complete', sources: [{ project_key: 'OTHER', status: 'searched', match_count: -1 }] },
+  { status: 'complete', sources: [{ project_key: 'OTHER', status: 'searched' }, { project_key: 'OTHER', status: 'unavailable', reason: 'memory_unreadable' }] },
+])('missing or malformed coverage does not claim the requested source was searched: %j', async (coverage) => {
+  vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockResolvedValue({ results: [], coverage });
+  open('&cross_q=backup&scope=OTHER');
+  fireEvent.click(await screen.findByRole('button', { name: 'knowledge.memory.crossSearch' }));
+  const report = await screen.findByRole('region', { name: 'knowledge.memory.crossCoverage' });
+  expect(within(report).getByText('knowledge.memory.crossCoverageUnknown')).toBeVisible();
+  expect(within(report).getByText('OTHER').closest('li')).toHaveTextContent('knowledge.memory.crossSourceUnknown');
+  expect(within(report).queryByText('FOREIGN')).not.toBeInTheDocument();
+  expect(screen.queryByText('knowledge.memory.crossEmpty')).not.toBeInTheDocument();
+});
+
+test('a complete summary or unrequested sources cannot cover an omitted requested project', async () => {
+  vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockResolvedValue({ results: [], coverage: { status: 'complete', sources: [
+    { project_key: 'OTHER', status: 'searched', match_count: 0 },
+    { project_key: 'FOREIGN', status: 'searched', match_count: 0 },
+  ] } });
+  open('&cross_q=backup&scope=OTHER,MISSING');
+  fireEvent.click(await screen.findByRole('button', { name: 'knowledge.memory.crossSearch' }));
+  const coverage = await screen.findByRole('region', { name: 'knowledge.memory.crossCoverage' });
+  expect(within(coverage).getByText('knowledge.memory.crossCoveragePartial')).toBeVisible();
+  expect(within(coverage).getByText('MISSING').closest('li')).toHaveTextContent('knowledge.memory.crossSourceUnknown');
+  expect(within(coverage).queryByText('FOREIGN')).not.toBeInTheDocument();
+  expect(screen.queryByText('knowledge.memory.crossEmpty')).not.toBeInTheDocument();
+});
+
+test('complete empty coverage requires every normalized selected source to have been searched', async () => {
+  const search = vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockResolvedValue(emptyCrossResult);
+  open('&cross_q=backup&scope=other,%20OTHER%20');
+  fireEvent.click(await screen.findByRole('button', { name: 'knowledge.memory.crossSearch' }));
+  await screen.findByText('knowledge.memory.crossEmpty');
+  const coverage = screen.getByRole('region', { name: 'knowledge.memory.crossCoverage' });
+  expect(within(coverage).getAllByRole('listitem')).toHaveLength(1);
+  expect(within(coverage).getByText('knowledge.memory.crossCoverageComplete')).toBeVisible();
+  expect(search).toHaveBeenCalledWith('architect', 'backup', ['OTHER'], expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(screen.getByRole('checkbox', { name: 'OTHER' })).toBeChecked();
+});
+
+test('a failed refresh labels retained complete coverage as a previous attempt and never claims current empty results', async () => {
+  vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockResolvedValueOnce(emptyCrossResult).mockRejectedValueOnce(new Error('Latest search failed'));
+  open('&cross_q=backup&scope=OTHER');
+  fireEvent.click(await screen.findByRole('button', { name: 'knowledge.memory.crossSearch' }));
+  await screen.findByText('knowledge.memory.crossEmpty');
+  fireEvent.click(screen.getByRole('button', { name: 'knowledge.memory.crossSearch' }));
+  await screen.findByText('Latest search failed');
+  const coverage = screen.getByRole('region', { name: 'knowledge.memory.crossCoverage' });
+  expect(within(coverage).getByText('knowledge.memory.crossPreviousAttempt')).toBeVisible();
+  expect(within(coverage).getByText('knowledge.memory.crossCoverageComplete')).toBeVisible();
+  expect(screen.queryByText('knowledge.memory.crossEmpty')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'product.actions.retry' })).toBeEnabled();
+});
+
+test('retry preserves partial results, queries, scope and source selection until a fresh response arrives', async () => {
+  let rejectRetry;
+  const retry = new Promise((_resolve, reject) => { rejectRetry = reject; });
+  const partial = {
+    results: [{ id: `OTHER:${contract.detail.id}`, mem_id: contract.detail.id, project_key: 'OTHER', text: 'Previous successful source' }],
+    coverage: { status: 'partial', sources: [{ project_key: 'OTHER', status: 'searched', match_count: 1 }] },
+  };
+  const search = vi.spyOn(knowledgeApi, 'getCrossProjectMemory').mockResolvedValueOnce(partial).mockReturnValueOnce(retry).mockResolvedValueOnce({
+    results: [], coverage: { status: 'complete', sources: [
+      { project_key: 'OTHER', status: 'searched', match_count: 0 },
+      { project_key: 'MISSING', status: 'searched', match_count: 0 },
+    ] },
+  });
+  open('&role=architect&cross_q=backup&scope=OTHER,MISSING');
+  fireEvent.click(await screen.findByRole('button', { name: 'knowledge.memory.crossSearch' }));
+  await screen.findByText('Previous successful source');
+  fireEvent.change(screen.getByRole('searchbox', { name: 'knowledge.memory.search' }), { target: { value: 'Keep this draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'knowledge.memory.openSource' }));
+  await screen.findByRole('complementary', { name: 'knowledge.memory.inspector' });
+  fireEvent.click(screen.getByRole('button', { name: 'knowledge.memory.crossRetry' }));
+  expect(screen.getByText('Previous successful source')).toBeVisible();
+  expect(screen.getByText('knowledge.memory.crossPreviousAttempt')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'knowledge.memory.crossRetry' })).toBeDisabled();
+  expect(screen.getByRole('searchbox', { name: 'knowledge.memory.search' })).toHaveValue('Keep this draft');
+  expect(screen.getByRole('searchbox', { name: 'knowledge.memory.crossQuery' })).toHaveValue('backup');
+  expect(screen.getByRole('checkbox', { name: 'OTHER' })).toBeChecked();
+  expect(screen.getByRole('complementary', { name: 'knowledge.memory.inspector' })).toBeVisible();
+  await act(async () => rejectRetry(new Error('Retry read failed')));
+  await screen.findByText('Retry read failed');
+  expect(screen.getByText('Previous successful source')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'knowledge.memory.crossRetry' }));
+  await screen.findByText('knowledge.memory.crossEmpty');
+  expect(screen.queryByText('Previous successful source')).not.toBeInTheDocument();
+  expect(screen.queryByText('Retry read failed')).not.toBeInTheDocument();
+  expect(screen.getByRole('complementary', { name: 'knowledge.memory.inspector' })).toBeVisible();
+  expect(search).toHaveBeenCalledTimes(3);
+  search.mock.calls.forEach(call => expect(call.slice(0, 3)).toEqual(['architect', 'backup', ['OTHER', 'MISSING']]));
+  expect(knowledgeApi.getMemoryEvent).toHaveBeenCalledTimes(1);
 });
