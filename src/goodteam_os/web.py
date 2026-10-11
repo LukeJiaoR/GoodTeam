@@ -141,7 +141,7 @@ from goodteam_os.workflow_table import (
     workflow_execution_plan_v2,
 )
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, WorkerJobStore, discover_installed_agents
-from goodteam_os.cross_project_memory import retrieve as retrieve_cross_project_memory
+from goodteam_os.cross_project_memory import retrieve_report as retrieve_cross_project_memory
 from goodteam_os.workflow_mutations import (
     WorkflowBusyError, begin_transition, finish_transition, interrupt_transition,
     recover_transition, replay_approval, serialized_workflow, workflow_guard,
@@ -7851,14 +7851,14 @@ def serve(
                         limit = int(query.get("k", ["5"])[0])
                     except ValueError:
                         limit = 5
-                    results = retrieve_cross_project_memory(
+                    report = retrieve_cross_project_memory(
                         workspace,
                         role,
                         memory_query,
                         scope=scope,
                         k=limit,
                     )
-                    self._send_json(200, {"results": results})
+                    self._send_json(200, report)
                 except Exception as exc:
                     self._send_api_error(exc)
                 return

@@ -2,7 +2,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 
-from goodteam_os.cross_project_memory import retrieve
+from goodteam_os.cross_project_memory import retrieve, retrieve_report
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.web import serve
 
@@ -160,3 +160,111 @@ def test_api_memory_cross_400s_on_missing_required_params(tmp_path, monkeypatch)
 
     handler = capture_get_handler(tmp_path, monkeypatch)("/api/memory/cross?role=implementation&scope=A")
     assert 400 in handler.responses
+
+
+def test_report_distinguishes_empty_unreadable_and_unresolved_sources(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    empty, corrupt, healthy = (tmp_path / name for name in ("empty", "corrupt", "healthy"))
+    for key, root in (("EMPTY", empty), ("CORRUPT", corrupt), ("HEALTHY", healthy)):
+        write_project_config(workspace, key, root)
+    hit = seed_memory(healthy, "known routing fact")
+    seed_memory(corrupt, "owned fixture before corruption")
+    corrupt_wal = RoleMemoryStore(corrupt).event_path("implementation")
+    corrupt_wal.parent.mkdir(parents=True, exist_ok=True)
+    corrupt_wal.write_text("private malformed fixture /private/path secret-value\n")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    report = retrieve_report(workspace, "implementation", "routing", scope=["EMPTY", "CORRUPT", "MISSING", "HEALTHY"])
+
+    assert report["coverage"] == {"status": "partial", "sources": [
+        {"project_key": "EMPTY", "status": "searched", "match_count": 0},
+        {"project_key": "CORRUPT", "status": "unavailable", "reason": "memory_unreadable"},
+        {"project_key": "MISSING", "status": "unavailable", "reason": "source_unavailable"},
+        {"project_key": "HEALTHY", "status": "searched", "match_count": 1},
+    ]}
+    assert [result["id"] for result in report["results"]] == [f"HEALTHY:{hit}"]
+    assert "private" not in json.dumps(report["coverage"])
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+def test_report_complete_empty_and_unavailable_are_different(tmp_path):
+    write_project_config(tmp_path, "EMPTY", tmp_path / "empty")
+    empty = retrieve_report(tmp_path, "implementation", "fact", scope=["EMPTY"])
+    unavailable = retrieve_report(tmp_path, "implementation", "fact", scope=["MISSING"])
+    assert empty["results"] == unavailable["results"] == []
+    assert empty["coverage"]["status"] == "complete"
+    assert unavailable["coverage"]["status"] == "unavailable"
+    assert not (tmp_path / "empty/.goodteam").exists()
+
+
+def test_report_normalizes_duplicate_scope_without_duplicate_results(tmp_path):
+    root = tmp_path / "alpha"
+    write_project_config(tmp_path, "ALPHA", root)
+    seed_memory(root, "routing fact")
+    report = retrieve_report(tmp_path, "implementation", "routing", scope=["alpha", "ALPHA", " alpha "])
+    assert len(report["results"]) == 1
+    assert report["coverage"] == {"status": "complete", "sources": [
+        {"project_key": "ALPHA", "status": "searched", "match_count": 1},
+    ]}
+
+
+def test_report_does_not_claim_zero_limit_or_blank_query_were_searched(tmp_path):
+    for query, limit in (("fact", 0), ("fact", -1), ("", 5)):
+        report = retrieve_report(tmp_path, "implementation", query, scope=["MISSING"], k=limit)
+        assert report == {"results": [], "coverage": {"status": "not_searched", "sources": [
+            {"project_key": "MISSING", "status": "not_searched", "reason": "not_requested"},
+        ]}}
+
+
+def test_report_does_not_read_relabelled_config(tmp_path, monkeypatch):
+    config = write_project_config(tmp_path, "B", tmp_path / "b")
+    seed_memory(tmp_path / "b", "private fact from another project")
+    monkeypatch.setattr("goodteam_os.cross_project_memory._project_config_for_key", lambda *_: config)
+    report = retrieve_report(tmp_path, "implementation", "fact", scope=["A"])
+    assert report == {"results": [], "coverage": {"status": "unavailable", "sources": [
+        {"project_key": "A", "status": "unavailable", "reason": "source_unavailable"},
+    ]}}
+
+
+def test_report_unavailable_config_does_not_reveal_exceptions(tmp_path):
+    root = tmp_path / "gone"
+    config = write_project_config(tmp_path, "GONE", root)
+    (root / "backend").rmdir()
+    (root / "frontend").rmdir()
+    unavailable = retrieve_report(tmp_path, "implementation", "fact", scope=["GONE"])
+    config.write_text("not: [valid yaml private-value")
+    unreadable = retrieve_report(tmp_path, "implementation", "fact", scope=["GONE"])
+    config.unlink()
+    missing = retrieve_report(tmp_path, "implementation", "fact", scope=["GONE"])
+    assert unavailable == unreadable == missing
+    assert unavailable["coverage"]["sources"][0]["reason"] == "source_unavailable"
+
+
+def test_cross_memory_http_partial_retry_stays_read_only(tmp_path):
+    from workflow_http_helpers import RecoveryServer
+
+    server = RecoveryServer(tmp_path)
+    workspace = tmp_path / "workspace"
+    healthy, corrupt = tmp_path / "healthy", tmp_path / "corrupt"
+    write_project_config(workspace, "HEALTHY", healthy)
+    write_project_config(workspace, "CORRUPT", corrupt)
+    seed_memory(healthy, "known routing fact")
+    seed_memory(corrupt, "owned fixture before corruption")
+    wal = RoleMemoryStore(corrupt).event_path("implementation")
+    wal.parent.mkdir(parents=True, exist_ok=True)
+    wal.write_text("malformed owned fixture\n")
+    before = {path: path.read_bytes() for root in (healthy, corrupt) for path in root.rglob("*") if path.is_file()}
+    try:
+        server.start()
+        path = "/api/memory/cross?role=implementation&q=routing&scope=HEALTHY,CORRUPT,MISSING"
+        status, first = server.request(path)
+        retry_status, retry = server.request(path)
+        assert status == retry_status == 200
+        assert first == retry
+        assert first["coverage"]["status"] == "partial"
+        assert len(first["results"]) == 1
+        assert [source["status"] for source in first["coverage"]["sources"]] == ["searched", "unavailable", "unavailable"]
+        assert {path: path.read_bytes() for root in (healthy, corrupt) for path in root.rglob("*") if path.is_file()} == before
+    finally:
+        server.stop()

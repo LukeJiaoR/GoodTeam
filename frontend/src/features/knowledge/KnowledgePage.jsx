@@ -28,6 +28,58 @@ function artifactEntries(data) {
   return Object.entries(artifacts);
 }
 
+function normalizeScope(value) {
+  return [...new Set(value.split(',').map(key => key.trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').toUpperCase()).filter(Boolean))];
+}
+
+function crossCoverageForScope(coverage, scope) {
+  const valid = ['complete', 'partial', 'unavailable', 'not_searched'].includes(coverage?.status)
+    && Array.isArray(coverage.sources);
+  const sources = scope.map(projectKey => {
+    const matches = valid ? coverage.sources.filter(source => source?.project_key === projectKey) : [];
+    const source = matches.length === 1 ? matches[0] : null;
+    if (source?.status === 'searched' && source.reason == null
+        && (source.match_count == null || (Number.isInteger(source.match_count) && source.match_count >= 0))) {
+      return { project_key: projectKey, status: 'searched', match_count: source.match_count };
+    }
+    if (source?.status === 'unavailable' && ['source_unavailable', 'memory_unreadable'].includes(source.reason)) {
+      return { project_key: projectKey, status: 'unavailable', reason: source.reason };
+    }
+    if (source?.status === 'not_searched' && source.reason === 'not_requested') {
+      return { project_key: projectKey, status: 'not_searched' };
+    }
+    return { project_key: projectKey, status: 'unknown' };
+  });
+  const searched = sources.filter(source => source.status === 'searched').length;
+  let status = 'unknown';
+  if (sources.length && searched === sources.length && coverage?.status === 'complete') status = 'complete';
+  else if (searched && searched < sources.length) status = 'partial';
+  else if (sources.length && sources.every(source => source.status === 'unavailable')) status = 'unavailable';
+  else if (sources.length && sources.every(source => source.status === 'not_searched')) status = 'not_searched';
+  return { status, sources };
+}
+
+function CrossSearchCoverage({ coverage, busy, retained, onRetry, t }) {
+  const summary = {
+    complete: 'crossCoverageComplete', partial: 'crossCoveragePartial', unavailable: 'crossCoverageUnavailable',
+    not_searched: 'crossCoverageNotSearched', unknown: 'crossCoverageUnknown',
+  };
+  const sourceLabel = source => {
+    if (source.status === 'searched') return source.match_count == null
+      ? t('knowledge.memory.crossSourceSearched') : t('knowledge.memory.crossSourceMatches', { count: source.match_count });
+    if (source.status === 'unavailable') return t(`knowledge.memory.${source.reason === 'memory_unreadable' ? 'crossMemoryUnreadable' : 'crossSourceUnavailable'}`);
+    return t(`knowledge.memory.${source.status === 'not_searched' ? 'crossSourceNotSearched' : 'crossSourceUnknown'}`);
+  };
+  return (
+    <section className="memory-provenance__notice" aria-label={t('knowledge.memory.crossCoverage')}>
+      {retained ? <p role="status">{t('knowledge.memory.crossPreviousAttempt')}</p> : null}
+      <p role="status">{t(`knowledge.memory.${summary[coverage.status]}`)}</p>
+      <ul>{coverage.sources.map(source => <li key={source.project_key}><strong>{source.project_key}</strong>: {sourceLabel(source)}</li>)}</ul>
+      {coverage.status !== 'complete' ? <button type="button" className="product-button product-button--secondary" disabled={busy} onClick={onRetry}>{t('knowledge.memory.crossRetry')}</button> : null}
+    </section>
+  );
+}
+
 function OverviewView({ home, language, overview, t }) {
   const readiness = home?.readiness || {};
   const facts = home?.facts || {};
@@ -68,7 +120,7 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   const draftQuery = queryDraft.base === query ? queryDraft.text : query;
   const eventId = search.get('event') || '';
   const crossQuery = search.get('cross_q') || '';
-  const scope = (search.get('scope') || '').split(',').filter(Boolean);
+  const scope = normalizeScope(search.get('scope') || '');
   const eventProject = search.get('event_project') || projectKey;
   const sourceAllowed = eventProject === projectKey || (scope.includes(eventProject) && projects.includes(eventProject));
   const validEvent = isMemoryEventId(eventId);
@@ -166,16 +218,16 @@ function MemoryView({ projectKey, search, setSearch, t }) {
     crossRequest.current?.controller.abort();
     const request = { key: crossKey, controller: new AbortController() };
     crossRequest.current = request;
-    setCrossResponse({ key: crossKey, status: 'loading', results: [], signal: request.controller.signal });
+    setCrossResponse({ ...currentCross, key: crossKey, status: 'loading', results: crossResults, signal: request.controller.signal });
     setReadErrors(current => ({ ...current, cross: null }));
     try {
       const payload = await knowledgeApi.getCrossProjectMemory(selected, crossQuery, scope, { signal: request.controller.signal });
       if (!request.controller.signal.aborted && crossRequest.current === request) {
-        setCrossResponse({ key: crossKey, status: 'complete', results: payload.results || [] });
+        setCrossResponse({ key: crossKey, status: 'complete', results: payload.results || [], coverage: crossCoverageForScope(payload.coverage, scope) });
       }
     } catch (caught) {
       if (!request.controller.signal.aborted && crossRequest.current === request) {
-        setCrossResponse({ key: crossKey, status: 'error', results: [] });
+        setCrossResponse({ ...currentCross, key: crossKey, status: 'error', results: crossResults });
         setReadErrors(current => ({ ...current, cross: { key: crossKey, value: caught, signal: request.controller.signal } }));
       }
     }
@@ -206,7 +258,17 @@ function MemoryView({ projectKey, search, setSearch, t }) {
         {eventId && (!validEvent || !sourceAllowed) ? <p role="status">{t('knowledge.memory.sourceUnavailable')} <button type="button" onClick={closeSource}>{t('knowledge.memory.closeSource')}</button></p> : null}
         {eventId && validEvent && sourceAllowed && !eventDetail && !visibleError ? <p role="status">{t('product.states.loading')}</p> : null}
         {eventDetail ? <MemoryEventInspector elementRef={inspectorRef} event={eventDetail} projectKey={eventProject} onOpenRelated={id => openEvent(id, eventProject)} onClose={closeSource} t={t} /> : null}
-        <form className="knowledge-cross-memory" onSubmit={runCrossSearch}><h2>{t('knowledge.memory.crossTitle')}</h2><p>{t('knowledge.memory.crossDescription')}</p><p className="memory-provenance__notice">{t('knowledge.memory.retrievalBoundary')}</p><fieldset><legend>{t('knowledge.memory.scope')}</legend>{projects.filter((key) => key !== projectKey).map((key) => <label key={key}><input checked={scope.includes(key)} onChange={() => toggleScope(key)} type="checkbox" />{key}</label>)}</fieldset><label><span>{t('knowledge.memory.crossQuery')}</span><input required type="search" value={crossQuery} onChange={(event) => updateSearch({ cross_q: event.target.value })} /></label>{crossQuery.trim() && !scope.length ? <p className="knowledge-scope-hint" id="knowledge-cross-scope-hint">{t('knowledge.memory.scopeHint')}</p> : null}<button className="product-button" aria-describedby={crossQuery.trim() && !scope.length ? 'knowledge-cross-scope-hint' : undefined} disabled={!selected || !crossQuery.trim() || !scope.length || crossBusy} type="submit">{crossBusy ? t('product.states.loading') : t('knowledge.memory.crossSearch')}</button>{crossResults.length ? <ol>{crossResults.map((result, index) => <li key={result.id || index}><strong>{result.project_key || result.project || '—'}</strong><p>{result.text || result.summary || result.content}</p><div className="memory-provenance__hit-source"><span>{result.source || t('knowledge.memory.unknown')}</span>{result.timestamp ? <span>{result.timestamp}</span> : null}{isMemoryEventId(result.mem_id) && result.id === `${result.project_key}:${result.mem_id}` && scope.includes(result.project_key) && projects.includes(result.project_key) ? <button type="button" className="product-button product-button--secondary" onClick={click => openEvent(result.mem_id, result.project_key, click.currentTarget)}>{t('knowledge.memory.openSource')}</button> : <span>{t('knowledge.memory.sourceUnavailable')}</span>}</div></li>)}</ol> : crossSearched ? <p className="product-empty-copy">{t('knowledge.memory.crossEmpty')}</p> : null}</form>
+        <form className="knowledge-cross-memory" onSubmit={runCrossSearch}>
+          <h2>{t('knowledge.memory.crossTitle')}</h2><p>{t('knowledge.memory.crossDescription')}</p>
+          <p className="memory-provenance__notice">{t('knowledge.memory.retrievalBoundary')}</p>
+          <fieldset><legend>{t('knowledge.memory.scope')}</legend>{projects.filter((key) => key !== projectKey).map((key) => <label key={key}><input checked={scope.includes(key)} onChange={() => toggleScope(key)} type="checkbox" />{key}</label>)}</fieldset>
+          <label><span>{t('knowledge.memory.crossQuery')}</span><input required type="search" value={crossQuery} onChange={(event) => updateSearch({ cross_q: event.target.value })} /></label>
+          {crossQuery.trim() && !scope.length ? <p className="knowledge-scope-hint" id="knowledge-cross-scope-hint">{t('knowledge.memory.scopeHint')}</p> : null}
+          <button className="product-button" aria-describedby={crossQuery.trim() && !scope.length ? 'knowledge-cross-scope-hint' : undefined} disabled={!selected || !crossQuery.trim() || !scope.length || crossBusy} type="submit">{crossBusy ? t('product.states.loading') : t('knowledge.memory.crossSearch')}</button>
+          {currentCross?.coverage ? <CrossSearchCoverage coverage={currentCross.coverage} busy={crossBusy} retained={!crossSearched} onRetry={runCrossSearch} t={t} /> : null}
+          {crossResults.length ? <ol>{crossResults.map((result, index) => <li key={result.id || index}><strong>{result.project_key || result.project || '—'}</strong><p>{result.text || result.summary || result.content}</p><div className="memory-provenance__hit-source"><span>{result.source || t('knowledge.memory.unknown')}</span>{result.timestamp ? <span>{result.timestamp}</span> : null}{isMemoryEventId(result.mem_id) && result.id === `${result.project_key}:${result.mem_id}` && scope.includes(result.project_key) && projects.includes(result.project_key) ? <button type="button" className="product-button product-button--secondary" onClick={click => openEvent(result.mem_id, result.project_key, click.currentTarget)}>{t('knowledge.memory.openSource')}</button> : <span>{t('knowledge.memory.sourceUnavailable')}</span>}</div></li>)}</ol>
+            : crossSearched && currentCross.coverage.status === 'complete' ? <p className="product-empty-copy">{t('knowledge.memory.crossEmpty')}</p> : null}
+        </form>
       </section>
     </div>
   );

@@ -14,34 +14,74 @@ def retrieve(
     scope: list[str],
     k: int = 5,
 ) -> list[dict[str, object]]:
+    """Compatibility list API; callers needing completeness use retrieve_report."""
+    return retrieve_report(workspace, role_key, query, scope=scope, k=k)["results"]
+
+
+def retrieve_report(
+    workspace: Path,
+    role_key: str,
+    query: str,
+    *,
+    scope: list[str],
+    k: int = 5,
+) -> dict[str, object]:
+    """Read the explicit scope without disguising unreadable sources as no hits.
+
+    Coverage concerns this bounded retrieval only, not all project context or
+    whether a Worker used any result. Reasons never include source exceptions,
+    private paths, or information about projects outside the requested scope.
+    """
     if not scope:
         raise ValueError("scope is required.")
 
     limit = max(0, int(k))
-    if limit == 0:
-        return []
-
     hits: list[dict[str, object]] = []
+    sources: list[dict[str, object]] = []
+    seen: set[str] = set()
     for requested_key in scope:
-        project_config = _project_config_for_key(workspace, requested_key)
-        if project_config is None:
+        try:
+            project_key = normalize_project_key(requested_key)
+        except ValueError:
+            project_key = requested_key
+        if project_key in seen:
+            continue
+        seen.add(project_key)
+        source: dict[str, object] = {"project_key": project_key}
+        sources.append(source)
+        if limit == 0 or not query.strip():
+            source.update(status="not_searched", reason="not_requested")
             continue
 
-        runtime_root = _runtime_root_for_config(project_config)
+        # Unknown, unreadable and changed configurations deliberately share one
+        # safe category; this endpoint does not enumerate project existence.
+        source.update(status="unavailable", reason="source_unavailable")
+        try:
+            project_config = _project_config_for_key(workspace, project_key)
+            if project_config is None:
+                continue
+            target = load_project_target(project_config)
+            if normalize_project_key(str(target.get("key", ""))) != project_key:
+                continue
+            runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+        except Exception:
+            continue
+
         if runtime_root is None:
             continue
 
         try:
-            target = load_project_target(project_config)
-            project_key = normalize_project_key(str(target.get("key", requested_key)))
             results = RoleMemoryStore(runtime_root).retrieve_relevant_events(
                 role_key,
                 query,
                 top_k=limit,
             )
         except Exception:
+            source["reason"] = "memory_unreadable"
             continue
 
+        source.update(status="searched", match_count=len(results))
+        source.pop("reason", None)
         for result in results:
             mem_id = str(result.get("id", ""))
             if not mem_id:
@@ -52,7 +92,14 @@ def retrieve(
             tagged["project_key"] = project_key
             hits.append(tagged)
 
-    return sorted(hits, key=lambda item: float(item.get("score", 0.0)), reverse=True)[:limit]
+    searched = sum(source["status"] == "searched" for source in sources)
+    status = ("complete" if searched == len(sources) else "partial" if searched
+              else "not_searched" if all(source["status"] == "not_searched" for source in sources)
+              else "unavailable")
+    return {
+        "results": sorted(hits, key=lambda item: float(item.get("score", 0.0)), reverse=True)[:limit],
+        "coverage": {"status": status, "sources": sources},
+    }
 
 
 def _project_config_for_key(workspace: Path, project_key: str) -> Path | None:
@@ -74,11 +121,3 @@ def _project_config_for_key(workspace: Path, project_key: str) -> Path | None:
         if target_key == key:
             return config_path
     return None
-
-
-def _runtime_root_for_config(config_path: Path) -> Path | None:
-    try:
-        target = load_project_target(config_path)
-        return resolve_project_runtime_root(dict(target.get("repos", {})))
-    except Exception:
-        return None
