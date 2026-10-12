@@ -29,7 +29,7 @@ vi.mock('@xyflow/react', async () => {
     useOnViewportChange: () => {},
   };
 });
-import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, expect, test, vi } from 'vitest';
 import { translate } from '../../i18n';
 import WorkPage from './WorkPage';
@@ -1349,4 +1349,156 @@ test('ignores a late retry conflict after navigating to another run and returnin
   fireEvent.change(screen.getByRole('combobox', { name: 'Select run' }), { target: { value: 'run-active' } });
   expect(await screen.findByRole('button', { name: 'Retry failed stage' })).toBeEnabled();
   expect(mocks.retryRun).toHaveBeenCalledTimes(1);
+});
+
+test.each(['replacement', 'completion'])('reconciles a selected task into history after %s without losing its draft', async (change) => {
+  const initial = projectedWorkData();
+  const historical = projectedWorkData();
+  historical.team_workspace.mission = { ...historical.team_workspace.mission, status: 'completed', read_only: true };
+  historical.team_workspace.execution_actors = [];
+  historical.team_workspace.outcome_tasks = [{
+    id: 'completed-result', objective: 'Original task completed result', owner: 'implementation',
+    status: 'completed', dependencies: [], supporting_refs: [],
+  }];
+  const replacement = projectedWorkData({
+    active_run: { run_id: 'run-new' }, state: { run_id: 'run-new', idea: 'Another task' },
+  });
+  replacement.team_workspace.mission = { ...replacement.team_workspace.mission, run_id: 'run-new', id: 'run-new', title: 'Another task' };
+  if (change === 'completion') {
+    replacement.active_run = false;
+    replacement.state = initial.state;
+    replacement.team_workspace.mission = { ...initial.team_workspace.mission, status: 'completed' };
+  }
+  mocks.useProjectState.mockReturnValue({ data: initial, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValueOnce({ runs: [{ run_id: 'run-active', status: 'active' }] })
+    .mockResolvedValue({ runs: [
+      { run_id: 'run-active', status: 'archived', idea: 'Original task' },
+      { run_id: 'run-new', status: 'active', idea: 'Another task' },
+    ] });
+  mocks.getProjectRun.mockResolvedValue(historical);
+  const view = renderWorkPage('/projects/DEMO/work/runs/run-active');
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalledTimes(1));
+  const draft = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(draft, { target: { value: 'Keep this unsent context' } });
+  mocks.useProjectState.mockReturnValue({ data: replacement, error: null, refresh: vi.fn(), status: 'ready' });
+  view.rerender(workPageElement('/projects/DEMO/work/runs/run-active'));
+
+  expect(await screen.findByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
+  expect(mocks.getProjectRun).toHaveBeenCalledWith('DEMO', 'run-active', expect.any(Object));
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/runs/run-active');
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(draft);
+  expect(draft).toHaveValue('Keep this unsent context');
+  expect(screen.getAllByText('Original task completed result').length).toBeGreaterThan(0);
+  expect(mocks.sendTaskAssistantMessage).not.toHaveBeenCalled();
+  expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
+  expect(mocks.retryRun).not.toHaveBeenCalled();
+  expect(mocks.terminateRun).not.toHaveBeenCalled();
+});
+
+test('a late list for the previous current run cannot undo the selected task history', async () => {
+  let resolveOld;
+  const pending = new Promise((resolve) => { resolveOld = resolve; });
+  const initial = projectedWorkData();
+  const completed = projectedWorkData({ active_run: false });
+  completed.team_workspace.mission = { ...completed.team_workspace.mission, status: 'completed', read_only: true };
+  mocks.useProjectState.mockReturnValue({ data: initial, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockReturnValueOnce(pending).mockResolvedValue({
+    runs: [{ run_id: 'run-active', status: 'complete' }],
+  });
+  mocks.getProjectRun.mockResolvedValue(completed);
+  const view = renderWorkPage();
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalledTimes(1));
+  mocks.useProjectState.mockReturnValue({ data: completed, error: null, refresh: vi.fn(), status: 'ready' });
+  view.rerender(workPageElement());
+  expect(await screen.findByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
+  await act(async () => { resolveOld({ runs: [{ run_id: 'run-active', status: 'active' }] }); await pending; });
+  expect(screen.getByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
+  expect(mocks.getProjectRuns).toHaveBeenCalledTimes(2);
+});
+
+test('ordinary state updates for the same current run do not repeatedly fetch history', async () => {
+  mocks.useProjectState.mockReturnValue({ data: projectedWorkData(), error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const view = renderWorkPage();
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalledTimes(1));
+  for (let index = 0; index < 3; index += 1) {
+    const data = projectedWorkData();
+    data.team_workspace.mission.updated_at = `2026-10-12T01:00:0${index}Z`;
+    mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+    view.rerender(workPageElement());
+  }
+  await act(async () => { await Promise.resolve(); });
+  expect(mocks.getProjectRuns).toHaveBeenCalledTimes(1);
+});
+
+test.each(['success', 'failure'])('switching projects ignores a late history %s even with the same run id', async (outcome) => {
+  let resolveOld;
+  let rejectOld;
+  const oldRequest = new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject; });
+  mocks.useProjectState.mockImplementation((projectKey) => ({
+    data: projectedWorkData({ start_context: { project_name: projectKey } }), error: null, refresh: vi.fn(), status: 'ready',
+  }));
+  mocks.getProjectRuns.mockImplementation((projectKey) => projectKey === 'DEMO' ? oldRequest : Promise.resolve({
+    project_key: 'OTHER', runs: [{ run_id: 'run-active', status: 'active', idea: 'Second project task' }],
+  }));
+  render(<MemoryRouter initialEntries={['/projects/DEMO/work']}>
+    <Link to="/projects/OTHER/work">Open other project</Link>
+    <Routes><Route element={<TranslationOutlet />}>
+      <Route path="/projects/:projectKey/work" element={<WorkPage />} />
+    </Route></Routes>
+  </MemoryRouter>);
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalledWith('DEMO', expect.any(Object)));
+  await userEvent.click(screen.getByRole('link', { name: 'Open other project' }));
+  expect(await screen.findByText('Second project task')).toBeVisible();
+  await act(async () => {
+    if (outcome === 'success') resolveOld({ project_key: 'DEMO', runs: [{ run_id: 'run-active', status: 'active', idea: 'Old project task' }] });
+    else rejectOld(new Error('Old project read failed'));
+    await oldRequest.catch(() => {});
+  });
+  expect(screen.getByText('Second project task')).toBeVisible();
+  expect(screen.queryByText('Old project task')).not.toBeInTheDocument();
+  expect(screen.queryByText('Old project read failed')).not.toBeInTheDocument();
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/OTHER/work');
+});
+
+test('failed history reconciliation remains unknown until a successful read restores the original result', async () => {
+  const initial = projectedWorkData();
+  const completed = projectedWorkData({ active_run: false });
+  completed.team_workspace.mission = { ...completed.team_workspace.mission, status: 'completed', read_only: true };
+  const refresh = vi.fn().mockResolvedValue(completed);
+  mocks.useProjectState.mockReturnValue({ data: initial, error: null, refresh, status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValueOnce({ runs: [{ run_id: 'run-active', status: 'active' }] })
+    .mockRejectedValueOnce(new Error('Task history temporarily unavailable'))
+    .mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'complete' }] });
+  mocks.getProjectRun.mockResolvedValue(completed);
+  const view = renderWorkPage();
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalledTimes(1));
+  mocks.useProjectState.mockReturnValue({ data: completed, error: null, refresh, status: 'ready' });
+  view.rerender(workPageElement());
+  expect(await screen.findByRole('alert')).toHaveTextContent('Task history temporarily unavailable');
+  expect(mocks.getProjectRun).not.toHaveBeenCalled();
+  const context = screen.getByRole('region', { name: 'Current task and next step' });
+  expect(context).toHaveAttribute('data-state', 'unknown');
+  await userEvent.click(within(context).getByRole('button', { name: 'Refresh current state' }));
+  expect(await screen.findByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
+  expect(mocks.getProjectRun).toHaveBeenCalledWith('DEMO', 'run-active', expect.any(Object));
+  expect(mocks.retryRun).not.toHaveBeenCalled();
+  expect(mocks.terminateRun).not.toHaveBeenCalled();
+});
+
+test.each([
+  { project_key: 'ANOTHER', runs: [{ run_id: 'run-active', status: 'complete' }] },
+  { project_key: 'DEMO', runs: null },
+])('rejects a mismatched or invalid reconciliation response %j', async (payload) => {
+  const initial = projectedWorkData();
+  const completed = projectedWorkData({ active_run: false });
+  mocks.useProjectState.mockReturnValue({ data: initial, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValueOnce({ runs: [{ run_id: 'run-active', status: 'active' }] }).mockResolvedValue(payload);
+  const view = renderWorkPage();
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalledTimes(1));
+  mocks.useProjectState.mockReturnValue({ data: completed, error: null, refresh: vi.fn(), status: 'ready' });
+  view.rerender(workPageElement());
+  expect(await screen.findByRole('alert')).toBeVisible();
+  expect(mocks.getProjectRun).not.toHaveBeenCalled();
+  expect(screen.queryByText('Historical runs are read-only and visually separate from the active run.')).not.toBeInTheDocument();
 });
