@@ -4,6 +4,7 @@ import { useOutletContext, useParams } from 'react-router-dom';
 import CollectionToolbar from '../../components/ui/CollectionToolbar';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
+import PageHeading from '../../components/ui/PageHeading';
 import StatusBadge from '../../components/ui/StatusBadge';
 import useProjectState from '../runs/useProjectState';
 import { settingsApi } from '../settings/settingsApi';
@@ -210,7 +211,7 @@ export default function TeamPage({ api = settingsApi }) {
   if (!team) {
     return (
       <main id="main-content" className="team-page">
-        <header className="team-page__header"><div><h1>{t('team.title')}</h1><p>{t('team.unavailable')}</p></div></header>
+        <PageHeading title={t('team.title')} description={t('team.unavailable')} />
       </main>
     );
   }
@@ -232,30 +233,30 @@ export default function TeamPage({ api = settingsApi }) {
 
   return (
     <main id="main-content" className="team-page">
-      <header className="team-page__header">
-        <div>
-          <p className="team-page__eyebrow">{data?.start_context?.project_name || projectKey}</p>
-          <h1>{t('team.title')}</h1>
-          <p>{t('team.description')}</p>
-        </div>
-        <div className="team-page__actions">
-          <button type="button" className="product-button product-button--secondary team-configure-button" onClick={openHistory}>
-            <History aria-hidden="true" size={16} />
-            {t('team.history.button')}
-          </button>
-          <button type="button" className="product-button product-button--secondary team-configure-button" onClick={() => setSkillsOpen(true)}>
-            <PackageOpen aria-hidden="true" size={16} />
-            {t('team.skills.button')}
-          </button>
-          <button type="button" className="product-button product-button--secondary team-configure-button" disabled={saving} onClick={() => openDialog({ type: 'create' })}>
-            <Plus aria-hidden="true" size={16} />
-            {t('team.addWorker')}
-          </button>
-          <button type="button" className="product-button product-button--primary team-configure-button" disabled={saving || !team.roles.some((role) => role.state === 'enabled')} onClick={() => openDialog({ type: 'batch' })}>
-            <Settings2 aria-hidden="true" size={16} />{t('team.bulk.button')}
-          </button>
-        </div>
-      </header>
+      <PageHeading
+        eyebrow={data?.start_context?.project_name || projectKey}
+        title={t('team.title')}
+        description={t('team.description')}
+        actions={(
+          <>
+            <button type="button" className="product-button product-button--secondary team-configure-button" onClick={openHistory}>
+              <History aria-hidden="true" size={16} />
+              {t('team.history.button')}
+            </button>
+            <button type="button" className="product-button product-button--secondary team-configure-button" onClick={() => setSkillsOpen(true)}>
+              <PackageOpen aria-hidden="true" size={16} />
+              {t('team.skills.button')}
+            </button>
+            <button type="button" className="product-button product-button--secondary team-configure-button" disabled={saving} onClick={() => openDialog({ type: 'create' })}>
+              <Plus aria-hidden="true" size={16} />
+              {t('team.addWorker')}
+            </button>
+            <button type="button" className="product-button product-button--primary team-configure-button" disabled={saving || !team.roles.some((role) => role.state === 'enabled')} onClick={() => openDialog({ type: 'batch' })}>
+              <Settings2 aria-hidden="true" size={16} />{t('team.bulk.button')}
+            </button>
+          </>
+        )}
+      />
 
       <section className="team-summary" aria-label={t('team.summary.label')}>
         <div><strong>{responsibilities.length}</strong><span>{t('team.groups.summary')}</span></div>

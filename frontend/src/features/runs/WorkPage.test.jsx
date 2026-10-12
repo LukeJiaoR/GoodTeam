@@ -1384,11 +1384,12 @@ test.each(['replacement', 'completion'])('reconciles a selected task into histor
   view.rerender(workPageElement('/projects/DEMO/work/runs/run-active'));
 
   expect(await screen.findByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
+  // The read-only shell may render before its separate historical result read.
+  expect((await screen.findAllByText('Original task completed result')).length).toBeGreaterThan(0);
   expect(mocks.getProjectRun).toHaveBeenCalledWith('DEMO', 'run-active', expect.any(Object));
   expect(screen.getByTestId('location-path')).toHaveTextContent('/runs/run-active');
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(draft);
   expect(draft).toHaveValue('Keep this unsent context');
-  expect(screen.getAllByText('Original task completed result').length).toBeGreaterThan(0);
   expect(mocks.sendTaskAssistantMessage).not.toHaveBeenCalled();
   expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
   expect(mocks.retryRun).not.toHaveBeenCalled();

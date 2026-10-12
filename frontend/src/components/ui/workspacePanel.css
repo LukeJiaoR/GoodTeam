@@ -28,17 +28,17 @@
 }
 .workspace-panel__header h2 { margin: 0; font-size: 1.05rem; }
 .workspace-panel__body { padding: 1.25rem; }
-.product-shell.product-shell--neumorphic .workspace-panel .product-review-page { width: 100%; padding: 0; margin: 0; }
-.product-shell.product-shell--neumorphic .workspace-panel .review-workspace { grid-template-columns: minmax(0, 1.6fr) minmax(17rem, 1fr); }
+.product-shell.product-shell--workspace .workspace-panel .product-review-page { width: 100%; padding: 0; margin: 0; }
+.product-shell.product-shell--workspace .workspace-panel .review-workspace { grid-template-columns: minmax(0, 1.6fr) minmax(17rem, 1fr); }
 .workspace-panel--compact { inset: 0; margin: auto; width: min(90vw, 32rem); height: fit-content; border-radius: 16px; }
 @media (max-width: 900px) {
   .workspace-panel { width: 100vw; border-radius: 0; }
-  .product-shell.product-shell--neumorphic .workspace-panel .review-workspace { grid-template-columns: minmax(0, 1fr); }
+  .product-shell.product-shell--workspace .workspace-panel .review-workspace { grid-template-columns: minmax(0, 1fr); }
   .workspace-panel__body { padding: 1rem; }
   .workspace-panel--compact { width: 94vw; border-radius: 16px; }
 }
 
-.product-shell.product-shell--neumorphic .workspace-panel .review-inspector {
+.product-shell.product-shell--workspace .workspace-panel .review-inspector {
   grid-column: auto;
   position: static;
   max-height: none;

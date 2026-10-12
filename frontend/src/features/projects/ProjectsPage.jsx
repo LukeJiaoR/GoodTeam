@@ -7,6 +7,7 @@ import CollectionToolbar from '../../components/ui/CollectionToolbar';
 import { browseProjects, projectActivity } from './projectBrowse';
 import Button from '../../components/ui/Button';
 import PageState from '../../components/ui/PageState';
+import PageHeading from '../../components/ui/PageHeading';
 import { translate } from '../../i18n';
 import { routes } from '../../lib/routing/routes';
 import LoadProjectPanel from './LoadProjectPanel';
@@ -79,17 +80,17 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
 
   return (
     <main id="main-content" className="projects-page">
-      <header className="projects-launcher-header">
-        <div>
-          <p className="projects-page-eyebrow">{t('projects.eyebrow')}</p>
-          <h1>{t('projects.launcher.title')}</h1>
-          <p>{t('projects.launcher.description')}</p>
-        </div>
-        <Button id="projects-add-project" className="projects-add-button" onClick={() => setImportOpen(true)}>
-          <Plus aria-hidden="true" size={17} />
-          <span>{t('projects.launcher.add')}</span>
-        </Button>
-      </header>
+      <PageHeading
+        eyebrow={t('projects.eyebrow')}
+        title={t('projects.launcher.title')}
+        description={t('projects.launcher.description')}
+        actions={(
+          <Button id="projects-add-project" className="projects-add-button" onClick={() => setImportOpen(true)}>
+            <Plus aria-hidden="true" size={17} />
+            <span>{t('projects.launcher.add')}</span>
+          </Button>
+        )}
+      />
 
       <section className="projects-launcher" aria-labelledby="projects-list-title">
         <header className="projects-launcher__heading">
@@ -137,11 +138,11 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
           </div>
         ) : null}
         {status === 'ready' && projects.length > 0 ? (
-          <div className="projects-launcher-list">
+          <ul className="projects-launcher-list">
             {visibleProjects.map((item) => {
               const project = item.project;
               return (
-                <div className="project-launcher-entry" key={project.project_key}>
+                <li className="project-launcher-entry" key={project.project_key}>
                 <button
                   type="button"
                   className="project-launcher-row"
@@ -165,10 +166,10 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
                   </span>
                 </button>
                 <FileLocation path={project.root} t={t} />
-                </div>
+                </li>
               );
             })}
-          </div>
+          </ul>
         ) : null}
       </section>
 

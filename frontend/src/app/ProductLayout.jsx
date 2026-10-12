@@ -7,10 +7,11 @@ import {
   Users,
   Workflow,
 } from 'lucide-react';
+import { useEffect } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { ToastProvider } from '../components/ui/ToastProvider';
 import { useAppearancePreferences } from '../hooks/useAppearancePreferences';
-import { routes } from '../lib/routing/routes';
+import { projectNavigationDestinations, rememberProjectLocation } from '../lib/routing/projectNavigation';
 
 const LANGUAGE_OPTIONS = [
   ['auto', 'product.language.auto'],
@@ -19,7 +20,7 @@ const LANGUAGE_OPTIONS = [
 ];
 
 export default function ProductLayout() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const {
     darkMode,
     setDarkMode,
@@ -32,13 +33,14 @@ export default function ProductLayout() {
   const projectKey = (() => {
     try { return projectMatch ? decodeURIComponent(projectMatch[1]) : ''; } catch { return ''; }
   })();
+  const destinations = projectNavigationDestinations(projectKey, pathname, search);
+  useEffect(() => { rememberProjectLocation(pathname, search); }, [pathname, search]);
   const isProjectsRoute = pathname === '/projects';
   const isWorkRoute = Boolean(projectKey && /^\/projects\/[^/]+\/(?:team|work|review|knowledge)(?:\/|$)/.test(pathname));
-  const isTaskRoute = Boolean(projectKey && /^\/projects\/[^/]+\/work(?:\/|$)/.test(pathname));
   const workNavClass = ({ isActive }) => `product-work-navigation__link${isActive ? ' is-active' : ''}`;
   return (
     <ToastProvider>
-      <div className={`product-shell${isWorkRoute || isProjectsRoute ? ' product-shell--neumorphic' : ''}${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}${isTaskRoute ? ' product-shell--task-workspace' : ''}`}>
+      <div className={`product-shell product-shell--workspace${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}`}>
         <a className="product-skip-link" href="#main-content">{t('product.navigation.skipToContent')}</a>
         <header className={`product-chrome${isWorkRoute ? ' product-work-chrome' : ''}`}>
           <div className="product-chrome__inner">
@@ -51,22 +53,22 @@ export default function ProductLayout() {
 
             {isWorkRoute ? (
               <nav className="product-work-navigation" aria-label={t('product.navigation.projectLabel')}>
-                <NavLink className={workNavClass} to={routes.projectTeam(projectKey)}>
+                <NavLink className={workNavClass} to={destinations.team}>
                   <Users aria-hidden="true" size={17} />
                   <span>{t('product.workNavigation.team')}</span>
                 </NavLink>
                 <NavLink
                   className={workNavClass}
-                  to={routes.projectWork(projectKey)}
+                  to={destinations.work}
                 >
                   <Workflow aria-hidden="true" size={17} />
                   <span>{t('product.workNavigation.workbench')}</span>
                 </NavLink>
-                <NavLink className={workNavClass} to={routes.projectReview(projectKey)}>
+                <NavLink className={workNavClass} to={destinations.review}>
                   <ClipboardCheck aria-hidden="true" size={17} />
                   <span>{t('product.workNavigation.reviews')}</span>
                 </NavLink>
-                <NavLink className={workNavClass} to={routes.projectKnowledge(projectKey)}>
+                <NavLink className={workNavClass} to={destinations.knowledge}>
                   <BookOpen aria-hidden="true" size={17} />
                   <span>{t('product.workNavigation.knowledge')}</span>
                 </NavLink>

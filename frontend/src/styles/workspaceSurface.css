@@ -1,0 +1,207 @@
+/* Shared material and controls for the task-oriented product. Layout belongs to
+   each page; all five primary surfaces use the same quiet light/dark language. */
+.product-shell.product-shell--workspace {
+  --product-bg: #f6f7f8;
+  --product-surface: #fff;
+  --product-surface-muted: #f0f2f5;
+  --product-border: #e0e3e8;
+  --product-text: #202124;
+  --product-text-muted: #62676f;
+  --product-accent: #5567e8;
+  --product-accent-strong: #4254cd;
+  --product-accent-soft: #eef0ff;
+  --product-focus: #5567e8;
+  --product-success: #16865b;
+  --product-warning: #8a641c;
+  --product-danger: #b64141;
+  --product-on-accent: #fff;
+  --product-radius: 12px;
+  --product-sticky-offset: 4.75rem;
+  --product-shadow: 0 2px 8px #20212408;
+  font-size: 14px;
+}
+.dark .product-shell.product-shell--workspace {
+  --product-bg: #171819;
+  --product-surface: #202224;
+  --product-surface-muted: #27292c;
+  --product-border: #363a40;
+  --product-text: #eeeff1;
+  --product-text-muted: #a9aeb7;
+  --product-accent: #a5b0ff;
+  --product-accent-strong: #a5b0ff;
+  --product-accent-soft: #2e3455;
+  --product-focus: #a5b0ff;
+  --product-success: #70d5a9;
+  --product-warning: #e5bd70;
+  --product-danger: #f59d9d;
+  --product-on-accent: #171819;
+  --product-shadow: 0 2px 8px #00000018;
+}
+.product-shell--workspace .product-chrome {
+  background: var(--product-bg);
+  border-bottom: 1px solid var(--product-border);
+  backdrop-filter: none;
+  padding: 0;
+  box-shadow: none;
+}
+.product-shell.product-shell--workspace .product-chrome__inner {
+  width: min(calc(100% - 2rem), 1680px);
+  min-height: 60px;
+  gap: 1rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.product-shell.product-shell--workspace .product-brand__mark {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--product-border);
+  border-radius: 9px;
+  color: var(--product-accent-strong);
+  background: var(--product-surface);
+  box-shadow: none;
+}
+.product-shell.product-shell--workspace .product-work-navigation {
+  justify-self: center;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+}
+.product-shell.product-shell--workspace .product-work-navigation__link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  white-space: nowrap;
+  gap: .45rem;
+  min-height: 36px;
+  padding: 0 .85rem;
+  border-radius: 8px;
+  color: var(--product-text-muted);
+  font-size: 13px;
+  text-decoration: none;
+  box-shadow: none;
+}
+.product-shell.product-shell--workspace .product-work-navigation__link.is-active {
+  background: var(--product-accent-soft);
+  color: var(--product-accent-strong);
+}
+.product-shell.product-shell--workspace :is(.product-language-control select, .product-appearance-control) {
+  min-height: 34px;
+  border: 1px solid var(--product-border);
+  border-radius: 9px;
+  background: var(--product-surface);
+  box-shadow: none;
+}
+.product-shell--workspace .product-button {
+  min-height: 38px;
+  padding: .5rem .85rem;
+  border-radius: 9px;
+  box-shadow: none;
+  font-size: 13px;
+  line-height: 1.4;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+.product-shell--workspace .product-button--secondary {
+  color: var(--product-text);
+  background: var(--product-surface);
+  border-color: var(--product-border);
+  box-shadow: none;
+}
+.product-shell--workspace :is(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--product-focus);
+  outline-offset: 3px;
+}
+.product-shell--workspace :is(.projects-import-dialog, .team-dialog, .team-history, .workspace-panel) {
+  border-color: var(--product-border);
+  color: var(--product-text);
+  background: var(--product-surface);
+}
+.product-shell--workspace :is(.projects-import-dialog, .team-dialog) {
+  border-radius: 16px;
+}
+.product-shell--workspace :is(.projects-import-dialog, .team-dialog) :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
+  min-height: 40px;
+  max-width: 100%;
+  border: 1px solid var(--product-border);
+  border-radius: 9px;
+  color: var(--product-text);
+  background: var(--product-surface);
+  box-shadow: none;
+}
+.product-shell--workspace :is(.projects-import-dialog, .team-dialog) :is(input, textarea)::placeholder {
+  color: var(--product-text-muted);
+  opacity: 1;
+}
+.product-shell--workspace .collection-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  margin: 1rem 0;
+}
+.product-shell--workspace .collection-search {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  flex: 1 1 16rem;
+  max-width: 30rem;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 .75rem;
+  color: var(--product-text-muted);
+  background: var(--product-surface);
+  border: 1px solid var(--product-border);
+  border-radius: 9px;
+}
+.product-shell--workspace .collection-search:focus-within { outline: 2px solid var(--product-focus); outline-offset: 2px; }
+.product-shell--workspace .collection-search input {
+  width: 100%; min-width: 0; min-height: 38px; background: transparent;
+  border: 0; box-shadow: none; color: var(--product-text); font: inherit;
+}
+.product-shell--workspace .collection-search input::-webkit-search-cancel-button { display: none; }
+.product-shell--workspace .collection-search input::placeholder { color: var(--product-text-muted); opacity: 1; }
+.product-shell--workspace .collection-search input:focus-visible { outline: 0; }
+.product-shell--workspace .collection-search button {
+  display: grid; place-items: center; flex: none; width: 32px; height: 32px;
+  border: 0; border-radius: 7px; background: transparent; color: var(--product-text-muted); cursor: pointer;
+}
+.product-shell--workspace .collection-filters { display: flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 9px; background: var(--product-surface-muted); }
+.product-shell--workspace .collection-filters button {
+  min-height: 34px; padding: 0 .75rem; border: 0; border-radius: 7px;
+  background: transparent; color: var(--product-text-muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.product-shell--workspace .collection-filters button[aria-pressed=true] { color: var(--product-accent-strong); background: var(--product-surface); box-shadow: var(--product-shadow); }
+.product-shell--workspace .collection-count { margin-left: auto; color: var(--product-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.product-shell--workspace .collection-empty { display: grid; justify-items: center; gap: .7rem; padding: 2.5rem 1rem; text-align: center; color: var(--product-text-muted); }
+@media (hover: hover) and (pointer: fine) {
+  .product-shell--workspace :is(.product-work-navigation__link, .collection-search button, .collection-filters button):hover { color: var(--product-accent-strong); background: var(--product-accent-soft); }
+  .product-shell--workspace .product-button--secondary:hover:not(:disabled) { border-color: var(--product-accent); background: var(--product-accent-soft); }
+}
+@media (min-width: 768px) and (max-width: 1100px) {
+  .product-shell--workspace .product-appearance-control span { display: none; }
+}
+@media (max-width: 767px) {
+  .product-shell.product-shell--workspace { --product-sticky-offset: 7.5rem; }
+  .product-shell.product-shell--workspace .product-chrome__inner { width: calc(100% - 1.5rem); grid-template-columns: 1fr auto; gap: .5rem; padding: .5rem 0; }
+  .product-shell.product-shell--workspace .product-work-navigation { grid-row: 2; grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; padding: 0; overflow: visible; }
+  .product-shell.product-shell--workspace .product-work-navigation__link { justify-content: center; flex-direction: column; min-width: 0; min-height: 44px; padding: .3rem .15rem; font-size: 11px; line-height: 1.2; gap: .2rem; }
+  .product-shell.product-shell--workspace .product-preferences { grid-row: 1; grid-column: 2; }
+  .product-shell.product-shell--workspace .product-work-navigation__link span { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .product-shell--workspace .product-appearance-control span, .product-shell--workspace .product-chrome__spacer { display: none; }
+  .product-shell--workspace .collection-search { flex-basis: 100%; max-width: none; }
+  .product-shell--workspace .collection-filters { max-width: 100%; }
+  .product-shell--workspace .collection-filters button { min-height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .product-shell--workspace *, .product-shell--workspace *::before, .product-shell--workspace *::after {
+    animation: none !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}

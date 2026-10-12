@@ -1,73 +1,4 @@
-/* First work-entry slice: compact, quiet surfaces. Existing state and action
-   components remain authoritative; this layer only arranges their presentation. */
-.product-shell.product-shell--work.product-shell--task-workspace {
-  --product-bg: #f6f7f8;
-  --product-surface: #fff;
-  --product-surface-muted: #f6f7f8;
-  --product-border: #e4e6e8;
-  --product-text: #202124;
-  --product-text-muted: #62676f;
-  --product-accent: #5567e8;
-  --product-accent-strong: #4254cd;
-  --product-accent-soft: #eef0ff;
-  --product-focus: #5567e8;
-  --product-success: #16865b;
-  --product-radius: 14px;
-  --neo-raised: 0 2px 8px #20212408;
-  --neo-soft: 0 1px 3px #20212408;
-  --neo-inset: none;
-  font-size: 14px;
-}
-.dark .product-shell.product-shell--work.product-shell--task-workspace {
-  --product-bg: #171819;
-  --product-surface: #202224;
-  --product-surface-muted: #27292c;
-  --product-border: #303337;
-  --product-text: #eeeff1;
-  --product-text-muted: #a9aeb7;
-  --product-accent: #a5b0ff;
-  --product-accent-strong: #a5b0ff;
-  --product-accent-soft: #2e3455;
-  --product-focus: #a5b0ff;
-  --product-success: #70d5a9;
-  --neo-raised: 0 2px 8px #00000018;
-  --neo-soft: 0 1px 3px #00000018;
-}
-.product-shell.product-shell--work.product-shell--task-workspace .product-chrome__inner {
-  width: calc(100% - 2rem);
-  min-height: 60px;
-  gap: 1rem;
-}
-.product-shell.product-shell--work.product-shell--task-workspace .product-brand__mark {
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
-  border: 1px solid var(--product-border);
-  box-shadow: none;
-}
-.product-shell.product-shell--work.product-shell--task-workspace .product-work-navigation {
-  gap: 3px;
-  padding: 3px;
-  border-radius: 10px;
-  background: transparent;
-  box-shadow: none;
-}
-.product-shell.product-shell--work.product-shell--task-workspace .product-work-navigation__link {
-  min-height: 36px;
-  padding: 0 .85rem;
-  border-radius: 8px;
-  font-size: 13px;
-}
-.product-shell.product-shell--work.product-shell--task-workspace .product-work-navigation__link.is-active {
-  background: var(--product-accent-soft);
-  box-shadow: none;
-}
-.product-shell.product-shell--work.product-shell--task-workspace :is(.product-language-control select, .product-appearance-control) {
-  min-height: 34px;
-  border: 1px solid var(--product-border);
-  border-radius: 10px;
-  box-shadow: none;
-}
+/* Work-owned layout; shared product material and chrome live in workspaceSurface.css. */
 .work-workspace-shell[data-workspace] {
   --work-bg: #f6f7f8;
   --work-surface: #fff;
@@ -227,7 +158,6 @@
 .work-workspace-shell[data-workspace] .product-button--secondary { border-color: var(--work-border); box-shadow: none; }
 .work-workspace-shell[data-workspace] .team-workspace.team-workspace--composing { grid-template-areas: 'tasks center'; grid-template-columns: minmax(11rem, .72fr) minmax(22rem, 2.8fr); }
 @media (max-width: 1100px) and (min-width: 768px) {
-  .product-shell.product-shell--work.product-shell--task-workspace .product-appearance-control span { display: none; }
   .work-workspace-shell[data-workspace] .team-workspace { grid-template-columns: minmax(10rem, .65fr) minmax(20rem, 1.65fr) minmax(14rem, 1fr); gap: .6rem; }
   .work-workspace-shell[data-workspace] .product-work-page { width: calc(100% - 1.25rem); }
   .work-workspace-shell[data-workspace] .team-manager-heading__title { flex-wrap: wrap; }
@@ -237,11 +167,6 @@
   .work-workspace-shell[data-workspace] .team-mobile-nav { display: none; }
 }
 @media (max-width: 767px) {
-  .product-shell.product-shell--work.product-shell--task-workspace .product-chrome__inner { width: calc(100% - 1.5rem); grid-template-columns: 1fr auto; gap: .5rem; padding: .5rem 0; }
-  .product-shell.product-shell--work.product-shell--task-workspace .product-work-navigation { grid-row: 2; grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; padding: 0; }
-  .product-shell.product-shell--work.product-shell--task-workspace .product-preferences { grid-row: 1; grid-column: 2; }
-  .product-shell.product-shell--work.product-shell--task-workspace .product-appearance-control span { display: none; }
-  .product-shell.product-shell--work.product-shell--task-workspace .product-work-navigation__link { min-height: 38px; padding: 0 .3rem; font-size: 12px; }
   .work-workspace-shell[data-workspace] .product-work-page { width: calc(100% - 1.25rem); height: auto; min-height: 0; padding-top: .5rem; }
   .work-workspace-shell[data-workspace] .work-current-context { padding: .5rem .25rem; }
   .work-workspace-shell[data-workspace] .work-current-context__identity strong { font-size: 18px; }

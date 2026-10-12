@@ -723,7 +723,7 @@
   align-items: stretch;
   padding: 0;
 }
-.product-shell.product-shell--neumorphic .team-dialog-backdrop--sheet .team-dialog {
+.product-shell.product-shell--workspace .team-dialog-backdrop--sheet .team-dialog {
   width: min(100%, 42rem);
   max-height: 100dvh;
   margin: 0;
@@ -731,7 +731,7 @@
   overflow-y: auto;
 }
 @media (max-width: 767px) {
-  .product-shell.product-shell--neumorphic .team-dialog-backdrop--sheet .team-dialog { border-radius: 0; }
+  .product-shell.product-shell--workspace .team-dialog-backdrop--sheet .team-dialog { border-radius: 0; }
 }
 
 .team-runtime-activity { padding: 1rem; overflow-wrap: anywhere; }

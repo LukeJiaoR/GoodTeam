@@ -9,6 +9,7 @@ import { approvalConfirmationKey, canConfirmApproval, requiresInformedApproval }
 import EvidenceSummary from '../../components/EvidenceSummary';
 import MarkdownView from '../../components/ui/MarkdownView';
 import ProductError from '../../components/ui/ProductError';
+import PageHeading from '../../components/ui/PageHeading';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { useToast } from '../../components/ui/ToastProvider';
 import { routes } from '../../lib/routing/routes';
@@ -507,18 +508,18 @@ export default function ReviewPage({ embedded = false, selectedReviewId = '', ex
   return (
     <ReviewSurface embedded={embedded} onClose={requestClose} busy={Boolean(busy)} t={t}>
     <Page id={embedded ? undefined : 'main-content'} className="product-page product-review-page">
-      <header className="review-page-header">
-        <div>
-          <p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p>
-          <h1>{t('review.title')}</h1>
-          <p>{t('review.description')}</p>
-        </div>
-        <dl className="review-page-summary" aria-label={t('review.workspace.summary')}>
-          <div><dt>{t('review.workspace.actionable')}</dt><dd>{actionableCount}</dd></div>
-          <div><dt>{t('review.workspace.total')}</dt><dd>{reviews.length}</dd></div>
-          <div><dt>{t('review.workspace.stage')}</dt><dd>{stepIndex >= 0 ? `${stepIndex + 1}/${steps.length}` : '—'}</dd></div>
-        </dl>
-      </header>
+      <PageHeading
+        eyebrow={data?.start_context?.project_name || projectKey}
+        title={t('review.title')}
+        description={t('review.description')}
+        summary={(
+          <dl className="review-page-summary" aria-label={t('review.workspace.summary')}>
+            <div><dt>{t('review.workspace.actionable')}</dt><dd>{actionableCount}</dd></div>
+            <div><dt>{t('review.workspace.total')}</dt><dd>{reviews.length}</dd></div>
+            <div><dt>{t('review.workspace.stage')}</dt><dd>{stepIndex >= 0 ? `${stepIndex + 1}/${steps.length}` : '—'}</dd></div>
+          </dl>
+        )}
+      />
       {!selected ? <p className="product-empty-copy">{t(boundRunMatches ? 'review.empty' : 'work.panel.taskChanged')}</p> : (
         <div className="review-workspace">
           {!embedded ? <ReviewList projectKey={projectKey} reviews={reviews} selected={selected.approval} t={t} /> : null}

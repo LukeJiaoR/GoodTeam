@@ -5,6 +5,7 @@ import KnowledgeArtifacts from './KnowledgeArtifacts';
 import MemoryEventInspector from './MemoryEventInspector';
 import { isMemoryEventId } from './memoryProvenance';
 import ProductError from '../../components/ui/ProductError';
+import PageHeading from '../../components/ui/PageHeading';
 import RepositoryOverview from '../projects/RepositoryOverview';
 import useProjectState from '../runs/useProjectState';
 import { knowledgeApi } from './knowledgeApi';
@@ -325,7 +326,12 @@ export default function KnowledgePage() {
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
   return (
     <main id="main-content" className="product-page product-knowledge-page">
-      <header className="knowledge-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('knowledge.title')}</h1><p>{t('knowledge.description')}</p></div><div className="knowledge-page-count"><strong>{artifactCount}</strong><span>{t('knowledge.workspace.artifacts')}</span></div></header>
+      <PageHeading
+        eyebrow={data?.start_context?.project_name || projectKey}
+        title={t('knowledge.title')}
+        description={t('knowledge.description')}
+        summary={<div className="knowledge-page-count"><strong>{artifactCount}</strong><span>{t('knowledge.workspace.artifacts')}</span></div>}
+      />
       <nav className="knowledge-view-switcher" aria-label={t('knowledge.views.label')}>{VIEWS.map(([item, Icon]) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => { const next = new URLSearchParams(search); next.set('view', item); setSearch(next); }}><Icon aria-hidden="true" size={17} /><span>{t(`knowledge.views.${item}`)}</span></button>)}</nav>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {view === 'overview' && !overviewReady ? <p role="status">{t('product.states.loading')}</p> : null}
