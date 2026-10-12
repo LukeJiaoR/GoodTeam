@@ -77,6 +77,20 @@ input inspector but absent from the Manager snapshot after their conversation
 mention left its last-40-event window. The window remains unchanged; this does
 not add automatic conversation summaries or general-purpose long-term memory.
 
+## Workflow Worker handoff
+
+For custom delivery mode, the existing workflow Worker context also carries
+`delivery_standards` from the saved workflow state. This closes an omission in
+the first PRD Worker input, where no earlier artifact exists to supply the
+criteria, and in subsequent UI/implementation/QA handoffs.
+
+This section is explicitly labeled `source: workflow_state`, separate from
+requested changes. It is not proof of an immutable task-start capture and does
+not replace the task-lock protocol above. No current project-setting lookup or
+chat reconstruction is introduced; an empty saved checklist stays explicitly
+unrecorded. Other delivery modes do not inherit leftover custom standards.
+Already materialized Worker inputs remain unchanged when workflow state changes.
+
 ## Validation scope
 
 Related tests use real registered method packages, original task captures,
@@ -88,6 +102,10 @@ actual conversation service with a controlled callback, check the input delivere
 to that callback, and restore the same capture in a fresh Python process. They
 cover changed feedback, historical identity, invalid capture data and read-only
 behavior. This does not establish what a live model would answer or do.
+Workflow handoff tests persist state, reload it in a fresh Python process, and
+materialize real job/context/prompt files without dispatching a backend. They
+check the first PRD and subsequent UI/implementation/QA inputs; receipt of the
+criteria does not establish execution or compliance.
 Frontend interaction tests cover the user entry point
 and interrupted navigation. Commands and final results are recorded in the PR.
 
