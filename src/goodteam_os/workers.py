@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from goodteam_os.skills.worker_creation_lock import serialized_worker_creation
 from goodteam_os.memory import RoleMemoryStore, default_embedder
+from goodteam_os.memory_handoff import MemoryHandoffStore, PreparedMemoryRecord, digest as memory_digest
 from goodteam_os.roles import role_definition, stable_role_prompt
 from goodteam_os.pi_rpc import PiRpcError
 from goodteam_os.worker_capabilities import BACKEND_REASONING_DEPTHS, REASONING_DEPTHS
@@ -869,6 +870,43 @@ def _invocation_command(command: object) -> str:
 _NO_TASK_SKILL_CONTEXT = object()
 
 
+@dataclass(frozen=True)
+class _ValidatedWorkerMemory:
+    fragment: str
+    citations: tuple[str, ...]
+    packet_digest: str | None
+    validation_data: bytes
+
+    @property
+    def validation(self) -> dict[str, Any]:
+        return json.loads(self.validation_data)
+
+
+class _PreparedWorkerPrompt(str):
+    """String-compatible prompt with bounded, per-call internal metadata."""
+
+    def __new__(cls, prompt: str, memory: _ValidatedWorkerMemory, record: PreparedMemoryRecord | None):
+        value = super().__new__(cls, prompt)
+        value.memory = memory
+        value.record = record
+        return value
+
+
+class _WorkerOutcome(dict):
+    """Keep prepared identity out of persisted/public status dictionary keys."""
+
+    def __init__(self, status, prompt=None, transport_ref=None):
+        super().__init__(status)
+        self.prepared_prompt = prompt
+        self.transport_ref = transport_ref
+
+
+class _WritebackOutcome(dict):
+    def __init__(self, status, receipt):
+        super().__init__(status)
+        self.receipt = receipt
+
+
 class WorkerJobStore:
     def __init__(self, project_root: Path, *, codex_review_admission=None):
         # Internal service composition only; never loaded from job/Team JSON,
@@ -1110,6 +1148,8 @@ class WorkerJobStore:
                 authority.assert_preparable(task_input)
             else:
                 authority.assert_dispatchable(task_input)
+        if task_input is None:
+            MemoryHandoffStore(self.project_root).reserve(job)
         self._write_json(job_root / "job.json", job)
         role_config, role_prompt = _role_prompt_for_job(role)
         (job_root / "role_prompt.md").write_text(role_prompt, encoding="utf-8")
@@ -1136,6 +1176,12 @@ class WorkerJobStore:
         (job_root / "result.md").write_text("", encoding="utf-8")
         if task_input is not None:
             self._input_store(task_input).bind_job(task_input, job)
+        else:
+            from goodteam_os.memory_storage import read_bytes
+            packet_bytes = read_bytes(job_root / "role_pickup_packet.json")
+            if packet_bytes is None:
+                raise ValueError("memory_handoff_packet_missing")
+            MemoryHandoffStore(self.project_root).capture(job, packet_bytes)
         return job
 
     @serialized_worker_creation
@@ -1308,8 +1354,12 @@ class WorkerJobStore:
                     "external_invocation": False, "reason": "local_codex_task_capture_required"}})
         if sandbox_context is not None:
             job = self._attach_sandbox_context(job_root, job, sandbox_context)
-        memory_citations = self._memory_citations_from_pickup_packet(job_root)
+        handoff = self._ordinary_memory_handoff(job_root, job)
+        if handoff is not None:
+            handoff.load(job)  # Retained partial enrollment cannot become legacy.
         adapter = str(job["adapter"])
+        # Compatibility references for builtin adapters are host observations only.
+        memory_citations = list(self._validated_worker_memory(job_root, role=str(job["role"])).citations) if adapter in BUILTIN_WORKER_MODES else []
         if str(job.get("execution_policy", "standard")) == "read_only" and (
             adapter in SESSION_BACKENDS or adapter == "opencode"
         ):
@@ -1368,10 +1418,17 @@ class WorkerJobStore:
                 retried = True
                 backoff = WORKER_RETRY_BACKOFF_SECONDS[min(attempts - 1, len(WORKER_RETRY_BACKOFF_SECONDS) - 1)]
                 _sleep(backoff)
+        prepared_prompt = getattr(status_payload, "prepared_prompt", None)
+        transport_ref = getattr(status_payload, "transport_ref", None)
+        if isinstance(prepared_prompt, _PreparedWorkerPrompt):
+            memory_citations = list(prepared_prompt.memory.citations)
         status_payload["memory_citations"] = memory_citations
         if status_payload.get("status") == "completed":
             try:
-                status_payload["memory_writeback"] = self._write_back_memory(job_root, job)
+                writeback = self._write_back_memory(job_root, job)
+                status_payload["memory_writeback"] = writeback
+                self._record_memory_writeback(handoff, job, writeback, kind="result",
+                                              prompt=prepared_prompt, transport_ref=transport_ref)
             except Exception as exc:  # pragma: no cover - exercised via monkeypatch safety test
                 status_payload["memory_writeback"] = {"status": "error", "error": str(exc)}
             try:
@@ -1379,7 +1436,10 @@ class WorkerJobStore:
                 provenance_job["status"] = status_payload.get("status")
                 if "failure_class" in status_payload:
                     provenance_job["failure_class"] = status_payload["failure_class"]
-                status_payload["memory_provenance"] = self._write_back_provenance(job_root, provenance_job)
+                provenance = self._write_back_provenance(job_root, provenance_job)
+                status_payload["memory_provenance"] = provenance
+                self._record_memory_writeback(handoff, job, provenance, kind="provenance",
+                                              prompt=prepared_prompt, transport_ref=transport_ref)
             except Exception as exc:  # pragma: no cover - exercised via monkeypatch safety test
                 status_payload["memory_provenance"] = {"status": "error", "error": str(exc)}
         self._write_json(job_root / "status.json", status_payload)
@@ -1391,6 +1451,33 @@ class WorkerJobStore:
             self._input_store(task_input).record_host_return(task_input,
                 status=status_payload["status"], output_digest=digest(result_bytes))
         return status_payload
+
+    def _ordinary_memory_handoff(self, job_root: Path, job: dict[str, Any]) -> MemoryHandoffStore | None:
+        if job_root.name.startswith(("job-input-", "job-correction-")):
+            return None
+        if job_root.name != job.get("id"):
+            raise ValueError("memory_handoff_job_root_mismatch")
+        return MemoryHandoffStore(self.project_root)
+
+    def _memory_transport(self, job_root: Path, job: dict[str, Any], prompt: str) -> str | None:
+        handoff = self._ordinary_memory_handoff(job_root, job)
+        if handoff is None:
+            return None
+        record = prompt.record if isinstance(prompt, _PreparedWorkerPrompt) else None
+        return handoff.transport(job, record)
+
+    @staticmethod
+    def _record_memory_writeback(handoff, job, outcome, *, kind, prompt, transport_ref):
+        if handoff is not None and isinstance(outcome, _WritebackOutcome):
+            try:
+                handoff.writeback(job, kind=kind, receipt=outcome.receipt,
+                                 prepared=prompt.record if isinstance(prompt, _PreparedWorkerPrompt) else None,
+                                 transport_ref=transport_ref)
+            except Exception:
+                # The memory event may already be committed. Preserve actual
+                # counts/outcomes and never change or retry the worker result.
+                outcome["status"] = "error"
+                outcome["error"] = "memory_handoff_writeback_receipt_unavailable"
 
     def _run_session_backend(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
         """Run a persistent session backend without entering the one-shot CLI loop."""
@@ -1477,6 +1564,8 @@ class WorkerJobStore:
         heartbeat_thread: threading.Thread | None = None
         running_summary = "Pi RPC session is running."
         started_at = self._now()
+        prompt = None
+        transport_ref = None
         try:
             state = runtime.start_or_resume()
             session_extra = {
@@ -1502,6 +1591,7 @@ class WorkerJobStore:
             if not runtime.already_settled:
                 prompt = self._worker_prompt(job_root, job, model=config.model or "auto")
                 self._input_receipt(job_root, job, prompt, stage="transport_attempt")
+                transport_ref = self._memory_transport(job_root, job, prompt)
                 if str(job.get("worker_session_ref") or "").strip():
                     runtime.send_resume_prompt(prompt)
                 else:
@@ -1533,7 +1623,7 @@ class WorkerJobStore:
                 json.dumps({"session_state": state, "session_stats": stats}, indent=2), encoding="utf-8"
             )
             metadata = runtime.store.read_metadata() or {}
-            return self._write_status(
+            return _WorkerOutcome(self._write_status(
                 job_root,
                 job,
                 "completed",
@@ -1550,7 +1640,7 @@ class WorkerJobStore:
                     "pi_session_stats": stats,
                     "process_alive": False,
                 },
-            )
+            ), prompt, transport_ref)
         except (PiRpcError, TimeoutError, ValueError, FileNotFoundError) as exc:
             self._fail_pending_pi_controls(job_root, job, f"Pi session stopped before RPC acknowledgement: {exc}")
             stop_heartbeat.set()
@@ -1563,7 +1653,7 @@ class WorkerJobStore:
             metadata.update({"status": "aborted" if runtime.aborted else "failed", "last_error": str(exc)})
             runtime.store.write_metadata(metadata)
             runtime.store.append_event("failure", {"failure_class": failure_class, "summary": str(exc)[:500]})
-            return self._write_status(
+            return _WorkerOutcome(self._write_status(
                 job_root,
                 job,
                 "failed",
@@ -1577,7 +1667,7 @@ class WorkerJobStore:
                     "session_status": metadata.get("status", "failed"),
                     "process_alive": False,
                 },
-            )
+            ), prompt, transport_ref)
         finally:
             stop_heartbeat.set()
             if heartbeat_thread is not None and heartbeat_thread is not threading.current_thread():
@@ -2092,24 +2182,7 @@ class WorkerJobStore:
         return job_root, job
 
     def _memory_citations_from_pickup_packet(self, job_root: Path) -> list[str]:
-        packet_path = job_root / "role_pickup_packet.json"
-        if not packet_path.is_file():
-            return []
-        try:
-            packet = RoleMemoryStore(self.project_root).validate_pickup_packet(self._read_json(packet_path))
-        except (OSError, UnicodeError, ValueError):
-            return []
-        relevant_events = packet.get("relevant_events")
-        if not isinstance(relevant_events, list):
-            return []
-        citations: list[str] = []
-        for event in relevant_events:
-            if not isinstance(event, dict):
-                continue
-            event_id = event.get("id")
-            if isinstance(event_id, str) and event_id:
-                citations.append(event_id)
-        return citations
+        return list(self._validated_worker_memory(job_root).citations)
 
     def _attach_sandbox_context(
         self,
@@ -2124,40 +2197,16 @@ class WorkerJobStore:
         return updated
 
     def _write_back_memory(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
-        result_path = job_root / "result.md"
-        result_text = result_path.read_text(encoding="utf-8")
-        parsed_items = parse_result_sections(result_text)
-        source = f"{job['id']}/result.md"
-        if not parsed_items:
-            return {
-                "status": "skipped",
-                "reason": "no_sections",
-                "source": source,
-                "parsed": 0,
-                "appended": 0,
-                "skipped_duplicates": 0,
-            }
+        from goodteam_os.memory_storage import read_bytes
+        from goodteam_os.memory_writeback import write_back_events
 
-        role = str(job["role"])
-        store = RoleMemoryStore(self.project_root)
-        existing_texts = store.event_texts(role)
-        appended = 0
-        skipped_duplicates = 0
-        for horizon, text in parsed_items:
-            if text in existing_texts:
-                skipped_duplicates += 1
-                continue
-            store.append_memory_event(role, horizon=horizon, text=text, source=source)
-            existing_texts.add(text)
-            appended += 1
-
-        return {
-            "status": "ok" if appended else "skipped",
-            "source": source,
-            "parsed": len(parsed_items),
-            "appended": appended,
-            "skipped_duplicates": skipped_duplicates,
-        }
+        result_bytes = read_bytes(job_root / "result.md", maximum=8 * 1024 * 1024)
+        if result_bytes is None:
+            raise ValueError("memory_writeback_result_missing")
+        result_text = result_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        status, receipt = write_back_events(RoleMemoryStore(self.project_root), str(job["role"]),
+            items=parse_result_sections(result_text), source=f"{job['id']}/result.md", result_bytes=result_bytes)
+        return _WritebackOutcome(status, receipt)
 
     def _write_back_provenance(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
         source = f"{job['id']}/provenance"
@@ -2190,24 +2239,15 @@ class WorkerJobStore:
             f"for task: {task_excerpt}. Outcome: {status}{failure_segment}.{source_segment}"
         )
 
-        role = str(job["role"])
-        store = RoleMemoryStore(self.project_root)
-        existing_texts = store.event_texts(role)
-        if text in existing_texts:
-            return {
-                "status": "skipped",
-                "source": source,
-                "appended": 0,
-                "skipped_duplicates": 1,
-            }
+        from goodteam_os.memory_storage import read_bytes
+        from goodteam_os.memory_writeback import write_back_events
 
-        store.append_memory_event(role, horizon="short-term", text=text, source=source)
-        return {
-            "status": "ok",
-            "source": source,
-            "appended": 1,
-            "skipped_duplicates": 0,
-        }
+        result_bytes = read_bytes(job_root / "result.md", maximum=8 * 1024 * 1024)
+        if result_bytes is None:
+            raise ValueError("memory_writeback_result_missing")
+        status, receipt = write_back_events(RoleMemoryStore(self.project_root), str(job["role"]),
+            items=[("short-term", text)], source=source, result_bytes=result_bytes, include_parsed=False)
+        return _WritebackOutcome(status, receipt)
 
     def _complete_noop(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
@@ -2456,6 +2496,7 @@ class WorkerJobStore:
         process: subprocess.Popen[str] | None = None
         stop_heartbeat = threading.Event()
         returncode = 1
+        transport_ref = None
         try:
             if correction:
                 timeout_seconds = min(timeout_seconds, int(authority.assert_dispatchable(task_input)))
@@ -2480,6 +2521,7 @@ class WorkerJobStore:
                     daemon=True,
                 )
                 heartbeat_thread.start()
+                transport_ref = self._memory_transport(job_root, job, prompt)
                 returncode, stdout, stderr = _run_command_in_pty(
                     process_command,
                     cwd=runtime_context.runtime_cwd,
@@ -2488,6 +2530,7 @@ class WorkerJobStore:
                     timeout_seconds=timeout_seconds,
                 )
             else:
+                transport_ref = self._memory_transport(job_root, job, prompt)
                 process = subprocess.Popen(
                     process_command,
                     cwd=runtime_context.runtime_cwd,
@@ -2533,13 +2576,13 @@ class WorkerJobStore:
                 f"# Worker Result\n\nStatus: failed\n\n{summary}\n",
                 encoding="utf-8",
             )
-            return self._write_status(
+            return _WorkerOutcome(self._write_status(
                 job_root,
                 job,
                 "failed",
                 summary,
                 extra={**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds},
-            )
+            ), prompt, transport_ref)
         finally:
             stop_heartbeat.set()
             if correction and process is not None:
@@ -2564,13 +2607,13 @@ class WorkerJobStore:
                 f"# Worker Result\n\nStatus: {status}\n\n{summary}\n\nSee stdout.txt and stderr.txt.\n",
                 encoding="utf-8",
             )
-        return self._write_status(
+        return _WorkerOutcome(self._write_status(
             job_root,
             job,
             status,
             summary,
             extra={**base_extra, "exit_code": returncode},
-        )
+        ), prompt, transport_ref)
 
     def _heartbeat_until_stopped(
         self,
@@ -2598,12 +2641,16 @@ class WorkerJobStore:
         # a protected Skill job while the verified Runtime adapter is absent.
         reject_unverified_runtime_entry(job_root, job)
         task_input = self.admit_task_input(job_root.name, job)
+        handoff = self._ordinary_memory_handoff(job_root, job)
+        if handoff is not None:
+            handoff.load(job)
         configured_model = (model or str(job.get("model", ""))).strip()
         if not configured_model:
             adapter = str(job.get("adapter", ""))
             spec = CLI_BACKENDS.get(adapter)
             configured_model = spec.model_default if spec is not None else "auto"
-        pickup_context = self._render_worker_pickup_context(job_root)
+        memory = self._validated_worker_memory(job_root, role=str(job["role"]))
+        pickup_context = memory.fragment
         sandbox_context = _worker_sandbox_context_prompt(job)
         sections = [
                 f"# GoodTeam Worker Job {job['id']}",
@@ -2637,7 +2684,7 @@ class WorkerJobStore:
             ])
             prompt = "\n\n".join(sections)
             self._input_receipt(job_root, job, prompt, stage="worker_input_prepared")
-            return prompt
+            return _PreparedWorkerPrompt(prompt, memory, None)
         sections.extend(
             [
                 "## Task",
@@ -2655,17 +2702,74 @@ class WorkerJobStore:
                 MEMORY_WRITEBACK_PROMPT,
             ]
         )
-        return "\n\n".join(sections)
+        prompt = "\n\n".join(sections)
+        record = handoff.prepare(job, prompt=prompt, fragment=memory.fragment,
+                                 citations=memory.citations, packet_digest=memory.packet_digest,
+                                 validation=memory.validation) if handoff is not None else None
+        return _PreparedWorkerPrompt(prompt, memory, record)
 
     def _render_worker_pickup_context(self, job_root: Path) -> str:
-        packet_path = job_root / "role_pickup_packet.json"
-        if not packet_path.is_file():
-            return "Memory context: unavailable. Unavailable context reasons: pickup_missing."
-        try:
-            packet = RoleMemoryStore(self.project_root).validate_pickup_packet(self._read_json(packet_path))
-        except (OSError, UnicodeError, ValueError):
-            return "Memory context: unavailable. Unavailable context reasons: pickup_unreadable."
+        return self._validated_worker_memory(job_root).fragment
 
+    def _validated_worker_memory(self, job_root: Path, *, role: str | None = None) -> _ValidatedWorkerMemory:
+        from goodteam_os.memory_storage import read_bytes
+        from goodteam_os.memory_handoff import canonical_bytes
+
+        packet_digest = None
+
+        def unavailable(reason):
+            return _ValidatedWorkerMemory(
+                f"Memory context: unavailable. Unavailable context reasons: {reason}.", (), packet_digest,
+                canonical_bytes({"context_status": "unavailable", "context_reasons": [reason], "rendered_sources": []}))
+
+        try:
+            raw = read_bytes(job_root / "role_pickup_packet.json")
+            if raw is None:
+                return unavailable("pickup_missing")
+            packet_digest = memory_digest(raw)
+            packet = json.loads(raw)
+            if role is None:
+                role = str(self._read_json(job_root / "job.json")["role"])
+            if isinstance(packet, dict) and packet.get("role_key") is not None and packet.get("role_key") != role:
+                return unavailable("pickup_role_mismatch")
+            packet = RoleMemoryStore(self.project_root).validate_pickup_packet(packet)
+        except (OSError, UnicodeError, ValueError):
+            return unavailable("pickup_unreadable")
+        fragment = self._render_validated_worker_memory(packet)
+        relevant = [event for event in packet.get("relevant_events", [])
+                    if isinstance(event, dict) and isinstance(event.get("id"), str)
+                    and event["id"] and str(event.get("text", "")).strip()]
+        citations = tuple(str(event["id"]) for event in relevant)
+        sources = [{"source_kind": "retrieved_event", "event_id": event["id"], "horizon": event.get("horizon", ""),
+                    "rendered_text_digest": memory_digest(str(event["text"]).strip().encode("utf-8"))}
+                   for event in relevant]
+        provenance = packet.get("provenance", {})
+        provenance = provenance if isinstance(provenance, dict) else {}
+        generated = provenance.get("generated_sources", {})
+        legacy = provenance.get("legacy_sources", {})
+        summaries = packet.get("summaries")
+        summaries = summaries if isinstance(summaries, dict) else {}
+        for horizon in ("long-term", "mid-term"):
+            summary = str(summaries.get(horizon, "")).strip()
+            if not summary:
+                continue
+            source = generated.get(horizon, {}) if isinstance(generated, dict) else {}
+            old = legacy.get(horizon, {}) if isinstance(legacy, dict) else {}
+            source = source if isinstance(source, dict) else {}
+            old = old if isinstance(old, dict) else {}
+            # These are dependencies of the summary, not a claim that every
+            # dependency event's text survived summarization/truncation.
+            sources.append({"source_kind": "horizon_summary", "horizon": horizon,
+                            "rendered_text_digest": memory_digest(summary.encode("utf-8")),
+                            "generated_dependency_ids": source.get("event_ids", []),
+                            "generated_digest": source.get("sha256"), "legacy_digest": old.get("sha256"),
+                            "legacy_status": old.get("status", "unknown")})
+        validation = {"context_status": packet.get("context_status", "unavailable"),
+                      "context_reasons": packet.get("context_reasons", []), "rendered_sources": sources}
+        return _ValidatedWorkerMemory(fragment, citations, packet_digest, canonical_bytes(validation))
+
+    @staticmethod
+    def _render_validated_worker_memory(packet: dict[str, Any]) -> str:
         relevant_events = packet.get("relevant_events")
         summaries = packet.get("summaries")
         lines = [

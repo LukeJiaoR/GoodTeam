@@ -167,10 +167,10 @@ def test_independent_checkpoint_repairs_bad_index_but_rejects_rollback(tmp_path,
 
 
 @pytest.mark.parametrize("index_state", ["missing", "broken"])
-def test_legacy_wal_without_any_checkpoint_requires_explicit_recovery(tmp_path, index_state, monkeypatch):
+def test_legacy_wal_without_any_checkpoint_requires_explicit_recovery(tmp_path, index_state, monkeypatch, tmp_path_factory):
     from goodteam_os.web import build_memory_overview
     from goodteam_os.workers import WorkerJobStore
-    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(tmp_path / "operator"))
+    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(tmp_path_factory.mktemp("operator")))
     monkeypatch.setattr("goodteam_os.workers.default_embedder", lambda: None)
     store = RoleMemoryStore(tmp_path)
     append(store, "database OLD_RULE")

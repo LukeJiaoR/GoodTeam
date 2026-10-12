@@ -9,8 +9,8 @@ from goodteam_os.workers import WorkerJobStore
 
 
 @pytest.fixture(autouse=True)
-def offline_memory(monkeypatch, tmp_path):
-    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(tmp_path / "operator"))
+def offline_memory(monkeypatch, tmp_path, tmp_path_factory):
+    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(tmp_path_factory.mktemp("operator")))
     monkeypatch.setenv("GOODTEAM_HOME", str(tmp_path / "home"))
     monkeypatch.setattr("goodteam_os.workers.default_embedder", lambda: None)
 

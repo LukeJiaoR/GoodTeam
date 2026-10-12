@@ -5,6 +5,9 @@ only filesystem, locking, size-limit and atomic-publication primitives. Event
 identity, active-event selection, retrieval and bounded context policy remain in
 the facade; no new database or model dependency is required.
 
+For ordinary Worker capture, preparation, per-call transport observations and
+writeback event references, see [Worker memory observations](worker-memory-observations.md).
+
 ## Commit and read contract
 
 All cooperating GoodTeam processes use the same stable `.store.lock` inode in a
