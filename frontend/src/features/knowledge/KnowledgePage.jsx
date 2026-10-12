@@ -105,6 +105,8 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   const [memory, setMemory] = useState(null);
   const [eventResponse, setEventResponse] = useState(null);
   const [projects, setProjects] = useState([]);
+  const [catalogResponse, setCatalogResponse] = useState(null);
+  const [catalogRevision, setCatalogRevision] = useState(0);
   const [detailResponse, setDetailResponse] = useState(null);
   const [crossResponse, setCrossResponse] = useState(null);
   const crossRequest = useRef(null);
@@ -121,8 +123,12 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   const eventId = search.get('event') || '';
   const crossQuery = search.get('cross_q') || '';
   const scope = normalizeScope(search.get('scope') || '');
+  const catalogKey = JSON.stringify([projectKey, catalogRevision]);
+  const catalogLoading = catalogResponse?.key !== catalogKey;
+  const catalogError = !catalogLoading ? catalogResponse?.error : null;
   const eventProject = search.get('event_project') || projectKey;
   const sourceAllowed = eventProject === projectKey || (scope.includes(eventProject) && projects.includes(eventProject));
+  const sourcePending = !sourceAllowed && scope.includes(eventProject) && catalogLoading;
   const validEvent = isMemoryEventId(eventId);
   const eventsKey = JSON.stringify(['events', projectKey, selected, query, readRevision]);
   const detailKey = JSON.stringify(['detail', projectKey, eventProject, selected, eventId, readRevision]);
@@ -164,17 +170,24 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   };
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([
-      knowledgeApi.getMemory(projectKey, { signal: controller.signal }),
-      knowledgeApi.getKnowledgeProjects({ signal: controller.signal }),
-    ]).then(([payload, projectPayload]) => {
+    knowledgeApi.getMemory(projectKey, { signal: controller.signal }).then((payload) => {
       if (controller.signal.aborted) return;
       setMemory(payload);
       setReadErrors(current => ({ ...current, overview: null }));
-      setProjects((projectPayload.projects || []).map((item) => item.project?.project_key).filter(Boolean));
     }).catch((caught) => { if (!controller.signal.aborted && caught.name !== 'AbortError') setReadErrors(current => ({ ...current, overview: { key: projectKey, value: caught, signal: controller.signal } })); });
     return () => controller.abort();
   }, [projectKey, readRevision]);
+  useEffect(() => {
+    const controller = new AbortController();
+    knowledgeApi.getKnowledgeProjects({ signal: controller.signal }).then((payload) => {
+      if (controller.signal.aborted) return;
+      setProjects((payload.projects || []).map((item) => item.project?.project_key).filter(Boolean));
+      setCatalogResponse({ key: catalogKey, error: null });
+    }).catch((caught) => {
+      if (!controller.signal.aborted && caught.name !== 'AbortError') setCatalogResponse({ key: catalogKey, error: caught });
+    });
+    return () => controller.abort();
+  }, [catalogKey]);
   useEffect(() => {
     queryTimer.current = globalThis.setTimeout(() => {
       if (draftQuery !== query) {
@@ -255,12 +268,15 @@ function MemoryView({ projectKey, search, setSearch, t }) {
         {roleContext?.context_status && roleContext.context_status !== 'available' ? <p role="status" className="memory-provenance__notice">{t('knowledge.memory.contextUnavailable')} <code>{roleContext.context_status}</code>{(roleContext.context_reasons || []).map(reason => <code key={reason}> · {reason}</code>)}</p> : null}
         {eventsReady && !events.length ? <p className="product-empty-copy">{t('knowledge.memory.emptyResults')}</p> : null}
         <ol>{events.map((memoryEvent, index) => <li key={memoryEvent.id || index}><button aria-pressed={eventProject === projectKey && eventId === memoryEvent.id} className={eventProject === projectKey && eventId === memoryEvent.id ? 'is-active' : ''} onClick={(click) => openEvent(memoryEvent.id, projectKey, click.currentTarget)}><strong>{memoryEvent.action || memoryEvent.horizon || selected}</strong><span>{memoryEvent.body ?? memoryEvent.text ?? memoryEvent.summary ?? ''}</span>{memoryEvent.is_superseded ? <small>{t('knowledge.memory.superseded')}</small> : null}<code>{memoryEvent.id}</code></button></li>)}</ol>
-        {eventId && (!validEvent || !sourceAllowed) ? <p role="status">{t('knowledge.memory.sourceUnavailable')} <button type="button" onClick={closeSource}>{t('knowledge.memory.closeSource')}</button></p> : null}
+        {eventId && (!validEvent || (!sourceAllowed && !sourcePending)) ? <p role="status">{t('knowledge.memory.sourceUnavailable')} <button type="button" onClick={closeSource}>{t('knowledge.memory.closeSource')}</button></p> : null}
+        {eventId && validEvent && sourcePending ? <p role="status">{t('knowledge.memory.catalogLoading')}</p> : null}
         {eventId && validEvent && sourceAllowed && !eventDetail && !visibleError ? <p role="status">{t('product.states.loading')}</p> : null}
         {eventDetail ? <MemoryEventInspector elementRef={inspectorRef} event={eventDetail} projectKey={eventProject} onOpenRelated={id => openEvent(id, eventProject)} onClose={closeSource} t={t} /> : null}
         <form className="knowledge-cross-memory" onSubmit={runCrossSearch}>
           <h2>{t('knowledge.memory.crossTitle')}</h2><p>{t('knowledge.memory.crossDescription')}</p>
           <p className="memory-provenance__notice">{t('knowledge.memory.retrievalBoundary')}</p>
+          {catalogError ? <><p>{t('knowledge.memory.catalogUnavailable')}</p><ProductError error={catalogError} onRetry={() => setCatalogRevision(value => value + 1)} t={t} /></> : null}
+          {catalogLoading ? <p role="status">{t('knowledge.memory.catalogLoading')}</p> : null}
           <fieldset><legend>{t('knowledge.memory.scope')}</legend>{projects.filter((key) => key !== projectKey).map((key) => <label key={key}><input checked={scope.includes(key)} onChange={() => toggleScope(key)} type="checkbox" />{key}</label>)}</fieldset>
           <label><span>{t('knowledge.memory.crossQuery')}</span><input required type="search" value={crossQuery} onChange={(event) => updateSearch({ cross_q: event.target.value })} /></label>
           {crossQuery.trim() && !scope.length ? <p className="knowledge-scope-hint" id="knowledge-cross-scope-hint">{t('knowledge.memory.scopeHint')}</p> : null}

@@ -1465,6 +1465,8 @@ export const zhCN = {
   'knowledge.memory.superseded': '已被后续记忆替代',
   'knowledge.memory.crossTitle': '跨项目记忆',
   'knowledge.memory.crossDescription': '使用当前角色在明确选择的项目范围内检索。',
+  'knowledge.memory.catalogLoading': '正在加载项目列表…',
+  'knowledge.memory.catalogUnavailable': '跨项目检索的项目列表暂时无法加载。',
   'knowledge.memory.scope': '项目范围',
   'knowledge.memory.crossQuery': '跨项目查询',
   'knowledge.memory.crossSearch': '搜索记忆',
