@@ -6,6 +6,8 @@ import {
   ChevronRight,
   FileCheck2,
   ExternalLink,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 import StatusBadge from '../../../components/ui/StatusBadge';
 import {
@@ -376,6 +378,7 @@ function TeamWorkspace({
     && !['blocker', 'approval'].includes(data.team_workspace?.attention_request?.kind)
     && data.team_workspace?.mission?.source !== 'workflow';
   const [mobileTab, setMobileTab] = useState('manager');
+  const [collapsedEvidence, setCollapsedEvidence] = useState(null);
   const [expandedTaskId, setExpandedTaskId] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState('');
   const [selectedReviewTargetId, setSelectedReviewTargetId] = useState('');
@@ -390,6 +393,8 @@ function TeamWorkspace({
   const outcomes = workspace.outcome_tasks || [];
   const selectedTask = outcomes.find((task) => task.id === selectedTaskId) || null;
   const attention = workspace.attention_request;
+  const evidenceContext = `${projectKey}:${mission?.run_id || mission?.id || ''}:${attention?.target_id || ''}`;
+  const evidenceHidden = !mobileWorkspace && collapsedEvidence === evidenceContext;
   const activeAttemptIds = new Set((workspace.execution_actors || []).filter(actor => actor.role !== 'orchestrator').map(actor => actor.current_attempt_id));
   const activeJobs = (data.worker_jobs || []).filter(job => activeAttemptIds.has(job.id) && job.status === 'running');
   const attentionReviewTask = attention?.target_type === 'review' && attention?.target_id
@@ -430,6 +435,7 @@ function TeamWorkspace({
     if (!attentionReviewTask) return;
     returnFocusRef.current = trigger || document.activeElement;
     setActiveReviewTaskId(attentionReviewTask.id);
+    setCollapsedEvidence(null);
     if (!mobileWorkspace) {
       outcomeRefs.current.get(attentionReviewTask.id)?.scrollIntoView?.({
         behavior: reducedMotion ? 'auto' : 'smooth',
@@ -464,6 +470,7 @@ function TeamWorkspace({
     id: `team-panel-${tab}`,
     'data-mobile-active': mobileTab === tab ? 'true' : 'false',
     'data-read-only': readOnly ? 'true' : undefined,
+    ...(!mobileWorkspace && tab === 'outcomes' ? { hidden: evidenceHidden } : {}),
     ...(mobileWorkspace ? {
       'aria-labelledby': `team-tab-${tab}`,
       hidden: mobileTab !== tab,
@@ -485,6 +492,7 @@ function TeamWorkspace({
   ];
   return (
     <>
+      {!composing ? <div className="studio-work-toolbar"><span>{t('product.studio.focusConversation')}</span><button type="button" aria-controls="team-panel-outcomes" aria-expanded={!evidenceHidden} onClick={() => setCollapsedEvidence(evidenceHidden ? null : evidenceContext)}>{evidenceHidden ? <PanelRightOpen size={16} aria-hidden="true" /> : <PanelRightClose size={16} aria-hidden="true" />}{t(evidenceHidden ? 'product.studio.showEvidence' : 'product.studio.hideEvidence')}</button></div> : null}
       {!composing ? <div
         aria-label={t('work.team.navigation')}
         aria-orientation="horizontal"
@@ -525,6 +533,7 @@ function TeamWorkspace({
       <div
         className={`team-workspace${composing ? ' team-workspace--composing' : ''}`}
         aria-label={t('work.team.workspace')}
+        data-evidence-collapsed={evidenceHidden ? 'true' : undefined}
         data-read-only={readOnly ? 'true' : undefined}
       >
         <aside className="team-task-sidebar" hidden={mobileWorkspace && !taskManagementOpen}>

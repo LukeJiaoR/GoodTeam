@@ -9,6 +9,7 @@ import TeamPage from '../features/team/TeamPage';
 import { legacyDestination, routes } from '../lib/routing/routes';
 import NotFoundPage from './NotFoundPage';
 import ProductLayout from './ProductLayout';
+import SettingsPage from '../features/settings/SettingsPage';
 
 function RootRedirect() {
   const { search } = useLocation();
@@ -47,7 +48,7 @@ export function createProductRoutes({
         { path: '/projects', element: <ProjectsComponent /> },
         { path: '/inbox', element: <Navigate to={routes.projects()} replace /> },
         { path: '/activity', element: <Navigate to={routes.projects()} replace /> },
-        { path: '/settings', element: <Navigate to={routes.projects()} replace /> },
+        { path: '/settings', element: <SettingsPage /> },
         { path: '/projects/:projectKey/home', element: <ProjectWorkRedirect /> },
         { path: '/projects/:projectKey/team', element: <TeamComponent /> },
         {
@@ -61,6 +62,7 @@ export function createProductRoutes({
         { path: '/projects/:projectKey/review', element: <ReviewComponent /> },
         { path: '/projects/:projectKey/review/:reviewId', element: <ReviewComponent /> },
         { path: '/projects/:projectKey/knowledge', element: <KnowledgeComponent /> },
+        { path: '/projects/:projectKey/settings', element: <SettingsPage /> },
         { path: '/projects/:projectKey/settings/:section', element: <ProjectTeamRedirect /> },
       ],
     },

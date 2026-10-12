@@ -1,112 +1,63 @@
-import {
-  BookOpen,
-  Bot,
-  ClipboardCheck,
-  Moon,
-  Sun,
-  Users,
-  Workflow,
-} from 'lucide-react';
+import { BookOpen, Bot, ChevronRight, ClipboardCheck, FolderKanban, Moon, Settings2, Sun, Users, Workflow } from 'lucide-react';
 import { useEffect } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { ToastProvider } from '../components/ui/ToastProvider';
 import { useAppearancePreferences } from '../hooks/useAppearancePreferences';
 import { projectNavigationDestinations, rememberProjectLocation } from '../lib/routing/projectNavigation';
 
-const LANGUAGE_OPTIONS = [
-  ['auto', 'product.language.auto'],
-  ['en', 'product.language.en'],
-  ['zh-CN', 'product.language.zhCN'],
+const LANGUAGE_OPTIONS = [['auto', 'product.language.auto'], ['en', 'product.language.en'], ['zh-CN', 'product.language.zhCN']];
+const PROJECT_PAGES = [
+  ['work', Workflow, 'product.workNavigation.workbench'],
+  ['review', ClipboardCheck, 'product.workNavigation.reviews'],
+  ['team', Users, 'product.workNavigation.team'],
+  ['knowledge', BookOpen, 'product.workNavigation.knowledge'],
 ];
 
 export default function ProductLayout() {
   const { pathname, search } = useLocation();
-  const {
-    darkMode,
-    setDarkMode,
-    language,
-    languagePreference,
-    setLanguagePreference,
-    t,
-  } = useAppearancePreferences();
-  const projectMatch = pathname.match(/^\/projects\/([^/]+)\/(?:home|team|work|review|knowledge|settings)/);
+  const preferences = useAppearancePreferences();
+  const { darkMode, setDarkMode, language, languagePreference, setLanguagePreference, t } = preferences;
+  const projectMatch = pathname.match(/^\/projects\/([^/]+)\/(?:home|team|work|review|knowledge|settings)(?:\/|$)/);
   const projectKey = (() => {
     try { return projectMatch ? decodeURIComponent(projectMatch[1]) : ''; } catch { return ''; }
   })();
   const destinations = projectNavigationDestinations(projectKey, pathname, search);
+  const settingsDestination = projectKey ? `/projects/${encodeURIComponent(projectKey)}/settings` : '/settings';
   useEffect(() => { rememberProjectLocation(pathname, search); }, [pathname, search]);
   const isProjectsRoute = pathname === '/projects';
-  const isWorkRoute = Boolean(projectKey && /^\/projects\/[^/]+\/(?:team|work|review|knowledge)(?:\/|$)/.test(pathname));
-  const workNavClass = ({ isActive }) => `product-work-navigation__link${isActive ? ' is-active' : ''}`;
+  const currentSection = pathname.match(/^\/projects\/[^/]+\/(work|review|team|knowledge|settings)(?:\/|$)/)?.[1];
+  const currentPage = PROJECT_PAGES.find(([key]) => key === currentSection);
+  const isWorkRoute = Boolean(projectKey);
+  const sectionTitle = (pathname === '/settings' || currentSection === 'settings') ? t('product.studio.settings') : currentPage ? t(currentPage[2]) : t('product.studio.projects');
+  const navClass = ({ isActive }) => `studio-navigation__link${isActive ? ' is-active' : ''}`;
   return (
     <ToastProvider>
-      <div className={`product-shell product-shell--workspace${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}`}>
+      <div className={`product-shell product-shell--workspace product-shell--studio${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}`}>
         <a className="product-skip-link" href="#main-content">{t('product.navigation.skipToContent')}</a>
-        <header className={`product-chrome${isWorkRoute ? ' product-work-chrome' : ''}`}>
-          <div className="product-chrome__inner">
-            <NavLink className="product-brand" to="/projects" aria-label={t('product.brand')}>
-              <span className="product-brand__mark" aria-hidden="true">
-                {isWorkRoute || isProjectsRoute ? <Bot size={21} strokeWidth={1.9} /> : 'G'}
-              </span>
-              <span>{t('product.brand')}</span>
-            </NavLink>
-
-            {isWorkRoute ? (
-              <nav className="product-work-navigation" aria-label={t('product.navigation.projectLabel')}>
-                <NavLink className={workNavClass} to={destinations.team}>
-                  <Users aria-hidden="true" size={17} />
-                  <span>{t('product.workNavigation.team')}</span>
-                </NavLink>
-                <NavLink
-                  className={workNavClass}
-                  to={destinations.work}
-                >
-                  <Workflow aria-hidden="true" size={17} />
-                  <span>{t('product.workNavigation.workbench')}</span>
-                </NavLink>
-                <NavLink className={workNavClass} to={destinations.review}>
-                  <ClipboardCheck aria-hidden="true" size={17} />
-                  <span>{t('product.workNavigation.reviews')}</span>
-                </NavLink>
-                <NavLink className={workNavClass} to={destinations.knowledge}>
-                  <BookOpen aria-hidden="true" size={17} />
-                  <span>{t('product.workNavigation.knowledge')}</span>
-                </NavLink>
-              </nav>
-            ) : <span className="product-chrome__spacer" aria-hidden="true" />}
-
-            <div className={`product-preferences${isWorkRoute ? ' product-work-tools' : ''}`}>
-              <label className="product-language-control">
-                <span className="sr-only">{t('product.language.label')}</span>
-                <select
-                  aria-label={t('product.language.label')}
-                  value={languagePreference}
-                  onChange={(event) => setLanguagePreference(event.target.value)}
-                >
-                  {LANGUAGE_OPTIONS.map(([value, labelKey]) => (
-                    <option value={value} key={value}>{t(labelKey)}</option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                className="product-appearance-control"
-                onClick={() => setDarkMode(!darkMode)}
-                aria-label={`${t('product.appearance.label')}: ${t(darkMode ? 'product.appearance.dark' : 'product.appearance.light')}`}
-                aria-pressed={darkMode}
-                title={t('product.appearance.label')}
-              >
-                {darkMode ? <Moon aria-hidden="true" size={16} /> : <Sun aria-hidden="true" size={16} />}
-                <span>{t(darkMode ? 'product.appearance.dark' : 'product.appearance.light')}</span>
-              </button>
+        <aside className="studio-sidebar" aria-label={t('product.studio.workspace')}>
+          <NavLink className="studio-brand" to="/projects" aria-label={t('product.brand')}>
+            <span className="studio-brand__mark"><Bot size={22} aria-hidden="true" /></span>
+            <span>{t('product.brand')}<small>{t('product.studio.tagline')}</small></span>
+          </NavLink>
+          <NavLink className={navClass} to="/projects" end aria-label={t('product.studio.projects')} title={t('product.studio.projects')}><FolderKanban size={17} aria-hidden="true" /><span>{t('product.studio.projects')}</span></NavLink>
+          {projectKey ? <>
+            <div className="studio-project-context"><span className="studio-project-context__avatar" aria-hidden="true">{projectKey.slice(0, 1).toUpperCase()}</span><span><small>{t('product.studio.currentProject')}</small><strong title={projectKey}>{projectKey}</strong></span></div>
+            <nav className="studio-navigation" aria-label={t('product.navigation.projectLabel')}>
+              {PROJECT_PAGES.map(([key, Icon, label]) => <NavLink className={navClass} to={destinations[key]} key={key} aria-label={t(label)} title={t(label)}><Icon size={17} aria-hidden="true" /><span>{t(label)}</span></NavLink>)}
+            </nav>
+          </> : <div className="studio-sidebar__hint"><Workflow size={20} aria-hidden="true" /><p>{t('product.studio.chooseProject')}</p></div>}
+          <div className="studio-sidebar__footer">
+            <NavLink className={navClass} to={settingsDestination} aria-label={t('product.studio.settings')} title={t('product.studio.settings')}><Settings2 size={17} aria-hidden="true" /><span>{t('product.studio.settings')}</span></NavLink>
+            <div className="studio-preferences">
+              <label><span className="sr-only">{t('product.language.label')}</span><select aria-label={t('product.language.label')} value={languagePreference} onChange={(event) => setLanguagePreference(event.target.value)}>{LANGUAGE_OPTIONS.map(([value, key]) => <option value={value} key={value}>{t(key)}</option>)}</select></label>
+              <button type="button" onClick={() => setDarkMode(!darkMode)} aria-label={`${t('product.appearance.label')}: ${t(darkMode ? 'product.appearance.dark' : 'product.appearance.light')}`} aria-pressed={darkMode} title={t('product.appearance.label')}>{darkMode ? <Moon size={16} aria-hidden="true" /> : <Sun size={16} aria-hidden="true" />}</button>
             </div>
           </div>
-        </header>
-
-        <Outlet context={{
-          language,
-          t,
-        }} />
+        </aside>
+        <div className="studio-main">
+          <header className="studio-topbar"><span>{projectKey || t('product.studio.workspace')}</span><ChevronRight size={13} aria-hidden="true" /><strong>{sectionTitle}</strong><span className="studio-topbar__label">{t('product.studio.localFirst')}</span></header>
+          <Outlet context={{ language, t, preferences }} />
+        </div>
       </div>
     </ToastProvider>
   );

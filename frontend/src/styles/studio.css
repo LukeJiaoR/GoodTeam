@@ -1,0 +1,250 @@
+/* Beautiful UI-inspired product composition. Owns the application canvas and
+   all destination materials; feature CSS continues to own local interactions. */
+.product-shell.product-shell--studio {
+  --product-bg: #f5f5f6;
+  --product-surface: #fff;
+  --product-surface-muted: #f1f1f3;
+  --product-border: #e7e7ea;
+  --product-text: #242429;
+  --product-text-muted: #6c6c75;
+  --product-accent: #4b5bd5;
+  --product-accent-strong: #424fc5;
+  --product-accent-soft: #efeffb;
+  --product-focus: #6670d9;
+  --product-radius: 18px;
+  --product-shadow: 0 3px 10px #23232c05, 0 12px 28px #23232c03;
+  --product-sticky-offset: 4.5rem;
+  display: grid;
+  grid-template-columns: 202px minmax(0, 1fr);
+  align-items: start;
+  min-height: 100dvh;
+  letter-spacing: -.012em;
+}
+.dark .product-shell.product-shell--studio {
+  --product-bg: #18181b;
+  --product-surface: #222225;
+  --product-surface-muted: #2a2a2e;
+  --product-border: #333337;
+  --product-text: #efeff1;
+  --product-text-muted: #a5a5ae;
+  --product-accent: #b4b8fa;
+  --product-accent-strong: #c1c4ff;
+  --product-accent-soft: #303044;
+  --product-focus: #acb2ff;
+  --product-shadow: 0 3px 10px #00000012, 0 12px 28px #0000000a;
+}
+.product-shell--studio .studio-sidebar {
+  position: sticky; top: 0; height: 100dvh; min-height: 480px;
+  padding: 27px 14px 14px; display: flex; flex-direction: column; gap: 6px;
+  background: var(--product-surface); border-right: 1px solid var(--product-border); z-index: 25;
+}
+.studio-brand { display: flex; gap: 10px; align-items: center; color: var(--product-text); text-decoration: none; font-weight: 650; font-size: 17px; padding: 0 7px 24px; }
+.studio-brand small { display: block; font-size: 10px; font-weight: 450; color: var(--product-text-muted); letter-spacing: .025em; margin-top: 1px; }
+.studio-brand__mark { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--product-border); border-radius: 12px; box-shadow: var(--product-shadow); }
+.studio-navigation { display: grid; gap: 5px; }
+.studio-navigation__link { display: flex; align-items: center; gap: 10px; padding: 10px 12px; min-height: 42px; color: var(--product-text-muted); font-size: 13px; font-weight: 500; border-radius: 10px; text-decoration: none; transition: background-color 140ms ease, color 140ms ease; }
+.studio-navigation__link:hover { color: var(--product-text); background: var(--product-bg); }
+.studio-navigation__link.is-active { color: var(--product-text); background: var(--product-surface-muted); }
+.studio-navigation__link.is-active svg { color: var(--product-accent-strong); }
+.studio-project-context { display: flex; align-items: center; gap: 9px; margin: 22px 7px 10px; min-width: 0; }
+.studio-project-context__avatar { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; border: 1px solid var(--product-border); border-radius: 8px; font-size: 12px; background: var(--product-bg); }
+.studio-project-context > span:last-child { min-width: 0; }
+.studio-project-context small { display: block; color: var(--product-text-muted); font-size: 10px; }
+.studio-project-context strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 550; max-width: 135px; }
+.studio-sidebar__footer { margin-top: auto; padding-top: 24px; }
+.studio-sidebar__hint { color: var(--product-text-muted); font-size: 12px; padding: 26px 12px; line-height: 1.7; }
+.studio-sidebar__hint svg { opacity: .6; }
+.studio-preferences { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--product-border); }
+.studio-preferences label { flex: 1; min-width: 0; }
+.studio-preferences select { width: 100%; min-width: 0; color: var(--product-text-muted); border: 0; background: transparent; font-size: 11px; padding: 7px 4px; }
+.studio-preferences button { display: grid; place-items: center; flex: 0 0 32px; height: 32px; border: 1px solid var(--product-border); border-radius: 50%; background: var(--product-bg); color: var(--product-text-muted); cursor: pointer; }
+.studio-main { min-width: 0; }
+.studio-topbar { height: 58px; padding: 0 30px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--product-border); color: var(--product-text-muted); background: var(--product-surface); font-size: 12px; }
+.studio-topbar > span:first-child { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-topbar strong { color: var(--product-text); font-weight: 500; white-space: nowrap; }
+.studio-topbar__label { margin-left: auto; font-size: 10px; letter-spacing: .02em; }
+.product-shell.product-shell--studio :is(.projects-page, .product-knowledge-page, .team-page, .product-review-page, .studio-settings-page) { width: calc(100% - 64px); max-width: 1320px; padding: 36px 0 56px; margin-inline: auto; }
+.product-shell.product-shell--studio .product-page-heading { align-items: end; margin-bottom: 30px; gap: 20px; }
+.product-shell.product-shell--studio .product-page-heading__eyebrow { font-size: 11px; letter-spacing: .03em; margin-bottom: 8px; }
+.product-shell.product-shell--studio .product-page-heading h1 { font-size: clamp(26px, 2.25vw, 34px); font-weight: 580; letter-spacing: -.045em; }
+.product-shell.product-shell--studio .product-page-heading__description { font-size: 13px; margin-top: 9px; max-width: 66ch; }
+.product-shell.product-shell--studio .product-button { min-height: 36px; border-radius: 999px; font-size: 12px; padding: 8px 14px; font-weight: 550; box-shadow: none; transform: none; }
+.product-shell.product-shell--studio .product-button--primary,
+.product-shell.product-shell--studio button.product-button:not(.product-button--secondary):not(.product-button--danger) { background: var(--product-text); color: var(--product-surface); border-color: var(--product-text); }
+.product-shell.product-shell--studio .product-button--secondary { background: var(--product-surface); border-color: var(--product-border); color: var(--product-text); box-shadow: 0 1px 3px #00000004; }
+.product-shell.product-shell--studio .product-status-badge { border: 0; padding: 4px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+.product-shell.product-shell--studio .collection-toolbar { gap: 12px; }
+.product-shell.product-shell--studio .collection-search { max-width: 280px; min-height: 36px; border-radius: 10px; background: var(--product-bg); border-color: transparent; }
+.product-shell.product-shell--studio .collection-search input { font-size: 12px; }
+.product-shell.product-shell--studio .collection-filters { gap: 3px; padding: 3px; background: var(--product-surface-muted); border-radius: 999px; }
+.product-shell.product-shell--studio .collection-filters button { min-height: 28px; padding: 4px 12px; border: 0; border-radius: 999px; font-size: 11px; color: var(--product-text-muted); background: transparent; }
+.product-shell.product-shell--studio .collection-filters button[aria-pressed=true] { background: var(--product-surface); color: var(--product-text); box-shadow: 0 1px 4px #0000000d; }
+.product-shell.product-shell--studio .collection-count { font-size: 11px; }
+/* Projects: one project-led overview, then roomy workspace records. */
+.studio-project-overview { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin: 0 0 28px; }
+.studio-project-overview button { display: grid; grid-template-columns: 1fr auto; gap: 12px; text-align: left; border: 1px solid var(--product-border); border-radius: 18px; background: var(--product-surface); padding: 20px 22px; color: var(--product-text); cursor: pointer; box-shadow: var(--product-shadow); }
+.studio-project-overview button span { font-size: 12px; color: var(--product-text-muted); grid-column: 1/-1; }
+.studio-project-overview strong { font-size: 30px; font-weight: 500; letter-spacing: -.05em; line-height: 1; }
+.studio-project-overview svg { align-self: end; color: var(--product-text-muted); }
+.studio-project-overview button[aria-pressed=true] { border-color: var(--product-accent); }
+.product-shell.product-shell--studio .projects-launcher { background: transparent; border: 0; box-shadow: none; }
+.product-shell.product-shell--studio .projects-launcher__heading { padding: 0 0 14px; }
+.product-shell.product-shell--studio .projects-launcher > .collection-toolbar { padding: 0 0 18px; border-bottom: 0; }
+.product-shell.product-shell--studio .projects-launcher-list { display: grid; gap: 12px; }
+.product-shell.product-shell--studio .project-launcher-entry { background: var(--product-surface); border: 1px solid var(--product-border); border-radius: 18px; overflow: hidden; box-shadow: var(--product-shadow); }
+.product-shell.product-shell--studio .project-launcher-entry + .project-launcher-entry { border-top: 1px solid var(--product-border); }
+.product-shell.product-shell--studio .project-launcher-row { min-height: 90px; padding: 22px 24px 15px; background: transparent; }
+.product-shell.product-shell--studio .project-launcher-row__icon { width: 38px; height: 38px; border-radius: 12px; background: var(--product-bg); }
+.product-shell.product-shell--studio .project-launcher-row__copy strong { font-size: 15px; font-weight: 550; }
+.product-shell.product-shell--studio .project-launcher-row__activity { padding: 5px 9px; border-radius: 999px; background: var(--product-bg); font-size: 11px; }
+.product-shell.product-shell--studio .project-launcher-entry > .file-location { margin-inline: 24px; padding-left: 51px; }
+/* Shared records and document surfaces. */
+.product-shell.product-shell--studio :is(.review-queue, .review-artifact, .review-inspector, .knowledge-intro, .knowledge-confirmed-facts, .knowledge-overview > .repository-overview, .knowledge-artifacts > aside, .knowledge-document, .knowledge-memory > aside, .knowledge-memory-workspace, .team-manager, .team-responsibility, .team-worker) { border-radius: 18px; border: 1px solid var(--product-border); background: var(--product-surface); box-shadow: var(--product-shadow); }
+.product-shell.product-shell--studio .team-summary { display: flex; flex-wrap: wrap; gap: 0; padding: 18px 8px; border: 1px solid var(--product-border); border-radius: 18px; background: var(--product-surface); box-shadow: var(--product-shadow); margin-bottom: 20px; }
+.product-shell.product-shell--studio .team-summary > div { flex: 1 1 105px; padding: 6px 18px; border: 0; border-right: 1px solid var(--product-border); background: transparent; border-radius: 0; box-shadow: none; }
+.product-shell.product-shell--studio .team-summary > div:last-child { border: 0; }
+.product-shell.product-shell--studio .team-summary strong { font-size: 24px; font-weight: 500; }
+.product-shell.product-shell--studio .team-summary span { font-size: 11px; }
+.product-shell.product-shell--studio .team-manager { margin-bottom: 28px; padding: 20px; }
+.product-shell.product-shell--studio .team-roster__heading h2 { font-size: 16px; font-weight: 550; }
+.product-shell.product-shell--studio .team-responsibility-list { display: grid; gap: 14px; }
+.product-shell.product-shell--studio .team-responsibility__header { padding: 19px 22px; }
+.product-shell.product-shell--studio .team-worker { box-shadow: none; border-radius: 12px; }
+.product-shell.product-shell--studio .team-worker__icon { border-radius: 12px; background: var(--product-bg); color: var(--product-text-muted); }
+.product-shell.product-shell--studio .team-role-workers > li { border-radius: 12px; }
+.product-shell.product-shell--studio .knowledge-view-switcher { display: flex; width: fit-content; gap: 3px; padding: 4px; margin: 0 0 24px; background: var(--product-surface-muted); border: 1px solid var(--product-border); border-radius: 999px; }
+.product-shell.product-shell--studio .knowledge-view-switcher button { min-height: 34px; padding: 7px 18px; font-size: 12px; border: 0; border-radius: 999px; color: var(--product-text-muted); background: transparent; }
+.product-shell.product-shell--studio .knowledge-view-switcher button.is-active { color: var(--product-text); background: var(--product-surface); box-shadow: 0 1px 4px #0000000c; }
+.product-shell.product-shell--studio .knowledge-overview { gap: 18px; }
+.product-shell.product-shell--studio .knowledge-intro { padding: 26px; }
+.product-shell.product-shell--studio .knowledge-intro h2 { font-size: 19px; font-weight: 550; }
+.product-shell.product-shell--studio .knowledge-memory-workspace > ol > li > button { padding: 17px; margin-bottom: 10px; border-radius: 14px; border-color: var(--product-border); background: var(--product-bg); }
+.product-shell.product-shell--studio .review-workspace { grid-template-columns: minmax(170px,.7fr) minmax(0,2fr) minmax(210px,.85fr); gap: 18px; }
+.product-shell.product-shell--studio .review-queue { border: 0; background: transparent; box-shadow: none; }
+.product-shell.product-shell--studio .review-queue ol { display: grid; gap: 7px; padding: 0; }
+.product-shell.product-shell--studio .review-queue li a { border: 1px solid transparent; border-radius: 12px; padding: 12px; background: transparent; }
+.product-shell.product-shell--studio .review-queue li a.is-active { border-color: var(--product-border); color: var(--product-text); background: var(--product-surface); box-shadow: var(--product-shadow); }
+.product-shell.product-shell--studio .review-view-switcher { border-radius: 999px; background: var(--product-bg); padding: 3px; }
+.product-shell.product-shell--studio .review-view-switcher button { border-radius: 999px; font-size: 11px; }
+.product-shell.product-shell--studio .review-view-switcher button.is-active { background: var(--product-surface); color: var(--product-text); box-shadow: 0 1px 4px #0000000a; }
+/* Work: conversation-first workspace, with task and delivery context as rails. */
+.product-shell--studio .work-workspace-shell[data-workspace] {
+  --work-bg: var(--product-bg); --work-surface: var(--product-surface); --work-surface-muted: var(--product-bg); --work-surface-sunken: var(--product-surface-muted); --work-material: var(--product-surface); --work-material-deep: var(--product-bg); --work-border: var(--product-border); --work-text: var(--product-text); --work-text-muted: var(--product-text-muted); --work-accent: var(--product-accent); --work-accent-strong: var(--product-accent-strong); --work-accent-soft: var(--product-accent-soft); --work-radius: 18px; --work-shadow-raised: var(--product-shadow); --work-shadow-soft: var(--product-shadow);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { width: calc(100% - 40px); height: calc(100dvh - 58px); min-height: 580px; padding: 18px 0 20px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding: 0 4px 12px; margin-bottom: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity strong { font-size: 24px; font-weight: 550; }
+.studio-work-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 4px 12px; color: var(--product-text-muted); font-size: 11px; }
+.studio-work-toolbar button { display: inline-flex; align-items: center; gap: 6px; color: var(--product-text-muted); border: 0; background: transparent; cursor: pointer; padding: 5px 8px; border-radius: 8px; }
+.studio-work-toolbar button:hover { background: var(--product-surface); color: var(--product-text); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace { grid-template-columns: 172px minmax(310px,1fr) minmax(255px,.64fr); gap: 16px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace.team-workspace--composing,
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed=true] { grid-template-columns: 172px minmax(0,1fr); grid-template-areas: 'tasks center'; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-task-sidebar { border-right: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation { padding: 8px 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation__heading { padding: 0 10px; font-size: 11px; font-weight: 500; color: var(--product-text-muted); }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation button:not(.product-button) { padding: 12px; border-radius: 12px; font-size: 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation button[aria-current=page] { border: 1px solid var(--product-border); background: var(--product-surface); box-shadow: var(--product-shadow); color: var(--product-text); }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation small { font-size: 10px; padding-top: 4px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace-center { gap: 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane { border-radius: 18px; background: var(--product-surface); border: 1px solid var(--product-border); box-shadow: var(--product-shadow); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-pane__header { min-height: 64px; padding: 14px 18px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-pane__header h2 { font-size: 14px; font-weight: 550; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-avatar--manager { border-radius: 11px; color: var(--product-text-muted); background: var(--product-bg); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__bubble { border: 0; background: var(--product-bg); border-radius: 16px; padding: 12px 15px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-dock { padding: 16px; border-top: 0; background: var(--product-surface); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-entry textarea { border: 1px solid var(--product-border); background: var(--product-bg); border-radius: 18px; padding: 15px; font-size: 13px; box-shadow: inset 0 1px 2px #00000002; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-actor-list { padding: 10px 14px 14px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-actor-list > li { background: var(--product-bg); border: 0; border-radius: 18px; padding: 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-outcome-list > li { background: var(--product-bg); border: 0; border-radius: 15px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .team-pane__header { padding: 16px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane__eyebrow { font-size: 11px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes[hidden] { display: none; }
+/* Preferences are a destination, not a redirect that changes the user's context. */
+.product-shell.product-shell--studio .studio-settings-page { max-width: 880px; }
+.studio-settings-section { padding: 25px 28px; border: 1px solid var(--product-border); border-radius: 18px; background: var(--product-surface); box-shadow: var(--product-shadow); margin-bottom: 18px; }
+.studio-settings-section header { display: flex; gap: 13px; align-items: start; }
+.studio-settings-section header > svg { color: var(--product-text-muted); margin-top: 3px; }
+.studio-settings-section h2 { margin: 0; font-size: 15px; font-weight: 550; }
+.studio-settings-section p { margin: 5px 0 0; color: var(--product-text-muted); font-size: 12px; }
+.studio-settings-section--row { display: flex; align-items: center; justify-content: space-between; gap: 25px; }
+.studio-settings-section select { max-width: 100%; padding: 9px 12px; border: 1px solid var(--product-border); border-radius: 9px; background: var(--product-bg); color: var(--product-text); font-size: 12px; }
+.studio-theme-options { display: flex; gap: 16px; margin: 22px 0 0 32px; }
+.studio-theme-option { width: 190px; padding: 8px; border: 1px solid var(--product-border); border-radius: 14px; cursor: pointer; background: var(--product-surface); color: var(--product-text); }
+.studio-theme-option[aria-pressed=true] { border-color: var(--product-accent); outline: 2px solid var(--product-accent-soft); }
+.studio-theme-option > span:last-child { display: flex; gap: 7px; align-items: center; padding: 10px 5px 3px; font-size: 12px; }
+.studio-theme-preview { display: flex; gap: 10px; border-radius: 8px; padding: 10px; height: 85px; background: #f2f2f4; border: 1px solid #e5e5e8; }
+.studio-theme-preview > i { width: 26%; background: #fff; border-radius: 4px; }
+.studio-theme-preview > span { flex: 1; display: grid; gap: 7px; padding-top: 7px; }
+.studio-theme-preview b { display: block; height: 10px; border-radius: 4px; background: #fff; }
+.studio-theme-option--dark .studio-theme-preview { background: #18181b; border-color: #333337; }
+.studio-theme-option--dark .studio-theme-preview :is(i,b) { background: #333337; }
+@media (max-width: 1250px) and (min-width: 768px) {
+  .product-shell.product-shell--studio { grid-template-columns: 174px minmax(0,1fr); }
+  .product-shell--studio .studio-sidebar { padding-inline: 10px; }
+  .studio-brand { font-size: 15px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace { grid-template-columns: 135px minmax(280px,1fr) minmax(220px,.65fr); gap: 10px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace.team-workspace--composing,
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed=true] { grid-template-columns: 135px minmax(0,1fr); }
+  .product-shell.product-shell--studio :is(.projects-page,.product-knowledge-page,.team-page,.product-review-page,.studio-settings-page) { width: calc(100% - 40px); }
+  .product-shell.product-shell--studio .review-workspace { grid-template-columns: minmax(150px,.7fr) minmax(0,2fr); }
+  .product-shell.product-shell--studio .review-inspector { grid-column: 2; position: static; max-height: none; }
+}
+@media (max-width: 1023px) and (min-width: 768px) {
+  .product-shell.product-shell--studio { grid-template-columns: 66px minmax(0,1fr); }
+  .product-shell--studio .studio-sidebar { padding: 20px 8px 12px; }
+  .studio-brand { padding: 0 7px 20px; }
+  .studio-brand > span:last-child, .studio-navigation__link > span, .studio-project-context, .studio-sidebar__hint, .studio-preferences label { display: none; }
+  .studio-navigation { margin-top: 18px; }
+  .studio-navigation__link { justify-content: center; padding-inline: 8px; }
+  .studio-preferences { justify-content: center; }
+}
+/* Keep the queue's existing <=820px carousel paired with one content column. */
+@media (max-width: 820px) {
+  .product-shell.product-shell--studio .review-queue ol { display: flex; overflow-x: auto; }
+  .product-shell.product-shell--studio .review-workspace { grid-template-columns: minmax(0,1fr); }
+  .product-shell.product-shell--studio .review-inspector { grid-column: auto; position: static; max-height: none; }
+}
+@media (max-width: 767px) {
+  .product-shell.product-shell--studio { display: block; }
+  .product-shell--studio .studio-sidebar { position: sticky; height: auto; min-height: 0; padding: 10px 12px 7px; display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 6px; border-right: 0; border-bottom: 1px solid var(--product-border); }
+  .studio-brand { font-size: 15px; padding: 0; }
+  .studio-brand small, .studio-project-context, .studio-sidebar__hint, .studio-preferences, .studio-topbar__label { display: none; }
+  .studio-brand__mark { width: 30px; height: 30px; border-radius: 9px; }
+  .studio-sidebar > .studio-navigation__link { grid-row: 1; grid-column: 2; min-height: 32px; padding: 5px 8px; font-size: 11px; }
+  .studio-navigation { grid-row: 2; grid-column: 1/-1; display: flex; min-width: 0; gap: 2px; }
+  .studio-navigation .studio-navigation__link { flex: 1; padding: 8px 5px; min-height: 38px; justify-content: center; font-size: 10px; gap: 5px; }
+  .studio-navigation .studio-navigation__link svg { width: 14px; }
+  .studio-sidebar__footer { grid-row: 1; grid-column: 3; margin: 0; padding: 0; }
+  .studio-sidebar__footer .studio-navigation__link { min-height: 38px; padding: 8px; font-size: 10px; gap: 5px; }
+  .studio-sidebar__footer .studio-navigation__link span { display: none; }
+  .studio-topbar { height: 40px; padding: 0 16px; font-size: 10px; }
+  .product-shell.product-shell--studio :is(.projects-page,.product-knowledge-page,.team-page,.product-review-page,.studio-settings-page) { width: calc(100% - 28px); padding: 24px 0 32px; }
+  .product-shell.product-shell--studio .product-page-heading { gap: 16px; margin-bottom: 22px; }
+  .product-shell.product-shell--studio .product-page-heading h1 { font-size: 27px; }
+  .product-shell.product-shell--studio .product-page-heading__description { font-size: 12px; }
+  .studio-project-overview { gap: 8px; margin-bottom: 24px; }
+  .studio-project-overview button { padding: 14px 12px; border-radius: 14px; }
+  .studio-project-overview button span { font-size: 10px; }
+  .studio-project-overview strong { font-size: 25px; }
+  .studio-project-overview svg { display: none; }
+  .product-shell.product-shell--studio .collection-search { max-width: none; }
+  .product-shell.product-shell--studio .project-launcher-row { padding: 16px; grid-template-columns: 32px minmax(0,1fr); gap: 10px; }
+  .product-shell.product-shell--studio .project-launcher-row__activity { grid-column: 2; justify-self: start; }
+  .product-shell.product-shell--studio .project-launcher-row__action { grid-column: 2; grid-row: 3; justify-self: start; }
+  .product-shell.product-shell--studio .project-launcher-entry > .file-location { padding-left: 43px; margin-inline: 16px; }
+  .product-shell.product-shell--studio .team-summary > div { flex-basis: 30%; padding: 8px 12px; border: 0; }
+  .product-shell.product-shell--studio .knowledge-view-switcher { width: 100%; }
+  .product-shell.product-shell--studio .knowledge-view-switcher button { flex: 1; min-width: 0; padding-inline: 8px; font-size: 11px; }
+  .product-shell.product-shell--studio .review-workspace { grid-template-columns: minmax(0,1fr); }
+  .product-shell.product-shell--studio :is(.review-queue,.review-inspector) { position: static; max-height: none; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { width: calc(100% - 24px); height: auto; min-height: 0; padding-top: 14px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace,
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace.team-workspace--composing { display: flex; flex-direction: column; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-pane { border-radius: 16px; }
+  .studio-work-toolbar { display: none; }
+  .studio-settings-section { padding: 20px; }
+  .studio-settings-section--row { flex-wrap: wrap; gap: 16px; }
+  .studio-theme-options { margin-left: 0; gap: 10px; }
+  .studio-theme-option { min-width: 0; width: 50%; }
+}
