@@ -756,9 +756,12 @@ export default function WorkPage() {
   const taskManagementOpen = taskManagementProject === projectKey;
   const [mutationBusy, setBusy] = useState('');
   const busy = retrying ? 'retry' : mutationBusy;
-  const [runHistory, setRunHistory] = useState([]);
-  const [historyStatus, setHistoryStatus] = useState('loading');
-  const [historyError, setHistoryError] = useState(null);
+  const [historyState, setHistoryState] = useState({ projectKey: '', runs: [], status: 'loading', error: null });
+  const runHistory = historyState.projectKey === projectKey ? historyState.runs : [];
+  const historyStatus = historyState.projectKey === projectKey ? historyState.status : 'loading';
+  const historyError = historyState.projectKey === projectKey ? historyState.error : null;
+  const historyRequest = useRef(null);
+  const historyScopeRef = useRef(null);
   const [historicalSnapshot, setHistoricalSnapshot] = useState(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const historicalDetail = historicalSnapshot?.projectKey === projectKey && historicalSnapshot?.runId === runId
@@ -773,6 +776,14 @@ export default function WorkPage() {
   const currentRunId = data?.active_run
     ? (projectedMission?.source === 'workflow' ? projectedMission.run_id : data?.state?.run_id) || ''
     : '';
+  // The project snapshot can move on while this route still names the old run.
+  // Re-read history for that transition without navigating or dispatching work.
+  const historyScope = JSON.stringify([projectKey, currentRunId]);
+  useLayoutEffect(() => {
+    historyScopeRef.current = historyScope;
+    historyRequest.current = null;
+    return () => { historyScopeRef.current = null; historyRequest.current = null; };
+  }, [historyScope]);
   const currentWorkflowBlocked = Boolean(currentRunId && projectedMission?.source === 'workflow'
     && !projectedMission.read_only && projectedWorkspace?.attention_request?.kind === 'blocker'
     && !(projectedWorkspace.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working'));
@@ -828,26 +839,34 @@ export default function WorkPage() {
   );
 
   const loadRuns = useCallback(async ({ signal } = {}) => {
-    setHistoryStatus((current) => (runHistory.length ? current : 'loading'));
+    if (signal?.aborted || historyScopeRef.current !== historyScope) return null;
+    const request = {};
+    historyRequest.current = request;
+    const isCurrent = () => !signal?.aborted && historyRequest.current === request
+      && historyScopeRef.current === historyScope;
+    setHistoryState((current) => current.projectKey === projectKey
+      ? { ...current, status: current.runs.length ? current.status : 'loading' }
+      : { projectKey, runs: [], status: 'loading', error: null });
     try {
       const payload = await runApi.getProjectRuns(projectKey, { signal });
-      setRunHistory(payload.runs || []);
-      setHistoryError(null);
-      setHistoryStatus('ready');
+      if (!isCurrent()) return null;
+      if (!Array.isArray(payload?.runs) || (payload.project_key && payload.project_key !== projectKey)) {
+        throw Object.assign(new Error('The requested project task history could not be verified.'), { code: 'invalid_response' });
+      }
+      setHistoryState({ projectKey, runs: payload.runs, status: 'ready', error: null });
       return payload;
     } catch (caught) {
-      if (caught.name === 'AbortError') return null;
-      setHistoryError(caught);
-      setHistoryStatus(runHistory.length ? 'stale' : 'error');
+      if (!isCurrent() || caught.name === 'AbortError') return null;
+      setHistoryState((current) => ({ ...current, error: caught, status: current.runs.length ? 'stale' : 'error' }));
       return null;
     }
-  }, [projectKey, runHistory.length]);
+  }, [projectKey, historyScope]);
 
   useEffect(() => {
     const controller = new AbortController();
     queueMicrotask(() => void loadRuns({ signal: controller.signal }));
     return () => controller.abort();
-  }, [projectKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loadRuns]);
 
   useEffect(() => {
     if (!isHistorical || !runId) return undefined;
@@ -858,13 +877,17 @@ export default function WorkPage() {
         const detailRunId = detail?.team_workspace?.mission?.run_id || detail?.state?.run_id;
         const detailProjectKey = detail?.team_workspace?.mission?.project_key || detail?.state?.project_key;
         if (detailRunId !== runId || (detailProjectKey && detailProjectKey !== projectKey)) {
-          setHistoryError({ code: 'run_not_found', message: 'The requested historical run could not be verified.' });
-          setHistoryStatus('stale');
+          setHistoryState((current) => ({ ...current, status: 'stale',
+            error: { code: 'run_not_found', message: 'The requested historical run could not be verified.' } }));
           return;
         }
         setHistoricalSnapshot({ projectKey, runId, detail });
       })
-      .catch((caught) => { if (caught.name !== 'AbortError') { setHistoryError(caught); setHistoryStatus('stale'); } });
+      .catch((caught) => {
+        if (!controller.signal.aborted && caught.name !== 'AbortError') {
+          setHistoryState((current) => ({ ...current, status: 'stale', error: caught }));
+        }
+      });
     return () => controller.abort();
   }, [isHistorical, projectKey, runId, historyRefresh]);
 
