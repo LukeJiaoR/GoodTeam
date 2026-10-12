@@ -214,6 +214,7 @@ export const zhCN = {
   'work.current.action.execution': "查看当前进度",
   'work.deliverySummary.readMismatch': '报告与当前项目、任务或版本不一致。请刷新工作区后重新打开。',
   'work.deliverySummary.loading': '正在读取所选报告…',
+  'work.attempt.inspect': '查看本次尝试',
   'work.deliverySummary.current': '当前任务交付',
   'work.deliverySummary.historical': '历史任务交付 · 只读',
   'work.deliverySummary.verification': '验证情况',

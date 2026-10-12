@@ -1,0 +1,29 @@
+.attempt-inspector { max-width: 54rem; margin: 0 auto; color: var(--product-text); min-width: 0; }
+.attempt-inspector__scope { margin: 0 0 .65rem; color: var(--product-text-muted); font-size: .8rem; }
+.attempt-inspector__scope-facts { padding: .8rem 1rem; background: var(--product-surface-muted); border: 1px solid var(--product-border); border-radius: 12px; }
+.attempt-inspector__section { padding: 1rem 0; border-bottom: 1px solid var(--product-border); }
+.attempt-inspector__section:last-child { border-bottom: 0; }
+.attempt-inspector h3 { margin: 0 0 .7rem; font-size: .95rem; }
+.attempt-inspector__facts { display: grid; gap: .55rem; margin: 0; font-size: .82rem; }
+.attempt-inspector__facts > div { display: grid; grid-template-columns: minmax(9rem, 1fr) minmax(0, 2fr); gap: .75rem; align-items: baseline; }
+.attempt-inspector__facts dt { color: var(--product-text-muted); }
+.attempt-inspector__facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.attempt-inspector__facts code { font-size: .78rem; }
+.attempt-inspector__note { margin: .6rem 0 0; color: var(--product-text-muted); font-size: .8rem; line-height: 1.5; }
+.attempt-inspector__responsibility { margin: 0 0 .85rem; font-size: .9rem; line-height: 1.5; overflow-wrap: anywhere; }
+.attempt-inspector__summary { white-space: pre-wrap; }
+.attempt-inspector__identity { margin-top: .7rem; font-size: .8rem; }
+.attempt-inspector__identity > summary { width: fit-content; color: var(--product-text-muted); cursor: pointer; }
+.attempt-inspector__identity > summary:focus-visible { outline: 2px solid var(--product-accent); outline-offset: 3px; }
+.attempt-inspector__identity > dl { margin-top: .65rem; }
+.attempt-inspector .task-input-context { margin: .5rem 0 0; }
+.attempt-inspector .delivery-summary { margin: .7rem 0 0; }
+.attempt-inspector__unavailable p { color: var(--product-text-muted); line-height: 1.5; }
+@media (max-width: 520px) {
+  .attempt-inspector__facts > div { grid-template-columns: minmax(0, 1fr); gap: .15rem; }
+  .attempt-inspector__scope-facts { padding: .65rem .75rem; }
+}
+.work-workspace-shell .team-attempt-inspect { display: inline-flex; align-items: center; gap: .35rem; margin: .5rem 0 0; padding: .3rem .45rem; border: 1px solid var(--work-border); border-radius: 7px; background: transparent; color: var(--work-text-muted); font: inherit; font-size: .75rem; line-height: 1.4; text-align: left; cursor: pointer; }
+.work-workspace-shell .team-attempt-inspect:hover { color: var(--work-text); background: var(--work-material); }
+.work-workspace-shell .team-attempt-inspect:focus-visible { outline: 2px solid var(--product-accent); outline-offset: 3px; }
+.work-workspace-shell .team-attempt-inspect:disabled { opacity: .55; cursor: default; }

@@ -18,6 +18,8 @@ import CurrentWorkContext from './workspace/CurrentWorkContext.jsx';
 import useProjectConversation from './useProjectConversation';
 import TaskNavigation from './workspace/TaskNavigation';
 import TaskInputContext from './workspace/TaskInputContext';
+import AttemptInspector from './workspace/AttemptInspector';
+import { resolveAttemptInspection } from './workspace/attemptInspection';
 import { TimelineItem } from './workspace/ConversationTimeline';
 import TeamWorkspace, { ManagerMissionEntry } from './workspace/TeamWorkspace';
 import WorkflowRetryAction from './workspace/WorkflowRetryAction';
@@ -751,6 +753,8 @@ export default function WorkPage() {
   useLayoutEffect(() => () => { retryRequest.current = null; }, [retryScope]);
   const [mutationError, setMutationError] = useState(null);
   const [panel, setPanel] = useState(null);
+  const [attemptSelection, setAttemptSelection] = useState(null);
+  if (attemptSelection && attemptSelection.scope !== retryScope) setAttemptSelection(null);
   const workspaceRef = useRef(null);
   const [taskManagementProject, setTaskManagementProject] = useState('');
   const taskManagementOpen = taskManagementProject === projectKey;
@@ -802,6 +806,14 @@ export default function WorkPage() {
     && contextMission.run_id && (!runId || contextMission.run_id === runId)
     ? contextMission.run_id : '';
   const contextFreshness = retryConflict ? 'stale' : status !== 'ready' ? status : contextIsLoading ? 'loading' : 'ready';
+  const inspection = attemptSelection?.scope === retryScope ? resolveAttemptInspection({
+    data: contextIsLoading ? null : isHistorical ? historicalDetail : data,
+    projectKey,
+    runId: attemptSelection.runId,
+    actorId: attemptSelection.actorId,
+    attemptId: attemptSelection.attemptId,
+    freshness: contextFreshness,
+  }) : null;
   const visibleTaskTitle = isHistorical ? contextTitle
     : projectedWorkspace?.proposed_task?.run_id ? currentRunTitle
       : projectedWorkspace?.proposed_task?.exact_request || (hasProjectedMission && !isTaskAssistantConversation ? currentRunTitle : '');
@@ -1255,6 +1267,9 @@ export default function WorkPage() {
         <>
           {isHistorical ? <HistoricalRunSummary language={language} detail={historicalDetail} summary={selectedSummary} projectKey={projectKey} t={t} /> : null}
           <TeamWorkspace
+            onInspectAttempt={inputContextRunId ? actor => setAttemptSelection({
+              scope: retryScope, runId: inputContextRunId, actorId: actor.id, attemptId: actor.current_attempt_id,
+            }) : undefined}
             onConfigureRuntime={() => setPanel({ type: 'runtime' })}
             onOpenReview={(approval) => setPanel({ type: 'review', approval, runId: currentRunId })}
             {...conversationProps}
@@ -1367,6 +1382,11 @@ export default function WorkPage() {
         }} /> : null}
       </Suspense>
       </fieldset>
+      {inspection ? <AttemptInspector
+        key={JSON.stringify([attemptSelection.scope, attemptSelection.runId, attemptSelection.actorId, attemptSelection.attemptId])}
+        inspection={inspection} projectKey={projectKey} runId={attemptSelection.runId}
+        historical={isHistorical || Boolean(contextMission?.read_only)} language={language} t={t} onClose={() => setAttemptSelection(null)}
+      /> : null}
     </main>
   );
 }
