@@ -59,6 +59,29 @@ context and not evidence that a Worker consumed the returned events.
 Python callers using `cross_project_memory.retrieve` retain the list result;
 callers needing source completeness use `retrieve_report`.
 
+## Current context acceptance coverage
+
+Baseline: `26253d10a1a5e9b72679a3bb1e889d00e587471d` (2026-10-12).
+The bounded follow-up is tracked in [#524](https://github.com/LukeJiaoR/GoodTeam/issues/524),
+under regression/claim calibration [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419).
+
+| Layer | Current evidence | Boundary |
+| --- | --- | --- |
+| Read-only input fidelity | [#522](https://github.com/LukeJiaoR/GoodTeam/pull/522) keeps exact-run captured delivery standards in Manager input after 41 discussion turns and a fresh service process. [#523](https://github.com/LukeJiaoR/GoodTeam/pull/523) carries saved custom workflow standards into first-PRD and UI/implementation/QA job inputs after restart. | Captured original input, legacy/workflow records and saved change feedback retain different source labels. Input presence does not prove model comprehension. |
+| Correction invalidation and recovery | Four fresh Python processes exercised WAL capture, a two-step supersedes chain, old/new Worker input restoration and damaged-WAL reads. Frozen input drops invalidated events, retains still-active events and never adds later facts. New input/retrieval/citations use the final active facts. | Frozen packet bytes and historical events remain intact. Corrupt WAL produces unavailable input without cached facts or read-time repair. Fixtures are synthetic; no provider runs. |
+| Actual execution effect | Not established by these checks. | Live Worker decisions, implementation, review/fix convergence and task acceptance still require real evidence under [#411](https://github.com/LukeJiaoR/GoodTeam/issues/411). Existing native-runtime restrictions remain unchanged. |
+
+The existing memory provenance, pure-context compatibility and file-store suites
+passed 93 focused tests in this run. The four-process chain found no product-code
+defect; the accepted result is verification of existing behavior, not a new
+memory implementation. These checks did not expand the conversation window, add
+automatic compression or validate an external RAG/index service. Local active-event
+retrieval was checked only for the synthetic query and facts in this chain.
+
+See [file-store consistency](memory-file-store.md) for persistence/recovery limits
+and [task input inspection](task-input-context-view.md) for input authority labels.
+This coverage does not close the overall memory/context or product-effect goals.
+
 ## Related
 - worker-backends.md
 - config-reference.md
