@@ -75,10 +75,12 @@ export default function useProjectState(projectKey, { api = runApi, poll = true 
     };
   }, [projectKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A hidden tab still owns its polling lifecycle. A response can arrive while
+  // it is hidden; visibility must not decide whether future polling exists.
+  const hasLiveWork = Boolean(data?.active_run || data?.project_assistant || data?.task_assistant_session)
+    || data?.team_workspace?.mission?.source === 'task_assistant';
   useEffect(() => {
-    const taskAssistantConversation = Boolean(data?.project_assistant || data?.task_assistant_session)
-      || data?.team_workspace?.mission?.source === 'task_assistant';
-    if (!poll || (!data?.active_run && !taskAssistantConversation) || globalThis.document?.hidden) return undefined;
+    if (!poll || !hasLiveWork) return undefined;
     const controller = new AbortController();
     const timer = globalThis.setInterval(() => {
       if (!globalThis.document?.hidden && !pendingRequest.current) {
@@ -89,7 +91,24 @@ export default function useProjectState(projectKey, { api = runApi, poll = true 
       globalThis.clearInterval(timer);
       controller.abort();
     };
-  }, [data?.active_run, data?.project_assistant, data?.task_assistant_session, data?.team_workspace?.mission?.source, poll, refresh]);
+  }, [hasLiveWork, poll, refresh]);
+
+  useEffect(() => {
+    if (!poll || !globalThis.document) return undefined;
+    const controller = new AbortController();
+    const resume = () => {
+      // Do not abort or overlap an initial read, manual refresh, or slow poll.
+      // Refresh idle projects too: work may have started while the user was away.
+      if (!document.hidden && !pendingRequest.current) {
+        void refresh({ signal: controller.signal, quiet: true });
+      }
+    };
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      document.removeEventListener('visibilitychange', resume);
+      controller.abort();
+    };
+  }, [poll, refresh]);
 
   return { data, error, refresh, status };
 }
