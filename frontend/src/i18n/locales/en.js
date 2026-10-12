@@ -1465,6 +1465,8 @@ export const en = {
   'knowledge.memory.superseded': 'Superseded',
   'knowledge.memory.crossTitle': 'Cross-project memory',
   'knowledge.memory.crossDescription': 'Search an explicit project scope using the selected role.',
+  'knowledge.memory.catalogLoading': 'Loading the project list…',
+  'knowledge.memory.catalogUnavailable': 'The project list for cross-project search could not be loaded.',
   'knowledge.memory.scope': 'Project scope',
   'knowledge.memory.crossQuery': 'Cross-project query',
   'knowledge.memory.crossSearch': 'Search memory',

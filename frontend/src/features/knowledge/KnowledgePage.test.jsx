@@ -54,6 +54,76 @@ test('renders the backend-protected browse contract and preserves superseded aud
   expect(knowledgeApi.getMemoryEvent).toHaveBeenCalledWith('AUDIT', current.id, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
+test('local memory stays readable when the unrelated project catalog fails', async () => {
+  knowledgeApi.getKnowledgeProjects.mockRejectedValue(new Error('Project catalog unavailable'));
+  open();
+  await screen.findByText(contract.architect.events[0].body);
+  fireEvent.click(screen.getByText(contract.detail.id));
+  const inspector = await screen.findByRole('complementary', { name: 'knowledge.memory.inspector' });
+  expect(within(inspector).getByText(contract.detail.text)).toBeVisible();
+  expect(screen.getByText('Project catalog unavailable')).toBeVisible();
+});
+
+test('a slow project catalog does not block local memory loading', async () => {
+  const catalog = pending();
+  knowledgeApi.getKnowledgeProjects.mockReturnValue(catalog.promise);
+  open();
+  await screen.findByText(contract.architect.events[0].body);
+  expect(screen.queryByRole('checkbox', { name: 'OTHER' })).not.toBeInTheDocument();
+  await act(async () => catalog.resolve({ projects: [{ project: { project_key: 'OTHER' } }] }));
+  expect(await screen.findByRole('checkbox', { name: 'OTHER' })).toBeVisible();
+});
+
+test('catalog retry preserves local source and filters without refetching local memory', async () => {
+  const retry = pending();
+  knowledgeApi.getKnowledgeProjects.mockRejectedValueOnce(new Error('Project catalog unavailable')).mockReturnValueOnce(retry.promise);
+  open(`&role=architect&memory_q=database&cross_q=backup&scope=OTHER&event=${encodeURIComponent(contract.detail.id)}`);
+  const inspector = await screen.findByRole('complementary', { name: 'knowledge.memory.inspector' });
+  await screen.findByText('Project catalog unavailable');
+  const location = screen.getByTestId('query-location').textContent;
+  fireEvent.click(screen.getByRole('button', { name: 'product.actions.retry' }));
+  expect(inspector).toBeInTheDocument();
+  expect(screen.queryByText('Project catalog unavailable')).not.toBeInTheDocument();
+  expect(screen.getByText('knowledge.memory.catalogLoading')).toBeVisible();
+  await act(async () => retry.resolve({ projects: [{ project: { project_key: 'OTHER' } }] }));
+  expect(await screen.findByRole('checkbox', { name: 'OTHER' })).toBeChecked();
+  expect(inspector).toBeInTheDocument();
+  expect(screen.getByRole('searchbox', { name: 'knowledge.memory.search' })).toHaveValue('database');
+  expect(screen.getByRole('searchbox', { name: 'knowledge.memory.crossQuery' })).toHaveValue('backup');
+  expect(screen.getByTestId('query-location').textContent).toBe(location);
+  expect(knowledgeApi.getMemory).toHaveBeenCalledTimes(1);
+  expect(knowledgeApi.getMemoryEvents).toHaveBeenCalledTimes(1);
+  expect(knowledgeApi.getMemoryEvent).toHaveBeenCalledTimes(1);
+  expect(knowledgeApi.getKnowledgeProjects).toHaveBeenCalledTimes(2);
+});
+
+test('late catalog responses do not add sources to a different project', async () => {
+  const oldCatalog = pending();
+  knowledgeApi.getKnowledgeProjects.mockReturnValueOnce(oldCatalog.promise)
+    .mockResolvedValueOnce({ projects: [{ project: { project_key: 'CURRENT' } }] });
+  open();
+  await screen.findByText(contract.architect.events[0].body);
+  const oldSignal = knowledgeApi.getKnowledgeProjects.mock.calls[0][0].signal;
+  fireEvent.click(screen.getByRole('link', { name: 'Switch project' }));
+  expect(await screen.findByRole('checkbox', { name: 'CURRENT' })).toBeVisible();
+  expect(oldSignal.aborted).toBe(true);
+  await act(async () => oldCatalog.resolve({ projects: [{ project: { project_key: 'OLD' } }] }));
+  expect(screen.queryByRole('checkbox', { name: 'OLD' })).not.toBeInTheDocument();
+  expect(screen.getByRole('checkbox', { name: 'CURRENT' })).toBeVisible();
+});
+
+test('a scoped cross-project source waits for catalog discovery before reading its detail', async () => {
+  const catalog = pending();
+  knowledgeApi.getKnowledgeProjects.mockReturnValueOnce(catalog.promise);
+  open(`&role=architect&scope=OTHER&event_project=OTHER&event=${encodeURIComponent(contract.detail.id)}`);
+  await screen.findByText(contract.architect.events[0].body);
+  expect(knowledgeApi.getMemoryEvent).not.toHaveBeenCalled();
+  expect(screen.queryByText('knowledge.memory.sourceUnavailable')).not.toBeInTheDocument();
+  await act(async () => catalog.resolve({ projects: [{ project: { project_key: 'OTHER' } }] }));
+  await screen.findByRole('complementary', { name: 'knowledge.memory.inspector' });
+  expect(knowledgeApi.getMemoryEvent).toHaveBeenCalledWith('OTHER', contract.detail.id, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+});
+
 test('a late role response cannot replace current role events', async () => {
   const old = pending();
   let oldSignal;
