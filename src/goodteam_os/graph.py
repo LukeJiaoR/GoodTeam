@@ -2351,6 +2351,15 @@ def worker_context(state: AgileDevState) -> str:
             artifacts or "- none",
         ]
     )
+    if state.delivery_mode == "custom":
+        standards = "\n".join(f"- {item}" for item in state.delivery_standards)
+        context += (
+            "\nRecorded workflow delivery settings (source: workflow_state):\n"
+            "Mode: custom\n"
+            "These saved fields are not proof of a task-start capture; requested changes remain separate.\n"
+            "Delivery standards:\n"
+            + (standards or "- No custom standards recorded in this workflow state; do not invent them.")
+        )
     if state.change_requests:
         changes = "\n".join(f"- {gate}: {note}" for gate, note in state.change_requests.items())
         context += f"\nRequested changes:\n{changes}"
