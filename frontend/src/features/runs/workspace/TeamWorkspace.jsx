@@ -96,7 +96,7 @@ function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
 }
 
 
-function ExecutionPane({ actors, blocker, controls, task, mobile, reducedMotion, sectionProps, t }) {
+function ExecutionPane({ actors, blocker, controls, task, mobile, onInspectAttempt, reducedMotion, sectionProps, t }) {
   const [expanded, setExpanded] = useState(Boolean(blocker) || mobile);
   return (
     <section className="team-pane team-pane--execution" aria-label={t('work.team.execution')} {...sectionProps}>
@@ -135,6 +135,11 @@ function ExecutionPane({ actors, blocker, controls, task, mobile, reducedMotion,
                   </div>
                 </div>
                 {reason ? <p className="team-actor-list__reason">{reason}</p> : null}
+                {onInspectAttempt && actor.current_attempt_id ? <button
+                  type="button" className="team-attempt-inspect"
+                  aria-label={`${t('work.attempt.inspect')}: ${actor.responsibility || role}`}
+                  onClick={() => onInspectAttempt(actor)}
+                >{t('work.attempt.inspect')}<ChevronRight size={14} aria-hidden="true" /></button> : null}
               </li>
             );
           })}
@@ -329,6 +334,7 @@ function AdvancedInspector({
 function TeamWorkspace({
   onConfigureRuntime,
   onOpenReview,
+  onInspectAttempt,
   conversationDelivery = null,
   projectAssistant,
   assistantBusy,
@@ -567,6 +573,7 @@ function TeamWorkspace({
           onClearContext={onClearContext}
         />
         {!composing ? <ExecutionPane
+          onInspectAttempt={onInspectAttempt}
           blocker={attention?.kind === 'blocker' ? <TaskAttention attention={attention} activeJobs={activeJobs} error={error} jobs={data.worker_jobs || []} projectKey={projectKey} busy={busy} onRetry={readOnly ? undefined : onRetry} retry={retry} t={t} /> : null}
           task={mission}
           mobile={mobileWorkspace}

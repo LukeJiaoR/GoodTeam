@@ -1230,6 +1230,185 @@ function retryWorkData({ runId = 'run-active', revision = 'a', attemptId = 'atte
   return data;
 }
 
+function inspectableWorkData({ projectKey = 'DEMO', runId = 'run-active', attemptId = 'job-bound' } = {}) {
+  const data = projectedWorkData();
+  data.state = { ...data.state, project_key: projectKey, run_id: runId };
+  data.team_workspace.mission = { ...data.team_workspace.mission, project_key: projectKey, run_id: runId };
+  data.team_workspace.execution_actors = [{ id: 'assignment-bound', role: 'implementation', state: 'working',
+    responsibility: 'Implement OAuth', task_id: 'TASK-1', current_attempt_id: attemptId }];
+  data.worker_jobs = [{ id: attemptId, role: 'implementation', summary: `Recorded work for ${attemptId}` }];
+  data.delivery_summary = { project_key: projectKey, run_id: runId, status: 'working', artifacts: [],
+    attempts: [{ id: attemptId, role: 'implementation', adapter: 'codex', status: 'running', updated_at: '2026-10-12T06:00:00Z' }] };
+  return data;
+}
+
+async function openBoundAttempt() {
+  const disclosure = document.querySelector('.team-execution-disclosure');
+  if (!disclosure.open) await userEvent.click(disclosure.querySelector('summary'));
+  const trigger = screen.getByRole('button', { name: 'Inspect attempt: Implement OAuth' });
+  await userEvent.click(trigger);
+  return { trigger, dialog: screen.getByRole('dialog', { name: 'Attempt details' }) };
+}
+
+test('opens the real execution attempt, reads its task baseline, and returns to the unsent draft', async () => {
+  mocks.useProjectState.mockReturnValue({ data: inspectableWorkData(), status: 'ready', refresh: vi.fn() });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  mocks.getTaskInputContext.mockResolvedValue({
+    schema_version: 'goodteam.task-input-context.v1', project_key: 'DEMO', run_id: 'run-active',
+    task_kind: 'workflow_run', read_only: true, capture_status: 'legacy_unverified', input_origin: 'workflow_state',
+    input: { exact_request: 'Original acceptance boundary', source_type: '', delivery_mode: '', delivery_standards: [] },
+    captured_at: '', team_revision: null, task_lock_ref: null, subjects: [],
+  });
+  renderWorkPage();
+  const draft = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(draft, { target: { value: 'Keep this while inspecting' } });
+  const { trigger, dialog } = await openBoundAttempt();
+  expect(within(dialog).getByText('Recorded work for job-bound')).toBeVisible();
+  expect(within(dialog).getByRole('region', { name: 'Attempt memory' })).toHaveTextContent('Unknown');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Task inputs and methods' }));
+  expect(await within(dialog).findByText('Original acceptance boundary')).toBeVisible();
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Close attempt details' }));
+  expect(trigger).toHaveFocus();
+  expect(draft).toHaveValue('Keep this while inspecting');
+  expect(mocks.sendTaskAssistantMessage).not.toHaveBeenCalled();
+  expect(mocks.startRun).not.toHaveBeenCalled();
+  expect(mocks.retryRun).not.toHaveBeenCalled();
+});
+
+test('a newly current attempt removes old facts and aborts an in-flight input reader', async () => {
+  let data = inspectableWorkData();
+  mocks.useProjectState.mockImplementation(() => ({ data, status: 'ready', refresh: vi.fn() }));
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  let finish;
+  mocks.getTaskInputContext.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  const view = renderWorkPage();
+  const { dialog } = await openBoundAttempt();
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Task inputs and methods' }));
+  const signal = mocks.getTaskInputContext.mock.calls[0][2].signal;
+  data = inspectableWorkData({ attemptId: 'job-retry' });
+  view.rerender(workPageElement());
+  expect(within(dialog).getByText('The assignment’s current attempt changed. Close this panel and select it again.')).toBeVisible();
+  expect(signal.aborted).toBe(true);
+  expect(within(dialog).queryByText('Recorded work for job-bound')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('Recorded work for job-retry')).not.toBeInTheDocument();
+  await act(async () => finish({ input: { exact_request: 'Late old input must not appear' } }));
+  expect(screen.queryByText('Late old input must not appear')).not.toBeInTheDocument();
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Close attempt details' }));
+  const reopened = (await openBoundAttempt()).dialog;
+  expect(within(reopened).getByText('Recorded work for job-retry')).toBeVisible();
+});
+
+test('a stale snapshot hides attempt facts while its close control remains usable', async () => {
+  const data = inspectableWorkData();
+  let status = 'ready';
+  mocks.useProjectState.mockImplementation(() => ({ data, status, refresh: vi.fn() }));
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const view = renderWorkPage();
+  const { dialog } = await openBoundAttempt();
+  status = 'stale';
+  view.rerender(workPageElement());
+  expect(within(dialog).queryByText('Recorded work for job-bound')).not.toBeInTheDocument();
+  const close = within(dialog).getByRole('button', { name: 'Close attempt details' });
+  expect(close).toBeEnabled();
+  await userEvent.click(close);
+  expect(screen.queryByRole('dialog', { name: 'Attempt details' })).not.toBeInTheDocument();
+});
+
+test('the historical attempt uses only its run records when current job details are absent', async () => {
+  mocks.useProjectState.mockReturnValue({ data: inspectableWorkData(), status: 'ready', refresh: vi.fn() });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }, { run_id: 'run-history', status: 'archived' }] });
+  const history = inspectableWorkData({ runId: 'run-history', attemptId: 'job-historical' });
+  history.team_workspace.mission.read_only = true;
+  delete history.worker_jobs;
+  mocks.getProjectRun.mockResolvedValue(history);
+  renderWorkPage('/projects/DEMO/work/runs/run-history');
+  await waitFor(() => expect(document.querySelector('.team-workspace[data-read-only="true"]')).toBeInTheDocument());
+  await screen.findByRole('button', { name: 'Inspect attempt: Implement OAuth', hidden: true });
+  const { dialog } = await openBoundAttempt();
+  expect(within(dialog).getByText('Historical task · read-only')).toBeVisible();
+  expect(within(dialog).getAllByText('job-historical').length).toBeGreaterThan(0);
+  expect(within(dialog).queryByText('Recorded work for job-bound')).not.toBeInTheDocument();
+  expect(within(dialog).getByText(/Matching job details are absent/)).toBeVisible();
+  expect(within(dialog).queryByRole('button', { name: /retry|approve|start review/i })).not.toBeInTheDocument();
+});
+
+test('duplicate run attempt IDs show unavailable instead of a believable mismatched record', async () => {
+  const data = inspectableWorkData();
+  data.delivery_summary.attempts.push({ ...data.delivery_summary.attempts[0], status: 'completed' });
+  mocks.useProjectState.mockReturnValue({ data, status: 'ready', refresh: vi.fn() });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  renderWorkPage();
+  const { dialog } = await openBoundAttempt();
+  expect(within(dialog).getByText('The selected attempt cannot be matched to one saved record.')).toBeVisible();
+  expect(within(dialog).queryByText('Recorded work for job-bound')).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole('button', { name: 'Task inputs and methods' })).not.toBeInTheDocument();
+});
+
+test('project A to B to A discards the old inspector even when run and attempt IDs collide', async () => {
+  mocks.useProjectState.mockImplementation(projectKey => ({
+    data: inspectableWorkData({ projectKey }), status: 'ready', refresh: vi.fn(),
+  }));
+  mocks.getProjectRuns.mockImplementation(projectKey => Promise.resolve({ project_key: projectKey, runs: [{ run_id: 'run-active', status: 'active' }] }));
+  let finishOld;
+  mocks.getTaskInputContext.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve; }));
+  render(<MemoryRouter initialEntries={['/projects/DEMO/work']}>
+    <Link to="/projects/OTHER/work">Navigate to B</Link>
+    <Link to="/projects/DEMO/work">Navigate to A</Link>
+    <Routes><Route element={<TranslationOutlet />}>
+      <Route path="/projects/:projectKey/work" element={<WorkPage />} />
+    </Route></Routes>
+  </MemoryRouter>);
+  const first = await openBoundAttempt();
+  await userEvent.click(within(first.dialog).getByRole('button', { name: 'Task inputs and methods' }));
+  const firstSignal = mocks.getTaskInputContext.mock.calls[0][2].signal;
+  // Simulate an external route change (such as browser navigation), rather than
+  // pretending the modal allows a user to click its inert background.
+  fireEvent.click(screen.getByRole('link', { name: 'Navigate to B' }));
+  expect(screen.queryByRole('dialog', { name: 'Attempt details' })).not.toBeInTheDocument();
+  expect(firstSignal.aborted).toBe(true);
+  const second = await openBoundAttempt();
+  expect(within(second.dialog).getByText('OTHER')).toBeVisible();
+  fireEvent.click(screen.getByRole('link', { name: 'Navigate to A' }));
+  expect(screen.queryByRole('dialog', { name: 'Attempt details' })).not.toBeInTheDocument();
+  await act(async () => finishOld({ input: { exact_request: 'Late first A input' } }));
+  expect(screen.queryByText('Late first A input')).not.toBeInTheDocument();
+  const returned = await openBoundAttempt();
+  expect(within(returned.dialog).getByText('DEMO')).toBeVisible();
+  expect(within(returned.dialog).queryByText('OTHER')).not.toBeInTheDocument();
+  expect(within(returned.dialog).getByRole('button', { name: 'Task inputs and methods' })).toHaveAttribute('aria-expanded', 'false');
+  expect(mocks.getTaskInputContext).toHaveBeenCalledTimes(1);
+});
+
+test('current to historical to current navigation never reuses the prior attempt panel', async () => {
+  mocks.useProjectState.mockReturnValue({ data: inspectableWorkData(), status: 'ready', refresh: vi.fn() });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }, { run_id: 'run-history', status: 'archived' }] });
+  const history = inspectableWorkData({ runId: 'run-history', attemptId: 'job-history' });
+  history.team_workspace.mission.read_only = true;
+  delete history.worker_jobs;
+  mocks.getProjectRun.mockResolvedValue(history);
+  render(<MemoryRouter initialEntries={['/projects/DEMO/work/runs/run-active']}>
+    <Link to="/projects/DEMO/work/runs/run-history">Navigate to history</Link>
+    <Link to="/projects/DEMO/work/runs/run-active">Navigate to current</Link>
+    <Routes><Route element={<TranslationOutlet />}>
+      <Route path="/projects/:projectKey/work/runs/:runId" element={<WorkPage />} />
+    </Route></Routes>
+  </MemoryRouter>);
+  await openBoundAttempt();
+  fireEvent.click(screen.getByRole('link', { name: 'Navigate to history' }));
+  expect(screen.queryByRole('dialog', { name: 'Attempt details' })).not.toBeInTheDocument();
+  await screen.findByRole('button', { name: 'Inspect attempt: Implement OAuth', hidden: true });
+  const old = (await openBoundAttempt()).dialog;
+  expect(within(old).getByText('Historical task · read-only')).toBeVisible();
+  expect(within(old).getAllByText('job-history').length).toBeGreaterThan(0);
+  expect(within(old).queryByText('job-bound')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('link', { name: 'Navigate to current' }));
+  expect(screen.queryByRole('dialog', { name: 'Attempt details' })).not.toBeInTheDocument();
+  const current = (await openBoundAttempt()).dialog;
+  expect(within(current).getByText('Current task · read-only')).toBeVisible();
+  expect(within(current).getAllByText('job-bound').length).toBeGreaterThan(0);
+  expect(within(current).queryByText('job-history')).not.toBeInTheDocument();
+});
+
 test.each([
   ['missing', data => { delete data.retry_target; }],
   ['wrong project', data => { data.retry_target.project_key = 'OTHER'; }],

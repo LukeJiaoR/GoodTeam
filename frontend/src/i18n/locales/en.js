@@ -214,6 +214,7 @@ export const en = {
   'work.current.action.execution': "Inspect current progress",
   'work.deliverySummary.readMismatch': 'This report does not match the selected project, task or version. Reload Work before opening it again.',
   'work.deliverySummary.loading': 'Loading the selected report…',
+  'work.attempt.inspect': 'Inspect attempt',
   'work.deliverySummary.current': 'Current task delivery',
   'work.deliverySummary.historical': 'Historical task delivery · read-only',
   'work.deliverySummary.verification': 'Verification',
