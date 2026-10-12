@@ -105,12 +105,22 @@ def handle_task_input_get(workspace: Path, path: str):
         state = next((item for _path, item in states.list_project_archived(key) if item.run_id == run_id), None)
     if state is None:
         return 404, {"error": "run_not_found", "message": "This task does not belong to the selected project."}
+    return 200, task_input_context_for_state(workspace, root, state, project_key=key, run_id=run_id)
+
+
+def task_input_context_for_state(workspace: Path, root: Path, state, *, project_key: str, run_id: str) -> dict:
+    """Share the existing read-only projection with the task's Manager context.
+
+    Callers supply their resolved task and root; this never looks up a different
+    run, captures new input, or substitutes live Team settings for missing proof.
+    """
+    key = project_key
     result = {"schema_version": SCHEMA, "project_key": key, "run_id": run_id,
               "task_kind": "workflow_run", "read_only": True,
               "capture_status": "unavailable", "input_origin": "unavailable", "input": None,
               "captured_at": "", "team_revision": None, "task_lock_ref": None, "subjects": []}
     if state.project_key != key or state.run_id != run_id:
-        return 200, {**result, "error_code": "snapshot_scope_mismatch"}
+        return {**result, "error_code": "snapshot_scope_mismatch"}
     try:
         context = workflow_skill_context(state.task_skill_context, run_id=run_id, project_key=key)
         if context:
@@ -127,4 +137,4 @@ def handle_task_input_get(workspace: Path, path: str):
         # Do not disclose store paths, raw exceptions or substitute mutable
         # workflow/Team data for an unreadable registered capture.
         result["error_code"] = exc.code if isinstance(exc, SkillError) else "task_input_unavailable"
-    return 200, result
+    return result

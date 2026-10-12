@@ -56,13 +56,39 @@ The frontend rejects response schema/project/run/kind mismatches and late
 responses from a previous selection. Missing input and loading are distinct;
 opening a historical task cannot silently show the current task's input.
 
+## Manager task context
+
+Manager conversations reuse this same projection for their exact selected
+workflow run. The `run.task_input` snapshot includes the user-facing input,
+capture status/origin, capture time and lock ID/digest. It excludes method
+bodies, private captured context and producer paths. This also works for a
+selected archived run and after a fresh service process reads the saved task.
+
+The original captured contract and `run.change_requests` remain separate. The
+Manager is instructed to explain current saved workflow feedback against the
+original baseline, retain source/uncertainty labels, and not promote unconfirmed
+chat or change discussions into applied requirements. A recorded change is not
+proof that an in-flight Worker received it. Missing or invalid captured input
+is not filled from the current title, Team settings or chat, and these reads do
+not initialize or repair a capture store.
+
+This fixes a specific input omission: delivery standards were readable in the
+input inspector but absent from the Manager snapshot after their conversation
+mention left its last-40-event window. The window remains unchanged; this does
+not add automatic conversation summaries or general-purpose long-term memory.
+
 ## Validation scope
 
 Related tests use real registered method packages, original task captures,
 current and archived state, changed Team versions, missing authority and
 stripped references. Both the dashboard handler and product HTTP server are
 exercised with isolated synthetic projects. These reads do not run a model or
-perform a task mutation. Frontend interaction tests cover the user entry point
+perform a task mutation. Manager tests drive 41 discussion turns through the
+actual conversation service with a controlled callback, check the input delivered
+to that callback, and restore the same capture in a fresh Python process. They
+cover changed feedback, historical identity, invalid capture data and read-only
+behavior. This does not establish what a live model would answer or do.
+Frontend interaction tests cover the user entry point
 and interrupted navigation. Commands and final results are recorded in the PR.
 
 Browser visual/keyboard layout acceptance and a real model's complete input/use
