@@ -297,10 +297,11 @@ export default function KnowledgePage() {
   const view = VIEWS.some(([key]) => key === search.get('view')) ? search.get('view') : 'overview';
   const api = useMemo(() => ({ getProjectState: knowledgeApi.getKnowledgeState }), []);
   const { data, error, refresh, status } = useProjectState(projectKey, { api, poll: false });
-  const [home, setHome] = useState(null);
-  const [overview, setOverview] = useState(null);
-  const [overviewError, setOverviewError] = useState(null);
+  const [overviewResponse, setOverviewResponse] = useState(null);
   const [overviewRequest, setOverviewRequest] = useState(0);
+  const overviewKey = JSON.stringify([projectKey, overviewRequest]);
+  const overviewReady = overviewResponse?.key === overviewKey && !overviewResponse.signal.aborted;
+  const overviewError = overviewReady ? overviewResponse.error : null;
   const artifactCount = artifactEntries(data).length;
   useEffect(() => {
     const controller = new AbortController();
@@ -308,20 +309,18 @@ export default function KnowledgePage() {
       try {
         const payload = await knowledgeApi.getKnowledgeHome(projectKey, { signal: controller.signal });
         if (controller.signal.aborted) return;
-        setHome(payload);
         const artifact = payload?.readiness?.artifacts?.repository_overview || payload?.readiness?.artifacts?.repository_understanding;
         const content = artifact || (payload?.readiness?.steps?.some((step) => step.id === 'repository_understanding' && step.status === 'complete')
           ? await knowledgeApi.getRepositoryUnderstanding(projectKey, { signal: controller.signal }) : null);
         if (controller.signal.aborted) return;
-        setOverview(content);
-        setOverviewError(null);
+        setOverviewResponse({ key: overviewKey, signal: controller.signal, home: payload, overview: content, error: null });
       } catch (caught) {
-        if (!controller.signal.aborted && caught.name !== 'AbortError') setOverviewError(caught);
+        if (!controller.signal.aborted && caught.name !== 'AbortError') setOverviewResponse({ key: overviewKey, signal: controller.signal, error: caught });
       }
     }
     void loadOverview();
     return () => controller.abort();
-  }, [projectKey, overviewRequest]);
+  }, [projectKey, overviewKey]);
   if (status === 'loading') return <main id="main-content" className="product-page"><div className="product-workspace-skeleton" role="status"><span /><span /><span /></div></main>;
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
   return (
@@ -329,8 +328,9 @@ export default function KnowledgePage() {
       <header className="knowledge-page-header"><div><p className="product-eyebrow">{data?.start_context?.project_name || projectKey}</p><h1>{t('knowledge.title')}</h1><p>{t('knowledge.description')}</p></div><div className="knowledge-page-count"><strong>{artifactCount}</strong><span>{t('knowledge.workspace.artifacts')}</span></div></header>
       <nav className="knowledge-view-switcher" aria-label={t('knowledge.views.label')}>{VIEWS.map(([item, Icon]) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => { const next = new URLSearchParams(search); next.set('view', item); setSearch(next); }}><Icon aria-hidden="true" size={17} /><span>{t(`knowledge.views.${item}`)}</span></button>)}</nav>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
+      {view === 'overview' && !overviewReady ? <p role="status">{t('product.states.loading')}</p> : null}
       {view === 'overview' && overviewError ? <ProductError error={overviewError} onRetry={() => setOverviewRequest((value) => value + 1)} t={t} /> : null}
-      {view === 'overview' && !overviewError ? <OverviewView home={home} language={language} overview={overview} t={t} /> : null}
+      {view === 'overview' && overviewReady && !overviewError ? <OverviewView home={overviewResponse.home} language={language} overview={overviewResponse.overview} t={t} /> : null}
       {view === 'artifacts' ? <KnowledgeArtifacts entries={artifactEntries(data)} projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
       {view === 'memory' ? <MemoryView key={projectKey} projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
     </main>
