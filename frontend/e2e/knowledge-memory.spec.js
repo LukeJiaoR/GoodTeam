@@ -38,10 +38,12 @@ for i in range(55):
   await expect(detail).toContainText(/mem:[a-f0-9]+/);
   await page.screenshot({ path: testInfo.outputPath('knowledge-desktop.png'), fullPage: true });
   const toggle = page.getByRole('checkbox', { name: 'Include execution records' });
-  await toggle.check();
+  await toggle.click();
+  await expect(toggle).toBeChecked();
   await expect(list.locator('li')).toHaveCount(50);
   await expect(list).toContainText('Execution record');
-  await toggle.uncheck();
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
   await expect(list.locator('li')).toHaveCount(2);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(toggle).toBeVisible();
