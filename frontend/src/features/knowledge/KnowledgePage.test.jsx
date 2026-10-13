@@ -49,7 +49,7 @@ test('renders the backend-protected browse contract and preserves superseded aud
   for (const event of contract.architect.events) await screen.findByText(event.body);
   expect(screen.getByText('knowledge.memory.superseded')).toBeVisible();
   const current = contract.architect.events.find((event) => !event.is_superseded);
-  fireEvent.click(screen.getByText(current.id));
+  fireEvent.click(screen.getByText(current.body));
   await screen.findByText('knowledge.memory.inspector');
   expect(knowledgeApi.getMemoryEvent).toHaveBeenCalledWith('AUDIT', current.id, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
@@ -58,7 +58,7 @@ test('local memory stays readable when the unrelated project catalog fails', asy
   knowledgeApi.getKnowledgeProjects.mockRejectedValue(new Error('Project catalog unavailable'));
   open();
   await screen.findByText(contract.architect.events[0].body);
-  fireEvent.click(screen.getByText(contract.detail.id));
+  fireEvent.click(screen.getByText(contract.detail.text));
   const inspector = await screen.findByRole('complementary', { name: 'knowledge.memory.inspector' });
   expect(within(inspector).getByText(contract.detail.text)).toBeVisible();
   expect(screen.getByText('Project catalog unavailable')).toBeVisible();
@@ -276,7 +276,7 @@ test('closing a cross-project source preserves pending query text and returns fo
   fireEvent.change(input, { target: { value: 'Keep this pending query' } });
   fireEvent.click(source);
   const inspector = await screen.findByRole('complementary', { name: 'knowledge.memory.inspector' });
-  const local = screen.getByText(contract.detail.id, { selector: '.knowledge-memory-workspace > ol code' }).closest('button');
+  const local = screen.getByText(contract.detail.text, { selector: '.knowledge-memory-record-body' }).closest('button');
   expect(local).toHaveAttribute('aria-pressed', 'false');
   await new Promise(resolve => setTimeout(resolve, 300));
   expect(inspector).toBeInTheDocument();
@@ -348,7 +348,7 @@ test('source remains open after opening with a whitespace-padded query', async (
   open('&role=architect');
   const input = await screen.findByRole('searchbox', { name: 'knowledge.memory.search' });
   fireEvent.change(input, { target: { value: 'database ' } });
-  fireEvent.click(screen.getByText(contract.detail.id));
+  fireEvent.click(screen.getByText(contract.detail.text));
   await screen.findByRole('complementary', { name: 'knowledge.memory.inspector' });
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
   expect(screen.getByRole('complementary', { name: 'knowledge.memory.inspector' })).toBeInTheDocument();
@@ -516,4 +516,20 @@ test('retry preserves partial results, queries, scope and source selection until
   expect(search).toHaveBeenCalledTimes(3);
   search.mock.calls.forEach(call => expect(call.slice(0, 3)).toEqual(['architect', 'backup', ['OTHER', 'MISSING']]));
   expect(knowledgeApi.getMemoryEvent).toHaveBeenCalledTimes(1);
+});
+
+
+test('execution filter is URL bound and discards stale list responses', async () => {
+  const old = pending();
+  knowledgeApi.getMemoryEvents.mockImplementation((_project, _role, _query, { includeExecution }) =>
+    includeExecution ? Promise.resolve({ events: [] }) : old.promise);
+  open();
+  await waitFor(() => expect(knowledgeApi.getMemoryEvents).toHaveBeenCalled());
+  fireEvent.click(screen.getByRole('checkbox', { name: 'knowledge.memory.includeExecution' }));
+  await waitFor(() => expect(knowledgeApi.getMemoryEvents).toHaveBeenLastCalledWith('AUDIT', 'architect', '', expect.objectContaining({ includeExecution: true })));
+  expect(screen.getByTestId('query-location').textContent).toContain('execution=true');
+  await act(async () => old.resolve(contract.architect));
+  expect(screen.queryByText(contract.architect.events[0].body)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Browser back' }));
+  await waitFor(() => expect(knowledgeApi.getMemoryEvents).toHaveBeenLastCalledWith('AUDIT', 'architect', '', expect.objectContaining({ includeExecution: false })));
 });

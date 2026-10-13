@@ -23,9 +23,11 @@ if TYPE_CHECKING:
 MAX_RECEIPT_OBSERVATIONS = 128
 
 
-def _matches_append(event: object, role_key: str, horizon: str, text: str, source: str) -> bool:
+def _matches_append(event: object, role_key: str, horizon: str, text: str, source: str, category: str = "") -> bool:
     return (isinstance(event, dict)
-            and set(event) == {"timestamp", "role_key", "horizon", "action", "source", "text"}
+            and set(event) == ({"timestamp", "role_key", "horizon", "action", "source", "text"}
+                               | ({"category"} if category else set()))
+            and event.get("category", "") == category
             and isinstance(event.get("timestamp"), str)
             and event.get("role_key") == role_key
             and event.get("horizon") == horizon
@@ -35,7 +37,7 @@ def _matches_append(event: object, role_key: str, horizon: str, text: str, sourc
 
 
 def _reconcile_append(store: RoleMemoryStore, role_key: str, *, before: bytes,
-                      horizon: str, text: str, source: str) -> tuple[str, dict | None]:
+                      horizon: str, text: str, source: str, category: str = "") -> tuple[str, dict | None]:
     """Read once while the caller still holds the role lock; never repair/retry.
 
     Checkpoints/projections may be exactly what failed after the WAL replace.
@@ -52,7 +54,7 @@ def _reconcile_append(store: RoleMemoryStore, role_key: str, *, before: bytes,
             return "unknown", None
         suffix = after[len(prefix):]
         event = json.loads(suffix)
-        if (_matches_append(event, role_key, horizon, text, source)
+        if (_matches_append(event, role_key, horizon, text, source, category)
                 and suffix == (json.dumps(event) + "\n").encode("utf-8")):
             # This is a WAL replacement observed under the lock, not a promise
             # of filesystem durability after an operating-system fsync error.
@@ -66,7 +68,7 @@ def write_back_events(
     store: RoleMemoryStore,
     role_key: str,
     *,
-    items: list[tuple[str, str]],
+    items: list[tuple[str, str] | tuple[str, str, str]],
     source: str,
     result_bytes: bytes,
     include_parsed: bool = True,
@@ -148,7 +150,9 @@ def write_back_events(
                 by_text: dict[str, list[dict]] = {}
                 for event in events:
                     by_text.setdefault(str(event.get("text", "")), []).append(event)
-                for index, (horizon, text) in enumerate(items):
+                for index, item in enumerate(items):
+                    horizon, text = item[:2]
+                    category = item[2] if len(item) == 3 else ""
                     matches = by_text.get(text, [])
                     if matches:
                         same_source = next((event for event in matches if event.get("source") == source), None)
@@ -161,10 +165,11 @@ def write_back_events(
                         continue
                     receipt["attempted"] += 1
                     try:
-                        event = store.append_memory_event(role_key, horizon=horizon, text=text, source=source)
+                        event = store.append_memory_event(role_key, horizon=horizon, text=text, source=source,
+                                                          **({"category": category} if category else {}))
                     except Exception:
                         outcome, event = _reconcile_append(
-                            store, role_key, before=before, horizon=horizon, text=text, source=source,
+                            store, role_key, before=before, horizon=horizon, text=text, source=source, category=category,
                         )
                         if outcome == "committed":
                             receipt["appended"] += 1

@@ -7570,6 +7570,7 @@ def build_memory_events(
     *,
     query: str = "",
     limit: int = 50,
+    include_execution: bool = False,
 ) -> dict[str, object]:
     if project_root is None:
         return {"project_key": project_key, "role": role, "events": []}
@@ -7580,7 +7581,7 @@ def build_memory_events(
     return {
         "project_key": project_key,
         "role": role,
-        "events": role_store.list_events(role, query=query, limit=limit),
+        "events": role_store.list_events(role, query=query, limit=limit, include_execution=include_execution),
     }
 
 
@@ -7841,6 +7842,7 @@ def serve(
                             role,
                             query=memory_query,
                             limit=limit,
+                            include_execution=query.get("include_execution", ["false"])[0] == "true",
                         ),
                     )
                 except Exception as exc:

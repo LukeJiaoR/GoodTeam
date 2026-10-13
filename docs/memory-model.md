@@ -82,6 +82,44 @@ See [file-store consistency](memory-file-store.md) for persistence/recovery limi
 and [task input inspection](task-input-context-view.md) for input authority labels.
 This coverage does not close the overall memory/context or product-effect goals.
 
+## Knowledge browsing and execution audit
+
+The role-memory list excludes the existing `worker_failure:*`, `*/provenance`,
+and `execution:<id>:final_provenance` execution audit source families before ranking and applying the limit. `include_execution=true` on
+`GET /api/memory/events` exposes those audit records; the page's checkbox stores
+this choice in its URL. Superseded knowledge remains browsable and labelled.
+Normal retrieval, generated summaries and the compatibility Markdown context
+exclude execution records, while the WAL and Markdown files retain the audit.
+Index and pickup provenance both carry the `knowledge_without_execution_v3`
+retrieval policy, bound into the packet content digest. Missing/old/unknown pickup
+policies invalidate frozen summaries and short-term text even with no retrieved
+hits. Independently verified original hits may survive; consuming a frozen job
+never retrieves newer facts, rewrites its packet, or changes its capture receipt.
+New captures build context under the current policy.
+
+The legacy prefix before the writer-owned `## Memory Events` appendix remains
+compatible. The entire machine appendix is reconstructed in memory from the
+captured eligible WAL events, including full multiline boundaries; embedded
+headings and edited/unknown appendix notes are not treated as independent context.
+Those original Markdown bytes remain on disk. This avoids guessing event
+boundaries from individual lines or a source marker on only the final line.
+
+When captured WAL or an explicit legacy source identifies execution records, the
+appendix boundary must match the complete captured WAL projection. An edited or
+ambiguous boundary withholds the entire legacy contribution and reports
+`legacy_execution_unverifiable`; eligible WAL knowledge remains available. This
+also covers embedded headings and legacy execution sources missing from WAL.
+Original Markdown files and audit events are never rewritten by pickup filtering.
+
+New Worker result writes retain the explicit `learned`, `caveats`, `decisions`,
+or `open_questions` section as optional event `category`. Existing horizon
+mapping, stable event IDs, text deduplication and private receipt schemas are
+unchanged. A duplicate of an old uncategorized event stays historical/unclassified;
+there is no retrospective category inference or automatic question resolution.
+The list shows category, recorded time and original text (visually clamped).
+Full original text, IDs, sources and correction links remain in the inspector.
+No generated translation or additional model summary is involved.
+
 ## Related
 - worker-backends.md
 - config-reference.md

@@ -1913,7 +1913,7 @@ def test_escalated_worker_failure_writes_scoped_failure_memory_event(tmp_path, m
     assert any(blocker.startswith("NEEDS HUMAN [network]:") for blocker in result.blockers)
     memory_root = tmp_path / "contentops"
     memory_store = RoleMemoryStore(memory_root)
-    events = memory_store.list_events("implementation")
+    events = memory_store.list_events("implementation", include_execution=True)
     failure_events = [
         event
         for event in events
@@ -1997,7 +1997,7 @@ def test_worker_failure_triage_records_failure_pattern_match_without_overriding_
     assert routed_pattern["routing_outcomes"]["shadow_only"] == 1
     assert routed_pattern["routing_outcomes"]["last_reason"] == "below_min_hits"
     assert routed_pattern["routing_outcomes"]["last_disposition"] == "block"
-    memory_events = RoleMemoryStore(tmp_path / "contentops").list_events("implementation")
+    memory_events = RoleMemoryStore(tmp_path / "contentops").list_events("implementation", include_execution=True)
     failure_events = [event for event in memory_events if event["source"] == "worker_failure:run-1:implementation:implementation"]
     assert "pattern_match=" in failure_events[0]["body"]
     assert "pattern_hits=1" in failure_events[0]["body"]
@@ -2056,7 +2056,7 @@ def test_worker_failure_triage_applies_canary_route_for_high_confidence_network_
     assert patterns[0]["routing_outcomes"]["confirmed"] == 1
     assert patterns[0]["routing_outcomes"]["last_reason"] == "canary_allowed"
     assert patterns[0]["routing_outcomes"]["last_disposition"] == "escalate_human"
-    memory_events = RoleMemoryStore(tmp_path / "contentops").list_events("implementation")
+    memory_events = RoleMemoryStore(tmp_path / "contentops").list_events("implementation", include_execution=True)
     failure_events = [event for event in memory_events if event["source"] == "worker_failure:run-1:implementation:implementation"]
     assert "disposition=escalate_human" in failure_events[0]["body"]
     assert "deterministic_disposition=block" in failure_events[0]["body"]

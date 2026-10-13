@@ -148,7 +148,7 @@ def test_writeback_receipt_loss_preserves_committed_counts_and_never_retries_tra
     assert status["memory_writeback"]["error"] == "memory_handoff_writeback_receipt_unavailable"
     assert len(receipts(handoff, job, "transport_attempt")) == 1
     memory = RoleMemoryStore(workers.project_root)
-    assert len(memory.list_events("architect")) == 2
+    assert len(memory.list_events("architect", include_execution=True)) == 2
     original_ids = [event["id"] for event in memory.list_events("architect")
                     if event["source"] == f"{job['id']}/result.md"]
     replay = workers._write_back_memory(workers.root / job["id"], job)
@@ -529,3 +529,41 @@ def test_builtin_host_refs_keep_admitted_role_after_mutable_job_swap(ctx, monkey
     assert status["status"] == "completed" and swapped == [True]
     assert status["memory_citations"] == []
     assert handoff.load(job)["role"] == "architect"
+
+
+def test_legacy_policy_packet_is_withheld_without_changing_capture_or_receipt_identity(ctx, monkeypatch):
+    from goodteam_os.memory_core.context import _pickup_content_digest
+
+    workers, handoff = ctx
+    memory = RoleMemoryStore(workers.project_root)
+    memory.append_memory_event('architect', horizon='mid-term', text='database KEEP_CAPTURED', source='old/result.md')
+    original = RoleMemoryStore.build_pickup_packet
+
+    def old_policy(self, *args, **kwargs):
+        packet = original(self, *args, **kwargs)
+        packet['provenance'].pop('retrieval_policy')
+        packet['summaries']['mid-term'] = 'AUDIT_SENTINEL'
+        packet['short_term'] = 'AUDIT_SENTINEL'
+        packet['relevant_events'] = []
+        packet['provenance']['content_sha256'] = _pickup_content_digest(packet)
+        return packet
+
+    monkeypatch.setattr(RoleMemoryStore, 'build_pickup_packet', old_policy)
+    job = create(workers)
+    path = workers.root / job['id'] / 'role_pickup_packet.json'
+    captured = path.read_bytes()
+    capture = handoff.load(job)
+    monkeypatch.setattr(RoleMemoryStore, 'build_pickup_packet', original)
+    memory.append_memory_event('architect', horizon='mid-term', text='database NEW_AFTER_CAPTURE', source='new/result.md')
+    offline_cli(monkeypatch, handoff)
+    status = workers.run_job(job['id'])
+    assert status['status'] == 'completed'
+    prepared = receipts(handoff, job, 'worker_input_prepared')
+    assert len(prepared) == 1
+    assert prepared[0]['packet_digest'] == digest(captured)
+    assert 'pickup_policy_changed' in prepared[0]['validation']['context_reasons']
+    assert prepared[0]['validation']['context_status'] == 'partial'
+    assert path.read_bytes() == captured
+    assert handoff.load(job) == capture
+    prompt = workers._worker_prompt(workers.root / job['id'], job)
+    assert 'AUDIT_SENTINEL' not in prompt and 'NEW_AFTER_CAPTURE' not in prompt

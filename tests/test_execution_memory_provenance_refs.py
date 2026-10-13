@@ -118,6 +118,16 @@ def test_finalize_exposes_ledger_linked_memory_provenance_ref(tmp_path):
     assert ref["timestamp"]
     assert ref["supersedes"] == ""
     assert ref["is_superseded"] is False
+    store = RoleMemoryStore(tmp_path)
+    wal = store.event_path("orchestrator").read_bytes()
+    assert store.list_events("orchestrator") == []
+    row = store.list_events("orchestrator", include_execution=True)[0]
+    assert row["id"] == ref["memory_event_id"] and row["source"] == ref["source"]
+    assert row["category"] == "execution"
+    assert store.retrieve_relevant_events("orchestrator", execution_id) == []
+    assert ref["source"] not in str(store.build_pickup_packet("orchestrator"))
+    assert store.event_path("orchestrator").read_bytes() == wal
+    assert api.audit_memory_provenance(execution_id) == audit
 
 
 def test_repeated_finalize_reuses_existing_memory_and_ledger_refs(tmp_path):

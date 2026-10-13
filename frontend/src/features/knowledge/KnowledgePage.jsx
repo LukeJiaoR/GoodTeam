@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpenCheck, BrainCircuit, Files, Search, ShieldCheck, TerminalSquare } from 'lucide-react';
 import { useOutletContext, useParams, useSearchParams } from 'react-router-dom';
+import './knowledgeMemory.css';
 import KnowledgeArtifacts from './KnowledgeArtifacts';
 import MemoryEventInspector from './MemoryEventInspector';
 import { isMemoryEventId } from './memoryProvenance';
@@ -102,7 +103,7 @@ function OverviewView({ home, language, overview, t }) {
   );
 }
 
-function MemoryView({ projectKey, search, setSearch, t }) {
+function MemoryView({ projectKey, search, setSearch, language, t }) {
   const [memory, setMemory] = useState(null);
   const [eventResponse, setEventResponse] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -120,6 +121,7 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   const searchInput = useRef(null);
   const selected = search.get('role') || memory?.roles?.[0]?.role || '';
   const query = search.get('memory_q') || '';
+  const includeExecution = search.get('execution') === 'true';
   const draftQuery = queryDraft.base === query ? queryDraft.text : query;
   const eventId = search.get('event') || '';
   const crossQuery = search.get('cross_q') || '';
@@ -131,7 +133,7 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   const sourceAllowed = eventProject === projectKey || (scope.includes(eventProject) && projects.includes(eventProject));
   const sourcePending = !sourceAllowed && scope.includes(eventProject) && catalogLoading;
   const validEvent = isMemoryEventId(eventId);
-  const eventsKey = JSON.stringify(['events', projectKey, selected, query, readRevision]);
+  const eventsKey = JSON.stringify(['events', projectKey, selected, query, includeExecution, readRevision]);
   const detailKey = JSON.stringify(['detail', projectKey, eventProject, selected, eventId, readRevision]);
   const crossKey = JSON.stringify(['cross', projectKey, selected, crossQuery, scope]);
   const eventsReady = eventResponse?.key === eventsKey;
@@ -202,13 +204,13 @@ function MemoryView({ projectKey, search, setSearch, t }) {
   useEffect(() => {
     if (!selected) return undefined;
     const controller = new AbortController();
-    knowledgeApi.getMemoryEvents(projectKey, selected, query, { signal: controller.signal }).then((payload) => {
+    knowledgeApi.getMemoryEvents(projectKey, selected, query, { signal: controller.signal, includeExecution }).then((payload) => {
       if (controller.signal.aborted) return;
       setEventResponse({ key: eventsKey, events: payload.events || [] });
       setReadErrors(current => ({ ...current, events: null }));
     }).catch((caught) => { if (!controller.signal.aborted && caught.name !== 'AbortError') setReadErrors(current => ({ ...current, events: { key: eventsKey, value: caught, signal: controller.signal } })); });
     return () => controller.abort();
-  }, [projectKey, query, selected, eventsKey]);
+  }, [projectKey, query, selected, includeExecution, eventsKey]);
   useEffect(() => {
     if (!eventId || !validEvent || !selected || !sourceAllowed) return undefined;
     const controller = new AbortController();
@@ -267,8 +269,9 @@ function MemoryView({ projectKey, search, setSearch, t }) {
         {visibleError ? <ProductError error={visibleError} onRetry={retryRead} t={t} /> : null}
         <p className="memory-provenance__notice">{t('knowledge.memory.storageBoundary')}</p>
         {roleContext?.context_status && roleContext.context_status !== 'available' ? <p role="status" className="memory-provenance__notice">{t('knowledge.memory.contextUnavailable')} <code>{roleContext.context_status}</code>{(roleContext.context_reasons || []).map(reason => <code key={reason}> · {reason}</code>)}</p> : null}
+        <label className="knowledge-memory-execution-toggle"><input type="checkbox" checked={includeExecution} onChange={event => updateSearch({ execution: event.target.checked ? 'true' : '', event: '', event_project: '' })} /><span>{t('knowledge.memory.includeExecution')}</span></label>
         {eventsReady && !events.length ? <p className="product-empty-copy">{t('knowledge.memory.emptyResults')}</p> : null}
-        <ol>{events.map((memoryEvent, index) => <li key={memoryEvent.id || index}><button aria-pressed={eventProject === projectKey && eventId === memoryEvent.id} className={eventProject === projectKey && eventId === memoryEvent.id ? 'is-active' : ''} onClick={(click) => openEvent(memoryEvent.id, projectKey, click.currentTarget)}><strong>{memoryEvent.action || memoryEvent.horizon || selected}</strong><span>{memoryEvent.body ?? memoryEvent.text ?? memoryEvent.summary ?? ''}</span>{memoryEvent.is_superseded ? <small>{t('knowledge.memory.superseded')}</small> : null}<code>{memoryEvent.id}</code></button></li>)}</ol>
+        <ol className="knowledge-memory-records">{events.map((memoryEvent, index) => <li key={memoryEvent.id || index}><button aria-pressed={eventProject === projectKey && eventId === memoryEvent.id} className={eventProject === projectKey && eventId === memoryEvent.id ? 'is-active' : ''} onClick={(click) => openEvent(memoryEvent.id, projectKey, click.currentTarget)}><span className="knowledge-memory-record-meta"><strong>{t(`knowledge.memory.category.${['learned', 'caveats', 'decisions', 'open_questions', 'execution'].includes(memoryEvent.category) ? memoryEvent.category : 'unclassified'}`)}</strong><time dateTime={memoryEvent.timestamp || undefined}>{updatedLabel(memoryEvent.timestamp, language)}</time></span><span className="knowledge-memory-record-body">{memoryEvent.body ?? memoryEvent.text ?? memoryEvent.summary ?? ''}</span>{memoryEvent.is_superseded ? <small>{t('knowledge.memory.superseded')}</small> : null}</button></li>)}</ol>
         {eventId && (!validEvent || (!sourceAllowed && !sourcePending)) ? <p role="status">{t('knowledge.memory.sourceUnavailable')} <button type="button" onClick={closeSource}>{t('knowledge.memory.closeSource')}</button></p> : null}
         {eventId && validEvent && sourcePending ? <p role="status">{t('knowledge.memory.catalogLoading')}</p> : null}
         {eventId && validEvent && sourceAllowed && !eventDetail && !visibleError ? <p role="status">{t('product.states.loading')}</p> : null}
@@ -338,7 +341,7 @@ export default function KnowledgePage() {
       {view === 'overview' && overviewError ? <ProductError error={overviewError} onRetry={() => setOverviewRequest((value) => value + 1)} t={t} /> : null}
       {view === 'overview' && overviewReady && !overviewError ? <OverviewView home={overviewResponse.home} language={language} overview={overviewResponse.overview} t={t} /> : null}
       {view === 'artifacts' ? <KnowledgeArtifacts entries={artifactEntries(data)} projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
-      {view === 'memory' ? <MemoryView key={projectKey} projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
+      {view === 'memory' ? <MemoryView key={projectKey} projectKey={projectKey} search={search} setSearch={setSearch} language={language} t={t} /> : null}
     </main>
   );
 }
