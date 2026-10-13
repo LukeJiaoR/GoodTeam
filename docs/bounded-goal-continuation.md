@@ -161,3 +161,28 @@ or the overall #439 product acceptance criteria.
 Skill-bound Manager attempts resolve their canonical producer identity and immutable
 original request; legacy attempts retain their original identity. Current Skill
 runtime unavailability still blocks assessment and cannot be bypassed by retry.
+
+### Existing workflow approval waits
+
+A Goal work unit at a supported, pending workflow Gate is observed as
+`awaiting_approval`, separate from actual execution blockers. Its existing task
+card uses `review` in the Doing column and carries the observed Gate key. These
+fields are display facts, not approval authority. The Work panel opens the
+existing review surface only for the same current workflow run and its actionable
+review; historical, stopped, canceled, blocked or mismatched contexts do not gain
+an approval action. In-flight or interrupted decisions do not advertise another
+approval.
+
+The existing approval endpoint, evidence/version binding and decision ledger are
+unchanged. Approving a Gate lets the same run advance; the background service then
+continues the same Goal within its original authorization. Rejecting the workflow
+stops Goal continuation. Stopping/canceling a Goal revokes future continuation,
+while the already-started workflow retains its existing controls. A new Goal
+revision clears superseded task-card observations before fresh run facts are
+projected.
+
+The isolated HTTP test seeds a release-gated run, uses the real approval endpoint
+and background service, and supplies only a synthetic read-only Manager result.
+It covers duplicate decisions, restart while waiting, rejection, Stop/cancel and
+actual blockers. This verifies the integration contract, not real-model product
+acceptance or browser pixels.

@@ -445,6 +445,8 @@ class GoalStore:
                     review_gaps=work["gaps"], source_evidence_refs=work["source_evidence_refs"],
                     assessment_checks=work["assessment_checks"],
                     continuation_stopped=goal["continuation_stopped"],
+                    # A new Goal revision supersedes old execution observations.
+                    observed_execution_status="", observed_approval="",
                 )
                 projected.append(task)
                 task_ids[work["id"]] = task["id"]

@@ -1,5 +1,8 @@
 export const zhCN = {
   "work.goal.executionStatus": "实际执行状态：{{status}}",
+  "work.goal.workflowApprovalStatus": "等待工作流审批",
+  "work.goal.workflowApprovalWait": "执行正在等待{{gate}}工作流 Gate 的审批。",
+  "work.goal.openWorkflowApproval": "查看工作流审批",
   "work.goal.assessment": "Manager 评估",
   "work.goal.assessmentCaution": "以下逐项结论及引用原文来自 Manager 评估，尚未经过独立验证。",
   "work.goal.assessmentStatus.met": "Manager 判断：已满足",
