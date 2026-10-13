@@ -6086,8 +6086,28 @@ def handle_project_api_post(
     )
     if task_assistant_action_match:
         key = _decode_project_api_key(task_assistant_action_match.group(1))
-        key, target, root = _project_target_and_root(workspace, key)
         action = str(request.get("action", ""))
+        if action == "stop_goal":
+            from goodteam_os.goal_continuation import stop_goal_action
+
+            try:
+                result = stop_goal_action(workspace, key, request)
+            except ValueError as exc:
+                raise ProjectApiError("goal_action_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
+            # Stop is already durable. Projection failure cannot undo it or
+            # falsely report that revocation failed. Outbox retains card sync.
+            try:
+                key, target, root = _project_target_and_root(workspace, key)
+                from goodteam_os.goals import GoalStore
+
+                GoalStore(workspace, key).sync_tasks(result["goal"]["id"], LocalTaskStore(root, key))
+                result["task_assistant_session"] = TaskAssistantService(
+                    workspace, project_config=_project_config_for_key(workspace, key),
+                ).session(key, root)
+            except Exception:
+                result["projection_unavailable"] = True
+            return 200, result
+        key, target, root = _project_target_and_root(workspace, key)
         if action in {"create_goal", "decide_goal_gate", "stop_goal"}:
             from goodteam_os.goal_continuation import handle_goal_action
 
@@ -8438,3 +8458,5 @@ def serve(
         close_server = getattr(server, "server_close", None)
         if close_server is not None:
             close_server()
+        if goal_service_stop is not None:
+            goal_service_stop.join()

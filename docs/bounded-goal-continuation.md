@@ -101,3 +101,23 @@ observable acceptance checks, retain all Gates and inspect each run's evidence.
 Record the final revision, every work/run identity, assessment citations, actual
 changes and verification, human interventions and provider spend. A fake or
 synthetic PASS is never substituted for this outstanding product demonstration.
+
+### Background recovery and stopping
+
+The background service checks an unfinished workflow transition through the same
+nonblocking workflow lock used by dashboard recovery. A live holder is left
+alone. An abandoned transition is marked interrupted and the Goal is visibly
+blocked; unknown work is never replayed automatically.
+
+If project configuration or its authorization snapshot can no longer be read,
+an active Goal becomes blocked. Stop/Cancel still accepts the original project
+key, Goal identity, revision and idempotency key directly against the Goal ledger.
+A successful stop receipt remains successful if the optional session/card
+projection cannot be refreshed (`projection_unavailable: true`). It does not
+terminate a Worker that was already dispatched.
+
+Normal server shutdown stops further scans and waits up to 30 seconds for an
+in-flight Goal tick after closing the HTTP server. A timeout is an explicit
+shutdown error, not a successful drain. Abrupt process loss or an overlong tick
+still requires the existing fail-closed recovery; this is not a cancellation or
+automatic replay mechanism for unknown Worker outcomes.
