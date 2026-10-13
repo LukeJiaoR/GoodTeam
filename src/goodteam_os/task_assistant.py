@@ -484,7 +484,11 @@ class TaskAssistantService:
                 item for item in readiness.get("steps", [])
                 if isinstance(item, dict)
                 and item.get("id") == "repository_understanding"
-                and item.get("status") == "complete"
+                and (
+                    item.get("status") == "complete"
+                    or (item.get("status") == "failed" and
+                        dict(item.get("error") or {}).get("code") == "repository_inventory_incomplete")
+                )
             ),
             None,
         )
@@ -501,22 +505,31 @@ class TaskAssistantService:
         completed_sources = {
             str(dict(item.get("details") or {}).get("source_message_id", ""))
             for item in session.get("timeline", [])
-            if isinstance(item, dict) and item.get("event") == "project_understanding_ready"
+            if isinstance(item, dict) and (
+                item.get("event") == "project_understanding_ready"
+                or (item.get("event") == "project_understanding_incomplete"
+                    and dict(item.get("details") or {}).get("artifact_ref") == artifact_ref)
+            )
         }
         unanswered = [item for item in pending if str(item.get("message_id", "")) not in completed_sources]
         if not unanswered:
             return session
         artifact = self.readiness.artifact(project_key, root, artifact_ref)
-        content = _format_repository_understanding(dict(artifact.get("content") or {}))
+        inventory = dict(artifact.get("content") or {})
+        scan = dict(inventory.get("scan") or {})
+        incomplete = step.get("status") == "failed" or scan.get("truncated") is True or scan.get("complete") is False
+        event = "project_understanding_incomplete" if incomplete else "project_understanding_ready"
+        content = _format_repository_understanding(inventory)
         for item in unanswered:
             source_message_id = str(item.get("message_id", ""))
             session = store.append_event(
-                f"understanding:{source_message_id}",
-                "project_understanding_ready",
+                f"understanding:{source_message_id}:{artifact_ref}",
+                event,
                 content=content,
                 details={
                     "source_message_id": source_message_id,
                     "artifact_ref": artifact_ref,
+                    "inventory_scan": scan,
                 },
             )
         return session

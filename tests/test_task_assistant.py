@@ -205,13 +205,19 @@ def test_first_message_initializes_missing_legacy_readiness(tmp_path, monkeypatc
     assert initialized == [(tmp_path / "workspace", str(root), [config])]
 
 
-def test_session_returns_completed_repository_understanding_as_message(tmp_path):
+@pytest.mark.parametrize("status,truncated,event", [
+    ("complete", False, "project_understanding_ready"),
+    ("failed", True, "project_understanding_incomplete"),
+    ("complete", True, "project_understanding_incomplete"),
+])
+def test_session_returns_completed_repository_understanding_as_message(tmp_path, status, truncated, event):
     root = tmp_path / "repo"
     root.mkdir()
     artifact_ref = "readiness://execution-1/1/repository_understanding"
     artifact = {
         "id": artifact_ref,
         "content": {
+            "scan": {"truncated": truncated},
             "technology_stack": ["Python"],
             "entry_points": ["src/app.py"],
             "commands": [{"command": "pytest"}],
@@ -226,7 +232,8 @@ def test_session_returns_completed_repository_understanding_as_message(tmp_path)
                 **readiness(),
                 "steps": [{
                     "id": "repository_understanding",
-                    "status": "complete",
+                    "status": status,
+                    "error": {"code": "repository_inventory_incomplete"} if status == "failed" else None,
                     "artifact_refs": [artifact_ref],
                 }],
             }
@@ -244,7 +251,8 @@ def test_session_returns_completed_repository_understanding_as_message(tmp_path)
     first = service.session("DEMO", root)
     repeated = service.session("DEMO", root)
 
-    assert first["timeline"][-1]["event"] == "project_understanding_ready"
+    assert first["timeline"][-1]["event"] == event
+    assert first["timeline"][-1]["details"]["inventory_scan"] == {"truncated": truncated}
     assert "Python" in first["timeline"][-1]["content"]
     assert "src/app.py" in first["timeline"][-1]["content"]
     assert "pytest" in first["timeline"][-1]["content"]
@@ -343,3 +351,41 @@ def test_onboarding_discovery_never_creates_or_changes_a_task(tmp_path, text, co
         if index == 0:
             store.append_message("existing", "user", "Implement login")
             store.propose_task(["existing"], "Implement login")
+
+
+@pytest.mark.parametrize("retry_status", ["complete", "failed"])
+def test_incomplete_understanding_publishes_new_attempt_once(tmp_path, retry_status):
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    class RetriedUnderstanding:
+        attempt = 1
+        status_value = "failed"
+
+        def status(self, key, root):
+            return {**readiness(), "steps": [{
+                "id": "repository_understanding", "status": self.status_value,
+                "error": {"code": "repository_inventory_incomplete"},
+                "artifact_refs": [f"attempt-{self.attempt}"],
+            }]}
+
+        def artifact(self, key, root, ref):
+            return {"content": {"technology_stack": ["Python"], "scan": {
+                "complete": self.status_value == "complete", "files_seen": self.attempt,
+            }}}
+
+    executor = RetriedUnderstanding()
+    workspace = tmp_path / "workspace"
+    store = import_module("goodteam_os.task_assistant_session").TaskAssistantSessionStore(workspace, "DEMO")
+    store.append_event("reply:message-1", "project_inspection_started")
+    service = service_type()(workspace, readiness_executor=executor)
+    first = service.session("DEMO", root)
+    assert first["timeline"][-1]["event"] == "project_understanding_incomplete"
+    executor.attempt = 2
+    executor.status_value = retry_status
+    second = service.session("DEMO", root)
+    assert len(second["timeline"]) == len(first["timeline"]) + 1
+    assert second["timeline"][-1]["details"]["artifact_ref"] == "attempt-2"
+    expected = "project_understanding_ready" if retry_status == "complete" else "project_understanding_incomplete"
+    assert second["timeline"][-1]["event"] == expected
+    assert service.session("DEMO", root) == second

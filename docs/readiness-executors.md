@@ -27,14 +27,32 @@ steps.
 ## Read-only and approval boundary
 
 Existing-project understanding opens the imported root with `O_NOFOLLOW`, verifies
-the stored device/inode, traverses a bounded number of entries, skips symlinks, and
+the stored device/inode, enumerates eligible directories without a default entry/depth cutoff, skips symlinks, and
 reads only bounded regular files needed for manifests and key documentation. In
 schema version 2, the existing `scan_existing_project()` entry point remains only
 as a compatibility wrapper over `repository_snapshot.v1` capture plus
 `repository_inventory.v1` extraction. Current "repository understanding" wording
-therefore means bounded inventory behavior, not model understanding. It does not
+therefore means directory inventory and heuristic metadata extraction, not model understanding. It does not
 install dependencies, execute discovered commands, modify configuration, or write
 into the target repository.
+
+Inventory keeps optional explicit entry/depth limits for callers; the normal readiness
+path uses neither. Iterative traversal checks cancellation between entries, with
+the executor polling its existing execution identity at most every 100 ms. Snapshot
+capture/verification and one directory listing remain synchronous; cancellation
+cannot interrupt an in-flight filesystem/Git operation, but cancelled or superseded
+attempts cannot publish results. No new queue or resume service is introduced.
+
+`scan.complete`, `enumeration_complete`, and `snapshot_complete` distinguish
+traversal from protected coverage. Snapshot omissions preserve the independent
+20,000-file / 512 MiB total / 8 MiB single-file limits. Partial results persist as
+artifacts with a failed, retryable readiness step; command confirmation stays
+locked. Chat returns a partial-result event instead of waiting indefinitely.
+`semantic_understanding: not_performed` is explicit: scanning all paths does not
+mean reading or understanding all source. Metadata text reads retain the 256 KiB
+per-file ceiling and summary lists retain display limits. Existing saved records
+are readable without migration; legacy truncated inventories are labelled partial
+when a new chat reply is produced, without rewriting old readiness decisions.
 
 Track 1 additionally provides a safe, read-only, snapshot-bound Repository
 Context Provider with an immutable snapshot, matching inventory, and

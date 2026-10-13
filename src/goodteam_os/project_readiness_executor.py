@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import threading
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -850,7 +851,20 @@ class ProjectReadinessExecutor:
                     "The imported project root identity is missing.",
                     recovery=["reload_project"],
                 )
-            overview = scan_existing_project(root, expected_identity=expected_identity)
+            last_check = 0.0
+
+            def should_cancel() -> bool:
+                nonlocal last_check
+                now = time.monotonic()
+                if last_check and now - last_check < 0.1:
+                    return False
+                last_check = now
+                current = read_bound_project_readiness(self.workspace, key, root)
+                return self._current_execution(current, execution_id, attempt) is None
+
+            overview = scan_existing_project(
+                root, expected_identity=expected_identity, should_cancel=should_cancel,
+            )
             timestamp = _now()
 
             def transform(current: dict[str, object]) -> dict[str, object]:
@@ -878,6 +892,23 @@ class ProjectReadinessExecutor:
                         "artifact_refs": [artifact_ref],
                     }
                 )
+                scan = dict(overview.get("scan", {}) or {})
+                if scan.get("complete") is not True:
+                    repository.update({
+                        "status": "failed",
+                        "error": {
+                            "code": "repository_inventory_incomplete",
+                            "message": "Repository inventory coverage is incomplete. Review the scan limits and retry.",
+                        },
+                        "recovery": ["retry_readiness", "return_to_projects"],
+                    })
+                    execution.update({
+                        "status": "failed", "completed_at": timestamp, "updated_at": timestamp,
+                    })
+                    state["lifecycle"] = "attention_required"
+                    state["updated_at"] = timestamp
+                    state["state_revision"] = int(state.get("state_revision", 0)) + 1
+                    return state
                 commands = list(overview.get("commands", []))
                 command_step = _find_step(state, "command_verification")
                 command_step.update(
@@ -1367,14 +1398,17 @@ def scan_existing_project(
     root: Path,
     *,
     expected_identity: dict[str, object] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     try:
+        if should_cancel is not None and should_cancel():
+            raise ReadinessExecutionError("readiness_cancelled", "Repository inventory was cancelled.")
         snapshot = capture_repository_snapshot(
             root,
             project_key="LEGACY-READINESS",
             expected_identity=expected_identity,
         )
-        return build_repository_inventory(root, snapshot=snapshot)
+        return build_repository_inventory(root, snapshot=snapshot, should_cancel=should_cancel)
     except (RepositoryAccessError, RepositorySnapshotError) as exc:
         legacy_code = {
             "repository_root_changed": "project_root_changed",

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from goodteam_os import repository_inventory
-from goodteam_os.repository_access import RepositoryEntry
+from goodteam_os.repository_access import RepositoryEntry, RepositoryAccessError
 from goodteam_os.repository_inventory import build_repository_inventory
 from goodteam_os.repository_snapshot import (
     RepositorySnapshot,
@@ -703,3 +703,93 @@ def test_inventory_reports_entry_truncation_at_the_entry_ceiling(tmp_path: Path)
     assert inventory["scan"]["truncation_reasons"] == ["max_entries"]
     assert any("entry limit" in risk for risk in inventory["risks"])
     assert not any("depth limit" in risk for risk in inventory["risks"])
+
+
+def test_default_inventory_covers_large_deep_source_tree(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for index in range(1520):
+        (root / f"source-{index:04d}.py").write_text("VALUE = 1\n")
+    deep = root.joinpath(*[f"level-{index}" for index in range(12)])
+    deep.mkdir(parents=True)
+    (deep / "main.py").write_text("print('deep')\n")
+    (deep / "package.json").write_text('{"scripts": {"test": "vitest"}}')
+    ignored = root / "node_modules" / "nested"
+    ignored.mkdir(parents=True)
+    (ignored / "main.py").write_text("ignored")
+    (root / "outside").symlink_to(tmp_path, target_is_directory=True)
+    inventory = build_repository_inventory(root, capture_repository_snapshot(root, "DEMO"))
+    scan = inventory["scan"]
+    assert scan["files_seen"] == 1522
+    assert scan["directories_seen"] == 12
+    assert scan["complete"] is True
+    assert scan["enumeration_complete"] is True
+    assert scan["snapshot_complete"] is True
+    assert scan["semantic_understanding"] == "not_performed"
+    assert scan["max_entries"] is None and scan["max_depth"] is None
+    assert inventory["entry_points"] == [(deep / "main.py").relative_to(root).as_posix()]
+    assert inventory["commands"][0]["command"] == "npm run test"
+    assert scan["symlinks_skipped"] == ["outside"]
+
+
+def test_inventory_cancellation_stops_between_entries(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for index in range(100):
+        (root / f"source-{index:04d}.py").write_text("VALUE = 1\n")
+    snapshot = capture_repository_snapshot(root, "DEMO")
+    calls = 0
+
+    def cancel() -> bool:
+        nonlocal calls
+        calls += 1
+        return calls > 13
+
+    with pytest.raises(RepositoryAccessError) as failure:
+        build_repository_inventory(root, snapshot, should_cancel=cancel)
+    assert failure.value.code == "repository_inventory_cancelled"
+    scan = failure.value.details["scan"]
+    assert scan["files_seen"] == 10
+    assert scan["complete"] is False
+    assert scan["enumeration_complete"] is False
+    assert scan["truncation_reasons"] == ["cancelled"]
+
+
+def test_inventory_reports_snapshot_safety_omission(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "main.py").write_text("VALUE = 1\n")
+    # Exercise the unchanged real single-file snapshot boundary.
+    (root / "large.py").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+    snapshot = capture_repository_snapshot(root, "DEMO")
+    inventory = build_repository_inventory(root, snapshot)
+    assert inventory["scan"]["files_seen"] == 1
+    assert inventory["scan"]["enumeration_complete"] is True
+    assert inventory["scan"]["snapshot_complete"] is False
+    assert inventory["scan"]["complete"] is False
+    assert inventory["scan"]["snapshot_omitted_files"] == 1
+    assert inventory["scan"]["snapshot_omission_reasons"] == ["max_file_bytes"]
+    assert inventory["scan"]["truncation_reasons"] == ["snapshot_incomplete"]
+
+
+@pytest.mark.parametrize("limit", [1, 2, 3])
+def test_explicit_entry_limit_is_complete_only_when_all_entries_scanned(tmp_path: Path, limit: int) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for name in ("a.py", "b.py"):
+        (root / name).write_text("VALUE = 1\n")
+    inventory = build_repository_inventory(root, capture_repository_snapshot(root, "DEMO"), max_entries=limit)
+    assert inventory["scan"]["complete"] is (limit >= 2)
+
+
+def test_pre_cancelled_inventory_does_not_verify_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    snapshot = capture_repository_snapshot(root, "DEMO")
+
+    def unexpected_verify(*args, **kwargs):
+        pytest.fail("cancelled scan must not start snapshot verification")
+
+    monkeypatch.setattr(repository_inventory, "verify_repository_snapshot", unexpected_verify)
+    with pytest.raises(RepositoryAccessError, match="cancelled"):
+        build_repository_inventory(root, snapshot, should_cancel=lambda: True)

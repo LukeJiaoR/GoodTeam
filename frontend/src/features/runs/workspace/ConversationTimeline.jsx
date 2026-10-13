@@ -78,8 +78,8 @@ function TimelineItem({ item, language, t }) {
         </div>
         {item.actor === 'user' ? <p>{copy}</p> : <MarkdownView content={copy} />}
         {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
-          item.event === 'project_understanding_ready'
-            ? <ProjectUnderstandingReply content={item.content} t={t} />
+          ['project_understanding_ready', 'project_understanding_incomplete'].includes(item.event)
+            ? <ProjectUnderstandingReply content={item.content} scan={item.details?.inventory_scan} t={t} />
             : <MarkdownView content={item.content} />
         ) : null}
       </div>
