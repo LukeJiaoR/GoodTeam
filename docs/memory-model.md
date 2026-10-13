@@ -82,6 +82,25 @@ See [file-store consistency](memory-file-store.md) for persistence/recovery limi
 and [task input inspection](task-input-context-view.md) for input authority labels.
 This coverage does not close the overall memory/context or product-effect goals.
 
+## Knowledge browsing and execution audit
+
+The role-memory list excludes `worker_failure:*` and `*/provenance` execution
+records before ranking and applying the limit. `include_execution=true` on
+`GET /api/memory/events` exposes those audit records; the page's checkbox stores
+this choice in its URL. Superseded knowledge remains browsable and labelled.
+Normal retrieval, generated summaries and the compatibility Markdown context
+exclude execution records, while the WAL and Markdown files retain the audit.
+An index retrieval-policy marker invalidates cached summaries from the old policy.
+
+New Worker result writes retain the explicit `learned`, `caveats`, `decisions`,
+or `open_questions` section as optional event `category`. Existing horizon
+mapping, stable event IDs, text deduplication and private receipt schemas are
+unchanged. A duplicate of an old uncategorized event stays historical/unclassified;
+there is no retrospective category inference or automatic question resolution.
+The list shows category, recorded time and original text (visually clamped).
+Full original text, IDs, sources and correction links remain in the inspector.
+No generated translation or additional model summary is involved.
+
 ## Related
 - worker-backends.md
 - config-reference.md

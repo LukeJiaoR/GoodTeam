@@ -2298,3 +2298,20 @@ def test_api_memory_returns_400_for_bad_project(tmp_path, monkeypatch):
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
     assert payload["code"] == "invalid_request"
     assert payload["request_id"]
+
+
+def test_api_memory_execution_filter_is_explicit_and_precedes_limit(tmp_path, monkeypatch):
+    project_root = tmp_path / "target"
+    backend_repo = project_root / "backend"
+    frontend_repo = project_root / "frontend"
+    backend_repo.mkdir(parents=True)
+    frontend_repo.mkdir(parents=True)
+    write_project_config(tmp_path, repos={"backend": backend_repo, "frontend": frontend_repo})
+    memory = RoleMemoryStore(project_root)
+    fact = memory.append_memory_event("architect", horizon="mid-term", text="Original knowledge", source="job/result.md")
+    audit = memory.append_memory_event("architect", horizon="short-term", text="Dispatched job", source="job/provenance")
+    for query, expected in [("", fact), ("&include_execution=true", audit), ("&include_execution=false", fact)]:
+        handler = capture_get_handler(tmp_path, monkeypatch)(f"/api/memory/events?project=REAL&role=architect&limit=1{query}")
+        assert 200 in handler.responses
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        assert [event["id"] for event in payload["events"]] == [memory._event_id(expected)]

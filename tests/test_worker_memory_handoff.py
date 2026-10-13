@@ -148,7 +148,7 @@ def test_writeback_receipt_loss_preserves_committed_counts_and_never_retries_tra
     assert status["memory_writeback"]["error"] == "memory_handoff_writeback_receipt_unavailable"
     assert len(receipts(handoff, job, "transport_attempt")) == 1
     memory = RoleMemoryStore(workers.project_root)
-    assert len(memory.list_events("architect")) == 2
+    assert len(memory.list_events("architect", include_execution=True)) == 2
     original_ids = [event["id"] for event in memory.list_events("architect")
                     if event["source"] == f"{job['id']}/result.md"]
     replay = workers._write_back_memory(workers.root / job["id"], job)

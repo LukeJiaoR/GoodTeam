@@ -12,7 +12,7 @@ from .memory_core.context import (
 )
 from .memory_core.projections import (
     IDENTITY_FIELDS as IDENTITY_FIELDS, MEMORY_HORIZONS as MEMORY_HORIZONS,
-    active_events, browse_result, event_id as legacy_event_id, normal_retrieval_events, retrieval_result,
+    MEMORY_CATEGORIES, active_events, browse_result, event_id as legacy_event_id, normal_retrieval_events, retrieval_result,
 )
 from .memory_storage import (
     MAX_WAL_BYTES, MemoryStorageError, atomic_write, read_bytes, role_lock, serialized_role,
@@ -233,6 +233,7 @@ class RoleMemoryStore:
             "role_key": role_key, "event_count": 0, "events_path": str(self.event_path(role_key)),
             "integrity": {"event_count": 0, "events_sha256": empty_hash},
             "projection_policy": "wal_generated_legacy_preserved",
+            "retrieval_policy": "knowledge_without_execution_v1",
             "horizons": {horizon: {
                 "path": str(self.memory_path(role_key, horizon)), "source_kind": "wal_generated",
                 "event_ids": [], "sha256": empty_hash, "chars": 0, "summary": "",
@@ -280,13 +281,16 @@ class RoleMemoryStore:
         source: str = "",
         action: str = "add",
         supersedes: str = "",
+        category: str = "",
     ) -> dict[str, str]:
-        for value in (role_key, horizon, text, source, action, supersedes):
+        for value in (role_key, horizon, text, source, action, supersedes, category):
             if not isinstance(value, str):
                 raise ValueError("Memory event fields must be strings.")
             value.encode("utf-8")
         if horizon not in MEMORY_HORIZONS:
             raise ValueError(f"Unknown memory horizon: {horizon}")
+        if category and category not in MEMORY_CATEGORIES:
+            raise ValueError(f"Unknown memory category: {category}")
         if action != "add":
             raise ValueError(f"Unsupported memory event action: {action}")
         if not text.strip():
@@ -321,6 +325,8 @@ class RoleMemoryStore:
             "source": source,
             "text": text.strip(),
         }
+        if category:
+            event["category"] = category
         if supersedes_value:
             event["supersedes"] = supersedes_value
         separator = b"\n" if raw and not raw.endswith(b"\n") else b""
@@ -366,6 +372,7 @@ class RoleMemoryStore:
             "integrity": {"event_count": len(events), "events_sha256": digest},
             "horizons": horizons,
             "projection_policy": "wal_generated_legacy_preserved",
+            "retrieval_policy": "knowledge_without_execution_v1",
         }
         self._write_json(self.index_path(role_key), index)
         return index
@@ -460,7 +467,7 @@ class RoleMemoryStore:
                 break
         return results
 
-    def list_events(self, role_key, *, query="", limit=50) -> list[dict]:
+    def list_events(self, role_key, *, query="", limit=50, include_execution=False) -> list[dict]:
         limit_value = min(max(int(limit), 0), 200)
         if limit_value == 0:
             return []
@@ -470,6 +477,8 @@ class RoleMemoryStore:
             return []
 
         active_ids = {self._event_id(event) for event in self._active_events(events)}
+        if not include_execution:
+            events = self._normal_retrieval_events(events)
         query_text = str(query).strip()
         if query_text:
             query_tokens = tokenize(query_text)
@@ -1017,7 +1026,8 @@ Role: `{role_key}`
         integrity = index.get("integrity")
         if (not isinstance(integrity, dict) or integrity.get("event_count") != len(events)
                 or index.get("event_count") != len(events) or integrity.get("events_sha256") != digest
-                or index.get("projection_policy") != "wal_generated_legacy_preserved"):
+                or index.get("projection_policy") != "wal_generated_legacy_preserved"
+                or index.get("retrieval_policy") != "knowledge_without_execution_v1"):
             return False
         horizons = index.get("horizons")
         if not isinstance(horizons, dict):

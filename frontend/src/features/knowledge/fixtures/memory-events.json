@@ -13,7 +13,8 @@
         "body": "数据库迁移前使用旧备份流程",
         "source": "contract-fixture",
         "action": "add",
-        "is_superseded": true
+        "is_superseded": true,
+        "category": "unclassified"
       },
       {
         "id": "mem:7a0ff8c939c6",
@@ -25,7 +26,8 @@
         "body": "数据库迁移前必须验证新备份",
         "source": "contract-fixture",
         "action": "add",
-        "is_superseded": false
+        "is_superseded": false,
+        "category": "unclassified"
       }
     ]
   },
@@ -43,7 +45,8 @@
         "body": "QA 独立验证数据库回滚",
         "source": "contract-fixture",
         "action": "add",
-        "is_superseded": false
+        "is_superseded": false,
+        "category": "unclassified"
       }
     ]
   },

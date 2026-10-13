@@ -16,9 +16,10 @@ export const getKnowledgeArtifact = (projectKey, key, { signal } = {}) => reques
   { signal },
 );
 export const getMemory = (projectKey, { signal } = {}) => requestJson(`/api/memory?project=${encodeURIComponent(projectKey)}`, { signal });
-export const getMemoryEvents = (projectKey, role, query = '', { signal } = {}) => {
+export const getMemoryEvents = (projectKey, role, query = '', { signal, includeExecution = false } = {}) => {
   const params = new URLSearchParams({ project: projectKey, role, limit: '50' });
   if (query.trim()) params.set('q', query.trim());
+  if (includeExecution) params.set('include_execution', 'true');
   return requestJson(`/api/memory/events?${params}`, { signal });
 };
 export const getMemoryEvent = (projectKey, eventId, { signal } = {}) => requestJson(

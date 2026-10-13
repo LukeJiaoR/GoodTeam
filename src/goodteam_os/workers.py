@@ -186,7 +186,11 @@ def _worker_sandbox_context_prompt(job: dict[str, Any]) -> str:
 
 
 def parse_result_sections(text: str) -> list[tuple[str, str]]:
-    parsed: list[tuple[str, str]] = []
+    return [(horizon, item) for horizon, item, _ in parse_categorized_result_sections(text)]
+
+
+def parse_categorized_result_sections(text: str) -> list[tuple[str, str, str]]:
+    parsed: list[tuple[str, str, str]] = []
     lines = text.splitlines()
     index = 0
     while index < len(lines):
@@ -204,7 +208,7 @@ def parse_result_sections(text: str) -> list[tuple[str, str]]:
             section_lines.append(lines[index])
             index += 1
         parsed.extend(
-            (horizon, item)
+            (horizon, item, section_name.replace(" ", "_"))
             for item in _parse_memory_section_items(section_lines)[:MEMORY_WRITEBACK_MAX_ITEMS_PER_SECTION]
         )
     return parsed
@@ -2205,7 +2209,7 @@ class WorkerJobStore:
             raise ValueError("memory_writeback_result_missing")
         result_text = result_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         status, receipt = write_back_events(RoleMemoryStore(self.project_root), str(job["role"]),
-            items=parse_result_sections(result_text), source=f"{job['id']}/result.md", result_bytes=result_bytes)
+            items=parse_categorized_result_sections(result_text), source=f"{job['id']}/result.md", result_bytes=result_bytes)
         return _WritebackOutcome(status, receipt)
 
     def _write_back_provenance(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:

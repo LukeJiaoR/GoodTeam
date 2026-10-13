@@ -65,6 +65,7 @@ def normal_pickup_content(content: str) -> str:
         line
         for line in content.splitlines()
         if " Source: `worker_failure:" not in line
+        and not re.search(r" Source: `[^`\n]+/provenance`\.$", line)
     ]
     return "\n".join(lines).rstrip()
 

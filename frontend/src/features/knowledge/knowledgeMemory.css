@@ -1,0 +1,53 @@
+/* Scoped to role memory; preserve shared typography and mobile controls. */
+.product-shell .knowledge-memory-workspace .knowledge-memory-execution-toggle {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 44px;
+  width: fit-content;
+  margin-bottom: .5rem;
+  cursor: pointer;
+}
+.product-shell .knowledge-memory-execution-toggle input { width: auto; margin: 0; }
+.product-shell .knowledge-memory .knowledge-memory-workspace > .knowledge-memory-records > li > button {
+  margin: 0;
+  padding: .75rem .875rem;
+  border-radius: 0;
+  background: transparent;
+  gap: .375rem;
+  font-size: .875rem;
+  line-height: 1.5;
+}
+.product-shell .knowledge-memory-records .knowledge-memory-record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .375rem 1rem;
+  font-size: .75rem;
+}
+.product-shell .knowledge-memory-record-meta strong { color: var(--product-text); font-size: .8125rem; font-weight: 600; }
+.product-shell .knowledge-memory-record-meta time { color: var(--product-text-muted); }
+.product-shell .knowledge-memory-workspace .knowledge-memory-records .knowledge-memory-record-body {
+  color: var(--product-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-memory > aside > button {
+  min-height: 48px;
+  line-height: 1.4;
+  padding: .5rem .75rem;
+  gap: .125rem;
+  border-radius: 8px;
+}
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-memory > aside > button small { margin-top: 0; }
+@media (max-width: 700px) {
+  .product-shell .knowledge-memory input[type='search'] { font-size: 16px; min-height: 44px; }
+}
+.product-shell .knowledge-memory .knowledge-memory-workspace > .knowledge-memory-records > li > button.is-active {
+  background: color-mix(in srgb, var(--product-accent) 7%, var(--product-surface));
+  box-shadow: inset 2px 0 0 var(--product-accent);
+}
