@@ -142,6 +142,7 @@
 .work-workspace-shell[data-workspace] .team-actor-list li { padding: .65rem; border: 1px solid var(--work-border); border-radius: 10px; box-shadow: none; }
 .work-workspace-shell[data-workspace] .team-actor-list__copy strong { font-size: 13px; }
 .work-workspace-shell[data-workspace] .team-manager-controls { margin: 0; padding: .35rem .85rem .55rem; }
+.work-workspace-shell[data-workspace] .team-manager-controls .team-attention__confirm { position: static; }
 .work-workspace-shell[data-workspace] .team-outcome-list { padding: .75rem; gap: .5rem; }
 .work-workspace-shell[data-workspace] .team-outcome-list > li { border: 1px solid var(--work-border); border-radius: 10px; box-shadow: none; }
 .work-workspace-shell[data-workspace] .team-outcome-card__toggle { padding: .75rem; }

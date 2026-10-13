@@ -139,5 +139,18 @@ Settled outcomes:
   not green full-suite evidence. Full backend is not required for this frontend-only
   presentation/input change, which preserves server approval and dispatch contracts;
   focused contract checks and the live UI checks are the selected validation.
-- No heavy remote candidate CI was dispatched. The branch/PR remains Draft for review;
-  exact-SHA candidate validation is required before making it ready or merging.
+- Initial exact-SHA candidate CI on `6783d4c13cf58f32aa9a398aa498bdbe96c37fb9`
+  failed: [run 38340064701](https://github.com/LukeJiaoR/GoodTeam/actions/runs/38340064701).
+  Browser acceptance had **40 passed / 3 failed**; HTTP recovery passed and the
+  dependent backend job was skipped. This is failed validation, not merge evidence.
+  The report test used the retired theme-button class; it now locates the current
+  accessible Appearance button while retaining light/dark contrast and read-only
+  checks. Both archive tests reproduced a real pointer obstruction: the legacy
+  absolute confirmation floated into the conversation pane. The task workspace
+  now lays that confirmation out in its execution panel. The existing stale-run,
+  stale-poll, refresh and exact-ledger assertions remain unchanged.
+  The three affected scenarios passed locally after the repair (**3 passed**),
+  with lint/build and `git diff --check` passing. PR #538 was merged externally
+  before its failing gate was resolved, producing main
+  `244c2c7b9067237f40d28574e9996d309f73f00a`. This repair is published separately
+  from that base; its final exact-SHA validation is recorded in the repair PR.
