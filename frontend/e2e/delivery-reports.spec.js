@@ -99,7 +99,7 @@ test('delivery: exact constraints, current reports and archived versions remain 
     expect(decisions(afterRead)).toEqual(decisions(completed));
     contrastEvidence.push({ mode: 'light', samples: await expectReadableReport(reports) });
     await testInfo.attach('delivery-current-desktop', { body: await page.screenshot(), contentType: 'image/png' });
-    const appearance = page.locator('.product-appearance-control');
+    const appearance = page.getByRole('button', { name: /^Appearance:/ });
     await expect(appearance).toHaveAttribute('aria-pressed', 'false');
     await appearance.click();
     await expect(appearance).toHaveAttribute('aria-pressed', 'true');
