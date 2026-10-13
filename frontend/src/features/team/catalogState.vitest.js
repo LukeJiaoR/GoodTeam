@@ -1,6 +1,24 @@
 import { expect, test } from 'vitest';
-import { mergeCatalog, refreshCatalog } from './catalogState';
+import { finishCatalog, mergeCatalog, refreshCatalog } from './catalogState';
 import { runtimeOptions } from './teamModel';
+
+test.each([
+  ['agy', 'antigravity'], ['claude', 'anthropic'], ['pi', 'pi-rpc'],
+])('failed %s refresh preserves historical alias %s without preserving live capabilities', (backend, alias) => {
+  const previous = refreshCatalog([{ backend, aliases: [backend, alias], models: ['old-model'],
+    models_source: 'live', observed_at: 'old', ready: true,
+    model_capabilities: { 'old-model': { reasoning_depths: ['high'] } } }]);
+  for (const failed of [
+    mergeCatalog(previous, [{ backend, models: [], models_source: 'unavailable', discovery_status: 'failed' }]),
+    finishCatalog(previous),
+  ]) {
+    const options = runtimeOptions(failed, alias, 'old-model');
+    expect(options.agent).toMatchObject({ backend, aliases: [backend, alias], stale: true, discovery_status: 'failed' });
+    expect(options.models).toContain('old-model');
+    expect(options.reasoningDepths).toEqual([]);
+    expect(options.agent.ready).toBeUndefined();
+  }
+});
 
 test('refresh keeps names but invalidates previous model capabilities until current response', () => {
   const old = [{ backend: 'codex', models: ['m'], models_source: 'live', observed_at: 'old',

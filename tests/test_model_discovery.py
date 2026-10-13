@@ -112,6 +112,26 @@ def test_unknown_provider_rejected_without_starting_work():
         model_discovery.discover("unknown")
 
 
+@pytest.mark.parametrize("canonical,alias", [("claude", "anthropic"), ("agy", "antigravity"), ("pi", "pi-rpc")])
+@pytest.mark.parametrize("alias_first", [False, True])
+def test_batch_alias_choices_share_one_canonical_observation(monkeypatch, canonical, alias, alias_first):
+    calls = []
+
+    def discover(provider):
+        calls.append(provider)
+        # A second observation changes support; the same transaction must not
+        # split validation across two different capability snapshots.
+        return [{"model_capabilities": {"m": {"reasoning_depths": ["high"] if len(calls) == 1 else []}}}]
+
+    monkeypatch.setattr(model_discovery, "discover", discover)
+    catalogs = {}
+    for provider in ([alias, canonical] if alias_first else [canonical, alias]):
+        model_discovery.validate_runtime_choice({"provider": provider, "model": "m", "reasoning_depth": "high"},
+                                               catalogs=catalogs)
+    assert calls == [canonical]
+    assert list(catalogs) == [canonical]
+
+
 def test_batch_reuses_catalog_and_rejects_without_persisting(tmp_path, monkeypatch):
     from goodteam_os.projects import write_project_config
     from goodteam_os.team_control_plane import TeamControlPlaneStore, ensure_team_state

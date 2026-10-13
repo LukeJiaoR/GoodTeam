@@ -26,8 +26,12 @@ def _release(provider, future):
             del _pending[provider]
 
 
+def _canonical_provider(provider):
+    return {"anthropic": "claude", "antigravity": "agy", "pi-rpc": "pi"}.get(provider, provider)
+
+
 def discover(provider=""):
-    provider = {"anthropic": "claude", "antigravity": "agy", "pi-rpc": "pi"}.get(provider, provider)
+    provider = _canonical_provider(provider)
     if provider and provider not in PROVIDERS:
         raise ValueError("Unknown model catalog provider")
     futures = []
@@ -53,7 +57,7 @@ def validate_runtime_choice(runtime, previous=None, *, catalogs=None):
     depth = runtime.get("reasoning_depth", "default")
     if depth == "default":
         return
-    provider = runtime.get("provider") or "codex"
+    provider = _canonical_provider(runtime.get("provider") or "codex")
     # One atomic team decision uses one observation per provider, including
     # failures. This is a local batch snapshot, never a cross-request auth cache.
     if catalogs is None:

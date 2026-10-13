@@ -18,10 +18,13 @@ export function mergeCatalog(previous, incoming) {
     const index = next.findIndex((item) => item.backend === agent.backend);
     const old = next[index];
     const failed = agent.models_source === 'unavailable' || agent.discovery_status === 'failed';
+    // Synthetic HTTP/empty-response failures omit identity metadata. Keep the
+    // known alias mapping, but never inherit old readiness or capabilities.
+    const current = failed ? { ...agent, aliases: agent.aliases ?? old?.aliases } : agent;
     const value = failed && old?.models?.length
-      ? { ...agent, models: old.models, model_capabilities: {}, stale: true,
+      ? { ...current, models: old.models, model_capabilities: {}, stale: true,
         stale_source: old.stale_source || old.models_source, observed_at: old.observed_at, discovery_status: 'failed' }
-      : { ...agent, discovery_status: failed ? 'failed' : 'complete', stale: false };
+      : { ...current, discovery_status: failed ? 'failed' : 'complete', stale: false };
     if (index < 0) next.push(value);
     else next[index] = value;
   }
