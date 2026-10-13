@@ -74,6 +74,11 @@ def test_intake_artifact_dispatch_records_research_worker_and_fails_closed(tmp_p
     from goodteam_os.graph import generate_artifact_via_worker
     from goodteam_os.workers import WorkerJobStore
 
+    # Synthetic selection evidence, separate from the dispatch readiness gate
+    # exercised below. Never probe a host CLI for this fake provider fixture.
+    monkeypatch.setattr("goodteam_os.model_discovery.discover", lambda _: [{
+        "model_capabilities": {"fixture-research": {"reasoning_depths": ["high"]}},
+    }])
     monkeypatch.setattr("goodteam_os.team_control_plane.worker_backend_doctor", lambda _: {"ready": True})
     root = tmp_path / "target"
     root.mkdir()
