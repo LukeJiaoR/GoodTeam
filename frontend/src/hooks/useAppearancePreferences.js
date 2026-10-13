@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useReducedMotion } from './useReducedMotion';
 import {
   LANGUAGE_STORAGE_KEY,
   normalizeLanguagePreference,
@@ -7,6 +8,7 @@ import {
 } from '../i18n';
 
 export function useAppearancePreferences() {
+  const motion = useReducedMotion();
   const [darkMode, setDarkMode] = useState(() => {
     const saved = typeof window.localStorage?.getItem === 'function'
       ? window.localStorage.getItem('color-scheme')
@@ -51,6 +53,7 @@ export function useAppearancePreferences() {
   }, [languagePreference]);
 
   return {
+    ...motion,
     darkMode,
     setDarkMode,
     language,

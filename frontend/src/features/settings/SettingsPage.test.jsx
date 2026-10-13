@@ -20,7 +20,7 @@ test('settings is a real destination and shares appearance and language preferen
   await user.click(within(main).getByRole('button', { name: 'Dark', exact: true }));
   expect(document.documentElement).toHaveClass('dark');
   expect(localStorage.getItem('color-scheme')).toBe('dark');
-  await user.selectOptions(within(main).getByRole('combobox'), 'zh-CN');
+  await user.selectOptions(within(main).getByRole('combobox', { name: 'Language' }), 'zh-CN');
   expect(within(main).getByRole('heading', { name: '设置' })).toBeVisible();
   expect(localStorage.getItem('gt-language')).toBe('zh-CN');
   expect(router.state.location.pathname).toBe('/settings');

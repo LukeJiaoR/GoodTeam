@@ -1,0 +1,31 @@
+{
+  "source": "actual Codex CLI via ordinary WorkerJobStore",
+  "run_id": "real-534-535-motion",
+  "model": "gpt-5.6-sol",
+  "implementation_job": "job-38dda557-fd90-47db-8ad6-545c0bea239b",
+  "qa_job": "job-d84c67dd-bcad-42eb-bb1c-a2530f84e1e1",
+  "transports": [
+    {
+      "id": "7a316aff-ec28-4c36-bdaf-322fa0802ef2",
+      "prepared_ref": "b1984776a30abdffa59fb551165a63eec3da333cdc96bc7272f1c89a98dcab52"
+    },
+    {
+      "id": "0a0778ff-66d5-45a3-acd4-74eafcd3c92f",
+      "prepared_ref": "474cd60fe48ad50ac0baa806ff79e481e0745815b12c7ad2553bedf8d49f764c"
+    }
+  ],
+  "files_sha256": {
+    "frontend/src/hooks/useReducedMotion.js": "2911a3f4f697d99d6f5baa30dcc24b0380f7493c26402f73df93212f3891b6bc",
+    "frontend/src/lib/motion/preferences.js": "47bd8f18c34846269c3c918f91a4b35a49e994b65174e3d441fcfa5a759f4903",
+    "frontend/src/lib/motion/preferences.test.js": "b619877b289620bd04e9852dfbcc717bba4f0372db158bac45c799fcb91bb04c"
+  },
+  "wal_event_ids_and_timestamps_verified": true,
+  "provider_receipt": "unknown",
+  "provider_read": "unknown",
+  "limitations": [
+    "No full Manager/Work/Outcomes real-runtime browser loop",
+    "No real transient provider failure or arbitrary crash recovery",
+    "Process restart restores records; explicit reentry executes again",
+    "Cost/usage was not authoritatively reported by this adapter"
+  ]
+}

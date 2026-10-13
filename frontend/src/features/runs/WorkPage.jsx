@@ -1,3 +1,4 @@
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 /* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -36,19 +37,6 @@ const ReviewPage = lazy(() => import('../reviews/ReviewPage'));
 const AssistantRuntimePanel = lazy(() => import('../team/AssistantRuntimePanel'));
 
 const VIEWS = WORK_VIEWS;
-function usePrefersReducedMotion() {
-  const [reduced, setReduced] = useState(() => (
-    globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false
-  ));
-  useEffect(() => {
-    const mq = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
-    if (!mq) return undefined;
-    const handler = (event) => setReduced(event.matches);
-    mq.addEventListener?.('change', handler);
-    return () => mq.removeEventListener?.('change', handler);
-  }, []);
-  return reduced;
-}
 
 function shortRunId(runId) {
   return String(runId || '').trim().slice(0, 8);
@@ -731,7 +719,7 @@ function DeliveryView({ data, projectKey, t }) {
 export default function WorkPage() {
   const { projectKey = '', runId = '' } = useParams();
   const { language, t } = useOutletContext();
-  const reducedMotion = usePrefersReducedMotion();
+  const { reducedMotion } = useReducedMotion();
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
   const viewParam = search.get('view');

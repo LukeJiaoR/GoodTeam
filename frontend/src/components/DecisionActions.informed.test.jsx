@@ -19,6 +19,13 @@ describe('informed Review decision contract', () => {
     expect(props.onDecision).not.toHaveBeenCalled();
   });
 
+  it('does not submit while an IME composition is committing Enter', () => {
+    const props = base(); render(<DecisionActions {...props} />);
+    enter('Composed reason.');
+    fireEvent.keyDown(reason(), { key: 'Enter', ctrlKey: true, isComposing: true });
+    expect(props.onDecision).not.toHaveBeenCalled();
+  });
+
   it('passes the operator reason without silently replacing it with a canned approval', async () => {
     const props = base(); render(<DecisionActions {...props} />);
     const note = '  I checked this planning document manually.\nNot a verified reviewer pass.  ';

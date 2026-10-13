@@ -205,3 +205,9 @@
     scroll-behavior: auto !important;
   }
 }
+
+html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after {
+  animation: none !important;
+  transition-duration: 0ms !important;
+  scroll-behavior: auto !important;
+}
