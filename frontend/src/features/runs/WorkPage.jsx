@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { focusWorkContext } from './workspace/currentWorkContext';
+import { focusWorkContext } from './workspace/currentWorkContext.js';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import WorkflowCanvas from '../../components/WorkflowCanvas';
 import { canConfirmApproval, requiresInformedApproval, usableApprovalTarget } from '../../lib/reviews/approvalConfirmation';
@@ -17,7 +17,7 @@ import useProjectState from './useProjectState';
 import CurrentWorkContext from './workspace/CurrentWorkContext.jsx';
 import useProjectConversation from './useProjectConversation';
 import TaskNavigation from './workspace/TaskNavigation';
-import TaskInputContext from './workspace/TaskInputContext';
+import TaskInputContext from './workspace/TaskInputContext.jsx';
 import AttemptInspector from './workspace/AttemptInspector';
 import { resolveAttemptInspection } from './workspace/attemptInspection';
 import { TimelineItem } from './workspace/ConversationTimeline';

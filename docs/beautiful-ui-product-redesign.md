@@ -19,7 +19,7 @@ Inspected the live light/dark reference, task capsules, chat, prompt bar, and si
 First broad slice is the product-wide navigation/composition and visual language, with local interaction regression checks and browser evidence. Keep the issue open for any acceptance or deeper flow redesign that is not actually verified. No backend authority, identity, approval, persistence, deployment, branch protection or CI workflow changes. Memory handoff issue #534 remains separate.
 
 ## Validation
-Tier 2, read-only projection/navigation and presentation contract. Run existing frontend tests, lint/build, focused API read-contract checks, and isolated browser smoke. No added CI workflows; publish and validate final candidates through the existing exact-SHA process only when authorized.
+Tier 4, browser-visible routing/layout with read-only projection and preferences. Run existing frontend tests, lint/build, focused HTTP/asset contract checks, and isolated browser smoke. No added CI workflows; publish and validate final candidates through the existing exact-SHA process.
 
 ## Implemented broad candidate
 
@@ -35,7 +35,7 @@ This candidate replaces the top-navigation composition with a persistent project
 
 ## Candidate verification and remaining acceptance
 
-Verification tier: Tier 2 (frontend presentation, preferences and navigation; no backend mutation contract changed).
+Verification tier: Tier 4 (frontend presentation, preferences, HTTP route fallback and live browser layout; no backend mutation contract changed).
 
 - Full frontend unit suite: 45 files / 590 tests passed after the settings, delivery-panel and breadcrumb route-segment additions. All five navigation tests also passed after correcting Projects active-route matching.
 - Existing Node helpers: 28 tests passed.
@@ -44,6 +44,31 @@ Verification tier: Tier 2 (frontend presentation, preferences and navigation; no
 - Focused backend import/registry/static-asset checks: 73 tests passed.
 - Independent source review prompted corrections to the 768–820px Review queue breakpoint, Projects active-route matching, routed CSS import order and small muted-text contrast. Follow-up review is required against the final frozen candidate.
 - Built-CSS/DOM cascade checks at 320, 600, 760, 768, 800, 820, 821, 1024 and 1440px verify the Review breakpoint, shared Work dark-material tokens, pill buttons and phone project-action placement. These are source-only checks, not pixel rendering. Muted light text calculates to at least 4.60:1 on the three light surfaces.
-- Actual rendered GoodTeam browser acceptance remains unverified: the dot cloud browser could inspect the public reference, but could not connect to the isolated exec loopback preview. No screenshot or browser success is claimed. Do not equate passing DOM tests with visual acceptance.
+- Actual rendered GoodTeam acceptance ran on 2026-10-12 through a real Chromium browser and the production build served by GoodTeam HTTP. The workspace, home, registry and Operator state were isolated; all task execution providers were fake. Projects, Work, Team, Knowledge, Review, Settings, dark/light, phone layouts, unsaved-review protection, draft persistence, configuration dialogs, source inspection and interrupted-message retry were inspected. That pass found two blockers: project Settings refresh returned 404, and expanding Execution clipped Send. It required a local import-extension workaround for a macOS build failure inherited from main, so that earlier evidence is not exact-HEAD build validation.
 
-The tracking issue remains open until the rendered light/dark and desktop/phone workflows are inspected. No deployment, remote CI changes or external preview publication is part of this candidate.
+## Browser acceptance repairs (2026-10-13)
+
+- The HTTP SPA fallback now accepts `/projects/:projectKey/settings` as well as the legacy single-section route. Browser regression coverage opens the global/project destinations directly, reloads both with HTTP 200, and verifies the old settings subsection still redirects to Team.
+- The active Task Assistant reserves the composer's intrinsic minimum, keeps the scrolling transcript out of intrinsic sizing, and scrolls expanded auxiliary guidance above the input/action row. Expanding Execution no longer hides Send. On short screens the page can scroll rather than clipping the main action.
+- Explicit `.jsx`/`.js` imports disambiguate `TaskInputContext` and `currentWorkContext` component/helper pairs on case-insensitive macOS, including their existing tests. The normal production build now works without a local workaround.
+- Added browser checks cover expanded/collapsed Execution and guidance at 1440×1000, 1280×720 and 1024×768, including pointer hit testing and zero composer-dock scroll. The existing 390px mobile navigation/focus and draft checks still pass. Real Chromium spot checks also passed dark mode at 320/390/1024/1280/1440px and Chinese at 390px; page scrolling was used on short/phone screens, with no composer-dock scrolling or horizontal overflow. A real Send through the isolated fake Assistant recorded one message, cleared input, preserved the run/gate and dispatched no Worker jobs.
+
+Verification commands for these repairs (run from the repository root unless noted):
+
+```sh
+npm run build --prefix frontend
+npm run lint --prefix frontend
+NODE_OPTIONS=--no-experimental-webstorage npm run test:unit --prefix frontend -- --maxWorkers=2
+npm run test:node --prefix frontend
+PYTHONPATH=src python -m pytest tests/test_web.py::test_product_spa_path_contract tests/test_frontend_assets.py -q
+ruff check src/goodteam_os/ tests/
+# From frontend/, with GOODTEAM_E2E_PYTHON pointing to the local Python environment:
+npm run test:e2e -- project-load-work.spec.js workspace-continuity.spec.js
+git diff --check
+```
+
+Results: production build and lint passed, 45 unit files / 590 tests passed, 28 Node tests passed, 8 focused backend tests passed, Ruff passed, and 7 real HTTP/Playwright tests passed without retries. Existing bundle-size/dynamic-import warnings remain. `NODE_OPTIONS` disables Node 25's native WebStorage so Vitest uses its browser test storage.
+
+Full backend and full E2E suites were not rerun for these bounded routing/layout/import repairs: approval authority, state mutation, execution identity and Worker dispatch contracts were unchanged. The complete approval loop, real model/adapter behavior, reduced-motion preferences and a full accessibility audit remain outside this acceptance evidence. Local checks do not replace exact-SHA candidate CI.
+
+Keep the tracking issue open for remaining UX acceptance beyond the inspected paths. The PR remains Draft until its final head and current main base pass the prescribed exact-SHA candidate validation. No deployment, remote CI changes or external preview publication is part of these repairs.

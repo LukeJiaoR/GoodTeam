@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { currentWorkContext, focusWorkContext } from './currentWorkContext';
+import { currentWorkContext, focusWorkContext } from './currentWorkContext.js';
 
 const t = (key) => key;
 const workspace = { schema_version: 'team_workspace.v1', mission: { project_key: 'A', status: 'working', source: 'workflow' } };

@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, FileText } from 'lucide-react';
 import { runApi } from '../runApi';
 import SkillReviewExecutions from './SkillReviewExecutions';
-import { validTaskInputContext } from './taskInputContext';
+import { validTaskInputContext } from './taskInputContext.js';
 import './taskInputContext.css';
 
 const words = {

@@ -1,5 +1,5 @@
 import WorkspacePanel from '../../../components/ui/WorkspacePanel';
-import TaskInputContext from './TaskInputContext';
+import TaskInputContext from './TaskInputContext.jsx';
 import DeliverySummary from './DeliverySummary';
 import './attemptInspector.css';
 

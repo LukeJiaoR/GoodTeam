@@ -6592,7 +6592,7 @@ def is_product_spa_path(path: str) -> bool:
     return bool(
         path in {"/", "/legacy", "/projects", "/inbox", "/activity", "/settings"}
         or re.fullmatch(
-            r"/projects/[^/]+/(?:home|work|work/runs/[^/]+|review|review/[^/]+|knowledge|team|settings/[^/]+)",
+            r"/projects/[^/]+/(?:home|work|work/runs/[^/]+|review|review/[^/]+|knowledge|team|settings(?:/[^/]+)?)",
             path,
         )
     )

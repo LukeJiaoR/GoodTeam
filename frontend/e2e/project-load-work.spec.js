@@ -47,7 +47,7 @@ test('project entry paths converge on Work without writing to the target', async
 test('legacy bookmarks redirect and the project shell reaches Team/Review/Knowledge', async ({ page, fixture }) => {
   await importProject(page, fixture);
 
-  for (const legacy of ['/inbox', '/activity', '/settings']) {
+  for (const legacy of ['/inbox', '/activity']) {
     await page.goto(legacy);
     await expect(page).toHaveURL(/\/projects$/);
     await expect(page.getByRole('heading', { name: 'Choose a project' })).toBeVisible();
@@ -73,4 +73,25 @@ test('legacy bookmarks redirect and the project shell reaches Team/Review/Knowle
   await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/team$`));
   await expect(page.getByRole('heading', { name: 'Team', exact: true })).toBeVisible();
 
+});
+
+test('global and project settings support direct links, refresh, and legacy sections', async ({ page, fixture }) => {
+  await importProject(page, fixture);
+  await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/settings$`));
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Configure team', exact: true })).toBeVisible();
+
+  for (const route of [`/projects/${fixture.key}/settings`, '/settings']) {
+    const direct = await page.goto(route);
+    expect(direct.status()).toBe(200);
+    await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+    const refreshed = await page.reload();
+    expect(refreshed.status()).toBe(200);
+    await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+  }
+
+  await page.goto(`/projects/${fixture.key}/settings/runtime`);
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/team$`));
+  await expect(page.getByRole('heading', { name: 'Team', exact: true })).toBeVisible();
 });
