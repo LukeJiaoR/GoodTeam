@@ -241,7 +241,7 @@ def test_execution_lifecycle_gate_replays_without_duplicate_side_effects(tmp_pat
     assert repeated["ledger_event_id"] == finalized["ledger_event_id"]
     assert repeated["evidence"] == evidence
 
-    memory_events = RoleMemoryStore(tmp_path).list_events("orchestrator")
+    memory_events = RoleMemoryStore(tmp_path).list_events("orchestrator", include_execution=True)
     closure_events = [
         event for event in ledger.read_events(execution_id)
         if event.payload.get("transition") == "provenance_written"

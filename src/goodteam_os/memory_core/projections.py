@@ -7,7 +7,7 @@ import hashlib
 import json
 
 MEMORY_HORIZONS = ("long-term", "mid-term", "short-term")
-MEMORY_RETRIEVAL_POLICY = "knowledge_without_execution_v2"
+MEMORY_RETRIEVAL_POLICY = "knowledge_without_execution_v3"
 MEMORY_CATEGORIES = ("learned", "caveats", "decisions", "open_questions")
 IDENTITY_FIELDS = ("timestamp", "role_key", "horizon", "action", "source", "text")
 
@@ -28,7 +28,9 @@ def active_events(events: list[dict[str, str]], *, identify=event_id) -> list[di
 
 def is_execution_record(event: dict[str, object]) -> bool:
     source = str(event.get("source", ""))
-    return source.split(":", 1)[0] == "worker_failure" or source.endswith("/provenance")
+    final_execution = (source.startswith("execution:") and source.endswith(":final_provenance")
+                       and bool(source[len("execution:"):-len(":final_provenance")].strip()))
+    return source.split(":", 1)[0] == "worker_failure" or source.endswith("/provenance") or final_execution
 
 
 def normal_retrieval_events(events: list[dict[str, str]]) -> list[dict[str, str]]:

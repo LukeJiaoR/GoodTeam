@@ -84,13 +84,13 @@ This coverage does not close the overall memory/context or product-effect goals.
 
 ## Knowledge browsing and execution audit
 
-The role-memory list excludes `worker_failure:*` and `*/provenance` execution
-records before ranking and applying the limit. `include_execution=true` on
+The role-memory list excludes the existing `worker_failure:*`, `*/provenance`,
+and `execution:<id>:final_provenance` execution audit source families before ranking and applying the limit. `include_execution=true` on
 `GET /api/memory/events` exposes those audit records; the page's checkbox stores
 this choice in its URL. Superseded knowledge remains browsable and labelled.
 Normal retrieval, generated summaries and the compatibility Markdown context
 exclude execution records, while the WAL and Markdown files retain the audit.
-Index and pickup provenance both carry the `knowledge_without_execution_v2`
+Index and pickup provenance both carry the `knowledge_without_execution_v3`
 retrieval policy, bound into the packet content digest. Missing/old/unknown pickup
 policies invalidate frozen summaries and short-term text even with no retrieved
 hits. Independently verified original hits may survive; consuming a frozen job

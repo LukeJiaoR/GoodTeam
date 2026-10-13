@@ -106,7 +106,7 @@ def test_old_index_rebuilds_summary_policy_without_rewriting_events(tmp_path):
     store.index_path('qa').write_text(json.dumps(index))
     wal = store.event_path('qa').read_bytes()
     rebuilt = store.read_memory_index('qa')
-    assert rebuilt['retrieval_policy'] == 'knowledge_without_execution_v2'
+    assert rebuilt['retrieval_policy'] == 'knowledge_without_execution_v3'
     assert 'AUDIT_LOG' not in rebuilt['horizons']['short-term']['summary']
     assert store.event_path('qa').read_bytes() == wal
 
@@ -130,7 +130,7 @@ def test_old_frozen_packet_policy_cannot_keep_audit_when_retrieval_is_empty(tmp_
 
 
 @pytest.mark.parametrize('horizon', ['short-term', 'mid-term', 'long-term'])
-@pytest.mark.parametrize('source', ['job/provenance', 'worker_failure:job'])
+@pytest.mark.parametrize('source', ['job/provenance', 'worker_failure:job', 'execution:exec_test:final_provenance'])
 def test_multiline_execution_blocks_never_enter_new_pickup(tmp_path, horizon, source):
     store = RoleMemoryStore(tmp_path)
     store.append_memory_event('qa', horizon=horizon,
@@ -274,3 +274,57 @@ def test_legacy_execution_marker_inside_body_without_execution_wal_is_withheld(t
     assert 'legacy_execution_unverifiable' in packet['context_reasons']
     assert store.validate_pickup_packet(packet)['context_status'] == 'partial'
     assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize('source', ['job/provenance', 'worker_failure:run:implementation:qa',
+                                    'execution:exec_test:final_provenance'])
+def test_all_written_audit_source_families_keep_ids_but_leave_normal_context(tmp_path, source):
+    store = RoleMemoryStore(tmp_path)
+    fact = store.append_memory_event('orchestrator', horizon='long-term', text='shared KEEP_FACT', source='old/result.md')
+    audit = store.append_memory_event('orchestrator', horizon='long-term', text='shared AUDIT_SENTINEL', source=source)
+    wal = store.event_path('orchestrator').read_bytes()
+    assert [e['id'] for e in store.list_events('orchestrator', query='shared', limit=1)] == [event_id(fact)]
+    rows = store.list_events('orchestrator', include_execution=True)
+    assert next(e for e in rows if e['id'] == event_id(audit))['category'] == 'execution'
+    assert [e['id'] for e in store.retrieve_relevant_events('orchestrator', 'shared')] == [event_id(fact)]
+    assert 'AUDIT_SENTINEL' not in json.dumps(store.read_memory_index('orchestrator'))
+    assert 'AUDIT_SENTINEL' not in json.dumps(store.build_pickup_packet('orchestrator', query='shared'))
+    detail = build_memory_event_detail(tmp_path, event_id(audit))
+    assert detail['source'] == source and detail['text'] == audit['text']
+    assert store.event_path('orchestrator').read_bytes() == wal
+
+
+@pytest.mark.parametrize('source', ['', 'old/result.md', 'execution:exec_test:result',
+                                    'execution:exec_test:final_provenance/notes', 'notes:final_provenance',
+                                    'execution::final_provenance', 'historical final_provenance'])
+def test_similar_or_unclassified_sources_remain_knowledge(tmp_path, source):
+    store = RoleMemoryStore(tmp_path)
+    fact = store.append_memory_event('qa', horizon='long-term', text='KEEP_LEGACY_FACT', source=source)
+    assert store.list_events('qa')[0]['category'] == 'unclassified'
+    assert store.retrieve_relevant_events('qa', 'KEEP_LEGACY_FACT')[0]['id'] == event_id(fact)
+    assert 'KEEP_LEGACY_FACT' in json.dumps(store.build_pickup_packet('qa'))
+
+
+def test_v2_frozen_final_provenance_and_index_are_invalidated_without_rewriting_capture(tmp_path):
+    import copy
+    from goodteam_os.memory_core.context import _pickup_content_digest
+
+    store = RoleMemoryStore(tmp_path)
+    store.append_memory_event('orchestrator', horizon='long-term', text='AUDIT_SENTINEL',
+                              source='execution:exec_test:final_provenance')
+    index = store.read_memory_index('orchestrator')
+    index['retrieval_policy'] = 'knowledge_without_execution_v2'
+    index['horizons']['long-term']['summary'] = 'AUDIT_SENTINEL'
+    index['horizons']['long-term']['summary_sha256'] = hashlib.sha256(b'AUDIT_SENTINEL').hexdigest()
+    store.index_path('orchestrator').write_text(json.dumps(index))
+    assert 'AUDIT_SENTINEL' not in json.dumps(store.read_memory_index('orchestrator'))
+    packet = store.build_pickup_packet('orchestrator')
+    packet['provenance']['retrieval_policy'] = 'knowledge_without_execution_v2'
+    packet['summaries']['long-term'] = 'AUDIT_SENTINEL'
+    packet['relevant_events'] = []
+    packet['provenance']['content_sha256'] = _pickup_content_digest(packet)
+    original = copy.deepcopy(packet)
+    consumed = store.validate_pickup_packet(packet)
+    assert 'pickup_policy_changed' in consumed['context_reasons']
+    assert 'AUDIT_SENTINEL' not in json.dumps(consumed)
+    assert packet == original
