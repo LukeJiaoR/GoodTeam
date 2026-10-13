@@ -18,6 +18,8 @@ const document = new JSDOM(`<div class="product-shell product-shell--workspace p
   <div class="assistant-draft-editor"><textarea id="draft"></textarea></div>
   <div class="work-workspace-shell"><div class="project-queued-task"><textarea id="queued"></textarea></div></div>
   <textarea id="plain"></textarea><input id="input"><select id="select"></select>
+  <button id="button"></button><a id="navigation" class="studio-navigation__link"></a>
+  <label id="checkbox-label"><input type="checkbox"></label>
 </div>`).window.document;
 function declarations(element, property) {
   return rules.flatMap(rule => {
@@ -28,6 +30,16 @@ function declarations(element, property) {
     return matching ? rule.nodes.filter(node => node.type === 'decl' && node.prop === property)
       .map(node => ({ node, selector: rule.selector })) : [];
   });
+}
+function assertTouchMedia(declaration) {
+  const media = declaration.parent.parent;
+  assert.equal(media.type, 'atrule', 'Touch guards must remain conditional');
+  assert.equal(media.name, 'media');
+  const alternatives = postcss.list.comma(media.params);
+  assert.ok(alternatives.some(query => /^\(\s*any-pointer\s*:\s*coarse\s*\)$/.test(query)),
+    'Touch guards must include hybrid devices with a fine primary pointer and a coarse secondary pointer');
+  assert.ok(alternatives.some(query => /^\(\s*(?:max-width\s*:\s*767px|width\s*<=\s*767px)\s*\)$/.test(query)),
+    'Narrow viewport protection must remain independent of pointer capability');
 }
 const retainedMinimums = { review: '28rem', draft: '120px', queued: '5rem' };
 for (const id of ['review', 'draft', 'queued', 'plain']) {
@@ -41,13 +53,15 @@ for (const id of ['review', 'draft', 'queued', 'plain']) {
     assert.ok(minimums.some(({ node }) => node.value === retainedMinimums[id]),
       `${id}: feature minimum ${retainedMinimums[id]} must survive compilation`);
   }
-  assert.ok(declarations(element, 'font-size').some(({ node, selector }) =>
-    selector.includes('product-shell--studio') && node.important && /max\(1rem,\s*16px\)/.test(node.value)),
-  `${id}: mobile text must retain the 16px font protection`);
+  const fontGuard = declarations(element, 'font-size').find(({ node, selector }) =>
+    selector.includes('product-shell--studio') && node.important && /max\(1rem,\s*16px\)/.test(node.value));
+  assert.ok(fontGuard, `${id}: mobile text must retain the 16px font protection`);
+  assertTouchMedia(fontGuard.node);
 }
-for (const id of ['input', 'select']) {
-  assert.ok(declarations(document.getElementById(id), 'min-height').some(({ node, selector }) =>
-    selector.includes('product-shell--studio') && node.important && node.value === '44px'),
-  `${id}: compact single-line controls must retain the 44px touch minimum`);
+for (const id of ['input', 'select', 'button', 'navigation', 'checkbox-label']) {
+  const heightGuard = declarations(document.getElementById(id), 'min-height').find(({ node, selector }) =>
+    selector.includes('product-shell--studio') && node.important && node.value === '44px');
+  assert.ok(heightGuard, `${id}: controls must retain the 44px touch minimum`);
+  assertTouchMedia(heightGuard.node);
 }
-console.log('Compiled CSS selector regression passed: larger Review/draft/queued editors retained; textarea font and input/select touch guards present. Not browser visual acceptance.');
+console.log('Compiled CSS selector regression passed: larger Review/draft/queued editors retained; textarea font and control touch guards include narrow viewports and hybrid touch pointers. Not browser visual acceptance.');

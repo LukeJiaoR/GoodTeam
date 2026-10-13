@@ -258,7 +258,7 @@
 
 /* Keep editable text legible on touch devices. Only single-line fields get
    a forced touch minimum; textareas retain their larger feature-owned editors. */
-@media (max-width: 767px), (pointer: coarse) {
+@media (max-width: 767px), (any-pointer: coarse) {
   .product-shell--studio :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]), select, textarea) {
     font-size: max(1rem, 16px) !important;
   }
