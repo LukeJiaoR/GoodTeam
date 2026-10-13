@@ -165,3 +165,37 @@ test('new-project discovery remains a conversation instead of a proposed task', 
     await expect(manager).toContainText('what product do you want to make, and who is it for?');
   }
 });
+
+for (const complete of [true, false]) {
+  test(`inventory coverage is ${complete ? 'complete' : 'partial'} without claiming semantic understanding`, async ({ page, fixture }) => {
+    await importProject(page, fixture);
+    await page.context().route('**/api/state?*', async route => {
+      const response = await route.fetch();
+      const data = await response.json();
+      if (new URL(route.request().url()).searchParams.get('project') === fixture.key) {
+        data.project_assistant.timeline = [{
+          id: 'inventory-coverage', actor: 'task_assistant',
+          event: complete ? 'project_understanding_ready' : 'project_understanding_incomplete',
+          content: 'Stack: Python\nEntry points: src/deep/main.py',
+          details: { inventory_scan: { complete, files_seen: 1522, directories_seen: 12, snapshot_omitted_files: complete ? 0 : 1 } },
+        }];
+      }
+      await route.fulfill({ response, json: data });
+    });
+    await page.reload();
+    const reply = page.locator('.project-understanding-reply');
+    await expect(reply).toContainText(complete ? 'Directory enumeration complete: 1522 files, 12 directories' : 'Coverage incomplete: 1522 files, 12 directories');
+    await expect(reply).toContainText('It does not establish code semantics');
+    await expect(reply).not.toContainText('scan reached its file limit');
+    if (!complete) await expect(page.locator('.team-manager-timeline')).toContainText('The initial inventory is incomplete.');
+    const chinese = await page.context().newPage();
+    chinese.on('pageerror', error => fixture.errors.push(error.message));
+    await chinese.addInitScript(() => localStorage.setItem('gt-language', 'zh-CN'));
+    await chinese.setViewportSize({ width: 390, height: 844 });
+    await chinese.goto(`/projects/${fixture.key}/work`);
+    const translated = chinese.locator('.project-understanding-reply');
+    await expect(translated).toContainText(complete ? '目录枚举完成' : '覆盖不完整');
+    await expect(translated).toContainText('尚未进行代码语义理解');
+    await chinese.close();
+  });
+}

@@ -3,12 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import tomllib
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from goodteam_os.repository_access import (
     DEFAULT_IGNORED_DIRECTORIES,
     AnchoredRepository,
     RepositoryEntry,
+    RepositoryAccessError,
 )
 from goodteam_os.repository_snapshot import (
     RepositorySnapshot,
@@ -19,8 +21,10 @@ from goodteam_os.repository_snapshot import (
 )
 
 
-MAX_ENTRIES = 1_500
-MAX_DEPTH = 4
+# Compatibility names: callers may still request explicit limits, but the
+# initial inventory has no product entry/depth ceiling. Snapshot limits remain.
+MAX_ENTRIES = None
+MAX_DEPTH = None
 MAX_READ_BYTES = 256 * 1024
 SKIPPED_DIRECTORY_NAMES = DEFAULT_IGNORED_DIRECTORIES
 DOCUMENT_NAMES = {
@@ -62,13 +66,16 @@ def build_repository_inventory(
     root: Path,
     snapshot: RepositorySnapshot,
     *,
-    max_entries: int = MAX_ENTRIES,
-    max_depth: int = MAX_DEPTH,
+    max_entries: int | None = MAX_ENTRIES,
+    max_depth: int | None = MAX_DEPTH,
     max_read_bytes: int = MAX_READ_BYTES,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     _validate_limits(max_entries, max_depth, max_read_bytes)
     root = Path(root).expanduser()
+    _check_cancelled(should_cancel)
     verify_repository_snapshot(root, snapshot)
+    _check_cancelled(should_cancel)
     with AnchoredRepository(
         root,
         expected_identity=snapshot.root_identity,
@@ -79,8 +86,16 @@ def build_repository_inventory(
             max_entries=max_entries,
             max_depth=max_depth,
             max_read_bytes=max_read_bytes,
+            should_cancel=should_cancel,
         )
+    if "cancelled" in inventory["scan"]["truncation_reasons"]:
+        raise RepositoryAccessError(
+            "repository_inventory_cancelled", "Repository inventory was cancelled.",
+            details={"scan": inventory["scan"]},
+        )
+    _check_cancelled(should_cancel)
     verify_repository_snapshot(root, snapshot)
+    _check_cancelled(should_cancel)
     inventory.update(
         {
             "schema": "repository_inventory.v1",
@@ -89,6 +104,11 @@ def build_repository_inventory(
     )
     inventory["inventory_digest"] = _inventory_digest(inventory)
     return inventory
+
+
+def _check_cancelled(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise RepositoryAccessError("repository_inventory_cancelled", "Repository inventory was cancelled.")
 
 
 def compute_repository_inventory_digest(inventory: dict[str, object]) -> str:
@@ -101,9 +121,10 @@ def _scan_repository(
     repository: AnchoredRepository,
     *,
     snapshot: RepositorySnapshot,
-    max_entries: int,
-    max_depth: int,
+    max_entries: int | None,
+    max_depth: int | None,
     max_read_bytes: int,
+    should_cancel: Callable[[], bool] | None,
 ) -> dict[str, object]:
     files: list[str] = []
     directories: list[str] = []
@@ -118,23 +139,29 @@ def _scan_repository(
     truncated_by_entries = False
     truncated_by_depth = False
 
-    def visit(prefix: str, depth: int) -> None:
-        nonlocal entry_count, truncated_by_depth, truncated_by_entries
-        if entry_count >= max_entries:
-            truncated_by_entries = True
-            return
-        if depth > max_depth:
+    cancelled = False
+    # Iterative DFS keeps arbitrary nesting off the Python call stack. Directory
+    # entries still pass snapshot membership and anchored filesystem validation.
+    pending = [("", 0, None)]
+    while pending:
+        if should_cancel is not None and should_cancel():
+            cancelled = True
+            break
+        prefix, depth, iterator = pending.pop()
+        if max_depth is not None and depth > max_depth:
             truncated_by_depth = True
-            return
-        remaining = max_entries - entry_count
-        listed = repository.list_directory(prefix, max_entries=remaining + 1)
-        if len(listed) > remaining:
-            truncated_by_entries = True
-            listed = listed[:remaining]
-        for entry in listed:
-            if entry_count >= max_entries:
+            continue
+        if iterator is None:
+            iterator = iter(repository.list_directory(prefix))
+        for entry in iterator:
+            if should_cancel is not None and should_cancel():
+                cancelled = True
+                pending.clear()
+                break
+            if max_entries is not None and entry_count >= max_entries:
                 truncated_by_entries = True
-                return
+                pending.clear()
+                break
             name = PurePosixPath(entry.path).name
             if _is_policy_skipped_entry(
                 entry,
@@ -158,7 +185,9 @@ def _scan_repository(
             if entry.kind == "directory":
                 directories.append(entry.path)
                 if name not in SKIPPED_DIRECTORY_NAMES:
-                    visit(entry.path, depth + 1)
+                    pending.append((prefix, depth, iterator))
+                    pending.append((entry.path, depth + 1, None))
+                    break
                 continue
             if entry.kind != "file":
                 continue
@@ -193,7 +222,6 @@ def _scan_repository(
                 if content is not None:
                     manifests[entry.path] = content
 
-    visit("", 0)
     stack = sorted(
         {
             MANIFEST_TECH[PurePosixPath(path).name]
@@ -221,6 +249,13 @@ def _scan_repository(
         truncation_reasons.append("max_entries")
     if truncated_by_depth:
         truncation_reasons.append("max_depth")
+    if cancelled:
+        truncation_reasons.append("cancelled")
+        risks.append("Repository inventory was cancelled before enumeration completed.")
+    snapshot_complete = not path_manifest["omitted"]
+    if not snapshot_complete:
+        truncation_reasons.append("snapshot_incomplete")
+        risks.append("The protected snapshot omitted files at its safety limits; inventory coverage is incomplete.")
     if truncated_by_entries:
         risks.append(
             "Repository scan reached the bounded entry limit; deeper indexing is recommended."
@@ -248,6 +283,12 @@ def _scan_repository(
             "Run Worker preflight after confirmation.",
         ],
         "scan": {
+            "complete": not truncation_reasons,
+            "enumeration_complete": not (cancelled or truncated_by_entries or truncated_by_depth),
+            "snapshot_complete": snapshot_complete,
+            "snapshot_omitted_files": len(path_manifest["omitted"]),
+            "snapshot_omission_reasons": sorted({str(item["reason"]) for item in path_manifest["omitted"].values()}),
+            "semantic_understanding": "not_performed",
             "files_seen": len(files),
             "directories_seen": len(directories),
             "entries_seen": entry_count,
@@ -510,6 +551,10 @@ def _inventory_digest(inventory: dict[str, object]) -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def _validate_limits(max_entries: int, max_depth: int, max_read_bytes: int) -> None:
-    if max_entries <= 0 or max_depth < 0 or max_read_bytes <= 0:
+def _validate_limits(max_entries: int | None, max_depth: int | None, max_read_bytes: int) -> None:
+    if (
+        (max_entries is not None and (isinstance(max_entries, bool) or not isinstance(max_entries, int) or max_entries <= 0))
+        or (max_depth is not None and (isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 0))
+        or isinstance(max_read_bytes, bool) or not isinstance(max_read_bytes, int) or max_read_bytes <= 0
+    ):
         raise ValueError("Repository inventory limits are invalid.")

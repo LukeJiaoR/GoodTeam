@@ -276,3 +276,29 @@ def test_readiness_conflicts_use_stable_409_envelope(code: str) -> None:
     assert status == 409
     assert payload["code"] == code
     assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
+
+
+def test_partial_inventory_api_retains_evidence_and_blocks_workflow(
+    tmp_path: Path,
+    synchronous_ready_executor: None,
+) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "main.py").write_text("print('ok')\n")
+    (root / "large.py").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+    key = import_project(workspace, str(root))["project"]["project_key"]
+    status, response = web.handle_project_api_post(
+        workspace, f"/api/projects/{key}/readiness/start", {"inputs": {}},
+    )
+    assert status == 202
+    assert response["readiness"]["execution"]["status"] == "failed"
+    assert response["capabilities"]["start_workflow"] is False
+    artifact_status, artifact = web.handle_project_api_get(
+        workspace, f"/api/projects/{key}/readiness/steps/repository_understanding/artifact",
+    )
+    assert artifact_status == 200
+    assert artifact["content"]["scan"]["snapshot_omitted_files"] == 1
+    with pytest.raises(web.ReadinessExecutionError) as failure:
+        web.handle_project_api_post(workspace, f"/api/projects/{key}/workflow", {})
+    assert failure.value.code == "readiness_not_ready"

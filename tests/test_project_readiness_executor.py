@@ -13,7 +13,6 @@ from goodteam_os.project_import import import_project, mutate_project_readiness
 from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities
 from goodteam_os.repository_access import RepositoryAccessError
 from goodteam_os.project_readiness_executor import (
-    MAX_ENTRIES,
     ProjectReadinessExecutor,
     ReadinessExecutionError,
     scan_existing_project,
@@ -868,6 +867,7 @@ def test_root_replacement_during_executor_scan_persists_bound_failure(
         scan_root: Path,
         *,
         expected_identity: dict[str, object] | None = None,
+        should_cancel=None,
     ) -> dict[str, object]:
         root.rename(original)
         root.mkdir()
@@ -898,17 +898,18 @@ def test_root_replacement_during_executor_scan_persists_bound_failure(
     assert (root / "replacement-marker.txt").read_text(encoding="utf-8") == "unchanged"
 
 
-def test_scanner_entry_collection_is_bounded(tmp_path: Path) -> None:
+def test_scanner_enumerates_beyond_legacy_entry_limit(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
-    for index in range(MAX_ENTRIES + 20):
+    for index in range(1520):
         (root / f"link-{index:04d}").symlink_to(tmp_path / "missing")
 
     overview = scan_existing_project(root)
 
-    assert overview["scan"]["entries_seen"] == MAX_ENTRIES
+    assert overview["scan"]["entries_seen"] == 1520
     assert len(overview["scan"]["symlinks_skipped"]) <= 80
-    assert any("bounded entry limit" in risk for risk in overview["risks"])
+    assert overview["scan"]["complete"] is True
+    assert not any("bounded entry limit" in risk for risk in overview["risks"])
 
 
 def test_scanner_discovers_conventional_python_rust_and_go_commands(
@@ -1007,3 +1008,66 @@ def test_scanner_ignores_invalid_or_unsafe_manifest_commands(tmp_path: Path) -> 
 
     assert overview["commands"] == []
     assert not (root / "marker").exists()
+
+
+def test_incomplete_snapshot_retains_artifact_without_unlocking_commands(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "main.py").write_text("print('ok')\n")
+    (root / "large.py").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+    key = import_project(workspace, str(root))["project"]["project_key"]
+    readiness = _executor(workspace).start(key, root, background=False)
+    repository = next(step for step in readiness["steps"] if step["id"] == "repository_understanding")
+    command = next(step for step in readiness["steps"] if step["id"] == "command_verification")
+    assert repository["status"] == "failed"
+    assert repository["error"]["code"] == "repository_inventory_incomplete"
+    assert command["status"] == "pending"
+    assert readiness["execution"]["status"] == "failed"
+    assert build_capabilities(readiness)["start_workflow"] is False
+    overview = readiness["artifacts"][repository["artifact_refs"][0]]["content"]
+    assert overview["scan"]["snapshot_omitted_files"] == 1
+    # A retry after removing the cause follows the existing recovery flow.
+    (root / "large.py").unlink()
+    retried = _executor(workspace).retry(key, root, background=False)
+    assert retried["execution"]["status"] == "needs_input"
+
+
+def test_cancel_stops_inventory_and_prevents_late_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from goodteam_os import repository_inventory
+
+    workspace = tmp_path / "workspace"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "main.py").write_text("print('ok')\n")
+    for index in range(30):
+        directory = root / f"part-{index:02d}"
+        directory.mkdir()
+        (directory / "README.md").write_text("Documentation\n")
+    key = import_project(workspace, str(root))["project"]["project_key"]
+    executor = _executor(workspace)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+    original = repository_inventory._read_inventory_text
+
+    def paused_read(*args, **kwargs):
+        calls.append(args[3].path)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(repository_inventory, "_read_inventory_text", paused_read)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(executor.start, key, root, background=False)
+        assert entered.wait(5)
+        cancelled = executor.cancel(key, root)
+        assert cancelled["execution"]["status"] == "cancelled"
+        time.sleep(0.11)  # Let the production cancellation polling interval elapse.
+        release.set()
+        finished = future.result(timeout=5)
+    assert calls == ["part-00/README.md"]
+    assert finished["execution"]["status"] == "cancelled"
+    assert not finished.get("artifacts")
+    assert build_capabilities(finished)["start_workflow"] is False

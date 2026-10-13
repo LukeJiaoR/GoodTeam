@@ -9,9 +9,10 @@ const fields = [
 const knownLimits = {
   'Repository scan reached the bounded entry limit; deeper indexing is recommended.': 'entries',
   'Repository scan reached the bounded depth limit; deeper indexing is recommended.': 'depth',
+  'The protected snapshot omitted files at its safety limits; inventory coverage is incomplete.': 'snapshot',
 };
 
-export default function ProjectUnderstandingReply({ content, t }) {
+export default function ProjectUnderstandingReply({ content, scan, t }) {
   const values = {};
   const remaining = [];
   for (const line of (content || '').split('\n').filter((line) => line.trim())) {
@@ -26,6 +27,9 @@ export default function ProjectUnderstandingReply({ content, t }) {
   return <div className="project-understanding-reply">
     {values.stack ? <p>{t('assistant.understanding.stack', { stack: values.stack })}</p> : null}
     <p>{t('assistant.understanding.scope')}</p>
+    {typeof scan?.complete === 'boolean' ? <p>{t(`assistant.understanding.coverage.${scan.complete ? 'complete' : 'incomplete'}`, {
+      files: scan.files_seen ?? 0, directories: scan.directories_seen ?? 0, omitted: scan.snapshot_omitted_files ?? 0,
+    })}</p> : null}
     {values.risks ? <div className="project-understanding-reply__limits">
       <strong>{t('assistant.understanding.limits')}</strong>
       <p>{knownLimits[values.risks] ? t(`assistant.understanding.limit.${knownLimits[values.risks]}`) : values.risks}</p>
