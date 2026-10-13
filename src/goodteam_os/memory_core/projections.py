@@ -7,6 +7,7 @@ import hashlib
 import json
 
 MEMORY_HORIZONS = ("long-term", "mid-term", "short-term")
+MEMORY_RETRIEVAL_POLICY = "knowledge_without_execution_v2"
 MEMORY_CATEGORIES = ("learned", "caveats", "decisions", "open_questions")
 IDENTITY_FIELDS = ("timestamp", "role_key", "horizon", "action", "source", "text")
 

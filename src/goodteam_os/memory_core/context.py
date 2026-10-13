@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 
-from .projections import MEMORY_HORIZONS
+from .projections import MEMORY_HORIZONS, MEMORY_RETRIEVAL_POLICY, is_execution_record
 
 # Prompt-facing characters are capped independently of WAL size. Valid UTF-8
 # takes at most four bytes per character, so these also bound encoded bytes.
@@ -19,7 +19,8 @@ MEMORY_CONTEXT_REASONS = frozenset({
     "wal_unreadable", "wal_changed_during_read", "wal_changed_after_capture",
     "legacy_mixed_after_correction", "legacy_source_unreadable", "legacy_changed_during_read",
     "legacy_changed_after_capture", "source_unreadable", "pickup_unverifiable",
-    "events_no_longer_active", "retrieval_unavailable", "history_unverifiable",
+    "events_no_longer_active", "retrieval_unavailable", "history_unverifiable", "pickup_policy_changed",
+    "legacy_execution_unverifiable",
 })
 
 def summarize_markdown(content: str) -> str:
@@ -60,14 +61,56 @@ def _sha256_value(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value) is not None
 
 
-def normal_pickup_content(content: str) -> str:
-    lines = [
-        line
-        for line in content.splitlines()
-        if " Source: `worker_failure:" not in line
-        and not re.search(r" Source: `[^`\n]+/provenance`\.$", line)
-    ]
-    return "\n".join(lines).rstrip()
+class LegacyExecutionContextError(ValueError):
+    """A legacy prefix contains execution sources without reliable boundaries."""
+
+
+def normal_pickup_content(content: str, *, events: list[dict]) -> str:
+    """Keep the legacy prefix; rebuild the machine appendix from captured WAL.
+
+    An event's text may itself contain bullets, blank lines and headings, so
+    Markdown lines cannot identify event boundaries. Everything after the first
+    writer-owned appendix marker is a mixed projection, never an independent
+    machine-context source. Unknown/edited appendix text stays on disk, but only
+    complete eligible WAL events are re-rendered into this in-memory view.
+    """
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    all_entries, entries, seen = [], [], set()
+    has_execution = any(is_execution_record({"source": source})
+                        for source in re.findall(r"Source: `([^`]+)`", content))
+    for event in events:
+        source = f" Source: `{event['source']}`." if event.get("source") else ""
+        text = str(event["text"]).replace("\r\n", "\n").replace("\r", "\n")
+        entry = f"- {text}{source}"
+        execution = is_execution_record(event)
+        has_execution = has_execution or execution
+        if entry not in seen:
+            all_entries.append(entry)
+            if not execution:
+                entries.append(entry)
+            seen.add(entry)
+    # The old writer recognizes this substring even inside ###/inline text.
+    # Conservatively honor that same boundary for existing files, including
+    # CRLF conversions, rather than treating the appendix as handwritten notes.
+    match = re.search(r"## Memory Events\r?\n", content)
+    prefix = content[:match.start()] if match else content
+    # Without an event boundary, removing only a source line could leave any
+    # number of preceding body lines. Withhold the entire legacy contribution.
+    if any(is_execution_record({"source": source})
+           for source in re.findall(r"Source: `([^`]+)`", prefix)):
+        raise LegacyExecutionContextError("legacy_execution_unverifiable")
+    if match is None:
+        if has_execution:
+            raise LegacyExecutionContextError("legacy_execution_unverifiable")
+        return content.rstrip()
+    # A heading can occur inside an execution body. When execution is present,
+    # accept a boundary only if its entire suffix is the captured WAL projection.
+    # Edited/partial projections cannot establish where the audit body started.
+    if has_execution and content[match.end():].strip() != "\n".join(all_entries).strip():
+        raise LegacyExecutionContextError("legacy_execution_unverifiable")
+    marker = content[match.start():match.end()]
+    return (prefix + marker + "\n" + "\n".join(entries)).rstrip()
+
 
 
 def empty_pickup(role_key: str, reason: str) -> dict[str, object]:
@@ -81,6 +124,7 @@ def empty_pickup(role_key: str, reason: str) -> dict[str, object]:
 def pickup_provenance_valid(packet: dict, legacy_paths: dict[str, str]) -> bool:
     provenance = packet.get("provenance")
     if (not isinstance(provenance, dict) or provenance.get("schema_version") != "memory_pickup.v1"
+            or provenance.get("retrieval_policy") != MEMORY_RETRIEVAL_POLICY
             or not _sha256_value(provenance.get("wal_sha256"))
             or type(provenance.get("wal_event_count")) is not int or provenance["wal_event_count"] < 0
             or type(provenance.get("wal_bytes")) is not int or provenance["wal_bytes"] < 0
@@ -93,7 +137,7 @@ def pickup_provenance_valid(packet: dict, legacy_paths: dict[str, str]) -> bool:
         legacy = provenance["legacy_sources"][horizon]
         generated = provenance["generated_sources"][horizon]
         if (not isinstance(legacy, dict) or legacy.get("source_kind") != "legacy_mixed"
-                or legacy.get("status") not in ("compatibility_unverified", "withheld_after_correction", "unavailable")
+                or legacy.get("status") not in ("compatibility_unverified", "withheld_after_correction", "withheld_execution_unverifiable", "unavailable")
                 or legacy.get("path") != legacy_paths[horizon]
                 or (legacy["status"] != "unavailable" and not _sha256_value(legacy.get("sha256")))):
             return False

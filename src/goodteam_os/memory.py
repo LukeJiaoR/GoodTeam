@@ -8,11 +8,11 @@ from .memory_core.context import (
     MEMORY_CONTEXT_REASONS, PICKUP_EVENT_CHARS, PICKUP_RELEVANT_CHARS, PICKUP_SHORT_CHARS, PICKUP_SUMMARY_CHARS,
     _bounded_context as _bounded_context, _pickup_content_digest as _pickup_content_digest,
     _sha256_value as _sha256_value, summarize_markdown as summarize_markdown,
-    empty_pickup, generated_horizon_context, normal_pickup_content, pickup_provenance_valid,
+    LegacyExecutionContextError, empty_pickup, generated_horizon_context, normal_pickup_content, pickup_provenance_valid,
 )
 from .memory_core.projections import (
     IDENTITY_FIELDS as IDENTITY_FIELDS, MEMORY_HORIZONS as MEMORY_HORIZONS,
-    MEMORY_CATEGORIES, active_events, browse_result, event_id as legacy_event_id, normal_retrieval_events, retrieval_result,
+    MEMORY_CATEGORIES, MEMORY_RETRIEVAL_POLICY, active_events, browse_result, event_id as legacy_event_id, normal_retrieval_events, retrieval_result,
 )
 from .memory_storage import (
     MAX_WAL_BYTES, MemoryStorageError, atomic_write, read_bytes, role_lock, serialized_role,
@@ -233,7 +233,7 @@ class RoleMemoryStore:
             "role_key": role_key, "event_count": 0, "events_path": str(self.event_path(role_key)),
             "integrity": {"event_count": 0, "events_sha256": empty_hash},
             "projection_policy": "wal_generated_legacy_preserved",
-            "retrieval_policy": "knowledge_without_execution_v1",
+            "retrieval_policy": MEMORY_RETRIEVAL_POLICY,
             "horizons": {horizon: {
                 "path": str(self.memory_path(role_key, horizon)), "source_kind": "wal_generated",
                 "event_ids": [], "sha256": empty_hash, "chars": 0, "summary": "",
@@ -372,7 +372,7 @@ class RoleMemoryStore:
             "integrity": {"event_count": len(events), "events_sha256": digest},
             "horizons": horizons,
             "projection_policy": "wal_generated_legacy_preserved",
-            "retrieval_policy": "knowledge_without_execution_v1",
+            "retrieval_policy": MEMORY_RETRIEVAL_POLICY,
         }
         self._write_json(self.index_path(role_key), index)
         return index
@@ -646,8 +646,13 @@ class RoleMemoryStore:
                     raise ValueError("Legacy memory source unavailable")
                 source["sha256"] = hashlib.sha256(raw).hexdigest()
                 if not has_correction:
-                    content = self._normal_pickup_content(raw.decode("utf-8"))
+                    content = self._normal_pickup_content(
+                        raw.decode("utf-8"), events=[event for event in events if event["horizon"] == horizon],
+                    )
                     legacy = content if horizon == "short-term" else summarize_markdown(content)
+            except LegacyExecutionContextError:
+                source["status"] = "withheld_execution_unverifiable"
+                reasons.append("legacy_execution_unverifiable")
             except (OSError, UnicodeError, ValueError):
                 source["status"] = "unavailable"
                 reasons.append("legacy_source_unreadable")
@@ -663,7 +668,8 @@ class RoleMemoryStore:
             "event_count": len(events), "short_term": short_content, "summaries": summaries,
             "context_status": "partial" if reasons else "available",
             "context_reasons": sorted(set(reasons)),
-            "provenance": {"schema_version": "memory_pickup.v1", "wal_sha256": digest,
+            "provenance": {"schema_version": "memory_pickup.v1", "retrieval_policy": MEMORY_RETRIEVAL_POLICY,
+                           "wal_sha256": digest,
                            "wal_event_count": len(events), "wal_bytes": len(wal_bytes),
                            "generated_sources": generated_sources, "legacy_sources": legacy_sources},
         }
@@ -762,6 +768,8 @@ class RoleMemoryStore:
         original_reasons = packet.get("context_reasons", [])
         reasons = [reason for reason in original_reasons if isinstance(reason, str) and reason in MEMORY_CONTEXT_REASONS] if isinstance(original_reasons, list) else []
         invalidate = False
+        if isinstance(provenance, dict) and provenance.get("retrieval_policy") != MEMORY_RETRIEVAL_POLICY:
+            reasons.append("pickup_policy_changed")
         if not self._pickup_provenance_valid(role_key, packet):
             reasons.append("pickup_unverifiable")
             invalidate = True
@@ -899,8 +907,8 @@ Role: `{role_key}`
     def _normal_retrieval_events(self, events: list[dict[str, str]]) -> list[dict[str, str]]:
         return normal_retrieval_events(events)
 
-    def _normal_pickup_content(self, content: str) -> str:
-        return normal_pickup_content(content)
+    def _normal_pickup_content(self, content: str, *, events: list[dict]) -> str:
+        return normal_pickup_content(content, events=events)
 
     def _retrieval_result(self, score: float, event: dict[str, object]) -> dict[str, object]:
         return retrieval_result(score, event, identifier=self._event_id(event))
@@ -1027,7 +1035,7 @@ Role: `{role_key}`
         if (not isinstance(integrity, dict) or integrity.get("event_count") != len(events)
                 or index.get("event_count") != len(events) or integrity.get("events_sha256") != digest
                 or index.get("projection_policy") != "wal_generated_legacy_preserved"
-                or index.get("retrieval_policy") != "knowledge_without_execution_v1"):
+                or index.get("retrieval_policy") != MEMORY_RETRIEVAL_POLICY):
             return False
         horizons = index.get("horizons")
         if not isinstance(horizons, dict):

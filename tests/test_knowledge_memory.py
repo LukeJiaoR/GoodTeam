@@ -106,6 +106,171 @@ def test_old_index_rebuilds_summary_policy_without_rewriting_events(tmp_path):
     store.index_path('qa').write_text(json.dumps(index))
     wal = store.event_path('qa').read_bytes()
     rebuilt = store.read_memory_index('qa')
-    assert rebuilt['retrieval_policy'] == 'knowledge_without_execution_v1'
+    assert rebuilt['retrieval_policy'] == 'knowledge_without_execution_v2'
     assert 'AUDIT_LOG' not in rebuilt['horizons']['short-term']['summary']
     assert store.event_path('qa').read_bytes() == wal
+
+
+def test_old_frozen_packet_policy_cannot_keep_audit_when_retrieval_is_empty(tmp_path):
+    from goodteam_os.memory_core.context import _pickup_content_digest
+
+    store = RoleMemoryStore(tmp_path)
+    store.append_memory_event('qa', horizon='short-term', text='AUDIT_SENTINEL', source='old/provenance')
+    packet = store.build_pickup_packet('qa')
+    packet['provenance'].pop('retrieval_policy', None)
+    packet['short_term'] = 'AUDIT_SENTINEL'
+    packet['relevant_events'] = []
+    packet['provenance']['content_sha256'] = _pickup_content_digest(packet)
+    captured = json.dumps(packet)
+    consumed = store.validate_pickup_packet(packet)
+    assert consumed['context_status'] != 'available'
+    assert consumed['short_term'] == ''
+    assert consumed['summaries'] == {'long-term': '', 'mid-term': ''}
+    assert json.dumps(packet) == captured
+
+
+@pytest.mark.parametrize('horizon', ['short-term', 'mid-term', 'long-term'])
+@pytest.mark.parametrize('source', ['job/provenance', 'worker_failure:job'])
+def test_multiline_execution_blocks_never_enter_new_pickup(tmp_path, horizon, source):
+    store = RoleMemoryStore(tmp_path)
+    store.append_memory_event('qa', horizon=horizon,
+                              text='MULTILINE_AUDIT\n\n## Embedded heading\n- continuation', source=source)
+    store.append_memory_event('qa', horizon=horizon, text='KEEP_KNOWLEDGE\nsecond line', source='job/result.md')
+    original = store.memory_path('qa', horizon).read_bytes()
+    packet = store.build_pickup_packet('qa', query='KEEP_KNOWLEDGE')
+    serialized = json.dumps(packet)
+    assert 'MULTILINE_AUDIT' not in serialized
+    assert 'Embedded heading' not in serialized
+    assert 'continuation' not in serialized
+    assert 'KEEP_KNOWLEDGE' in serialized
+    assert store.memory_path('qa', horizon).read_bytes() == original
+
+
+@pytest.mark.parametrize('policy', [None, 'knowledge_without_execution_v1', 'unknown_policy'])
+def test_frozen_policy_change_retains_only_verified_old_hits_without_recapture(tmp_path, monkeypatch, policy):
+    import copy
+    from goodteam_os.memory_core.context import _pickup_content_digest
+
+    store = RoleMemoryStore(tmp_path)
+    old = store.append_memory_event('qa', horizon='mid-term', text='database CAPTURED_FACT', source='old/result.md')
+    packet = store.build_pickup_packet('qa', query='database')
+    if policy is None:
+        packet['provenance'].pop('retrieval_policy')
+    else:
+        packet['provenance']['retrieval_policy'] = policy
+    packet['summaries']['mid-term'] = 'FROZEN_AUDIT'
+    packet['provenance']['content_sha256'] = _pickup_content_digest(packet)
+    captured = copy.deepcopy(packet)
+    store.append_memory_event('qa', horizon='mid-term', text='database NEW_AFTER_CAPTURE', source='new/result.md')
+    monkeypatch.setattr(store, 'build_pickup_packet', lambda *_a, **_k: pytest.fail('must not recapture a frozen packet'))
+    consumed = store.validate_pickup_packet(packet)
+    assert consumed['context_status'] == 'partial'
+    assert 'pickup_policy_changed' in consumed['context_reasons']
+    assert consumed['short_term'] == '' and not any(consumed['summaries'].values())
+    assert [event['id'] for event in consumed['relevant_events']] == [event_id(old)]
+    assert 'NEW_AFTER_CAPTURE' not in json.dumps(consumed)
+    assert 'FROZEN_AUDIT' not in json.dumps(consumed)
+    assert packet == captured
+
+
+def test_machine_appendix_is_rebuilt_without_trusting_edited_multiline_or_headings(tmp_path):
+    store = RoleMemoryStore(tmp_path)
+    path = store.ensure_role_memory('qa')['short-term']
+    path.write_text('# Legacy notes\n- KEEP_LEGACY_PREFIX\n')
+    store.append_memory_event('qa', horizon='short-term', text='AUDIT_FIRST\n## Nested\nAUDIT_LAST', source='job/provenance')
+    store.append_memory_event('qa', horizon='short-term', text='KEEP_WAL_FACT', source='job/result.md')
+    path.write_text(path.read_text().replace('AUDIT_FIRST', 'EDITED_AUDIT_FIRST') + '\n# Unknown appendix notes\nUNKNOWN_APPENDIX\n')
+    # CRLF conversion cannot turn a generated appendix into trusted legacy notes.
+    path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
+    raw = path.read_bytes()
+    packet = store.build_pickup_packet('qa')
+    assert packet['context_status'] == 'partial'
+    assert 'legacy_execution_unverifiable' in packet['context_reasons']
+    assert 'KEEP_LEGACY_PREFIX' not in packet['short_term']
+    assert 'KEEP_WAL_FACT' in packet['short_term']
+    assert 'AUDIT' not in packet['short_term'] and 'UNKNOWN_APPENDIX' not in packet['short_term']
+    assert store.validate_pickup_packet(packet)['short_term'] == packet['short_term']
+    assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize('heading', ['### Memory Events', 'prefix ## Memory Events', '## Memory Events'])
+def test_legacy_writer_heading_substrings_cannot_bypass_execution_filter(tmp_path, heading):
+    store = RoleMemoryStore(tmp_path)
+    path = store.ensure_role_memory('qa')['short-term']
+    store.append_memory_event('qa', horizon='short-term', text='BASE_WAL_FACT', source='old/result.md')
+    path.write_text(f'# Legacy\n{heading}\n- existing notes\n')
+    store.append_memory_event('qa', horizon='short-term', text='AUDIT_SENTINEL\ncontinuation', source='job/provenance')
+    raw = path.read_bytes()
+    packet = store.build_pickup_packet('qa')
+    assert 'AUDIT_SENTINEL' not in packet['short_term']
+    assert 'continuation' not in packet['short_term']
+    assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize('source', ['worker_failure:old', 'old/provenance'])
+@pytest.mark.parametrize('with_appendix', [False, True])
+def test_ambiguous_legacy_execution_prefix_is_withheld_as_a_whole(tmp_path, source, with_appendix):
+    store = RoleMemoryStore(tmp_path)
+    path = store.ensure_role_memory('qa')['short-term']
+    path.write_text(f'# Legacy\n- OLD_AUDIT_SENTINEL\n\n## Body heading\nlast line Source: `{source}`.\n')
+    if with_appendix:
+        store.append_memory_event('qa', horizon='short-term', text='KEEP_WAL_FACT', source='job/result.md')
+    raw = path.read_bytes()
+    packet = store.build_pickup_packet('qa')
+    assert 'OLD_AUDIT_SENTINEL' not in packet['short_term']
+    assert 'Body heading' not in packet['short_term']
+    assert packet['context_status'] == 'partial'
+    assert 'legacy_execution_unverifiable' in packet['context_reasons']
+    assert packet['provenance']['legacy_sources']['short-term']['status'] == 'withheld_execution_unverifiable'
+    if with_appendix:
+        assert 'KEEP_WAL_FACT' in packet['short_term']
+    assert store.validate_pickup_packet(packet)['short_term'] == packet['short_term']
+    assert path.read_bytes() == raw
+
+
+def test_missing_appendix_marker_with_execution_wal_does_not_trust_modified_source(tmp_path):
+    store = RoleMemoryStore(tmp_path)
+    store.append_memory_event('qa', horizon='short-term', text='AUDIT_SENTINEL\ncontinuation', source='job/provenance')
+    path = store.memory_path('qa', 'short-term')
+    path.write_text(path.read_text().replace('## Memory Events', '## Edited heading').replace(' Source: `job/provenance`.', ''))
+    raw = path.read_bytes()
+    packet = store.build_pickup_packet('qa')
+    assert packet['short_term'] == ''
+    assert 'legacy_execution_unverifiable' in packet['context_reasons']
+    assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize('edit_body', [False, True])
+def test_execution_embedded_marker_cannot_replace_the_real_appendix_boundary(tmp_path, edit_body):
+    store = RoleMemoryStore(tmp_path)
+    store.append_memory_event('qa', horizon='short-term', text='AUDIT_SENTINEL\n## Memory Events\nAUDIT_TAIL', source='job/provenance')
+    store.append_memory_event('qa', horizon='short-term', text='KEEP_WAL_FACT', source='job/result.md')
+    path = store.memory_path('qa', 'short-term')
+    edited = path.read_text().replace('## Memory Events', '## Edited heading', 1)
+    if edit_body:
+        edited = edited.replace('AUDIT_SENTINEL', 'EDITED_AUDIT_SENTINEL')
+    path.write_text(edited)
+    raw = path.read_bytes()
+    packet = store.build_pickup_packet('qa')
+    assert 'AUDIT' not in packet['short_term']
+    assert 'KEEP_WAL_FACT' in packet['short_term']
+    assert 'legacy_execution_unverifiable' in packet['context_reasons']
+    assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize('source', ['old/provenance', 'worker_failure:old'])
+@pytest.mark.parametrize('horizon', ['short-term', 'mid-term', 'long-term'])
+def test_legacy_execution_marker_inside_body_without_execution_wal_is_withheld(tmp_path, source, horizon):
+    store = RoleMemoryStore(tmp_path)
+    store.append_memory_event('qa', horizon=horizon, text='KEEP_WAL_FACT', source='job/result.md')
+    path = store.memory_path('qa', horizon)
+    path.write_text(f'# Legacy\n- LEGACY_AUDIT_SENTINEL\n## Memory Events\nAUDIT_TAIL Source: `{source}`.\n')
+    raw = path.read_bytes()
+    packet = store.build_pickup_packet('qa')
+    context = packet['short_term'] if horizon == 'short-term' else packet['summaries'][horizon]
+    assert 'AUDIT' not in context
+    assert 'KEEP_WAL_FACT' in context
+    assert packet['context_status'] == 'partial'
+    assert 'legacy_execution_unverifiable' in packet['context_reasons']
+    assert store.validate_pickup_packet(packet)['context_status'] == 'partial'
+    assert path.read_bytes() == raw

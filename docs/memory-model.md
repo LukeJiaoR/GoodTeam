@@ -90,7 +90,26 @@ records before ranking and applying the limit. `include_execution=true` on
 this choice in its URL. Superseded knowledge remains browsable and labelled.
 Normal retrieval, generated summaries and the compatibility Markdown context
 exclude execution records, while the WAL and Markdown files retain the audit.
-An index retrieval-policy marker invalidates cached summaries from the old policy.
+Index and pickup provenance both carry the `knowledge_without_execution_v2`
+retrieval policy, bound into the packet content digest. Missing/old/unknown pickup
+policies invalidate frozen summaries and short-term text even with no retrieved
+hits. Independently verified original hits may survive; consuming a frozen job
+never retrieves newer facts, rewrites its packet, or changes its capture receipt.
+New captures build context under the current policy.
+
+The legacy prefix before the writer-owned `## Memory Events` appendix remains
+compatible. The entire machine appendix is reconstructed in memory from the
+captured eligible WAL events, including full multiline boundaries; embedded
+headings and edited/unknown appendix notes are not treated as independent context.
+Those original Markdown bytes remain on disk. This avoids guessing event
+boundaries from individual lines or a source marker on only the final line.
+
+When captured WAL or an explicit legacy source identifies execution records, the
+appendix boundary must match the complete captured WAL projection. An edited or
+ambiguous boundary withholds the entire legacy contribution and reports
+`legacy_execution_unverifiable`; eligible WAL knowledge remains available. This
+also covers embedded headings and legacy execution sources missing from WAL.
+Original Markdown files and audit events are never rewritten by pickup filtering.
 
 New Worker result writes retain the explicit `learned`, `caveats`, `decisions`,
 or `open_questions` section as optional event `category`. Existing horizon

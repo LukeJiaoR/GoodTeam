@@ -1,4 +1,4 @@
-"""Byte-compatible pure extraction against a frozen pre-refactor baseline."""
+"""Legacy content compatibility with explicit pickup-policy invalidation."""
 import copy
 from datetime import datetime
 import hashlib
@@ -12,6 +12,24 @@ from goodteam_os.memory_core import context, projections
 
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "memory" / "pickup-v1.json").read_text())
+
+
+def current_policy_expectations(case):
+    # Only the versioned policy and its bound digest change these legacy
+    # content fixtures. Preserve original fixtures to test old frozen packets.
+    expected = copy.deepcopy(case)
+    capture = expected["expected_capture"]
+    for key in ("expected_capture", "expected_validation"):
+        provenance = expected[key]["provenance"]
+        expected[key]["provenance"] = {
+            "schema_version": provenance["schema_version"],
+            "retrieval_policy": projections.MEMORY_RETRIEVAL_POLICY,
+            **{name: value for name, value in provenance.items() if name != "schema_version"},
+        }
+    digest = context._pickup_content_digest(capture)
+    for key in ("expected_capture", "expected_validation"):
+        expected[key]["provenance"]["content_sha256"] = digest
+    return expected
 
 
 def normalize(value, root):
@@ -30,7 +48,8 @@ def wire_bytes(value):
 
 
 @pytest.mark.parametrize("case", FIXTURE["cases"], ids=lambda case: case["name"])
-def test_capture_and_frozen_validation_match_pre_refactor_bytes(tmp_path, monkeypatch, case):
+def test_capture_and_frozen_validation_preserve_content_under_current_policy(tmp_path, monkeypatch, case):
+    case = current_policy_expectations(case)
     class FixedClock:
         @staticmethod
         def now(tz):
@@ -89,7 +108,9 @@ def test_pure_context_uses_in_memory_values_without_mutating_inputs(case):
         assert hashlib.sha256(text.encode()).hexdigest() == source["sha256"]
         assert source["source_kind"] == "wal_generated"
     paths = {horizon: f".goodteam/memory/roles/architect/{horizon}.md" for horizon in facade.MEMORY_HORIZONS}
-    assert context.pickup_provenance_valid(packet, paths)
+    assert not context.pickup_provenance_valid(packet, paths)
+    current = current_policy_expectations(case)["expected_capture"]
+    assert context.pickup_provenance_valid(current, paths)
     assert before == wire_bytes({"events": events, "packet": packet})
 
 
