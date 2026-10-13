@@ -29,10 +29,21 @@ def test_service_continues_same_goal_from_observed_omission_and_budget_gate(tmp_
             "max_work_units": 1, "confirmed": True, "billing_acknowledged": True, "idempotency_key": "goal-http"})["goal"]
         def snapshot():
             return server.state()["task_assistant_session"]["goals"][-1]
+        def wait_for_gate(run_id, gate):
+            def matching_gate():
+                data = server.state()
+                state = data["state"]
+                # Starting a successor archives the previous current state
+                # before publishing the new one. Wait through that gap and
+                # bind every approval to this Goal work unit's run.
+                if state and state["run_id"] == run_id and state["next_node"] == f"await_{gate}_approval":
+                    return data
+                return None
+            return wait_until(matching_gate)
         wait_until(lambda: snapshot()["active_work"])
         first_run = snapshot()["active_work"]["run_id"]
         for gate in ("takeover", "prd", "rfc", "security", "release"):
-            current = wait_until(lambda: next((data for data in [server.state()] if data["state"]["next_node"] == f"await_{gate}_approval"), None))
+            current = wait_for_gate(first_run, gate)
             assert current["state"]["next_node"] == f"await_{gate}_approval"
             server.ok("/api/approve", approval_body(current, gate))
         waiting = wait_until(lambda: next((g for g in [snapshot()] if g["status"] == "awaiting_approval"), None))
@@ -46,7 +57,7 @@ def test_service_continues_same_goal_from_observed_omission_and_budget_gate(tmp_
         assert second["id"] == created["id"]
         assert second["work_units"][1]["criterion_indices"] == [1]
         for gate in ("takeover", "prd", "rfc", "security", "release"):
-            current = wait_until(lambda: next((data for data in [server.state()] if data["state"]["next_node"] == f"await_{gate}_approval"), None))
+            current = wait_for_gate(second["active_work"]["run_id"], gate)
             assert current["state"]["next_node"] == f"await_{gate}_approval"
             server.ok("/api/approve", approval_body(current, gate))
         complete = wait_until(lambda: next((g for g in [snapshot()] if g["status"] == "complete"), None))
