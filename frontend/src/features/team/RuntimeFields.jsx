@@ -6,12 +6,14 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
   const [customModel, setCustomModel] = useState(false);
   const [promptOpen, setPromptOpen] = useState(Boolean(draft.additionalPrompt));
   const options = runtimeOptions(agents, draft.provider, draft.model, defaultProvider);
+  agentsLoading = options.agent?.discovery_status ? options.agent.discovery_status === 'loading' : agentsLoading;
   const providers = [...new Set([draft.provider, defaultProvider, ...backendOptions].filter(Boolean))];
   const changeSelection = (patch) => setDraft(changeRuntimeSelection(draft, patch, agents, defaultProvider));
   const effortLabel = (value) => t(`team.dialog.reasoning${value[0].toUpperCase()}${value.slice(1)}`);
   const currentUnsupported = draft.reasoningDepth !== 'default' && !options.reasoningDepths.includes(draft.reasoningDepth);
-  const catalogUnconfirmed = !options.agent || ['unavailable', 'unsupported'].includes(options.agent.models_source);
+  const catalogUnconfirmed = !options.agent || options.agent.stale || ['unavailable', 'unsupported'].includes(options.agent.models_source);
   const catalogMessage = agentsLoading ? 'team.dialog.catalogLoading'
+    : options.agent?.stale ? 'team.dialog.catalogStale'
     : !options.agent ? 'team.dialog.catalogUnknown'
       : options.agent.models_source === 'unsupported' ? 'team.dialog.catalogUnsupported'
         : options.agent.models_source === 'unavailable' ? 'team.dialog.catalogUnavailable' : null;
@@ -37,7 +39,7 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
           }}>
             {providers.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
           </select>
-          {!agentsLoading && (diagnosticHint || diagnosticFallback) ? <small className={options.agent?.ready === false ? 'team-field-warning' : undefined}>
+          {!agentsLoading && !options.agent?.stale && (diagnosticHint || diagnosticFallback) ? <small className={options.agent?.ready === false ? 'team-field-warning' : undefined}>
             {t('team.config.localDiagnostic')}: {diagnosticHint || t(diagnosticFallback)}
           </small> : null}
         </label>
@@ -58,6 +60,7 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
             {t(customModel ? 'team.config.chooseModel' : 'team.config.customModel')}
           </button>
           {catalogMessage ? <small role="status">{t(catalogMessage)}</small> : null}
+          {options.agent ? <small>{t('team.dialog.catalogSource')}: {options.agent.stale_source || options.agent.models_source} {options.agent.observed_at || ''}</small> : null}
         </div>
         <label>
           <span>{t('team.dialog.reasoning')}</span>
@@ -66,6 +69,7 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
             {currentUnsupported ? <option value={draft.reasoningDepth} disabled>{effortLabel(draft.reasoningDepth)} · {t(agentsLoading || catalogUnconfirmed ? 'team.dialog.reasoningUnconfirmed' : 'team.dialog.reasoningUnavailable')}</option> : null}
             {options.reasoningDepths.map((depth) => <option key={depth} value={depth}>{effortLabel(depth)}</option>)}
           </select>
+          <small>{t(options.reasoningSource === 'model' ? 'team.dialog.effortModel' : 'team.dialog.effortAdapter')} {draft.reasoningDepth === 'default' ? t('team.dialog.effortAuto', { value: options.reasoningDefault || t('team.dialog.effortUnknown') }) : t('team.dialog.effortManual', { value: draft.reasoningDepth })}</small>
           {!agentsLoading && !catalogUnconfirmed && !currentUnsupported && !options.reasoningDepths.length ? <small>{t('team.config.reasoningAutomatic')}</small> : null}
         </label>
       </div>

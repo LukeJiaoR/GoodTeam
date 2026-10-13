@@ -31,7 +31,9 @@ export function runtimeOptions(agents, provider, model, defaultProvider = 'codex
     provider: effectiveProvider,
     model: effectiveModel,
     models: [...new Set([model, ...(agent?.models || [])].filter(Boolean))],
-    reasoningDepths: capabilities?.reasoning_depths ?? agent?.reasoning_depths ?? [],
+    reasoningDepths: agent?.stale ? [] : capabilities?.reasoning_depths ?? agent?.reasoning_depths ?? [],
+    reasoningSource: !agent?.stale && Array.isArray(capabilities?.reasoning_depths) ? 'model' : 'adapter',
+    reasoningDefault: !agent?.stale ? capabilities?.reasoning_default : undefined,
   };
 }
 

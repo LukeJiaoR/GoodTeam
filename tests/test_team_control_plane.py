@@ -39,6 +39,17 @@ from goodteam_os.team_control_plane import (
 )
 
 
+@pytest.fixture
+def runtime_catalog(monkeypatch):
+    # These persistence/routing tests use synthetic capability evidence; actual
+    # probing and rejection contracts live in test_model_discovery.py.
+    from goodteam_os import model_discovery
+    from goodteam_os.worker_capabilities import REASONING_DEPTHS
+    monkeypatch.setattr(model_discovery, "discover", lambda provider: [{
+        "model_default": "synthetic", "reasoning_depths": list(REASONING_DEPTHS),
+    }])
+
+
 def make_project(tmp_path: Path, *, worker_mode: str = "fake", extra_yaml: str = "") -> Path:
     workspace = tmp_path / "ws"
     (workspace / "projects").mkdir(parents=True)
@@ -520,7 +531,7 @@ def test_snapshot_records_enabled_roles_and_worker_runtime(tmp_path):
 # ------------------------------------------------------- 8. manager surface
 
 
-def test_manager_runtime_comes_from_team_state(tmp_path):
+def test_manager_runtime_comes_from_team_state(tmp_path, runtime_catalog):
     config = make_project(
         tmp_path,
         extra_yaml=(
@@ -852,7 +863,7 @@ def test_project_state_payload_includes_team_view(tmp_path):
     assert roles["implementation"]["capability"] in {"ready", "degraded", "unstaffed"}
 
 
-def test_legacy_settings_bridge_translates_onto_control_plane(tmp_path, monkeypatch):
+def test_legacy_settings_bridge_translates_onto_control_plane(tmp_path, monkeypatch, runtime_catalog):
     from goodteam_os import team_control_plane, web
 
     # Capability readiness depends on host runtime availability (doctor);
@@ -950,7 +961,7 @@ def test_task_assistant_team_decision_actions(tmp_path):
 # ------------------------------------- 11. worker resolution is the whole contract
 
 
-def test_resolution_provides_complete_runtime_without_cross_worker_mixing(tmp_path, monkeypatch):
+def test_resolution_provides_complete_runtime_without_cross_worker_mixing(tmp_path, monkeypatch, runtime_catalog):
     """One worker resolution must carry the full execution runtime.
 
     Regression for the P1 found in review: with Worker A active-but-unready
@@ -1123,7 +1134,7 @@ def test_debate_dispatch_fails_closed_on_corrupt_team_state(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("depth", ["none", "minimal", "xhigh", "max", "ultra"])
-def test_model_effort_survives_team_persistence_snapshot_and_resolution(tmp_path, monkeypatch, depth):
+def test_model_effort_survives_team_persistence_snapshot_and_resolution(tmp_path, monkeypatch, depth, runtime_catalog):
     from goodteam_os.web import normalize_worker_type_settings
 
     def ready_doctor(_provider):

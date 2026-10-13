@@ -1,3 +1,4 @@
+import { finishCatalog, mergeCatalog, refreshCatalog } from './catalogState';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { settingsApi } from '../settings/settingsApi';
 import WorkerDialog from './WorkerDialog';
@@ -14,13 +15,15 @@ export default function AssistantRuntimePanel({ data, projectKey, onClose, refre
   const team = useMemo(() => buildTeamModel(data), [data]);
   useEffect(() => {
     const controller = new AbortController();
-    api.getSettingsAgents({ signal: controller.signal })
-      .then((payload) => { if (!controller.signal.aborted) setAgents(Array.isArray(payload?.agents) ? payload.agents : []); })
-      .catch((caught) => { if (!controller.signal.aborted) { setAgents([]); setError(caught); } })
+    api.getSettingsAgents({ signal: controller.signal, onProgress: (incoming) => {
+      if (!controller.signal.aborted) setAgents((previous) => mergeCatalog(previous, incoming));
+    } })
+      .then((payload) => { if (!controller.signal.aborted) setAgents((previous) => finishCatalog(previous, Array.isArray(payload?.agents) ? payload.agents : [])); })
+      .catch((caught) => { if (!controller.signal.aborted) { setAgents((previous) => finishCatalog(previous)); setError(caught); } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [api, revision]);
-  const reloadAgents = () => { setLoading(true); setAgents([]); setError(null); setRevision((value) => value + 1); };
+  const reloadAgents = () => { setLoading(true); setAgents(refreshCatalog); setError(null); setRevision((value) => value + 1); };
   const save = async (commands) => {
     if (pending.current) return;
     pending.current = true;
