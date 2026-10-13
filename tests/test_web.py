@@ -4996,7 +4996,11 @@ def test_api_project_config_create_accepts_workers_without_update_branch(tmp_pat
     assert '  implementation: "opencode:opencode-go/qwen3.7-max"' in content
 
 
-def test_api_project_config_update_still_accepts_project_key_with_workers(tmp_path):
+def test_api_project_config_update_still_accepts_project_key_with_workers(tmp_path, monkeypatch):
+    from goodteam_os import model_discovery
+    monkeypatch.setattr(model_discovery, "discover", lambda _: [{
+        "model_capabilities": {"opencode-go/qwen3.7-max": {"reasoning_depths": ["high"]}},
+    }])
     project_root = tmp_path / "target"
     project_root.mkdir()
     _write_context_project(tmp_path, project_root, key="WBP")

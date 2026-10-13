@@ -45,13 +45,13 @@ test('invalidates a refreshing and failed catalog without changing the draft or 
   await user.clear(screen.getByLabelText('Additional instructions'));
   await user.type(screen.getByLabelText('Additional instructions'), 'Preserve this unsaved instruction.');
   await user.click(screen.getByRole('button', { name: 'Refresh models' }));
-  expect(modelOptions()).toEqual(['', 'saved-model']);
+  expect(modelOptions()).toEqual(['', 'saved-model', 'old-catalog-model']);
   expect(screen.getByRole('button', { name: 'Loading models…' })).toBeDisabled();
   expect(screen.getByLabelText('Reasoning depth')).toHaveValue('xhigh');
   expect(screen.queryByText(/Local CLI and credential presence detected/)).not.toBeInTheDocument();
   await act(async () => { failRefresh(new Error('Discovery request failed')); });
   expect(await screen.findByRole('alert')).toHaveTextContent('Discovery request failed');
-  expect(modelOptions()).toEqual(['', 'saved-model']);
+  expect(modelOptions()).toEqual(['', 'saved-model', 'old-catalog-model']);
   expect(screen.getByLabelText('Reasoning depth')).toHaveValue('xhigh');
   expect(screen.getByLabelText('Additional instructions')).toHaveValue('Preserve this unsaved instruction.');
   expect(api.sendTeamCommands).not.toHaveBeenCalled();
@@ -76,13 +76,13 @@ test.each([
   { agents: null },
   { agents: { backend: 'codex' } },
   null,
-])('does not reuse old discovery after an empty or malformed response: %j', async (payload) => {
+])('marks previous discovery stale after an empty or malformed response: %j', async (payload) => {
   const getSettingsAgents = vi.fn().mockResolvedValueOnce(catalog).mockResolvedValueOnce(payload);
   const { user, api } = setup({ getSettingsAgents });
   await waitFor(() => expect(modelOptions()).toContain('old-catalog-model'));
   await user.click(screen.getByRole('button', { name: 'Refresh models' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh models' })).toBeEnabled());
-  expect(modelOptions()).toEqual(['', 'saved-model']);
+  expect(modelOptions()).toEqual(['', 'saved-model', 'old-catalog-model']);
   expect(screen.getByLabelText('Reasoning depth')).toHaveValue('high');
   expect(screen.getByLabelText('Additional instructions')).toHaveValue('Keep APIs stable.');
   expect(api.sendTeamCommands).not.toHaveBeenCalled();

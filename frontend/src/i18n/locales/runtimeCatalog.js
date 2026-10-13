@@ -1,5 +1,13 @@
 // Runtime-only strings are separate from #430's unadopted Work/approval redesign.
 export const runtimeEn = {
+  'team.dialog.catalogStale': 'Refresh failed. Previous model names are shown as stale; capabilities are unconfirmed.',
+  'team.dialog.catalogSource': 'Catalog source / observed',
+  'team.dialog.effortModel': 'Capability source: model catalog.',
+  'team.dialog.effortAdapter': 'Capability source: adapter fallback or unknown.',
+  'team.dialog.effortAuto': 'Automatic: no effort override. CLI-reported default: {value}. Existing agent policy applies; this is not task-based selection.',
+  'team.dialog.effortUnknown': 'unknown',
+  'team.dialog.effortManual': 'Requested override: {value}. Actual runtime acceptance is not yet observed.',
+
   'team.dialog.reasoningNone': 'None',
   'team.dialog.reasoningOff': 'Off',
   'team.dialog.reasoningMinimal': 'Minimal',
@@ -25,6 +33,14 @@ export const runtimeEn = {
 };
 
 export const runtimeZhCN = {
+  'team.dialog.catalogStale': '刷新失败。保留的模型名称已陈旧，能力尚未确认。',
+  'team.dialog.catalogSource': '目录来源 / 观察时间',
+  'team.dialog.effortModel': '能力来源：模型目录。',
+  'team.dialog.effortAdapter': '能力来源：适配器后备值或未知。',
+  'team.dialog.effortAuto': '自动：不强制档位。CLI 报告默认值：{value}。沿用执行器策略，并非按任务智能选择。',
+  'team.dialog.effortUnknown': '未知',
+  'team.dialog.effortManual': '请求覆盖值：{value}。实际运行是否采用尚未观察。',
+
   'team.dialog.reasoningNone': '无（none）',
   'team.dialog.reasoningOff': '关闭（off）',
   'team.dialog.reasoningMinimal': '最低（minimal）',

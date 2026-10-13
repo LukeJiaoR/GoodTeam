@@ -3384,7 +3384,7 @@ def _redacted_command_shape(spec: CliBackendSpec) -> list[str]:
     return shapes.get(spec.which_name, [spec.which_name, "<redacted-arguments>"])
 
 
-def discover_installed_agents() -> list[dict[str, Any]]:
+def _discover_installed_agents(provider: str = "") -> list[dict[str, Any]]:
     """Discover distinct CLI backends registered in CLI_BACKENDS.
 
     Alias keys are collapsed into one canonical backend entry and reported with
@@ -3407,6 +3407,8 @@ def discover_installed_agents() -> list[dict[str, Any]]:
         spec = spec_by_id[spec_id]
         aliases = sorted(aliases_by_spec[spec_id])
         canonical = canonical_by_spec[spec_id]
+        if provider and provider not in aliases:
+            continue
         report = worker_backend_doctor(canonical)
         # Always query the installed agent. A failed probe must not masquerade
         # as a successful catalog using bundled or previously returned names.
@@ -3452,6 +3454,8 @@ def discover_installed_agents() -> list[dict[str, Any]]:
                 "reasoning_depths": list(BACKEND_REASONING_DEPTHS.get(canonical, ())),
             }
         )
+    if provider and provider not in {"pi", "pi-rpc"}:
+        return discovered
     pi_report = worker_backend_doctor("pi")
     discovered.append(
         {
@@ -3471,6 +3475,13 @@ def discover_installed_agents() -> list[dict[str, Any]]:
         }
     )
     return sorted(discovered, key=lambda item: str(item["backend"]))
+
+
+def discover_installed_agents(provider: str = "") -> list[dict[str, Any]]:
+    """Share in-flight probes; each provider has an independent bounded slot."""
+    from goodteam_os.model_discovery import discover
+
+    return discover(provider)
 
 
 def _generic_cli_hint(spec: CliBackendSpec, available: bool, auth_present: bool) -> str:

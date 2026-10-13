@@ -552,6 +552,8 @@ class TeamControlPlaneStore:
                 library = SkillLibraryService(service_state_dir(), worker_roots=(self.workspace,))
                 binding_resolver = library.binding_reference
 
+            before_runtimes = {str(w["id"]): dict(w["runtime"]) for w in _workers(state)}
+            before_manager = dict(dict(state["manager"]).get("runtime", {}) or {})
             decision = decision_id or _new_id("dec")
             events: list[dict[str, object]] = []
             for raw_command in commands:
@@ -569,6 +571,15 @@ class TeamControlPlaneStore:
                         binding_resolver=binding_resolver,
                     )
                 )
+            from goodteam_os.model_discovery import validate_runtime_choice
+
+            catalogs = {}
+            try:
+                for worker in _workers(state):
+                    validate_runtime_choice(worker["runtime"], before_runtimes.get(str(worker["id"])), catalogs=catalogs)
+                validate_runtime_choice(dict(state["manager"]).get("runtime", {}), before_manager, catalogs=catalogs)
+            except ValueError as exc:
+                raise TeamControlPlaneError(str(exc)) from exc
             if events:
                 state["revision"] = int(state["revision"]) + 1
                 for event in events:

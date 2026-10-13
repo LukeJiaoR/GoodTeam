@@ -460,7 +460,7 @@ test('refreshes model discovery and resets unsupported effort on provider change
   expect(within(dialog).getByLabelText('Reasoning depth')).toBeDisabled();
 });
 
-test('failed refresh drops the previous catalog instead of serving stale models', async () => {
+test('failed refresh keeps previous model names with unconfirmed capabilities', async () => {
   mocks.getAgents.mockResolvedValueOnce({ agents: [{
     backend: 'codex', available: true, models: ['live-only-model'], model_default: 'live-only-model',
     model_capabilities: { 'live-only-model': { reasoning_depths: ['ultra'] } },
@@ -473,7 +473,7 @@ test('failed refresh drops the previous catalog instead of serving stale models'
   const dialog = screen.getByRole('dialog');
   await user.click(await within(dialog).findByRole('button', { name: 'Refresh models' }));
   await waitFor(() => expect(mocks.getAgents).toHaveBeenCalledTimes(2));
-  expect([...within(dialog).getByLabelText('Model').options].map((item) => item.value)).toEqual(['', 'gpt-5.6-sol']);
+  expect([...within(dialog).getByLabelText('Model').options].map((item) => item.value)).toEqual(['', 'gpt-5.6-sol', 'live-only-model']);
   expect(mocks.sendTeamCommands).not.toHaveBeenCalled();
   expect(within(dialog).getByLabelText('Reasoning depth')).toBeDisabled();
 });

@@ -1,3 +1,4 @@
+import { finishCatalog, mergeCatalog, refreshCatalog } from './catalogState';
 import { AlertTriangle, Bot, History, PackageOpen, Pause, Pencil, Play, Plus, Settings2, Trash2, UserRoundCog, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
@@ -122,16 +123,18 @@ export default function TeamPage({ api = settingsApi }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    api.getSettingsAgents({ signal: controller.signal })
-      .then((payload) => { if (!controller.signal.aborted) setAgents(Array.isArray(payload?.agents) ? payload.agents : []); })
-      .catch((caught) => { if (!controller.signal.aborted) { setAgents([]); setLoadError(caught); } })
+    api.getSettingsAgents({ signal: controller.signal, onProgress: (incoming) => {
+      if (!controller.signal.aborted) setAgents((previous) => mergeCatalog(previous, incoming));
+    } })
+      .then((payload) => { if (!controller.signal.aborted) setAgents((previous) => finishCatalog(previous, Array.isArray(payload?.agents) ? payload.agents : [])); })
+      .catch((caught) => { if (!controller.signal.aborted) { setAgents((previous) => finishCatalog(previous)); setLoadError(caught); } })
       .finally(() => { if (!controller.signal.aborted) setAgentsLoading(false); });
     return () => controller.abort();
   }, [api, agentsRevision]);
 
   const refreshAgents = () => {
     setAgentsLoading(true);
-    setAgents([]);
+    setAgents(refreshCatalog);
     setLoadError(null);
     setAgentsRevision((revision) => revision + 1);
   };

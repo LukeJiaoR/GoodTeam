@@ -7896,7 +7896,9 @@ def serve(
                 return
             if parsed.path == "/api/agents":
                 try:
-                    self._send_json(200, {"agents": discover_installed_agents()})
+                    provider = query.get("provider", [""])[0].strip()
+                    agents = discover_installed_agents(provider) if provider else discover_installed_agents()
+                    self._send_json(200, {"agents": agents})
                 except Exception as exc:
                     self._send_api_error(exc)
                 return
