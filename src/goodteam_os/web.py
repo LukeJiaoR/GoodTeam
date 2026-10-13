@@ -6109,7 +6109,7 @@ def handle_project_api_post(
                 result["projection_unavailable"] = True
             return 200, result
         key, target, root = _project_target_and_root(workspace, key)
-        if action in {"create_goal", "decide_goal_gate", "stop_goal"}:
+        if action in {"create_goal", "decide_goal_gate", "retry_goal_assessment"}:
             from goodteam_os.goal_continuation import handle_goal_action
 
             try:

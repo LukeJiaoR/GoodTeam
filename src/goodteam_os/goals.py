@@ -18,6 +18,7 @@ from uuid import uuid4
 from goodteam_os.state import normalize_project_key
 
 MAX_WORK_UNITS = 10
+MAX_ASSESSMENT_ATTEMPTS = 3
 GOAL_STATUSES = {"active", "awaiting_approval", "complete", "blocked", "stopped", "canceled"}
 TERMINAL_STATUSES = {"complete", "blocked", "stopped", "canceled"}
 WORK_STATUSES = {"pending", "dispatching", "running", "done", "blocked", "canceled"}
@@ -121,7 +122,8 @@ class GoalStore:
 
     def create_goal(self, *, objective: str, acceptance_criteria: list[str], allowed_scope: list[str],
                     max_work_units: int, confirmed: bool, idempotency_key: str,
-                    authority_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+                    authority_snapshot: dict[str, Any] | None = None,
+                    max_assessment_attempts: int | None = None) -> dict[str, Any]:
         idempotency_key = _text(idempotency_key, "idempotency_key")
         if confirmed is not True:
             raise GoalError("A goal requires explicit user confirmation; legacy tasks are not upgraded.")
@@ -137,6 +139,9 @@ class GoalStore:
         authority_snapshot = json.loads(_json(authority_snapshot or {}))
         payload = dict(objective=objective, acceptance_criteria=criteria, allowed_scope=scope,
                        max_work_units=max_work_units, confirmed=confirmed, authority_snapshot=authority_snapshot)
+        if max_assessment_attempts is not None:
+            self._assessment_limit(max_assessment_attempts)
+            payload["max_assessment_attempts"] = max_assessment_attempts
         with self._transaction(write=True) as db:
             replay, fingerprint = self._replay(db, idempotency_key, "create", payload)
             if replay is not None:
@@ -151,13 +156,16 @@ class GoalStore:
                         max_work_units=max_work_units, accepted_criteria=[], criterion_evidence={},
                         confirmed=True, created_at=now, updated_at=now, gate=None, stop_reason="",
                         authority_snapshot=authority_snapshot, continuation_stopped=False)
+            if max_assessment_attempts is not None:
+                goal["max_assessment_attempts"] = max_assessment_attempts
             db.execute("INSERT INTO goals VALUES (?,?,?,?)", (goal["id"], self.project_key, 1, _json(goal)))
             self._new_work(db, goal, list(range(len(criteria))), [], [])
             return self._finish(db, goal, "goal_confirmed", payload, idempotency_key, fingerprint)
 
     def replay_goal_creation(self, *, idempotency_key: str, objective: str,
                              acceptance_criteria: list[str], allowed_scope: list[str],
-                             max_work_units: int, confirmed: bool = True) -> dict[str, Any] | None:
+                             max_work_units: int, confirmed: bool = True,
+                             max_assessment_attempts: int | None = None) -> dict[str, Any] | None:
         """Validate a creation retry without refreshing its original server authority.
 
         This read-only check precedes active-run admission: a lost response may
@@ -182,6 +190,9 @@ class GoalStore:
             payload = dict(objective=objective, acceptance_criteria=criteria, allowed_scope=scope,
                            max_work_units=max_work_units, confirmed=True,
                            authority_snapshot=original["authority_snapshot"])
+            if max_assessment_attempts is not None:
+                self._assessment_limit(max_assessment_attempts)
+                payload["max_assessment_attempts"] = max_assessment_attempts
             replay, _ = self._replay(db, key, "create", payload)
             return self._snapshot(db, replay["id"])
 
@@ -284,6 +295,71 @@ class GoalStore:
                             dict(work_id=work_id, evidence_refs=refs, accepted_criteria=accepted, gaps=gaps,
                                  assessment_checks=checks), change)
 
+    @staticmethod
+    def assessment_binding_digest(goal, work):
+        binding = {key: goal[key] for key in ("objective", "acceptance_criteria", "allowed_scope", "authority_snapshot")}
+        binding["work"] = {key: work[key] for key in ("id", "run_id", "task", "criterion_indices")}
+        return hashlib.sha256(_json(binding).encode()).hexdigest()
+
+    @staticmethod
+    def _assessment_limit(value):
+        if type(value) is not int or not 1 <= value <= MAX_ASSESSMENT_ATTEMPTS:
+            raise GoalError("Assessment attempt limit must be between 1 and 3; it is not a monetary budget.")
+
+    def record_assessment_failure(self, goal_id, *, work_id, job_id, evidence_digest, code,
+                                  expected_revision, idempotency_key):
+        if code not in {"invalid_json", "non_object"}:
+            raise GoalError("Only enumerated completed-response protocol failures are recoverable.")
+        _text(job_id, "job_id")
+        if not isinstance(evidence_digest, str) or len(evidence_digest) != 64 or any(c not in "0123456789abcdef" for c in evidence_digest):
+            raise GoalError("An exact assessment evidence digest is required.")
+        def change(db, goal):
+            self._active(goal)
+            work = self._work(goal, work_id)
+            if work["status"] != "running":
+                raise GoalConflict("Only a submitted work unit can record an assessment failure.")
+            failures = work.setdefault("assessment_failures", [])
+            limit = work.get("assessment_retry_limit", goal.get("max_assessment_attempts", 1))
+            if len(failures) >= limit or any(item["job_id"] == job_id for item in failures):
+                raise GoalConflict("Assessment attempt was already recorded or exhausted.")
+            if failures and failures[0]["evidence_digest"] != evidence_digest:
+                raise GoalConflict("Assessment evidence changed across attempts.")
+            failures.append(dict(attempt=len(failures) + 1, job_id=job_id, evidence_digest=evidence_digest,
+                                 code=code, run_id=work["run_id"], created_at=_now(),
+                                 binding_digest=self.assessment_binding_digest(goal, work)))
+            if len(failures) >= limit:
+                goal.update(status="blocked", continuation_stopped=True,
+                            stop_reason="Completed Manager response was invalid; assessment attempts exhausted.")
+                work["continuation_stopped"] = True
+                goal["assessment_retry_target"] = ({"work_id": work_id, **failures[-1]}
+                                                    if len(failures) < MAX_ASSESSMENT_ATTEMPTS else None)
+            self._save_work(db, work)
+        return self._mutate(goal_id, "assessment_response_failed", expected_revision, idempotency_key,
+            dict(work_id=work_id, job_id=job_id, evidence_digest=evidence_digest, code=code), change)
+
+    def retry_assessment(self, goal_id, *, work_id, run_id, evidence_digest, failed_job_id,
+                         expected_revision, idempotency_key, validate):
+        def change(db, goal):
+            work = self._work(goal, work_id)
+            failures = work.get("assessment_failures", [])
+            if (goal["status"] != "blocked" or work["status"] != "running" or not failures
+                    or goal.get("assessment_retry_target") != {"work_id": work_id, **failures[-1]}
+                    or goal.get("gate") and goal["gate"].get("status") == "pending"):
+                raise GoalConflict("This Goal has no recoverable assessment failure.")
+            failure = failures[-1]
+            if (run_id != work["run_id"] or evidence_digest != failure["evidence_digest"]
+                    or failed_job_id != failure["job_id"] or len(failures) >= MAX_ASSESSMENT_ATTEMPTS):
+                raise GoalConflict("The assessment retry target changed or its hard limit was reached.")
+            # Replays return before this callback. New approvals recheck actual
+            # current run/config/catalog/evidence before modifying authority.
+            validate(goal, work, failure)
+            work["assessment_retry_limit"] = len(failures) + 1
+            work["continuation_stopped"] = False
+            goal.update(status="active", continuation_stopped=False, stop_reason="", assessment_retry_target=None)
+            self._save_work(db, work)
+        return self._mutate(goal_id, "assessment_retry_approved", expected_revision, idempotency_key,
+            dict(work_id=work_id, run_id=run_id, evidence_digest=evidence_digest, failed_job_id=failed_job_id), change)
+
     def decide_gate(self, goal_id: str, *, gate_id: str, decision: str, expected_revision: int,
                     idempotency_key: str) -> dict[str, Any]:
         if decision not in {"approve", "reject"}:
@@ -321,7 +397,7 @@ class GoalStore:
         def change(db, goal):
             if goal["status"] in {"complete", "stopped", "canceled"}:
                 raise GoalConflict("A terminal goal cannot be advanced.")
-            goal.update(status=status, stop_reason=reason, continuation_stopped=True)
+            goal.update(status=status, stop_reason=reason, continuation_stopped=True, assessment_retry_target=None)
             if goal["gate"] and goal["gate"]["status"] == "pending":
                 goal["gate"]["status"] = "canceled"
             for work in goal["work_units"]:
@@ -513,6 +589,7 @@ class GoalStore:
         work_rows = db.execute("SELECT * FROM work WHERE goal_id=? ORDER BY position", (goal_id,)).fetchall()
         works = [self._decode(work["data"]) for work in work_rows]
         try:
+            self._assessment_limit(goal.get("max_assessment_attempts", 1))
             criteria = _strings(goal["acceptance_criteria"], "acceptance_criteria", required=True)
             _require(criteria == goal["acceptance_criteria"])
             _require(_strings(goal["allowed_scope"], "allowed_scope", required=True) == goal["allowed_scope"])
@@ -547,6 +624,17 @@ class GoalStore:
                 _require(work["dependencies"] == ([prior_work["id"]] if prior_work else []))
                 _require(work["source_evidence_refs"] == (prior_work["evidence_refs"] if prior_work else []))
                 _require(type(work["continuation_stopped"]) is bool)
+                limit = work.get("assessment_retry_limit", goal.get("max_assessment_attempts", 1))
+                self._assessment_limit(limit)
+                failures = work.get("assessment_failures", [])
+                _require(isinstance(failures, list) and len(failures) <= limit)
+                _require(len({item["job_id"] for item in failures}) == len(failures))
+                for attempt, failure in enumerate(failures, 1):
+                    _require(failure["attempt"] == attempt and failure["run_id"] == work["run_id"])
+                    _require(failure["code"] in {"invalid_json", "non_object"})
+                    _require(failure["binding_digest"] == self.assessment_binding_digest(goal, work))
+                    _require(failure["evidence_digest"] == failures[0]["evidence_digest"])
+                    _require(isinstance(failure["evidence_digest"], str) and len(failure["evidence_digest"]) == 64)
                 _require(isinstance(work["dependencies"], list) and set(work["dependencies"]) <= work_ids)
                 _require(isinstance(work["accepted_criteria"], list))
                 _require(all(type(index) is int for index in work["accepted_criteria"]))
@@ -595,6 +683,14 @@ class GoalStore:
                 _require(event["goal_id"] == goal_id and event["id"] == event_row["id"])
                 _require(event["kind"] == event_row["kind"] and isinstance(event["payload"], dict))
                 _require(event_row["delivered"] in (0, 1))
+            retry_target = goal.get("assessment_retry_target")
+            if retry_target is not None:
+                _require(goal["status"] == "blocked" and goal["continuation_stopped"] is True)
+                _require(len(active) == 1 and active[0]["status"] == "running")
+                failure = active[0]["assessment_failures"][-1]
+                _require(retry_target == {"work_id": active[0]["id"], **failure})
+                _require(failure["attempt"] < MAX_ASSESSMENT_ATTEMPTS)
+                _require(events[-1]["kind"] == "assessment_response_failed")
         except (AssertionError, KeyError, TypeError, ValueError) as exc:
             raise GoalCorruptState("Goal ledger invariants failed; continuation is disabled.") from exc
         goal["work_units"] = works
