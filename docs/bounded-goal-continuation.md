@@ -107,7 +107,10 @@ synthetic PASS is never substituted for this outstanding product demonstration.
 The background service checks an unfinished workflow transition through the same
 nonblocking workflow lock used by dashboard recovery. A live holder is left
 alone. An abandoned transition is marked interrupted and the Goal is visibly
-blocked; unknown work is never replayed automatically.
+blocked; unknown work is never replayed automatically. This recovery runs even
+when the Goal is stopped or its configuration is unavailable, but only for the
+exact run and input already bound to that Goal. An unrelated newer run is never
+recovered on an old Goal's behalf.
 
 If project configuration or its authorization snapshot can no longer be read,
 an active Goal becomes blocked. Stop/Cancel still accepts the original project
@@ -116,8 +119,16 @@ A successful stop receipt remains successful if the optional session/card
 projection cannot be refreshed (`projection_unavailable: true`). It does not
 terminate a Worker that was already dispatched.
 
-Normal server shutdown stops further scans and waits up to 30 seconds for an
-in-flight Goal tick after closing the HTTP server. A timeout is an explicit
+Normal server shutdown, including CLI/supervisor SIGTERM, stops further scans
+and waits up to 30 seconds for an in-flight Goal tick after closing the HTTP
+server. The supervisor first signals only the web process, allowing its child
+Worker to reach a checkpoint; its web timeout is 35 seconds. The outer normal
+service-stop timeout is 50 seconds, covering web plus two other components.
+Remaining owned Worker descendants are killed after web exits (including a
+drain error), or after the bounded window; the consumed process generation is
+not signaled again. Unhealthy components already selected for automatic restart
+retain the original 5-second forced-recovery window; the longer grace period is
+for normal stopping, not an unresponsive process. A timeout is an explicit
 shutdown error, not a successful drain. Abrupt process loss or an overlong tick
 still requires the existing fail-closed recovery; this is not a cancellation or
 automatic replay mechanism for unknown Worker outcomes.

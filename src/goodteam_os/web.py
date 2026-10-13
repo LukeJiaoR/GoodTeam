@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -8439,7 +8440,23 @@ def serve(
 
         server.service_actions = heartbeat_service_actions
     goal_service_stop = None
+    previous_signals = {}
+    stopping = False
+
+    def request_server_stop(_signum, _frame):
+        nonlocal stopping
+        if stopping:
+            return
+        stopping = True
+        raise SystemExit(0)
+
     try:
+        # The CLI/supervisor web process runs serve on its main thread. A TERM
+        # must unwind through finally rather than kill a claimed Goal tick.
+        if threading.current_thread() is threading.main_thread():
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                previous_signals[signum] = signal.getsignal(signum)
+                signal.signal(signum, request_server_stop)
         # Start only after binding succeeds. Persisted explicit Goal authorization
         # is the sole source of continuation; GET handlers remain projections.
         from goodteam_os.goal_continuation import start_goal_service
@@ -8451,12 +8468,17 @@ def serve(
             ready_file.write_text(ready_token, encoding="utf-8")
         server.serve_forever()
     finally:
+        stopping = True
         if goal_service_stop is not None:
             goal_service_stop.set()
         if ready_file is not None:
             ready_file.unlink(missing_ok=True)
-        close_server = getattr(server, "server_close", None)
-        if close_server is not None:
-            close_server()
-        if goal_service_stop is not None:
-            goal_service_stop.join()
+        try:
+            close_server = getattr(server, "server_close", None)
+            if close_server is not None:
+                close_server()
+            if goal_service_stop is not None:
+                goal_service_stop.join()
+        finally:
+            for signum, previous in previous_signals.items():
+                signal.signal(signum, previous)

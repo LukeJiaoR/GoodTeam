@@ -15,6 +15,7 @@ from typing import Any
 
 from goodteam_os.frontend_assets import resolve_frontend_dist
 from goodteam_os.operator_queue import DurableOperatorQueue
+from goodteam_os.service_timeouts import SERVICE_STOP_TIMEOUT_SECONDS
 
 if os.name == "nt":
     import msvcrt
@@ -171,7 +172,7 @@ def _stop_service_unlocked(*, set_stopped: bool = True) -> dict[str, Any]:
     queue = DurableOperatorQueue(service_state_dir())
     queue.set_desired_state("draining")
     os.kill(pid, signal.SIGTERM)
-    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+    deadline = time.monotonic() + SERVICE_STOP_TIMEOUT_SECONDS
     while time.monotonic() < deadline and _state_process_is_running(pid, identity):
         time.sleep(0.05)
     if _state_process_is_running(pid, identity):
