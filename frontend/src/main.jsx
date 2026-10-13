@@ -9,6 +9,9 @@ import './styles/workspaceSurface.css'
 import './styles/workspacePages.css'
 import './styles/workspaceDocuments.css'
 import { createProductRoutes } from './app/AppRouter.jsx'
+// Load the product design system after routed feature styles so equal-specificity
+// legacy selectors cannot restore a different material language on Work.
+import './styles/studio.css'
 
 const router = createBrowserRouter(createProductRoutes())
 

@@ -92,6 +92,14 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
         )}
       />
 
+      {status === 'ready' && projects.length > 0 ? <section className="studio-project-overview" aria-label={t('product.studio.projectOverview')}>
+        {[
+          ['all', 'allProjects', projects.length],
+          ['attention_required', 'needAttention', projects.filter(item => projectActivity(item) === 'attention_required').length],
+          ['active', 'activeProjects', projects.filter(item => Boolean(item.active_run)).length],
+        ].map(([key, label, count]) => <button type="button" key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}><span>{t(`product.studio.${label}`)}</span><strong>{count}</strong><ArrowRight size={16} aria-hidden="true" /></button>)}
+      </section> : null}
+
       <section className="projects-launcher" aria-labelledby="projects-list-title">
         <header className="projects-launcher__heading">
           <div>

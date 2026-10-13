@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import TaskInputContext from './TaskInputContext';
+import TaskInputContext from './TaskInputContext.jsx';
 import { runApi } from '../runApi';
 import { requestJson } from '../../../lib/api/client';
 

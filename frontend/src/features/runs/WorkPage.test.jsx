@@ -1682,3 +1682,20 @@ test.each([
   expect(mocks.getProjectRun).not.toHaveBeenCalled();
   expect(screen.queryByText('Historical runs are read-only and visually separate from the active run.')).not.toBeInTheDocument();
 });
+
+test('delivery panel can be collapsed and restored without losing the current approval', async () => {
+  const data = managerReviewData();
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  const user = userEvent.setup();
+  renderWorkPage();
+  const panel = document.getElementById('team-panel-outcomes');
+  expect(panel).not.toHaveAttribute('hidden');
+  await user.click(screen.getByRole('button', { name: 'Hide delivery panel' }));
+  expect(panel).toHaveAttribute('hidden');
+  expect(screen.getByRole('button', { name: 'Show delivery panel' })).toHaveAttribute('aria-expanded', 'false');
+  await user.click(screen.getByRole('button', { name: 'Show delivery panel' }));
+  expect(panel).not.toHaveAttribute('hidden');
+  expect(within(panel).getByRole('button', { name: 'Approve and continue' })).toBeVisible();
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+});

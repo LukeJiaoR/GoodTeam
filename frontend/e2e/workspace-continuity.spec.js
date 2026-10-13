@@ -80,7 +80,7 @@ test('running workspace keeps the composer usable on short and narrow screens', 
   await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/work$`));
   await expect(page.getByRole('button', { name: 'Inspect details →', exact: true })).toBeVisible();
   await expect(page.locator('.team-workspace')).not.toHaveClass(/team-workspace--composing/);
-  for (const viewport of [{ width: 1280, height: 720 }, { width: 1024, height: 768 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 1280, height: 720 }, { width: 1024, height: 768 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     const manager = page.locator('.team-pane--manager');
     await manager.scrollIntoViewIfNeeded();
@@ -107,11 +107,31 @@ test('running workspace keeps the composer usable on short and narrow screens', 
       await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
       await expect(navigation).toBeFocused();
       const execution = page.locator('.team-execution-disclosure');
-      const wasOpen = await execution.evaluate(node => node.open);
-      await execution.locator(':scope > summary').click();
-      await expect(execution).toHaveJSProperty('open', !wasOpen);
-      await execution.locator(':scope > summary').click();
-      await expect(execution).toHaveJSProperty('open', wasOpen);
+      for (const open of [true, false]) {
+        if (await execution.evaluate(node => node.open) !== open) {
+          await execution.locator(':scope > summary').click();
+        }
+        await expect(execution).toHaveJSProperty('open', open);
+        const guidance = page.locator('.team-change-context-help');
+        for (const guidanceOpen of [false, true]) {
+          if (await guidance.evaluate(node => node.open) !== guidanceOpen) {
+            await guidance.locator(':scope > summary').click();
+          }
+          await manager.scrollIntoViewIfNeeded();
+          const send = manager.getByRole('button', { name: 'Send', exact: true });
+          // Visibility alone does not detect ancestor clipping. The whole button
+          // must fit its dock and receive pointer input without scrolling the dock.
+          await expect.poll(() => send.evaluate(button => {
+            const box = button.getBoundingClientRect();
+            const dock = button.closest('.team-manager-dock');
+            const bounds = dock.getBoundingClientRect();
+            return box.top >= bounds.top && box.bottom <= bounds.bottom
+              && dock.scrollTop === 0
+              && button.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+          })).toBe(true);
+          await send.click({ trial: true });
+        }
+      }
       await input.focus();
     }
     await expect(input).toHaveAttribute('data-continuity', 'same-composer');

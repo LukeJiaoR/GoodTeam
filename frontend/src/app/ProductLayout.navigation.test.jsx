@@ -71,3 +71,11 @@ test('remembered navigation respects the existing unsaved-review blocker', async
   await user.click(screen.getByRole('button', { name: 'Keep editing' }));
   expect(router.state.location.pathname).toBe('/projects/one/review/dirty');
 });
+
+
+test('workspace breadcrumb identifies the route rather than words in the project key', () => {
+  openRoute('/projects/work-settings-project/knowledge');
+  expect(document.querySelector('.studio-topbar strong')).toHaveTextContent('Knowledge base');
+  expect(screen.getByRole('link', { name: 'Projects', exact: true })).not.toHaveAttribute('aria-current');
+  expect(screen.getByRole('link', { name: 'Knowledge base' })).toHaveAttribute('aria-current', 'page');
+});

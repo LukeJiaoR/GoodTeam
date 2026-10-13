@@ -1,5 +1,5 @@
 import { blockerSummary } from './blockerPresentation';
-import { focusWorkContext } from './currentWorkContext';
+import { focusWorkContext } from './currentWorkContext.js';
 import { useEffect, useRef } from 'react';
 import { Settings } from 'lucide-react';
 import ProductError from '../../../components/ui/ProductError';

@@ -1,6 +1,6 @@
 import Button from '../../../components/ui/Button';
 import StatusBadge from '../../../components/ui/StatusBadge';
-import { currentWorkContext, focusWorkContext } from './currentWorkContext';
+import { currentWorkContext, focusWorkContext } from './currentWorkContext.js';
 import './currentWorkContext.css';
 
 export default function CurrentWorkContext({ projectKey, projectName, title, workspace, freshness, historical, onRefresh, reducedMotion, t }) {

@@ -486,7 +486,9 @@ def test_product_spa_path_contract() -> None:
     assert web.is_product_spa_path("/projects/DEMO/review/prd") is True
     assert web.is_product_spa_path("/projects/DEMO/knowledge") is True
     assert web.is_product_spa_path("/projects/DEMO/team") is True
+    assert web.is_product_spa_path("/projects/DEMO/settings") is True
     assert web.is_product_spa_path("/projects/DEMO/settings/general") is True
+    assert web.is_product_spa_path("/projects/DEMO/settings/general/unknown") is False
     assert web.is_product_spa_path("/api/projects") is False
     assert web.is_product_spa_path("/review-workbench/run-1") is False
     assert web.is_product_spa_path("/assets/index.js") is False
