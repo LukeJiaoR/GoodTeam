@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import Button from './ui/Button';
 import { canConfirmApproval } from '../lib/reviews/approvalConfirmation';
 
@@ -13,6 +13,7 @@ function BoundDecisionActions({ approveDisabled = false, busy = '', error, infor
   const [pending, setPending] = useState('');
   const [failed, setFailed] = useState(false);
   const inFlight = useRef(false);
+  const hintId = useId();
   const disabled = Boolean(busy || pending);
   const canApprove = canConfirmApproval({
     disabled: disabled || approveDisabled || typeof onDecision !== 'function',
@@ -43,7 +44,7 @@ function BoundDecisionActions({ approveDisabled = false, busy = '', error, infor
   };
 
   const handleKeyDown = (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+    if (!event.nativeEvent.isComposing && (event.metaKey || event.ctrlKey) && event.key === 'Enter') {
       event.preventDefault();
       void submit('approved');
     }
@@ -55,8 +56,8 @@ function BoundDecisionActions({ approveDisabled = false, busy = '', error, infor
     setNote((current) => (current ? `${current}；${text}` : text));
   };
 
-  return (
-    <form className="review-decision-panel" onSubmit={(event) => event.preventDefault()}>
+  return (<>
+    <form className="review-decision-panel" aria-busy={disabled} onSubmit={(event) => event.preventDefault()}>
       {informedApproval ? <p>{t('work.informedApproval.explanation')}</p> : (
         <div className="review-decision-snippets">
           {SNIPPET_KEYS.map((key) => {
@@ -71,8 +72,9 @@ function BoundDecisionActions({ approveDisabled = false, busy = '', error, infor
       )}
       <label>
         <span>{t(informedApproval ? 'work.informedApproval.reason' : 'review.decision.rationale')}</span>
-        <textarea rows="3" value={note} disabled={disabled} onChange={(event) => setNote(event.target.value)} onKeyDown={handleKeyDown} />
+        <textarea rows="3" value={note} disabled={disabled} aria-describedby={hintId} onChange={(event) => setNote(event.target.value)} onKeyDown={handleKeyDown} />
       </label>
+      <p id={hintId}>{t('review.decision.keyboardHint')}</p>
       <Button busy={(pending || busy) === 'approved'} disabled={!canApprove} onClick={() => { void submit('approved'); }}>
         {t(informedApproval ? 'work.informedApproval.continue' : 'review.decision.approve')}
         <span className="product-kbd-hint" aria-hidden="true">⌘↵</span>
@@ -87,7 +89,8 @@ function BoundDecisionActions({ approveDisabled = false, busy = '', error, infor
       {error ? <p className="workflow-canvas-error" role="alert">{error.message || String(error)}</p>
         : failed ? <p role="alert">{t('work.informedApproval.failed')}</p> : null}
     </form>
-  );
+    <p role="status">{disabled ? t('review.decision.submitting') : ''}</p>
+  </>);
 }
 
 export default function DecisionActions({ decisionContextKey = '', ...props }) {
