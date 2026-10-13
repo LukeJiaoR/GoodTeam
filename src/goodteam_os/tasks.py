@@ -389,6 +389,9 @@ def build_task_board(tasks: list[dict[str, Any]]) -> dict[str, list[dict[str, An
     board: dict[str, list[dict[str, Any]]] = {column: [] for column in TASK_BOARD_COLUMNS}
     for task in tasks:
         column = TASK_BOARD_STATUS_MAP.get(str(task.get("status", "")))
+        if task.get("goal_id") and task.get("status") == "review" and task.get("observed_execution_status") == "awaiting_approval":
+            # This work has already started and is waiting on its existing Gate.
+            column = "doing"
         if column is None:
             continue
         board[column].append(task)
@@ -423,7 +426,8 @@ def _serialize_task(task: dict[str, Any]) -> dict[str, Any]:
     }
     if task.get("goal_id"):
         for field in ("goal_id", "goal_revision", "work_id", "rationale", "accepted_criteria",
-                      "review_gaps", "assessment_checks", "source_evidence_refs", "continuation_stopped"):
+                      "review_gaps", "assessment_checks", "source_evidence_refs", "continuation_stopped",
+                      "observed_execution_status", "observed_approval"):
             if field in task:
                 payload[field] = task[field]
     return payload

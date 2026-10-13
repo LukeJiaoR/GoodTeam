@@ -77,3 +77,59 @@ test('Goal confirmation and exact one-unit gate remain explicit on desktop and m
   await expect(panel.getByRole('button', { name: 'Approve one more unit' })).toHaveCount(0);
   await testInfo.attach('goal-command-evidence', { body: JSON.stringify(commands, null, 2), contentType: 'application/json' });
 });
+
+// Existing fake-worker preparation and review APIs remain real. Only the Goal
+// projection is supplied here; scheduler classification is verified in backend
+// tests, and no model is invoked by this browser contract.
+test('Goal workflow approval waiting uses the current review panel and stays distinct from blockers', async ({ page, fixture }) => {
+  const { prepareFirstTask, sendTask } = await import('./business-loop-helpers.js');
+  await importProject(page, fixture);
+  await sendTask(page, fixture, 'Implement title search.');
+  const runId = await prepareFirstTask(page, fixture, []);
+  let goal = {
+    id: 'waiting-goal', revision: 3, status: 'active', objective: 'Make search keyboard accessible',
+    max_work_units: 1, acceptance_criteria: ['Search works with keyboard'], allowed_scope: ['Search UI'], gate: null,
+    work_units: [{ id: 'waiting-work', run_id: runId, task: 'Implement keyboard search', status: 'running',
+      observed_execution_status: 'awaiting_approval', observed_approval: 'takeover' }],
+  };
+  await page.route(`**/api/state?project=${encodeURIComponent(fixture.key)}`, async route => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.task_assistant_session = { ...payload.task_assistant_session, goals: [goal] };
+    await route.fulfill({ response, json: payload });
+  });
+  const mutations = [];
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname.startsWith('/api/')) mutations.push(request.url());
+  });
+  await page.reload();
+  const panel = page.getByRole('region', { name: 'Bounded Goal', exact: true });
+  await expect(panel).toContainText('Execution status: Waiting for workflow approval');
+  await expect(panel).not.toContainText('Execution status: Blocked');
+  await expect(panel.getByRole('button', { name: 'Approve one more unit' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Retry this assessment' })).toHaveCount(0);
+  const url = page.url();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await panel.getByRole('button', { name: 'Review workflow approval' }).click();
+    const review = page.getByRole('dialog', { name: 'Review', exact: true });
+    await expect(review).toBeVisible();
+    expect(page.url()).toBe(url);
+    await review.getByRole('button', { name: 'Back to task', exact: true }).click();
+    await expect(review).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: 'Review workflow approval' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  goal = { ...goal, work_units: [{ ...goal.work_units[0], observed_execution_status: 'blocked' }] };
+  await page.reload();
+  await expect(panel).toContainText('Execution status: Blocked');
+  await expect(panel.getByRole('button', { name: 'Review workflow approval' })).toHaveCount(0);
+  for (const status of ['stopped', 'canceled']) {
+    goal = { ...goal, status, work_units: [{ ...goal.work_units[0], observed_execution_status: 'awaiting_approval' }] };
+    await page.reload();
+    await expect(panel).toContainText(status === 'stopped' ? 'Stopped' : 'Canceled');
+    await expect(panel.getByRole('button', { name: 'Review workflow approval' })).toHaveCount(0);
+    await expect(panel.getByRole('button', { name: 'Stop continuation' })).toHaveCount(0);
+  }
+  expect(mutations).toEqual([]);
+});

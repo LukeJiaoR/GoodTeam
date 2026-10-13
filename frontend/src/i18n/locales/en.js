@@ -1,5 +1,8 @@
 export const en = {
   "work.goal.executionStatus": "Execution status: {{status}}",
+  "work.goal.workflowApprovalStatus": "Waiting for workflow approval",
+  "work.goal.workflowApprovalWait": "Execution is waiting at the {{gate}} workflow Gate.",
+  "work.goal.openWorkflowApproval": "Review workflow approval",
   "work.goal.assessment": "Manager assessment",
   "work.goal.assessmentCaution": "These criterion findings and cited quotes are the Manager’s assessment; they have not been independently verified.",
   "work.goal.assessmentStatus.met": "Manager assessed: met",

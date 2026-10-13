@@ -23,6 +23,7 @@ from goodteam_os.goals import GoalStore
 from goodteam_os.state import StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.service_timeouts import GOAL_DRAIN_TIMEOUT_SECONDS
+from goodteam_os.workflow_table import resolve_profile
 
 
 _LOG = logging.getLogger(__name__)
@@ -154,6 +155,8 @@ def handle_goal_action(workspace, project_key, root, request):
 
 def goal_view(workspace, goal):
     """Read actual run facts without changing a Goal dispatch receipt."""
+    from goodteam_os.web import current_approval_gate
+
     result = deepcopy(goal)
     states = StateStore(Path(workspace))
     current = states.read_project_current(goal["project_key"])
@@ -166,14 +169,28 @@ def goal_view(workspace, goal):
             state = archived.get(work["run_id"])
         if state is None:
             continue
+        work["observed_approval"] = ""
         if state.idea != work["task"]:
             work["observed_execution_status"] = "unknown"
         elif state.current_node == "complete":
             work["observed_execution_status"] = "done"
         elif state.current_node == "rejected" or state.next_node == "rejected":
             work["observed_execution_status"] = "canceled"
-        elif state.blockers or state.next_node == "blocked" or state.next_node.startswith("await_"):
+        elif state.blockers or state.next_node == "blocked" or state.pending_transition.get("status") == "interrupted":
             work["observed_execution_status"] = "blocked"
+        elif state.pending_transition.get("status") in {"recording", "executing"}:
+            work["observed_execution_status"] = "in_progress"
+        elif state.next_node.startswith("await_"):
+            gate = current_approval_gate(state)
+            try:
+                supported = gate in resolve_profile(state.load_profile or "greenfield").gate_names()
+            except ValueError:
+                supported = False
+            # Existing workflow facts determine waiting; this does not grant
+            # approval authority. The UI separately binds the current review.
+            work["observed_execution_status"] = "awaiting_approval" if supported else "blocked"
+            if supported:
+                work["observed_approval"] = gate
         else:
             work["observed_execution_status"] = "in_progress"
         work["observed_next_node"] = state.next_node
@@ -187,11 +204,14 @@ def _sync_execution_projection(workspace, goal, tasks):
     cards = tasks.list_tasks()
     for work in view["work_units"]:
         actual = work.get("observed_execution_status")
-        if actual not in {"done", "canceled", "blocked", "in_progress"} or work["status"] not in {"dispatching", "running"}:
+        if actual not in {"done", "canceled", "blocked", "in_progress", "awaiting_approval"} or work["status"] not in {"dispatching", "running"}:
             continue
         card = next((card for card in cards if card.get("goal_id") == goal["id"] and card.get("work_id") == work["id"]), None)
-        if card and (card["status"] != actual or card.get("observed_execution_status") != actual):
-            tasks.update_task(card["id"], status=actual, observed_execution_status=actual)
+        status = "review" if actual == "awaiting_approval" else actual
+        approval = work.get("observed_approval", "")
+        if card and (card["status"] != status or card.get("observed_execution_status") != actual
+                     or card.get("observed_approval", "") != approval):
+            tasks.update_task(card["id"], status=status, observed_execution_status=actual, observed_approval=approval)
     return view
 
 
@@ -286,7 +306,7 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
                     except Exception as exc:
                         goal = _block(store, store.get_goal(goal_id), f"Goal assessment stopped: {exc}")
             store.sync_tasks(goal_id, tasks)
-            return goal
+            return _sync_execution_projection(workspace, goal, tasks)
         # Pending continuation may only claim when the prior workflow is terminal.
         if current and current.current_node not in {"complete", "rejected"} and current.next_node != "rejected":
             goal = _block(store, goal, "Another active workflow owns this project; Goal continuation did not interrupt it.")

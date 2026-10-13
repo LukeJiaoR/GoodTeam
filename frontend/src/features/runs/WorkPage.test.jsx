@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-vi.mock('../reviews/ReviewPage', () => ({ default: ({ selectedReviewId, onClose }) => (
-  <section role="dialog" aria-label="Review document"><p>{selectedReviewId}</p><button onClick={onClose}>Back to task</button></section>
+vi.mock('../reviews/ReviewPage', () => ({ default: ({ selectedReviewId, expectedRunId, onClose }) => (
+  <section role="dialog" aria-label="Review document" data-run-id={expectedRunId}><p>{selectedReviewId}</p><button onClick={onClose}>Back to task</button></section>
 ) }));
 
 vi.mock('@xyflow/react', async () => {
@@ -1721,4 +1721,54 @@ test('shows persisted Goal in Work without mutation and routes its exact gate de
     decision: 'approve', idempotency_key: expect.any(String),
   });
   await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+});
+
+function goalApprovalData() {
+  return projectedWorkData({
+    task_assistant_session: { goals: [{
+      id: 'bounded-approval', revision: 3, objective: 'Complete keyboard navigation', status: 'active',
+      max_work_units: 1, acceptance_criteria: ['Keyboard works'], allowed_scope: ['Search UI'], gate: null,
+      work_units: [{ id: 'work-1', run_id: 'run-active', task: 'Implement keyboard search', status: 'running',
+        observed_execution_status: 'awaiting_approval', observed_approval: 'prd' }],
+    }] },
+    approval_reviews: [{ approval: 'prd', is_actionable: true }],
+  });
+}
+
+test('Goal workflow approval opens the existing run-bound review panel and dismissal never dispatches', async () => {
+  const data = goalApprovalData();
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }] });
+  renderWorkPage('/projects/DEMO/work');
+  const panel = screen.getByRole('region', { name: 'Bounded Goal' });
+  const openReview = within(panel).getByRole('button', { name: 'Review workflow approval' });
+  fireEvent.click(openReview);
+  fireEvent.click(openReview);
+  const dialog = await screen.findByRole('dialog', { name: 'Review document' });
+  expect(dialog).toHaveAttribute('data-run-id', 'run-active');
+  expect(within(dialog).getByText('prd')).toBeInTheDocument();
+  expect(screen.getAllByRole('dialog', { name: 'Review document' })).toHaveLength(1);
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Back to task' }));
+  expect(screen.queryByRole('dialog', { name: 'Review document' })).not.toBeInTheDocument();
+  expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work');
+  expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
+  expect(mocks.decideReview).not.toHaveBeenCalled();
+  expect(mocks.startRun).not.toHaveBeenCalled();
+});
+
+test.each(['stale', 'history', 'unknown-route', 'different-workflow', 'read-only', 'foreign-project', 'no-active-run'])('Goal cannot open the current approval in %s context', async scenario => {
+  const data = goalApprovalData();
+  if (scenario === 'different-workflow') data.state.run_id = 'run-new';
+  if (scenario === 'read-only') data.team_workspace.mission.read_only = true;
+  if (scenario === 'foreign-project') data.team_workspace.mission.project_key = 'ANOTHER';
+  if (scenario === 'no-active-run') data.active_run = false;
+  mocks.useProjectState.mockReturnValue({ data, error: null, refresh: vi.fn(), status: scenario === 'stale' ? 'stale' : 'ready' });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active' }, { run_id: 'run-history', status: 'complete' }] });
+  mocks.getProjectRun.mockResolvedValue({ ...projectedWorkData(), state: { run_id: 'run-history' } });
+  renderWorkPage(scenario === 'history' ? '/projects/DEMO/work/runs/run-history'
+    : scenario === 'unknown-route' ? '/projects/DEMO/work/runs/run-missing' : '/projects/DEMO/work');
+  await waitFor(() => expect(mocks.getProjectRuns).toHaveBeenCalled());
+  expect(screen.queryByRole('button', { name: 'Review workflow approval' })).not.toBeInTheDocument();
+  expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
+  expect(mocks.decideReview).not.toHaveBeenCalled();
 });

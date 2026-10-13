@@ -1258,6 +1258,12 @@ export default function WorkPage() {
         busy={busy || conversation.busy}
         readOnly={isHistorical || contextIsLoading}
         activeRun={Boolean(data.active_run)}
+        currentRunId={!interactionsPaused && !isHistorical && !contextIsLoading
+          && projectedMission?.source === 'workflow' && !projectedMission.read_only
+          && (!projectedMission.project_key || projectedMission.project_key === projectKey)
+          && currentRunId === data?.state?.run_id ? currentRunId : ''}
+        approvalReviews={data.approval_reviews || []}
+        onOpenReview={(approval, boundRunId) => setPanel({ type: 'review', approval, runId: boundRunId })}
         error={conversation.error?.code === 'goal_action_unavailable' ? conversation.error : null}
         onAction={handleAssistantAction}
         t={t}

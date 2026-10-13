@@ -187,3 +187,74 @@ it('does not show retry for arbitrary blocked Goals or exhausted attempts', () =
     work_units: [{ ...goal.work_units[0], id: 'w1' }] }]} onAction={vi.fn()} t={t} />);
   expect(screen.queryByRole('button', { name: 'Retry this assessment' })).not.toBeInTheDocument();
 });
+
+const waitingGoal = {
+  ...goal, status: 'active', gate: null,
+  work_units: [{ ...goal.work_units[0], id: 'waiting-work', status: 'running',
+    observed_execution_status: 'awaiting_approval', observed_approval: 'prd' }],
+};
+const currentApproval = { currentRunId: 'run-bound', approvalReviews: [{ approval: 'prd', is_actionable: true }] };
+
+it('opens the existing approval for the exact current work without dispatching or deciding anything', () => {
+  const onAction = vi.fn();
+  const onOpenReview = vi.fn();
+  render(<GoalContinuationPanel goals={[waitingGoal]} {...currentApproval} onAction={onAction} onOpenReview={onOpenReview} t={t} />);
+  expect(onAction).not.toHaveBeenCalled();
+  expect(onOpenReview).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Review workflow approval' }));
+  expect(onOpenReview).toHaveBeenCalledExactlyOnceWith('prd', 'run-bound');
+  expect(onAction).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: 'Approve one more unit' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry this assessment' })).not.toBeInTheDocument();
+});
+
+it.each([
+  ['historical snapshot', { readOnly: true }],
+  ['different current run', { currentRunId: 'run-new' }],
+  ['no active workflow binding', { currentRunId: '' }],
+  ['different pending Gate', { approvalReviews: [{ approval: 'rfc', is_actionable: true }] }],
+  ['non-actionable Gate', { approvalReviews: [{ approval: 'prd', is_actionable: false }] }],
+  ['stopped Goal', { goals: [{ ...waitingGoal, status: 'stopped' }] }],
+  ['canceled Goal', { goals: [{ ...waitingGoal, status: 'canceled' }] }],
+  ['blocked Goal', { goals: [{ ...waitingGoal, status: 'blocked' }] }],
+  ['blocked execution', { goals: [{ ...waitingGoal, work_units: [{ ...waitingGoal.work_units[0], observed_execution_status: 'blocked' }] }] }],
+  ['unknown execution', { goals: [{ ...waitingGoal, work_units: [{ ...waitingGoal.work_units[0], observed_execution_status: 'unknown' }] }] }],
+  ['unobserved approval', { goals: [{ ...waitingGoal, work_units: [{ ...waitingGoal.work_units[0], observed_approval: '' }] }] }],
+  ['stopped work', { goals: [{ ...waitingGoal, work_units: [{ ...waitingGoal.work_units[0], status: 'stopped' }] }] }],
+])('does not borrow current approval authority for %s', (_, overrides) => {
+  const onAction = vi.fn();
+  const onOpenReview = vi.fn();
+  render(<GoalContinuationPanel goals={[waitingGoal]} {...currentApproval} {...overrides} onAction={onAction} onOpenReview={onOpenReview} t={t} />);
+  expect(screen.queryByRole('button', { name: 'Review workflow approval' })).not.toBeInTheDocument();
+  expect(onAction).not.toHaveBeenCalled();
+  expect(onOpenReview).not.toHaveBeenCalled();
+});
+
+it('uses existing actionable profile Gates without a hard-coded approval list and withdraws stale navigation', () => {
+  const onOpenReview = vi.fn();
+  const profileGoal = { ...waitingGoal, work_units: [{ ...waitingGoal.work_units[0], observed_approval: 'fix_plan' }] };
+  const props = { goals: [profileGoal], currentRunId: 'run-bound', approvalReviews: [{ approval: 'fix_plan', is_actionable: true }], onOpenReview, t };
+  const view = render(<GoalContinuationPanel {...props} busy />);
+  fireEvent.click(screen.getByRole('button', { name: 'Review workflow approval' }));
+  expect(onOpenReview).not.toHaveBeenCalled();
+  view.rerender(<GoalContinuationPanel {...props} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Review workflow approval' }));
+  expect(onOpenReview).toHaveBeenCalledExactlyOnceWith('fix_plan', 'run-bound');
+  view.rerender(<GoalContinuationPanel {...props} approvalReviews={[{ approval: 'fix_plan', is_actionable: false }]} />);
+  expect(screen.queryByRole('button', { name: 'Review workflow approval' })).not.toBeInTheDocument();
+});
+
+it.each(['stopped', 'canceled'])('preserves the exact %s command and blocks duplicate submission while waiting for workflow approval', async status => {
+  let finish;
+  const onAction = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+  const onOpenReview = vi.fn();
+  render(<GoalContinuationPanel goals={[waitingGoal]} {...currentApproval} onAction={onAction} onOpenReview={onOpenReview} t={t} />);
+  const button = screen.getByRole('button', { name: status === 'stopped' ? 'Stop continuation' : 'Cancel Goal' });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  fireEvent.click(screen.getByRole('button', { name: 'Review workflow approval' }));
+  expect(onAction).toHaveBeenCalledExactlyOnceWith({ action: 'stop_goal', goal_id: goal.id,
+    expected_revision: goal.revision, status, idempotency_key: expect.any(String) });
+  expect(onOpenReview).not.toHaveBeenCalled();
+  await act(async () => finish(false));
+});

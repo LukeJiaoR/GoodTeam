@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import Button from '../../../components/ui/Button';
 import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
-import { statusText, tone } from './presentationUtils';
+import { reviewGateName, statusText, tone } from './presentationUtils';
 import './goalContinuation.css';
 
 const TERMINAL = new Set(['complete', 'stopped', 'canceled']);
@@ -63,7 +63,7 @@ function GoalForm({ busy, onAction, onClose, t }) {
   </form>;
 }
 
-function GoalSnapshot({ goal, busy, readOnly, onAction, t }) {
+function GoalSnapshot({ goal, busy, readOnly, currentRunId, approvalReviews, onOpenReview, onAction, t }) {
   const pending = useRef(false);
   const requestKeys = useRef(new Map());
   const [submitting, setSubmitting] = useState('');
@@ -71,7 +71,14 @@ function GoalSnapshot({ goal, busy, readOnly, onAction, t }) {
   const gate = goal.gate;
   const work = (goal.work_units || []).at(-1);
   const executionStatus = work?.observed_execution_status || work?.execution_status;
+  const awaitingWorkflowApproval = executionStatus === 'awaiting_approval';
   const terminal = TERMINAL.has(goal.status);
+  // Observed execution fields describe the work; only the current workflow's
+  // actionable review can offer navigation to the existing approval surface.
+  const canOpenReview = !readOnly && goal.status === 'active' && work?.status === 'running'
+    && work?.observed_execution_status === 'awaiting_approval'
+    && Boolean(currentRunId && work.run_id === currentRunId && work.observed_approval && onOpenReview)
+    && approvalReviews.some(review => review.approval === work.observed_approval && review.is_actionable === true);
   const bindingValid = Boolean(goal.id && Number.isInteger(goal.revision) && goal.revision >= 1);
   const act = async (request) => {
     if (!onAction || busy || readOnly || pending.current || !bindingValid) return;
@@ -104,8 +111,12 @@ function GoalSnapshot({ goal, busy, readOnly, onAction, t }) {
     {work ? <section className="goal-continuation-work" aria-label={t('work.goal.currentWork')}>
       <h3>{t('work.goal.currentWork')}</h3>
       <p>{work.task}</p>
-      {executionStatus ? <p>{t('work.goal.executionStatus', { status: label(executionStatus, t) })}</p>
+      {executionStatus ? <p>{t('work.goal.executionStatus', { status: awaitingWorkflowApproval ? t('work.goal.workflowApprovalStatus') : label(executionStatus, t) })}</p>
         : work.status ? <p>{label(work.status, t)}</p> : null}
+      {awaitingWorkflowApproval && work.observed_approval ? <p>{t('work.goal.workflowApprovalWait', { gate: reviewGateName(work.observed_approval, t) })}</p> : null}
+      {canOpenReview ? <div className="goal-continuation-actions">
+        <Button variant="secondary" disabled={Boolean(busy || submitting)} onClick={() => onOpenReview(work.observed_approval, work.run_id)}>{t('work.goal.openWorkflowApproval')}</Button>
+      </div> : null}
       {work.run_id ? <p className="goal-continuation-meta">{t('work.goal.run', { runId: work.run_id })}</p> : null}
       {work.rationale ? <p>{work.rationale}</p> : null}
       {work.dependencies?.length ? <p className="goal-continuation-meta">{t('work.goal.dependencies', { ids: work.dependencies.join(', ') })}</p> : null}
@@ -159,7 +170,7 @@ function GoalSnapshot({ goal, busy, readOnly, onAction, t }) {
   </article>;
 }
 
-export default function GoalContinuationPanel({ goals = [], busy, readOnly = false, activeRun = false, error, onAction, t }) {
+export default function GoalContinuationPanel({ goals = [], busy, readOnly = false, activeRun = false, currentRunId = '', approvalReviews = [], onOpenReview, error, onAction, t }) {
   const [creating, setCreating] = useState(false);
   const latest = goals.at(-1);
   const activeGoal = goals.some(goal => !TERMINAL.has(goal.status));
@@ -168,7 +179,7 @@ export default function GoalContinuationPanel({ goals = [], busy, readOnly = fal
       {!readOnly && !creating && !activeGoal ? <Button variant="secondary" disabled={Boolean(busy || activeRun || !onAction)} onClick={() => setCreating(true)}>{t('work.goal.new')}</Button> : null}
     </header>
     {activeRun && !activeGoal && !readOnly ? <p>{t('work.goal.waitForRun')}</p> : null}
-    {latest ? <GoalSnapshot key={latest.id} goal={latest} busy={busy} readOnly={readOnly} onAction={onAction} t={t} /> : <p>{t('work.goal.optional')}</p>}
+    {latest ? <GoalSnapshot key={latest.id} goal={latest} busy={busy} readOnly={readOnly} currentRunId={currentRunId} approvalReviews={approvalReviews} onOpenReview={onOpenReview} onAction={onAction} t={t} /> : <p>{t('work.goal.optional')}</p>}
     {creating && !readOnly && !activeGoal ? <GoalForm busy={busy || activeRun} onAction={onAction} onClose={() => setCreating(false)} t={t} /> : null}
     {error ? <ProductError error={error} t={t} /> : null}
   </section>;
