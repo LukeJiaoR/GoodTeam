@@ -1,0 +1,26 @@
+.goal-continuation { padding: 16px 20px; margin-bottom: 16px; border: 1px solid var(--product-border); border-radius: 14px; background: var(--product-surface); font-size: 13px; line-height: 1.6; min-width: 0; }
+.goal-continuation-heading, .goal-continuation-snapshot > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.goal-continuation h2, .goal-continuation h3, .goal-continuation p { margin: 0; }
+.goal-continuation h2 { font-size: 14px; font-weight: 650; }
+.goal-continuation h3 { font-size: 13px; font-weight: 600; }
+.goal-continuation summary { cursor: pointer; }
+.goal-continuation summary:focus-visible { outline: 2px solid var(--product-focus); outline-offset: 3px; }
+.goal-continuation-snapshot, .goal-continuation-work, .goal-continuation-gate { display: grid; gap: 8px; padding-top: 12px; overflow-wrap: anywhere; }
+.goal-continuation-meta { color: var(--product-text-muted); font-size: 12px; }
+.goal-continuation-gate { border-top: 1px solid var(--product-border); margin-top: 4px; }
+.goal-continuation-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.goal-continuation-actions > p { width: 100%; color: var(--product-text-muted); font-size: 12px; }
+.goal-continuation-form fieldset { border: 0; padding: 16px 0 0; margin: 0; min-width: 0; display: grid; gap: 12px; }
+.goal-continuation-form legend { padding-top: 16px; font-weight: 650; }
+.goal-continuation-form label { display: grid; gap: 6px; }
+.goal-continuation-form textarea, .goal-continuation-form input[type="number"] { border: 1px solid var(--product-border); border-radius: 8px; padding: 8px; font: inherit; color: var(--product-text); background: var(--product-surface); width: 100%; box-sizing: border-box; }
+.goal-continuation-form textarea { resize: vertical; }
+.goal-continuation-form input[type="number"] { max-width: 100px; }
+.goal-continuation-form .goal-continuation-checkbox { display: flex; align-items: flex-start; gap: 10px; }
+.goal-continuation-checkbox input { margin-top: 5px; flex: 0 0 auto; }
+.goal-continuation .product-button { white-space: normal; }
+@media (max-width: 600px) { .goal-continuation { padding: 14px; } }
+
+.goal-continuation-assessment { display: grid; gap: 8px; padding-top: 12px; }
+.goal-continuation-assessment ol { display: grid; gap: 12px; padding-left: 20px; }
+.goal-continuation-assessment blockquote { margin: 6px 0; padding-left: 12px; border-left: 2px solid var(--product-border); white-space: pre-wrap; overflow-wrap: anywhere; }

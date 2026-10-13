@@ -10,6 +10,7 @@ from goodteam_os import assistant_requests
 from goodteam_os.assistant_drafts import archive_terminal_proposal, is_conversation_only, stage_draft
 from goodteam_os.assistant_intake import intake_source_messages, mark_draft_needs_clarification, resolve_intake_sources
 from goodteam_os.assistant_runtime import runtime_view
+from goodteam_os.goals import GoalStore
 from goodteam_os.manager_execution import run_manager_chat_turn
 from goodteam_os.project_import import confirm_project_mode, import_project
 from goodteam_os.project_readiness import assess_project_mode
@@ -83,9 +84,16 @@ class TaskAssistantService:
         self.manager_turn = manager_turn
 
     def session(self, project_key: str, root: Path) -> dict[str, object]:
+        from goodteam_os.goal_continuation import goal_view
+
         store = TaskAssistantSessionStore(self.workspace, project_key)
         assistant_requests.recover_interrupted(store)
         session = store.read()
+        # Goal reads only project persisted snapshots; viewing Work never advances them.
+        goals = (
+            [goal_view(self.workspace, goal) for goal in GoalStore(self.workspace, project_key).list_goals()]
+            if (self.workspace / "state" / "goals.sqlite3").is_file() else []
+        )
         if not session["timeline"]:
             opening = initial_task_assistant_session(project_key, assess_project_mode(root))
             session.update({key: opening[key] for key in ("timeline", "status", "project_mode_hint", "suggestions")})
@@ -95,7 +103,7 @@ class TaskAssistantService:
         except ValueError as exc:
             if not str(exc).startswith("No readiness found for project:"):
                 raise
-            return self._with_team_decision_status(session, project_key)
+            return self._with_team_decision_status({**session, "goals": goals}, project_key)
         session = self._append_completed_understanding(
             store,
             session,
@@ -104,6 +112,7 @@ class TaskAssistantService:
             root,
         )
         session["runtime"] = runtime_view(self.project_config, session)
+        session["goals"] = goals
         return self._with_team_decision_status(self._with_readiness_attention(session, readiness), project_key)
 
     def _with_team_decision_status(self, session, project_key):

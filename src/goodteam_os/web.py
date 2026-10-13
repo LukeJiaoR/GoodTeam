@@ -6088,6 +6088,17 @@ def handle_project_api_post(
         key = _decode_project_api_key(task_assistant_action_match.group(1))
         key, target, root = _project_target_and_root(workspace, key)
         action = str(request.get("action", ""))
+        if action in {"create_goal", "decide_goal_gate", "stop_goal"}:
+            from goodteam_os.goal_continuation import handle_goal_action
+
+            try:
+                result = handle_goal_action(workspace, key, root, request)
+                result["task_assistant_session"] = TaskAssistantService(
+                    workspace, project_config=_project_config_for_key(workspace, key),
+                ).session(key, root)
+                return 200, result
+            except ValueError as exc:
+                raise ProjectApiError("goal_action_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
         if action in QUEUE_ACTIONS:
             service = TaskAssistantService(workspace, project_config=_project_config_for_key(workspace, key))
             try:
@@ -8407,13 +8418,21 @@ def serve(
                 parent_service_actions()
 
         server.service_actions = heartbeat_service_actions
+    goal_service_stop = None
     try:
+        # Start only after binding succeeds. Persisted explicit Goal authorization
+        # is the sole source of continuation; GET handlers remain projections.
+        from goodteam_os.goal_continuation import start_goal_service
+
+        goal_service_stop = start_goal_service(workspace)
         if heartbeat_callback is not None:
             heartbeat_callback()
         if ready_file is not None:
             ready_file.write_text(ready_token, encoding="utf-8")
         server.serve_forever()
     finally:
+        if goal_service_stop is not None:
+            goal_service_stop.set()
         if ready_file is not None:
             ready_file.unlink(missing_ok=True)
         close_server = getattr(server, "server_close", None)

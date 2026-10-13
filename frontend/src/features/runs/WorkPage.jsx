@@ -16,6 +16,7 @@ import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 import CurrentWorkContext from './workspace/CurrentWorkContext.jsx';
+import GoalContinuationPanel from './workspace/GoalContinuationPanel.jsx';
 import useProjectConversation from './useProjectConversation';
 import TaskNavigation from './workspace/TaskNavigation';
 import TaskInputContext from './workspace/TaskInputContext.jsx';
@@ -1251,6 +1252,16 @@ export default function WorkPage() {
         <Button variant="secondary" onClick={() => { void handleRefreshContext(); }}>{t('work.retry.refresh')}</Button>
       </section> : null}
       <fieldset className="work-interaction-scope" disabled={interactionsPaused}>
+      <GoalContinuationPanel
+        key={projectKey}
+        goals={data.task_assistant_session?.goals || []}
+        busy={busy || conversation.busy}
+        readOnly={isHistorical || contextIsLoading}
+        activeRun={Boolean(data.active_run)}
+        error={conversation.error?.code === 'goal_action_unavailable' ? conversation.error : null}
+        onAction={handleAssistantAction}
+        t={t}
+      />
       {hasProjectedWorkspace ? (
         <>
           {isHistorical ? <HistoricalRunSummary language={language} detail={historicalDetail} summary={selectedSummary} projectKey={projectKey} t={t} /> : null}

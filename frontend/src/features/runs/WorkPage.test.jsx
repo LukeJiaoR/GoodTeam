@@ -1699,3 +1699,26 @@ test('delivery panel can be collapsed and restored without losing the current ap
   expect(within(panel).getByRole('button', { name: 'Approve and continue' })).toBeVisible();
   expect(mocks.decideReview).not.toHaveBeenCalled();
 });
+
+test('shows persisted Goal in Work without mutation and routes its exact gate decision', async () => {
+  const refresh = vi.fn().mockResolvedValue({});
+  const goal = { id: 'bounded-1', revision: 8, objective: 'Complete keyboard navigation', status: 'awaiting_approval',
+    max_work_units: 1, acceptance_criteria: ['All controls are keyboard accessible'], allowed_scope: ['Search UI'], work_units: [],
+    gate: { id: 'budget-1', kind: 'budget', status: 'pending', revision: 8, proposed_max_work_units: 2,
+      rationale: 'A regression needs one more bounded unit', criterion_indices: [0], evidence_refs: [] } };
+  mocks.useProjectState.mockReturnValue({ data: projectedWorkData({
+    task_assistant_session: { goals: [goal] },
+  }), refresh, status: 'ready', error: null });
+  mocks.getProjectRuns.mockResolvedValue({ runs: [{ run_id: 'run-active', status: 'active', title: 'Current run' }] });
+  mocks.taskAssistantAction.mockResolvedValue({ goal });
+  renderWorkPage('/projects/DEMO/work');
+  const panel = screen.getByRole('region', { name: 'Bounded Goal' });
+  expect(within(panel).getByText('Complete keyboard navigation')).toBeInTheDocument();
+  expect(mocks.taskAssistantAction).not.toHaveBeenCalled();
+  await userEvent.click(within(panel).getByRole('button', { name: 'Approve one more unit' }));
+  expect(mocks.taskAssistantAction).toHaveBeenCalledExactlyOnceWith('DEMO', {
+    action: 'decide_goal_gate', goal_id: 'bounded-1', gate_id: 'budget-1', expected_revision: 8,
+    decision: 'approve', idempotency_key: expect.any(String),
+  });
+  await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+});

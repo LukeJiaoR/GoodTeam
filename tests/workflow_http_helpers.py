@@ -27,7 +27,8 @@ def wait_until(predicate):
 
 
 class RecoveryServer:
-    def __init__(self, root):
+    def __init__(self, root, *, fixture="workflow_recovery_server.py"):
+        self.fixture = fixture
         self.root = root
         self.control = root / f"server-{uuid4().hex}"
         self.control.mkdir(parents=True)
@@ -41,7 +42,7 @@ class RecoveryServer:
         self.control.joinpath("address.json").unlink(missing_ok=True)
         self.log = (self.control / "server.log").open("ab")
         self.process = subprocess.Popen(
-            [sys.executable, str(REPOSITORY / "tests/fixtures/workflow_recovery_server.py"),
+            [sys.executable, str(REPOSITORY / "tests/fixtures" / self.fixture),
              str(self.root), str(self.control)],
             cwd=REPOSITORY, stdout=self.log, stderr=subprocess.STDOUT,
             env={**os.environ, "PYTHONPATH": str(REPOSITORY / "src"),
