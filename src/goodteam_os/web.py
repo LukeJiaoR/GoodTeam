@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -6086,8 +6087,28 @@ def handle_project_api_post(
     )
     if task_assistant_action_match:
         key = _decode_project_api_key(task_assistant_action_match.group(1))
-        key, target, root = _project_target_and_root(workspace, key)
         action = str(request.get("action", ""))
+        if action == "stop_goal":
+            from goodteam_os.goal_continuation import stop_goal_action
+
+            try:
+                result = stop_goal_action(workspace, key, request)
+            except ValueError as exc:
+                raise ProjectApiError("goal_action_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
+            # Stop is already durable. Projection failure cannot undo it or
+            # falsely report that revocation failed. Outbox retains card sync.
+            try:
+                key, target, root = _project_target_and_root(workspace, key)
+                from goodteam_os.goals import GoalStore
+
+                GoalStore(workspace, key).sync_tasks(result["goal"]["id"], LocalTaskStore(root, key))
+                result["task_assistant_session"] = TaskAssistantService(
+                    workspace, project_config=_project_config_for_key(workspace, key),
+                ).session(key, root)
+            except Exception:
+                result["projection_unavailable"] = True
+            return 200, result
+        key, target, root = _project_target_and_root(workspace, key)
         if action in {"create_goal", "decide_goal_gate", "stop_goal"}:
             from goodteam_os.goal_continuation import handle_goal_action
 
@@ -8419,7 +8440,23 @@ def serve(
 
         server.service_actions = heartbeat_service_actions
     goal_service_stop = None
+    previous_signals = {}
+    stopping = False
+
+    def request_server_stop(_signum, _frame):
+        nonlocal stopping
+        if stopping:
+            return
+        stopping = True
+        raise SystemExit(0)
+
     try:
+        # The CLI/supervisor web process runs serve on its main thread. A TERM
+        # must unwind through finally rather than kill a claimed Goal tick.
+        if threading.current_thread() is threading.main_thread():
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                previous_signals[signum] = signal.getsignal(signum)
+                signal.signal(signum, request_server_stop)
         # Start only after binding succeeds. Persisted explicit Goal authorization
         # is the sole source of continuation; GET handlers remain projections.
         from goodteam_os.goal_continuation import start_goal_service
@@ -8431,10 +8468,17 @@ def serve(
             ready_file.write_text(ready_token, encoding="utf-8")
         server.serve_forever()
     finally:
+        stopping = True
         if goal_service_stop is not None:
             goal_service_stop.set()
         if ready_file is not None:
             ready_file.unlink(missing_ok=True)
-        close_server = getattr(server, "server_close", None)
-        if close_server is not None:
-            close_server()
+        try:
+            close_server = getattr(server, "server_close", None)
+            if close_server is not None:
+                close_server()
+            if goal_service_stop is not None:
+                goal_service_stop.join()
+        finally:
+            for signum, previous in previous_signals.items():
+                signal.signal(signum, previous)

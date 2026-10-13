@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from goodteam_os.operator_queue import DurableOperatorQueue
+from goodteam_os.service_timeouts import COMPONENT_STOP_TIMEOUT_SECONDS, WEB_STOP_TIMEOUT_SECONDS
 
 
 HEARTBEAT_SECONDS = 0.5
@@ -575,20 +576,56 @@ def _wait_for_component(component: Component) -> None:
 
 def _stop_component(component: Component) -> None:
     process = component.process
-    if process is None or process.poll() is not None:
+    if process is None:
         return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        return
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
+
+    def kill_owned_group():
+        # _start_component creates this process as its session/group leader.
+        # Its descendants retain that group after the leader exits, including
+        # when web's bounded drain raises before our outer wait times out.
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
             pass
+        except PermissionError:
+            return
+        if component.name == "web":
+            # Consume ownership once. A later stop must not signal a recycled
+            # numeric group ID after this generation has been cleaned up.
+            component.process = None
+
+    if process.poll() is not None:
+        if component.name == "web":
+            kill_owned_group()
+        return
+    try:
+        if component.name == "web":
+            # Let web checkpoint its in-flight Goal/Worker before killing any
+            # child process. Group-wide TERM would preempt the drain itself.
+            os.kill(process.pid, signal.SIGTERM)
+        else:
+            os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        if component.name == "web":
+            kill_owned_group()
+        return
+    except PermissionError:
+        return
+    try:
+        # A healthy explicit stop gets the Goal drain window. An unhealthy
+        # component already selected for restart retains bounded fault recovery;
+        # a SIGSTOPed web cannot run its signal handler or reach a checkpoint.
+        timeout = (WEB_STOP_TIMEOUT_SECONDS if component.name == "web" and component.status != "restarting"
+                   else COMPONENT_STOP_TIMEOUT_SECONDS)
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_owned_group()
         process.wait()
+    else:
+        if component.name == "web":
+            # The leader's exit is not proof that every Worker has exited.
+            # Reap remaining owned descendants before stop/restart returns.
+            kill_owned_group()
 
 
 def _component_exit_error(component: Component) -> str:

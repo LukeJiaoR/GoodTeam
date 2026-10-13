@@ -20,6 +20,7 @@ from goodteam_os.goal_assessment import assess_goal, run_evidence
 from goodteam_os.goals import GoalStore
 from goodteam_os.state import StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
+from goodteam_os.service_timeouts import GOAL_DRAIN_TIMEOUT_SECONDS
 
 
 _LOG = logging.getLogger(__name__)
@@ -61,6 +62,19 @@ def authority_snapshot(workspace, project_key, config, root):
             "team_sha256": hashlib.sha256(json.dumps(team, sort_keys=True).encode()).hexdigest(),
             "model_catalogs": {"workflow": catalog(workflow_catalog), "manager": catalog(manager_catalog)},
             "billing_acknowledged": True}
+
+
+def stop_goal_action(workspace, project_key, request):
+    """Revoke continuation from its ledger even if project configuration is lost."""
+    command = request.get("idempotency_key")
+    if not isinstance(command, str) or not command.strip() or len(command) > 256:
+        raise ValueError("A stable Goal command identity is required.")
+    with goal_guard(workspace, project_key):
+        goal = GoalStore(workspace, project_key).stop_goal(
+            request.get("goal_id"), expected_revision=request.get("expected_revision"),
+            idempotency_key=command, status=request.get("status", "stopped"),
+            reason="User stopped automatic continuation; an already started run keeps its existing controls.")
+        return {"goal": goal}
 
 
 def handle_goal_action(workspace, project_key, root, request):
@@ -171,23 +185,39 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
     with goal_guard(workspace, project_key):
         store = GoalStore(workspace, project_key)
         goal = store.get_goal(goal_id)
-        key, target, root = _project_target_and_root(workspace, project_key)
+        current = StateStore(workspace).read_project_current(project_key)
+        work = goal.get("active_work")
+        # Recovery is a workflow fact, independent of future Goal authority or
+        # configuration availability. Never touch an unrelated/new project run.
+        if (work and current and current.run_id == work["run_id"] and current.idea == work["task"]
+                and current.pending_transition.get("status") in {"recording", "executing"}):
+            from goodteam_os.workflow_mutations import recover_transition
+
+            current = recover_transition(workspace, project_key)
+        try:
+            key, target, root = _project_target_and_root(workspace, project_key)
+            config = _project_config_for_key(workspace, key)
+            authority = authority_snapshot(workspace, key, config, root)
+        except Exception:
+            # No target filesystem or Worker action is safe without resolving
+            # the original configuration. The workspace ledger remains usable.
+            if goal["status"] == "active":
+                return _block(store, goal, "Project configuration or authorization snapshot is unavailable. Automatic continuation stopped.")
+            return goal
         tasks = LocalTaskStore(root, key)
         store.sync_tasks(goal_id, tasks)
         if goal["status"] != "active":
             return _sync_execution_projection(workspace, goal, tasks)
-        config = _project_config_for_key(workspace, key)
-        if goal.get("authority_snapshot") != authority_snapshot(workspace, key, config, root):
+        if goal.get("authority_snapshot") != authority:
             goal = _block(store, goal, "Project, Team or runtime configuration changed since Goal confirmation. Reconfirm a new Goal.")
             store.sync_tasks(goal_id, tasks)
             return goal
-        current = StateStore(workspace).read_project_current(key)
         # A workflow can publish its final node before its approval transaction
         # finishes. Wait for that existing authority boundary; do not assess or
         # claim a successor in the middle of an in-flight decision.
-        if current and current.pending_transition.get("status") in {"recording", "executing"}:
+        if (work and current and current.run_id == work["run_id"] and current.idea == work["task"]
+                and current.pending_transition.get("status") in {"recording", "executing"}):
             return goal
-        work = goal.get("active_work")
         if work and work["status"] in {"dispatching", "running"}:
             if current is None or current.run_id != work["run_id"]:
                 goal = _block(store, goal, "Goal dispatch ownership cannot be proven from the current workflow. Automatic replay is blocked.")
@@ -250,10 +280,21 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
         return goal
 
 
+class GoalServiceStop(threading.Event):
+    """Stop scanning, then explicitly drain the current bounded tick."""
+
+    thread: threading.Thread
+
+    def join(self, timeout=GOAL_DRAIN_TIMEOUT_SECONDS):
+        self.thread.join(timeout)
+        if self.thread.is_alive():
+            raise TimeoutError("Goal continuation did not reach a shutdown checkpoint within 30 seconds; inspect the persisted run before restarting.")
+
+
 def start_goal_service(workspace):
     """Resume only explicitly authorized Goals; one bounded tick per scan."""
     workspace = Path(workspace)
-    stop = threading.Event()
+    stop = GoalServiceStop()
 
     def run():
         while not stop.wait(1):
@@ -272,5 +313,6 @@ def start_goal_service(workspace):
                         _LOG.exception("Goal continuation stopped before dispatch")
             except Exception:
                 _LOG.exception("Goal continuation ledger unavailable; no work dispatched")
-    threading.Thread(target=run, name="goodteam-goal-continuation", daemon=True).start()
+    stop.thread = threading.Thread(target=run, name="goodteam-goal-continuation", daemon=True)
+    stop.thread.start()
     return stop
