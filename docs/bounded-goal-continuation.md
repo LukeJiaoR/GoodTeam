@@ -132,3 +132,32 @@ for normal stopping, not an unresponsive process. A timeout is an explicit
 shutdown error, not a successful drain. Abrupt process loss or an overlong tick
 still requires the existing fail-closed recovery; this is not a cancellation or
 automatic replay mechanism for unknown Worker outcomes.
+
+### Bounded reassessment of a completed run
+
+New Goal confirmation can explicitly authorize 1–3 Manager assessments per
+completed run, including the initial assessment. This limits assessment attempts,
+not money or tokens. Historical Goals without this field retain one attempt.
+
+Only JSON parse failure or a non-object JSON response from a durably completed,
+read-only assessment Worker is eligible. Scope/citation/criterion validation,
+unknown execution, unavailable evidence, policy gates, configuration/catalog
+changes and stopped Goals are never automatically reopened. Each physical
+assessment has a distinct persistent idempotency identity; completed malformed
+responses are recorded before the next attempt. The failure receipt binds the
+run, evidence digest, original Goal/work inputs and authority snapshot.
+
+When an eligible failure exhausts its allowance below the hard limit of three,
+Work offers explicit approval for exactly one extra read-only assessment. It
+retains the same Goal and completed run and checks current revision, unchanged
+inputs/configuration/catalog/evidence and durable Worker completion again. It
+does not rerun the workflow or broaden scope. A later nonrecoverable failure
+removes this retry eligibility. Unknown/in-flight attempts are not replayed.
+
+The recovery tests use synthetic local responses and deliberately seeded completed
+runs. They prove control-plane and HTTP behavior, not real-model output quality
+or the overall #439 product acceptance criteria.
+
+Skill-bound Manager attempts resolve their canonical producer identity and immutable
+original request; legacy attempts retain their original identity. Current Skill
+runtime unavailability still blocks assessment and cannot be bypassed by retry.

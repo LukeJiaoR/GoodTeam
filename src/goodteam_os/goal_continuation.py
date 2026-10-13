@@ -16,7 +16,9 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
-from goodteam_os.goal_assessment import assess_goal, run_evidence
+from goodteam_os.goal_assessment import (
+    CompletedAssessmentProtocolError, assess_goal, evidence_digest, run_evidence, verify_completed_assessment,
+)
 from goodteam_os.goals import GoalStore
 from goodteam_os.state import StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
@@ -96,7 +98,8 @@ def handle_goal_action(workspace, project_key, root, request):
                 raise ValueError("Confirm the exact Goal, automatic continuation and configured provider charges first.")
             replay = store.replay_goal_creation(idempotency_key=command, objective=request.get("objective"),
                 acceptance_criteria=request.get("acceptance_criteria"), allowed_scope=request.get("allowed_scope"),
-                max_work_units=request.get("max_work_units"), confirmed=True)
+                max_work_units=request.get("max_work_units"), confirmed=True,
+                max_assessment_attempts=request.get("max_assessment_attempts"))
             if replay is not None:
                 store.sync_tasks(replay["id"], LocalTaskStore(root, project_key))
                 return {"goal": replay}
@@ -113,11 +116,32 @@ def handle_goal_action(workspace, project_key, root, request):
                 allowed_scope=request.get("allowed_scope"), max_work_units=request.get("max_work_units"),
                 confirmed=True, idempotency_key=command,
                 authority_snapshot=authority_snapshot(workspace, project_key, config, root),
+                max_assessment_attempts=request.get("max_assessment_attempts"),
             )
         elif action == "decide_goal_gate":
             goal = store.decide_gate(request.get("goal_id"), gate_id=request.get("gate_id"),
                                      decision=request.get("decision"), expected_revision=request.get("expected_revision"),
                                      idempotency_key=command)
+        elif action == "retry_goal_assessment":
+            if request.get("confirmed") is not True:
+                raise ValueError("Confirm the exact assessment retry and its potential provider charge.")
+            def validate_retry(goal, work, failure):
+                config = _project_config_for_key(workspace, project_key)
+                if goal.get("authority_snapshot") != authority_snapshot(workspace, project_key, config, root):
+                    raise ValueError("Goal configuration or model catalog changed; retry is blocked.")
+                current = StateStore(workspace).read_project_current(project_key)
+                if (not current or current.run_id != work["run_id"] or current.idea != work["task"]
+                        or current.current_node != "complete"
+                        or current.pending_transition.get("status") in {"recording", "executing", "interrupted"}):
+                    raise ValueError("The same completed workflow cannot be proven; retry is blocked.")
+                evidence = run_evidence(workspace, current)
+                if evidence_digest(evidence) != failure["evidence_digest"]:
+                    raise ValueError("The original assessment evidence changed; retry is blocked.")
+                verify_completed_assessment(root, goal, work, failure["attempt"], failure["job_id"], evidence)
+            goal = store.retry_assessment(request.get("goal_id"), work_id=request.get("work_id"),
+                run_id=request.get("run_id"), evidence_digest=request.get("evidence_digest"),
+                failed_job_id=request.get("failed_job_id"), expected_revision=request.get("expected_revision"),
+                idempotency_key=command, validate=validate_retry)
         elif action == "stop_goal":
             goal = store.stop_goal(request.get("goal_id"), expected_revision=request.get("expected_revision"),
                                    idempotency_key=command, status=request.get("status", "stopped"),
@@ -234,14 +258,31 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
                 if current.current_node == "complete":
                     try:
                         evidence = run_evidence(workspace, current)
+                        failures = work.get("assessment_failures", [])
+                        digest = evidence_digest(evidence)
+                        if failures and digest != failures[0]["evidence_digest"]:
+                            raise ValueError("The original assessment evidence changed; retry is blocked.")
+                        attempt = len(failures) + 1
+                        if attempt > work.get("assessment_retry_limit", goal.get("max_assessment_attempts", 1)):
+                            raise ValueError("Assessment retry allowance exhausted.")
+                        if failures:
+                            verify_completed_assessment(root, goal, work, failures[-1]["attempt"], failures[-1]["job_id"], evidence)
                         assessment = assessor(workspace=workspace, project_config=config, project_root=root,
-                                              goal=goal, work=work, state=current, evidence=evidence)
+                                              goal=goal, work=work, state=current, evidence=evidence, attempt=attempt)
                         # Only the validated assessment adapter returns criterion indices and refs;
                         # every ref is rechecked here against the current immutable evidence packet.
                         if not assessment.get("evidence_refs") or not set(assessment["evidence_refs"]).issubset(evidence):
                             raise ValueError("Goal assessment returned evidence outside the bound completed run.")
                         goal = store.complete_work(goal_id, expected_revision=goal["revision"],
                             idempotency_key=f"complete:{goal_id}:{work['id']}", work_id=work["id"], **assessment)
+                    except CompletedAssessmentProtocolError as exc:
+                        try:
+                            verify_completed_assessment(root, goal, work, attempt, exc.job_id, evidence)
+                            goal = store.record_assessment_failure(goal_id, work_id=work["id"], job_id=exc.job_id,
+                                code=exc.code, evidence_digest=digest, expected_revision=goal["revision"],
+                                idempotency_key=f"assessment-failure:{goal_id}:{work['id']}:{attempt}")
+                        except Exception as proof_error:
+                            goal = _block(store, store.get_goal(goal_id), f"Assessment retry could not be admitted: {proof_error}")
                     except Exception as exc:
                         goal = _block(store, store.get_goal(goal_id), f"Goal assessment stopped: {exc}")
             store.sync_tasks(goal_id, tasks)

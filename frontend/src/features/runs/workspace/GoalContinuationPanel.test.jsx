@@ -17,7 +17,7 @@ function fillGoal() {
   fireEvent.change(screen.getByRole('textbox', { name: 'Objective' }), { target: { value: ' Make search usable ' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Acceptance criteria (one per line)' }), { target: { value: ' Search works with keyboard\n\nResults announce updates ' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Allowed scope and constraints (one per line)' }), { target: { value: ' Search screen only\nNo new dependencies ' } });
-  fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '2' } });
+  fireEvent.change(screen.getByRole('spinbutton', { name: 'Maximum work units (1–10)' }), { target: { value: '2' } });
 }
 
 describe('bounded Goal controls', () => {
@@ -49,7 +49,7 @@ describe('bounded Goal controls', () => {
     await waitFor(() => expect(onAction).toHaveBeenCalledExactlyOnceWith({
       action: 'create_goal', objective: 'Make search usable',
       acceptance_criteria: ['Search works with keyboard', 'Results announce updates'],
-      allowed_scope: ['Search screen only', 'No new dependencies'], max_work_units: 2,
+      allowed_scope: ['Search screen only', 'No new dependencies'], max_work_units: 2, max_assessment_attempts: 3,
       confirmed: true, billing_acknowledged: true, idempotency_key: expect.any(String),
     }));
     await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Objective' })).not.toBeInTheDocument());
@@ -62,10 +62,10 @@ describe('bounded Goal controls', () => {
     fillGoal();
     fireEvent.click(screen.getByRole('checkbox'));
     for (const value of ['0', '11', '1.5', '']) {
-      fireEvent.change(screen.getByRole('spinbutton'), { target: { value } });
+      fireEvent.change(screen.getByRole('spinbutton', { name: 'Maximum work units (1–10)' }), { target: { value } });
       expect(screen.getByRole('button', { name: 'Confirm and start Goal' })).toBeDisabled();
     }
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '1' } });
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Maximum work units (1–10)' }), { target: { value: '1' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Allowed scope and constraints (one per line)' }), { target: { value: ' \n ' } });
     expect(screen.getByRole('button', { name: 'Confirm and start Goal' })).toBeDisabled();
     expect(onAction).not.toHaveBeenCalled();
@@ -158,4 +158,32 @@ describe('bounded Goal controls', () => {
     expect(screen.queryByText('Running')).not.toBeInTheDocument();
   });
 
+});
+
+
+it('requires specific consent and binds a completed assessment retry', async () => {
+  const onAction = vi.fn().mockResolvedValue({});
+  const retry = { work_id: 'w1', run_id: 'run-bound', attempt: 1, job_id: 'job-failed', evidence_digest: 'abc' };
+  const blocked = { ...goal, status: 'blocked', gate: null, assessment_retry_target: retry,
+    work_units: [{ ...goal.work_units[0], id: 'w1', status: 'running' }] };
+  render(<GoalContinuationPanel goals={[blocked]} onAction={onAction} t={t} />);
+  const button = screen.getByRole('button', { name: 'Retry this assessment' });
+  expect(button).toBeDisabled();
+  expect(onAction).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('checkbox', { name: /I approve one more/ }));
+  fireEvent.click(button);
+  await waitFor(() => expect(onAction).toHaveBeenCalledExactlyOnceWith({
+    action: 'retry_goal_assessment', goal_id: goal.id, expected_revision: goal.revision,
+    work_id: 'w1', run_id: 'run-bound', evidence_digest: 'abc', failed_job_id: 'job-failed',
+    confirmed: true, idempotency_key: expect.any(String),
+  }));
+});
+
+it('does not show retry for arbitrary blocked Goals or exhausted attempts', () => {
+  const view = render(<GoalContinuationPanel goals={[{ ...goal, status: 'blocked', gate: null }]} onAction={vi.fn()} t={t} />);
+  expect(screen.queryByRole('button', { name: 'Retry this assessment' })).not.toBeInTheDocument();
+  view.rerender(<GoalContinuationPanel goals={[{ ...goal, status: 'blocked', gate: null,
+    assessment_retry_target: { work_id: 'w1', run_id: 'run-bound', attempt: 3, job_id: 'job' },
+    work_units: [{ ...goal.work_units[0], id: 'w1' }] }]} onAction={vi.fn()} t={t} />);
+  expect(screen.queryByRole('button', { name: 'Retry this assessment' })).not.toBeInTheDocument();
 });

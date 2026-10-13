@@ -18,12 +18,14 @@ function GoalForm({ busy, onAction, onClose, t }) {
   const [criteria, setCriteria] = useState('');
   const [scope, setScope] = useState('');
   const [maxUnits, setMaxUnits] = useState('1');
+  const [maxAssessments, setMaxAssessments] = useState('3');
   const [billing, setBilling] = useState(false);
   const [requestKey] = useState(() => globalThis.crypto.randomUUID());
   const [submitting, setSubmitting] = useState(false);
   const pending = useRef(false);
   const valid = objective.trim() && lines(criteria).length && lines(scope).length
-    && Number.isInteger(Number(maxUnits)) && Number(maxUnits) >= 1 && Number(maxUnits) <= 10 && billing;
+    && Number.isInteger(Number(maxUnits)) && Number(maxUnits) >= 1 && Number(maxUnits) <= 10
+    && Number.isInteger(Number(maxAssessments)) && Number(maxAssessments) >= 1 && Number(maxAssessments) <= 3 && billing;
   const submit = async (event) => {
     event.preventDefault();
     if (!valid || busy || pending.current || !onAction) return;
@@ -32,7 +34,7 @@ function GoalForm({ busy, onAction, onClose, t }) {
     try {
       const result = await onAction({
         action: 'create_goal', objective: objective.trim(), acceptance_criteria: lines(criteria),
-        allowed_scope: lines(scope), max_work_units: Number(maxUnits), confirmed: true,
+        allowed_scope: lines(scope), max_work_units: Number(maxUnits), max_assessment_attempts: Number(maxAssessments), confirmed: true,
         billing_acknowledged: billing, idempotency_key: requestKey,
       });
       if (result && result !== false) onClose();
@@ -48,6 +50,8 @@ function GoalForm({ busy, onAction, onClose, t }) {
       <label>{t('work.goal.criteria')}<textarea required rows={3} value={criteria} onChange={event => setCriteria(event.target.value)} /></label>
       <label>{t('work.goal.scope')}<textarea required rows={2} value={scope} onChange={event => setScope(event.target.value)} /></label>
       <label>{t('work.goal.maxUnits')}<input type="number" min={1} max={10} step={1} required value={maxUnits} onChange={event => setMaxUnits(event.target.value)} /></label>
+      <label>{t('work.goal.maxAssessments')}<input type="number" min={1} max={3} step={1} required value={maxAssessments} onChange={event => setMaxAssessments(event.target.value)} /></label>
+      <p>{t('work.goal.assessmentLimitHelp')}</p>
       <p>{t('work.goal.authorization')}</p>
       <p>{t('work.goal.costWarning')}</p>
       <label className="goal-continuation-checkbox"><input type="checkbox" checked={billing} onChange={event => setBilling(event.target.checked)} />{t('work.goal.billingConsent')}</label>
@@ -63,6 +67,7 @@ function GoalSnapshot({ goal, busy, readOnly, onAction, t }) {
   const pending = useRef(false);
   const requestKeys = useRef(new Map());
   const [submitting, setSubmitting] = useState('');
+  const [retryConsent, setRetryConsent] = useState(false);
   const gate = goal.gate;
   const work = (goal.work_units || []).at(-1);
   const executionStatus = work?.observed_execution_status || work?.execution_status;
@@ -73,7 +78,7 @@ function GoalSnapshot({ goal, busy, readOnly, onAction, t }) {
     const identity = JSON.stringify([goal.id, goal.revision, request]);
     if (!requestKeys.current.has(identity)) requestKeys.current.set(identity, globalThis.crypto.randomUUID());
     pending.current = true;
-    setSubmitting(request.decision || request.status);
+    setSubmitting(request.decision || request.status || request.action);
     try {
       await onAction({ ...request, goal_id: goal.id, expected_revision: goal.revision,
         idempotency_key: requestKeys.current.get(identity) });
@@ -86,6 +91,9 @@ function GoalSnapshot({ goal, busy, readOnly, onAction, t }) {
   const budgetGate = goal.status === 'awaiting_approval' && gate?.kind === 'budget'
     && gate?.status === 'pending' && gate?.revision === goal.revision && Boolean(gate.id)
     && gate.proposed_max_work_units === goal.max_work_units + 1 && gate.proposed_max_work_units <= 10;
+  const retryTarget = goal.assessment_retry_target;
+  const canRetry = goal.status === 'blocked' && retryTarget?.work_id === work?.id
+    && retryTarget?.run_id === work?.run_id && retryTarget?.attempt < 3 && Boolean(retryTarget?.job_id);
   return <article className="goal-continuation-snapshot" aria-label={t('work.goal.latest')}>
     <header><strong>{goal.objective}</strong><StatusBadge tone={tone(goal.status)}>{label(goal.status, t)}</StatusBadge></header>
     <p className="goal-continuation-meta">{t('work.goal.progress', { used: (goal.work_units || []).filter(unit => unit.started_at).length, max: goal.max_work_units })} · {t('work.goal.revision', { revision: goal.revision })}</p>
@@ -133,6 +141,15 @@ function GoalSnapshot({ goal, busy, readOnly, onAction, t }) {
           <Button variant="secondary" disabled={disabled} busy={submitting === 'reject'} onClick={() => act({ action: 'decide_goal_gate', gate_id: gate.id, decision: 'reject' })}>{t('work.goal.rejectUnit')}</Button>
         </div>
       </> : null}
+    </section> : null}
+    {canRetry && !readOnly ? <section className="goal-continuation-gate" aria-label={t('work.goal.retryAssessment')}>
+      <p>{t('work.goal.retryAssessmentHelp', { attempt: retryTarget.attempt + 1 })}</p>
+      <label className="goal-continuation-checkbox"><input type="checkbox" disabled={disabled} checked={retryConsent} onChange={event => setRetryConsent(event.target.checked)} />{t('work.goal.retryConsent')}</label>
+      <Button disabled={disabled || !retryConsent} busy={submitting === 'retry_goal_assessment'} onClick={() => {
+        setRetryConsent(false);
+        return act({ action: 'retry_goal_assessment', work_id: work.id, run_id: work.run_id,
+          evidence_digest: retryTarget.evidence_digest, failed_job_id: retryTarget.job_id, confirmed: true });
+      }}>{t('work.goal.retryAssessment')}</Button>
     </section> : null}
     {!terminal && !readOnly ? <div className="goal-continuation-actions">
       <Button variant="secondary" disabled={disabled} busy={submitting === 'stopped'} onClick={() => act({ action: 'stop_goal', status: 'stopped' })}>{t('work.goal.stop')}</Button>
