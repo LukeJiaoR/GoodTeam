@@ -1,7 +1,24 @@
+import fcntl
 import json
+import os
+from contextlib import contextmanager
+from functools import wraps
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+
+class TaskStoreCorruptError(ValueError):
+    """Refuse to overwrite unreadable task evidence."""
+
+
+def _locked(operation):
+    @wraps(operation)
+    def wrapped(self, *args, **kwargs):
+        with self._lock():
+            return operation(self, *args, **kwargs)
+    return wrapped
 
 
 TASK_STATUSES = {"todo", "in_progress", "blocked", "review", "done", "canceled"}
@@ -58,6 +75,7 @@ class LocalTaskStore:
                 return task
         raise ValueError(f"Unknown task id: {task_id}")
 
+    @_locked
     def create_task(
         self,
         *,
@@ -101,6 +119,7 @@ class LocalTaskStore:
         self._write(ledger)
         return task
 
+    @_locked
     def update_task(self, task_id: str, **updates: Any) -> dict[str, Any]:
         if updates.get("role") == "orchestrator":
             raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
@@ -132,20 +151,95 @@ class LocalTaskStore:
             return updated
         raise ValueError(f"Unknown task id: {task_id}")
 
+    @_locked
+    def upsert_external_task(self, *, external_ref: str, **fields: Any) -> dict[str, Any]:
+        """One atomic read/modify/write for a durable external projection identity."""
+        if not isinstance(external_ref, str) or not external_ref.strip():
+            raise ValueError("An external task reference is required.")
+        if fields.get("role") == "orchestrator":
+            raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
+        if fields.get("status", "todo") not in TASK_STATUSES:
+            raise ValueError("Unknown task status.")
+        if any(name in fields for name in ("id", "created_at", "updated_at")):
+            raise ValueError("Projection cannot replace task identity or timestamps.")
+        ledger = self._read()
+        tasks = ledger["tasks"]
+        matches = [task for task in tasks if external_ref in task.get("external_refs", [])]
+        if len(matches) > 1:
+            raise TaskStoreCorruptError("External task identity is duplicated.")
+        if matches:
+            task = matches[0]
+            previous_revision = task.get("goal_revision")
+            next_revision = fields.get("goal_revision")
+            if (isinstance(previous_revision, int) and isinstance(next_revision, int)
+                    and next_revision < previous_revision):
+                return dict(task)
+        else:
+            prefix = str(self.project_key or ledger.get("prefix", "GT")).strip().upper()
+            next_id = ledger["next_id"]
+            existing_ids = {task["id"] for task in tasks}
+            while f"{prefix}-{next_id}" in existing_ids:
+                next_id += 1
+            task = dict(id=f"{prefix}-{next_id}", title="", description="", role="implementation",
+                        status="todo", priority="medium", dependencies=[], acceptance_criteria=[],
+                        artifact_refs=[], external_refs=[], created_at=self._now())
+            ledger["next_id"] = next_id + 1
+            tasks.append(task)
+        task.update(fields)
+        task["external_refs"] = list(dict.fromkeys([external_ref, *task.get("external_refs", [])]))
+        task["updated_at"] = self._now()
+        self._write(ledger)
+        return dict(task)
+
+    @contextmanager
+    def _lock(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with (self.path.parent / ".tasks.lock").open("a") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
     def _read(self) -> dict[str, Any]:
-        if not self.path.is_file():
+        if not self.path.exists():
             return {"tasks": [], "next_id": 1}
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {"tasks": [], "next_id": 1}
-        if not isinstance(payload, dict):
-            return {"tasks": [], "next_id": 1}
+            if (not isinstance(payload, dict) or not isinstance(payload.get("tasks"), list)
+                    or type(payload.get("next_id")) is not int or payload["next_id"] < 1):
+                raise ValueError("Invalid task ledger structure.")
+            identifiers = set()
+            for task in payload["tasks"]:
+                if (not isinstance(task, dict) or not isinstance(task.get("id"), str)
+                        or not task["id"] or task["id"] in identifiers
+                        or task.get("status") not in TASK_STATUSES
+                        or not isinstance(task.get("external_refs", []), list)):
+                    raise ValueError("Invalid task ledger record.")
+                identifiers.add(task["id"])
+        except (OSError, ValueError, TypeError) as exc:
+            raise TaskStoreCorruptError("Task ledger is unreadable; existing evidence was preserved.") from exc
         return payload
 
     def _write(self, payload: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
+                                             prefix=".tasks-", delete=False) as handle:
+                temporary = Path(handle.name)
+                json.dump(payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+            directory = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat()
@@ -313,7 +407,7 @@ def serialize_task_board(board: dict[str, list[dict[str, Any]]]) -> dict[str, An
 
 
 def _serialize_task(task: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "id": str(task.get("id", "")),
         "title": str(task.get("title", "")),
         "description": str(task.get("description", "")),
@@ -327,3 +421,9 @@ def _serialize_task(task: dict[str, Any]) -> dict[str, Any]:
         "created_at": str(task.get("created_at", "")),
         "updated_at": str(task.get("updated_at", "")),
     }
+    if task.get("goal_id"):
+        for field in ("goal_id", "goal_revision", "work_id", "rationale", "accepted_criteria",
+                      "review_gaps", "assessment_checks", "source_evidence_refs", "continuation_stopped"):
+            if field in task:
+                payload[field] = task[field]
+    return payload
