@@ -84,7 +84,18 @@ def test_execution_cli_commands_emit_stable_json(tmp_path, monkeypatch, capsys):
     execution_id = intake["execution_id"]
     assert intake["status"] == "ok"
 
-    for command, key in [("run", "worker_job"), ("pr", "binding"), ("ci", "ci"), ("replay", "events")]:
+    # This legacy intake has no trusted task snapshot or delivery plan. The local
+    # delivery CLI must reject it, while the ordinary Builder-only API remains usable.
+    assert cli.main(["execution", "run", "--execution-id", execution_id,
+                     "--project-root", str(tmp_path)]) == 2
+    rejected = capsys.readouterr()
+    assert "validation_input_missing" in rejected.err and not rejected.out
+    from goodteam_os.execution.api import ExecutionAPI
+    built = ExecutionAPI(tmp_path, github_client=client).run_execution(execution_id)
+    assert built["run"]["status"] == "succeeded" and "worker_job" in built
+    assert "candidate_delivery" not in built
+
+    for command, key in [("pr", "binding"), ("ci", "ci"), ("replay", "events")]:
         assert (
             cli.main(["execution", command, "--execution-id", execution_id, "--project-root", str(tmp_path)])
             == 0

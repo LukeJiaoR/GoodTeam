@@ -79,6 +79,7 @@ class ExecutionAPI:
             delivery = CandidateDeliveryService(self.project_root, **self.review_runtime_kwargs)
             if candidate_review is not None:
                 delivery.configure(execution_id, **candidate_review)
+            delivery.require_plan(execution_id)
         if run.status is not ExecutionRunStatus.SUCCEEDED:
             run = self._orchestrator().run_execution(execution_id)
         payload = self._status_payload(run.execution_id)
