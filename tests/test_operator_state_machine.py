@@ -241,6 +241,22 @@ def test_deterministic_review_blocker_enters_bounded_fix(tmp_path):
     assert queue.active_item()["attempt"] == 2
 
 
+@pytest.mark.parametrize("review", [
+    {"head_sha": "head-1", "blockers": [], "recommendation": "escalate"},
+    {"head_sha": "another-head", "blockers": [], "recommendation": "approve"},
+    {"head_sha": "head-1", "blockers": ["unknown coverage"], "recommendation": "approve"},
+])
+def test_empty_blockers_or_unknown_review_cannot_open_human_approval(tmp_path, review):
+    queue, _ = _queue(tmp_path)
+    actions = FakeActions(reviews=[review])
+    machine = OperatorExecutionStateMachine(queue, actions)
+    for _ in range(7):
+        machine.tick()
+    assert queue.active_item()["phase"] == "paused"
+    assert queue.active_item()["last_failure_class"] == "delivery_review_unresolved"
+    assert actions.calls["send_approval"] == 0 and actions.calls["fix"] == 0
+
+
 def test_pending_ci_is_not_treated_as_passed(tmp_path):
     queue, _ = _queue(tmp_path)
     actions = FakeActions(ci=[{"status": "pending", "head_sha": "head-1", "checks": []}])

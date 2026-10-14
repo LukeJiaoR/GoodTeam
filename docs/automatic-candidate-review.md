@@ -14,6 +14,78 @@ An admitted Reviewer is not an admitted coding Worker.
 
 ## Local CLI entry and resumption
 
+The normal `execution run` entry now connects Builder completion to checks and
+independent review. Provide the trusted local check and original base once:
+
+```bash
+goodteam execution run \
+  --project-root /path/to/registered/project --execution-id EXECUTION_ID \
+  --review-base FULL_ORIGINAL_BASE_COMMIT_ID --criterion 0 --criterion 1 \
+  --trusted-codex-review-policy /private/existing-task-policy.json \
+  -- /path/to/venv/bin/python -m pytest tests/test_feature.py
+```
+
+Before dispatch, this freezes `execution_candidate_delivery.v1` against the
+original task snapshot: base, command, criterion mapping, check time limit, Reviewer
+adapter and model. After a successful Builder return it resolves the committed
+candidate from that execution's retained worktree, runs the check there, passes
+the exact receipt to the existing registered Reviewer, and drives the bounded
+correction controller. The Builder must leave a clean committed candidate;
+delivery does not create an unreviewed commit or accept dirty output. The
+original checkout remains separate from the candidate worktree. Worktree
+location, Git administration backlinks, repository and exclusive branch identity
+are checked before use.
+Missing workspace metadata blocks delivery until the retained worktree identity
+is restored. Resumption then validates the Builder's committed artifact.
+
+Resume through the same normal entry without copying head or receipt data:
+
+```bash
+goodteam execution run \
+  --project-root /path/to/registered/project --execution-id EXECUTION_ID \
+  --trusted-codex-review-policy /private/existing-task-policy.json
+```
+
+The saved plan cannot change on restart. Completed Builder/check/Reviewer
+operations are reused; an indeterminate check or provider outcome blocks instead
+of being retried. A terminal review can be reopened without the policy file.
+The JSON `run.status` describes the Builder; `candidate_delivery` describes the
+actual check/review outcome and retained evidence. A successful command dispatch
+or Builder return does not establish delivery acceptance. With no saved or
+explicit check plan the legacy Builder-only operation remains usable, but its
+delivery evidence stays unknown. No command is inferred from issue text,
+verification suggestions, Worker output or project configuration.
+
+Embedded callers use
+`ExecutionAPI(root, codex_review_admission=authority).run_execution(execution_id,
+candidate_review={"base_sha": base, "argv": command, "criteria": [0, 1]})`.
+Subsequent local calls use `resume_candidate_review=True`. Ordinary HTTP run
+requests pass neither local option and cannot run even a saved check plan;
+evidence reads and Workbench exports remain read-only.
+
+`LocalOperatorActions` uses the existing typed
+`candidate_reviews={operator_item_id: OperatorCandidateReviewConfig(...)}` and
+`codex_review_admission` startup composition. The managed CLI wiring is described
+in [Operator plan review](operator-plan-review.md). Its normal execute action
+freezes the selection before Builder dispatch and checks the returned candidate.
+Publication uses that exact checked commit, and the normal queue invokes the
+independent Reviewer once PR/CI is ready, so CI waiting does not consume the
+Reviewer budget. A missing plan stops before Builder dispatch; neither queue
+metadata nor a repository config can authorize a command. Publication re-reads
+the completed check receipt and never creates a summary commit. Approval and
+merge require current passed checks and a protected machine-review receipt;
+green CI and an empty legacy blockers list cannot pass that gate. Source
+hydration preserves the original snapshot and pauses on changed requirements
+for explicit reconciliation. Corrected candidates use their validated commit ID
+on the existing execution branch. Production correction admission remains closed,
+and no legacy generic fix Worker is used as a fallback. CI failures or human
+feedback that lack a bound correction receipt remain unresolved.
+
+This delivery plan is a local execution/check selection, not a versioned Planner
+artifact or evidence of human plan approval. Real provider, Planner-policy,
+Telegram, merge and source-task-update acceptance for the entire #347 workflow
+remain separate from the offline integration evidence for this slice.
+
 Run the explicitly selected local candidate check and independent review in one
 invocation. Supply the original exact base once and an existing task-bound
 Reviewer policy:

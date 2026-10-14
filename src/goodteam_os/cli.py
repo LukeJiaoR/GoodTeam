@@ -221,7 +221,18 @@ def build_parser() -> argparse.ArgumentParser:
     intake_github_issue.add_argument("--adapter", default="fake")
     intake_github_issue.add_argument("--role", default="implementation")
 
-    for command in ("run", "pr", "ci", "replay", "review"):
+    run_execution = execution_subparsers.add_parser("run")
+    run_execution.add_argument("--execution-id", required=True)
+    run_execution.add_argument("--project-root", type=Path, required=True)
+    run_execution.add_argument("--review-base", default="", help="Original exact base for the frozen delivery plan.")
+    run_execution.add_argument("--criterion", type=int, action="append", help="Original acceptance criterion index.")
+    run_execution.add_argument("--seconds", type=int, default=30)
+    run_execution.add_argument("--acknowledge-external-cost", action="store_true",
+                              help="Acknowledge correction cost; does not grant runtime admission.")
+    run_execution.add_argument("--local-codex-policy", type=Path, help="Existing task-bound local Reviewer policy.")
+    run_execution.add_argument("--trusted-codex-review-policy", type=Path, help="Existing task-bound trusted Reviewer policy.")
+    run_execution.add_argument("argv", nargs=argparse.REMAINDER)
+    for command in ("pr", "ci", "replay", "review"):
         execution_command = execution_subparsers.add_parser(command)
         execution_command.add_argument("--execution-id", required=True)
         execution_command.add_argument("--project-root", type=Path, required=True)
@@ -324,7 +335,7 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
 
         codex_review_admission = LocalCodexReviewAdmission(local_policy)
     automatic_entry = args.command == "execution" and args.execution_command in {
-        "validate-candidate", "continue-automatic-review"}
+        "run", "validate-candidate", "continue-automatic-review"}
     if codex_review_admission is not None and args.command not in {"dispatch", "serve"} and not automatic_entry and not operator_entry:
         raise ValueError("This Codex Reviewer composition is supported only by direct dispatch and serve, plus automatic review entry points.")
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
@@ -666,7 +677,14 @@ def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=N
             role=args.role,
         )
     if args.execution_command == "run":
-        return api.run_execution(args.execution_id)
+        command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+        plan = None
+        if command or args.review_base or args.criterion or args.seconds != 30:
+            if not command or not args.review_base or not args.criterion:
+                raise ValueError("The first delivery run requires --review-base, --criterion and an explicit check command")
+            plan = {"base_sha": args.review_base, "argv": command, "criteria": args.criterion, "seconds": args.seconds}
+        return api.run_execution(args.execution_id, candidate_review=plan, resume_candidate_review=True,
+                                 acknowledge_external_cost=args.acknowledge_external_cost)
     if args.execution_command == "pr":
         return api.create_or_reuse_pr(args.execution_id)
     if args.execution_command == "ci":

@@ -1,5 +1,6 @@
 """Real registered candidate review consumed by the existing Operator gate."""
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +23,9 @@ def snapshot():
 
 def operator_item(c):
     snap = c.store.load(c.execution_id)
+    from goodteam_os.execution.github import GitHubExecutionBindingStore
+    bindings = GitHubExecutionBindingStore(c.project)
+    bindings.write_binding(replace(bindings.read_binding(c.execution_id), pr_number=1))
     return {"id": "op-1", "execution_id": c.execution_id, "repository_identity": "example/project",
         "source_url": "https://github.com/example/project/issues/1", "project_key": "DEMO", "attempt": 1,
         "metadata": {"project_root": str(c.project), "pr_number": 1, "head_sha": c.head,
@@ -31,7 +35,9 @@ def operator_item(c):
 
 
 def actions(c):
-    return LocalOperatorActions(workspace=c.workspace, state_dir=c.operator)
+    controller = LocalOperatorActions(workspace=c.workspace, state_dir=c.operator)
+    controller._client = lambda _: SimpleNamespace(fetch_pr=lambda *_: {"head_sha": c.head})
+    return controller
 
 
 def test_fix_hydration_cannot_replace_frozen_contract(tmp_path, monkeypatch):

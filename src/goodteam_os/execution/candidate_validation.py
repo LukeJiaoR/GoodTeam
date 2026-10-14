@@ -47,6 +47,22 @@ def _operation(value):
     return digest(value.encode())
 
 
+def validation_contract(snapshot, *, argv, criteria, seconds=30):
+    """Normalize only trusted caller inputs, shared by checks and delivery start."""
+    if (not isinstance(argv, list) or not argv or len(argv) > 128
+            or any(not isinstance(arg, str) or not arg or "\0" in arg for arg in argv)
+            or len(canonical_bytes(argv)) > 16384 or type(seconds) is not int or not 1 <= seconds <= MAX_SECONDS):
+        raise TaskInputError("validation_command_invalid")
+    executable = argv[0] if Path(argv[0]).is_absolute() else shutil.which(argv[0], path=os.defpath)
+    if not executable:
+        raise TaskInputError("validation_command_unavailable")
+    count = len(snapshot.task.task_contract.acceptance_criteria)
+    if (not isinstance(criteria, list) or not criteria or any(type(i) is not int or not 0 <= i < count for i in criteria)
+            or len(set(criteria)) != len(criteria)):
+        raise TaskInputError("validation_criteria_invalid")
+    return {"argv": [executable, *argv[1:]], "criteria": sorted(criteria), "seconds": seconds}
+
+
 class CandidateValidationService:
     def __init__(self, project_root: Path):
         self.project_root = Path(project_root).resolve()
@@ -91,22 +107,12 @@ class CandidateValidationService:
         source intent, Worker output or mutable project configuration.
         """
         key = _operation(operation_id)
-        if (not isinstance(argv, list) or not argv or len(argv) > 128
-                or any(not isinstance(arg, str) or not arg or "\0" in arg for arg in argv)
-                or len(canonical_bytes(argv)) > 16384 or type(seconds) is not int or not 1 <= seconds <= MAX_SECONDS):
-            raise TaskInputError("validation_command_invalid")
-        executable = argv[0] if Path(argv[0]).is_absolute() else shutil.which(argv[0], path=os.defpath)
-        if not executable:
-            raise TaskInputError("validation_command_unavailable")
-        command = [executable, *argv[1:]]
         snapshot = self._snapshot(execution_id)
-        count = len(snapshot.task.task_contract.acceptance_criteria)
-        if (not isinstance(criteria, list) or not criteria or any(type(i) is not int or not 0 <= i < count for i in criteria)
-                or len(set(criteria)) != len(criteria)):
-            raise TaskInputError("validation_criteria_invalid")
+        contract = validation_contract(snapshot, argv=argv, criteria=criteria, seconds=seconds)
+        command = contract["argv"]
         request = {"schema_version": "candidate_validation_plan.v1", "snapshot": snapshot.reference,
                    "operation_id": operation_id, "head_sha": head_sha, "argv": command, "cwd": ".",
-                   "criteria": sorted(criteria), "seconds": seconds, "producer": "explicit_operator_cli"}
+                   "criteria": contract["criteria"], "seconds": seconds, "producer": "explicit_operator_cli"}
         if correction_worker:
             request["correction_worker"] = correction_worker
         if builder_worker:
