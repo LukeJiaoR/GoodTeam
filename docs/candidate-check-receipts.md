@@ -37,6 +37,33 @@ only choose a command they intend to authorize. Absolute interpreter paths are
 supported; simple program names resolve on the system default PATH. Dependencies
 must already be present; the service does not install packages or fetch Git data.
 
+### Retained original Builder candidates
+
+Trusted local composition can explicitly pass `builder_worker=original_job_id`
+to `ExecutionAPI.validate_candidate(execution_id, ...)`, with the same explicit
+command, criterion mapping and exact head. The selector must equal the original
+protected execution's Worker identity. It selects only that successful
+execution's retained `sandbox/<execution_id>` Git worktree, never a caller-supplied
+path. Calls without this selector retain their project-root behavior. It cannot
+be combined with a correction Worker selector.
+
+The protected validation plan freezes the source registration and directory
+identities. Replay, evidence reads and automatic-review consumption require the
+same original job, retained sandbox, Git repository and branch. Missing, replaced,
+redirected, dirty or moved-head worktrees cannot reuse accepted evidence.
+The Reviewer reads exact committed Git objects shared with the registered project
+root; the local command runs inside the selected Builder worktree. There is no
+checkout or copying into the project's working tree.
+
+This API selection does not launch a Builder, select a verification command,
+grant Reviewer admission or infer a review base. An existing explicitly configured
+automatic-review service may consume the resulting receipt. The
+[Operator entry](operator-plan-review.md) uses this selector when trusted startup
+provides its task-bound candidate-review configuration. Worktree metadata and filesystem
+identity observations are not an OS isolation boundary or protection from
+unrestricted same-UID rollback. Removing the retained worktree invalidates the
+current check's availability even when its historical receipt remains stored.
+
 Only output SHA-256 digests, byte counts and completeness are retained, not raw
 stdout/stderr, credentials or absolute working-directory paths. Nonzero exit is
 a failed check; timeout, output limit or uncertain cleanup is unknown. A hash of

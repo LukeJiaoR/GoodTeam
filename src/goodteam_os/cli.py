@@ -33,6 +33,22 @@ if TYPE_CHECKING:
     from goodteam_os.skills.codex_runtime import CodexReviewAdmission
 
 
+def _candidate_check_arguments(command, *, require_base=False):
+    command.add_argument("--criterion", type=int, action="append", required=True,
+                         help="Zero-based original acceptance criterion; mapping is not semantic proof")
+    command.add_argument("--seconds", type=int, default=30)
+    command.add_argument("--review-base", required=require_base, default="",
+                         help="Original exact base SHA for the admitted independent Reviewer.")
+    command.add_argument("argv", nargs=argparse.REMAINDER)
+
+
+def _operator_startup_arguments(command):
+    command.add_argument("--operator-review-config", type=Path, help="Private explicit queue-item candidate-check configuration.")
+    command.add_argument("--operator-review-config-sha256", default="", help=argparse.SUPPRESS)
+    command.add_argument("--local-codex-policy", type=Path, help="Existing task-bound local Reviewer policy; Operator only.")
+    command.add_argument("--trusted-codex-review-policy", type=Path, help="Existing task-bound trusted Reviewer policy; Operator only.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="goodteam")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -66,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     restart.add_argument("--host", default="127.0.0.1")
     restart.add_argument("--port", type=int, default=DEFAULT_PORT)
     restart.add_argument("--workspace", type=Path, default=Path("."))
+    _operator_startup_arguments(restart)
 
     subparsers.add_parser("stop", help="Stop the background GoodTeam server")
     subparsers.add_parser("status", help="Show the background GoodTeam server status")
@@ -80,6 +97,14 @@ def build_parser() -> argparse.ArgumentParser:
     queue_subparsers = queue.add_subparsers(dest="queue_command", required=True)
     for queue_command in ("list", "drain", "resume"):
         queue_subparsers.add_parser(queue_command)
+    review_config = queue_subparsers.add_parser("review-config", help="Print explicit candidate-check configuration without running it")
+    review_config.add_argument("--item-id", required=True)
+    review_config.add_argument("--workspace", type=Path, default=Path("."))
+    review_config.add_argument("--reviewer-model", required=True)
+    _candidate_check_arguments(review_config, require_base=True)
+    prepare_review = queue_subparsers.add_parser("prepare-review", help="Capture original execution identity without running its Builder")
+    prepare_review.add_argument("--item-id", required=True)
+    prepare_review.add_argument("--workspace", type=Path, default=Path("."))
 
     supervise = subparsers.add_parser("supervise", help=argparse.SUPPRESS)
     supervise.add_argument("--workspace", type=Path, required=True)
@@ -90,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     supervise.add_argument("--identity", required=True)
     supervise.add_argument("--ready-file", type=Path, required=True)
     supervise.add_argument("--ready-token", required=True)
+    _operator_startup_arguments(supervise)
 
     telegram_component = subparsers.add_parser("_telegram-component", help=argparse.SUPPRESS)
     telegram_component.add_argument("--workspace", type=Path, required=True)
@@ -105,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_component.add_argument("--ready-token", required=True)
     operator_component.add_argument("--heartbeat-file", type=Path, required=True)
     operator_component.add_argument("--heartbeat-token", required=True)
+    _operator_startup_arguments(operator_component)
 
     init = subparsers.add_parser("init", help="Scaffold a project config and run doctor")
     init.add_argument("--key", required=True, help="Short project key, e.g. MYAPP")
@@ -237,11 +264,8 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--project-root", type=Path, required=True)
     validate.add_argument("--head", required=True)
     validate.add_argument("--operation-id", required=True)
-    validate.add_argument("--criterion", type=int, action="append", required=True,
-                          help="Zero-based original acceptance criterion; mapping is not semantic proof")
-    validate.add_argument("--seconds", type=int, default=30)
+    _candidate_check_arguments(validate)
     validate.add_argument("--correction-worker", default="", help="Protected correction job selecting its isolated candidate worktree")
-    validate.add_argument("--review-base", default="", help="Original exact base SHA; starts and advances automatic review with the admitted Reviewer.")
     continue_review = execution_subparsers.add_parser("continue-automatic-review", help="Resume the frozen automatic review without re-entering its inputs")
     continue_review.add_argument("--execution-id", required=True)
     continue_review.add_argument("--project-root", type=Path, required=True)
@@ -253,7 +277,6 @@ def build_parser() -> argparse.ArgumentParser:
     stop_review = execution_subparsers.add_parser("stop-automatic-review", help="Stop subsequent automatic review and correction admissions")
     stop_review.add_argument("--execution-id", required=True)
     stop_review.add_argument("--project-root", type=Path, required=True)
-    validate.add_argument("argv", nargs=argparse.REMAINDER)
     export_review_workbench = execution_subparsers.add_parser("export-review-workbench")
     export_review_workbench.add_argument("--execution-id", required=True)
     export_review_workbench.add_argument("--project-root", type=Path, required=True)
@@ -262,6 +285,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAdmission | None = None) -> int:
     args = build_parser().parse_args(argv)
+    operator_entry = args.command in {"restart", "supervise", "_operator-component"}
+    if args.command in {"restart", "supervise"} and codex_review_admission is not None:
+        raise ValueError("Subprocess startup requires an existing Reviewer policy path, not an in-memory authority.")
+    operator_paths = {}
+    candidate_reviews = None
+    if operator_entry:
+        from goodteam_os.operator_startup import load_config, startup_arguments
+        startup_arguments(operator_review_config=args.operator_review_config,
+            local_codex_policy=args.local_codex_policy, trusted_codex_review_policy=args.trusted_codex_review_policy,
+            operator_review_config_sha256=args.operator_review_config_sha256)
+        if args.operator_review_config is not None:
+            candidate_reviews, config_digest = load_config(args.operator_review_config,
+                                                          expected_digest=args.operator_review_config_sha256)
+            operator_paths = {"operator_review_config": args.operator_review_config,
+                              "local_codex_policy": args.local_codex_policy,
+                              "trusted_codex_review_policy": args.trusted_codex_review_policy,
+                              "operator_review_config_sha256": config_digest}
     # Embedding/operator startup supplies a real authority as code, never a
     # request flag, import path, package hook or persisted admission marker.
     if args.command == "local-codex-inspect":
@@ -285,11 +325,24 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         codex_review_admission = LocalCodexReviewAdmission(local_policy)
     automatic_entry = args.command == "execution" and args.execution_command in {
         "validate-candidate", "continue-automatic-review"}
-    if codex_review_admission is not None and args.command not in {"dispatch", "serve"} and not automatic_entry:
+    if codex_review_admission is not None and args.command not in {"dispatch", "serve"} and not automatic_entry and not operator_entry:
         raise ValueError("This Codex Reviewer composition is supported only by direct dispatch and serve, plus automatic review entry points.")
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
 
     runtime_kwargs = review_worker_kwargs(codex_review_admission)
+    if candidate_reviews is not None and any(config.reviewer_adapter != "codex"
+            or config.reviewer_model != codex_review_admission.policy["model"] for config in candidate_reviews.values()):
+        raise ValueError("Operator Reviewer selection must match the existing policy model and adapter.")
+    if candidate_reviews is not None and args.operator_review_config.absolute().resolve().is_relative_to(
+            codex_review_admission.root.resolve()):
+        raise ValueError("Operator startup configuration must be outside the Worker project root.")
+    if candidate_reviews is not None:
+        queue = DurableOperatorQueue(getattr(args, "state_dir", None) or service_state_dir())
+        for item_id in candidate_reviews:
+            queued = queue.get(item_id)
+            root = dict(queued.get("metadata", {})).get("project_root") if queued else None
+            if root and args.operator_review_config.absolute().resolve().is_relative_to(Path(root).resolve()):
+                raise ValueError("Operator startup configuration must be outside every selected Worker project root.")
     if args.command == "start":
         payload = start_workflow(
             workspace=args.workspace,
@@ -330,6 +383,7 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             identity=args.identity,
             ready_file=args.ready_file,
             ready_token=args.ready_token,
+            **operator_paths,
         )
     if args.command == "_telegram-component":
         return run_telegram_component(
@@ -347,10 +401,11 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             ready_token=args.ready_token,
             heartbeat_file=args.heartbeat_file,
             heartbeat_token=args.heartbeat_token,
+            **({"candidate_reviews": candidate_reviews, **runtime_kwargs} if candidate_reviews is not None else {}),
         )
     if args.command == "restart":
         try:
-            payload = restart_service(workspace=args.workspace, host=args.host, port=args.port)
+            payload = restart_service(workspace=args.workspace, host=args.host, port=args.port, **operator_paths)
         except RuntimeError as exc:
             print(f"goodteam restart: {exc}", file=sys.stderr)
             return 1
@@ -381,7 +436,24 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         return 0
     if args.command == "queue":
         queue_store = DurableOperatorQueue(service_state_dir())
-        if args.queue_command == "list":
+        if args.queue_command == "prepare-review":
+            from goodteam_os.operator_startup import prepare_review_identity
+            item = queue_store.get(args.item_id)
+            if item is None:
+                raise ValueError("Unknown operator queue item.")
+            payload = prepare_review_identity(args.workspace, service_state_dir(), item)
+        elif args.queue_command == "review-config":
+            from goodteam_os.operator import LocalOperatorActions
+            from goodteam_os.operator_startup import config_document
+            item = queue_store.get(args.item_id)
+            if item is None:
+                raise ValueError("Unknown operator queue item.")
+            actions = LocalOperatorActions(workspace=args.workspace, state_dir=service_state_dir())
+            contract = actions._hydrate(item)["task_contract"]
+            command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+            payload = config_document(item, contract, argv=command, criteria=args.criterion,
+                base_sha=args.review_base, reviewer_model=args.reviewer_model, seconds=args.seconds)
+        elif args.queue_command == "list":
             payload = {"summary": queue_store.summary(), "items": queue_store.list_items()}
         elif args.queue_command == "drain":
             payload = queue_store.set_desired_state("draining")

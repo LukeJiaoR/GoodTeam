@@ -7,6 +7,13 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from goodteam_os.execution import ExecutionAPI
+from goodteam_os.execution.automatic_review import AutomaticCandidateReviewService, MACHINE_SCHEMA
+from goodteam_os.execution.candidate_probe import probe_candidate
+from goodteam_os.execution.task_snapshot import TaskInputError
+from goodteam_os.execution.task_snapshot_store import store_for_project
+from goodteam_os.skills.models import SkillError
+from goodteam_os.skills.review_results import ReviewResultStore
+from goodteam_os.skills.codex_runtime import review_worker_kwargs
 from goodteam_os.execution.github import execution_task_from_github_issue
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.pr import PullRequestBindingService
@@ -22,9 +29,12 @@ from goodteam_os.operator_queue import (
     QueueCorruptionError,
     utc_now,
 )
+from goodteam_os.operator_candidate_review import (
+    configuration_for, freeze_configuration, prepare_candidate, start_candidate_review, check_admission_identity,
+)
 from goodteam_os.projects import load_project_target
 from goodteam_os.telegram import TelegramReviewSessionStore, send_approval_notification
-from goodteam_os.workers import WorkerJobStore, worker_backend_doctor
+from goodteam_os.workers import worker_backend_doctor
 
 
 MAX_RETRIES = 3
@@ -188,6 +198,9 @@ class OperatorExecutionStateMachine:
             if phase == "review_ready":
                 result = self._effect(item, "review")
                 metadata = self._merged_metadata(item, {"review": result})
+                if result.get("acceptance_status") == "unknown":
+                    return self._pause(item, "plan_review_inconclusive",
+                                       str(result.get("summary", "plan evidence is unresolved")), metadata=metadata)
                 blockers = list(result.get("blockers", []))
                 deterministic = bool(blockers and result.get("deterministic"))
                 if deterministic and int(item["attempt"]) <= MAX_FIX_ATTEMPTS:
@@ -226,6 +239,9 @@ class OperatorExecutionStateMachine:
                     payload={"attempt": item["attempt"]},
                 )
                 result = self._effect(refreshed, "fix")
+                if result.get("status") == "blocked":
+                    return self._pause(refreshed, "correction_evidence_pending", str(result.get("reason", "correction blocked")),
+                        metadata=self._merged_metadata(refreshed, {"correction": {**result, "acceptance_status": "unknown"}}))
                 if result.get("status") != "succeeded":
                     return self._pause(refreshed, "bounded_fix_failed", str(result.get("reason", "fix failed")))
                 return self._advance(
@@ -279,6 +295,9 @@ class OperatorExecutionStateMachine:
             return item
         except AmbiguousOperation as exc:
             return self._pause(item, "ambiguous_external_operation", str(exc))
+        except (TaskInputError, SkillError) as exc:
+            return self._pause(item, "candidate_review_setup_block", exc.code,
+                               metadata={**dict(item["metadata"]), "pause_reason": exc.code})
         except QueueCorruptionError:
             raise
         except Exception as exc:
@@ -340,6 +359,8 @@ class OperatorExecutionStateMachine:
     def _effect(self, item: Mapping[str, Any], kind: str) -> dict[str, Any]:
         head = str(dict(item.get("metadata", {})).get("head_sha", ""))
         operation_id = f"{item['id']}:{item['attempt']}:{kind}:{head or 'none'}"
+        if kind == "preflight" and item["metadata"].get("candidate_configuration_resumed") is True:
+            operation_id += ":configured"
         operation, created = self.queue.record_operation_intent(
             str(item["id"]), operation_id, kind=kind, payload={"phase": item["phase"], "head_sha": head}
         )
@@ -384,13 +405,15 @@ class OperatorExecutionStateMachine:
         *,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        paused_metadata = dict(item["metadata"] if metadata is None else metadata)
+        paused_metadata["pause_reason"] = reason
         return self._advance(
             item,
             "paused",
             status="paused",
             updates={
                 "last_failure_class": failure_class,
-                "metadata": metadata or dict(item["metadata"]),
+                "metadata": paused_metadata,
             },
         )
 
@@ -416,10 +439,13 @@ class OperatorService:
         workspace: Path,
         state_dir: Path,
         actions: OperatorActions | None = None,
+        candidate_reviews=None,
+        codex_review_admission=None,
     ):
         self.workspace = Path(workspace).resolve()
         self.queue = DurableOperatorQueue(state_dir)
-        self.actions = actions or LocalOperatorActions(workspace=self.workspace, state_dir=state_dir)
+        self.actions = actions or LocalOperatorActions(workspace=self.workspace, state_dir=state_dir,
+            candidate_reviews=candidate_reviews, codex_review_admission=codex_review_admission)
         self.machine = OperatorExecutionStateMachine(self.queue, self.actions)
 
     def recover(self) -> dict[str, Any] | None:
@@ -427,6 +453,19 @@ class OperatorService:
         if item is None:
             return None
         phase = str(item["phase"])
+        if (phase == "paused" and item["last_failure_class"] == "policy_preflight_block"
+                and item["metadata"].get("pause_reason") == "operator_candidate_configuration_required"
+                and not item.get("execution_id")
+                and not any(op.get("kind") == "execute" for op in item["operations"].values())
+                and isinstance(self.actions, LocalOperatorActions)
+                and item["id"] in self.actions.candidate_reviews):
+            # Explicit startup now supplies this exact task's missing config.
+            # Only the known pre-Builder configuration pause is resumable here.
+            configuration_for(self.actions.candidate_reviews, item)
+            return self.queue.transition(item["id"], expected_phase="paused", phase="preflight", status="active",
+                updates={"retry_count": 0, "last_failure_class": "",
+                         "metadata": {**item["metadata"], "pause_reason": "", "candidate_configuration_resumed": True}},
+                event="candidate_configuration_resumed", payload={"previous_phase": "paused"})
         if phase not in LEGAL_PHASE_TRANSITIONS:
             return self.queue.transition(
                 item["id"],
@@ -449,9 +488,11 @@ class OperatorService:
 
 
 class LocalOperatorActions:
-    def __init__(self, *, workspace: Path, state_dir: Path):
+    def __init__(self, *, workspace: Path, state_dir: Path, codex_review_admission=None, candidate_reviews=None):
         self.workspace = Path(workspace).resolve()
         self.state_dir = Path(state_dir).resolve()
+        self.review_runtime_kwargs = review_worker_kwargs(codex_review_admission)
+        self.candidate_reviews = dict(candidate_reviews or {})
 
     def perform(self, kind: str, item: Mapping[str, Any]) -> dict[str, Any]:
         method = getattr(self, f"_{kind}", None)
@@ -467,11 +508,21 @@ class LocalOperatorActions:
     ) -> dict[str, Any] | None:
         metadata = dict(item["metadata"])
         client = self._client(item)
-        if kind == "execute" and item.get("execution_id"):
-            status = ExecutionAPI(self._project(item), github_client=client).replay(str(item["execution_id"]))
-            run = dict(status.get("run", {}) or {})
-            if run.get("status") == "succeeded":
-                return {"status": "succeeded", "execution_id": item["execution_id"]}
+        if kind == "execute":
+            # Queue result publication can fail before execution_id is saved.
+            # Derive only the existing source identity; never repeat intake or
+            # dispatch to discover whether an unknown Builder actually ran.
+            from goodteam_os.execution.idempotency import execution_id_from_task, task_id_from_github_issue
+            from goodteam_os.execution.ledger import ExecutionLedger
+            parsed = parse_github_issue_url(str(item["source_url"]))
+            execution_id = execution_id_from_task(task_id_from_github_issue(
+                str(item["repository_identity"]), parsed.issue_number))
+            if item.get("execution_id") and item["execution_id"] != execution_id:
+                raise AmbiguousOperation("operator execution identity changed")
+            run = ExecutionLedger(self._project(item)).read_run(execution_id)
+            if run is not None and run.status.value == "succeeded":
+                return self._executed_candidate(item, run)
+            return None
         if kind in {"ensure_pr", "send_approval"} and metadata.get("pr_number"):
             if kind == "ensure_pr":
                 pr = client.fetch_pr(str(item["repository_identity"]), int(metadata["pr_number"]))
@@ -587,6 +638,16 @@ class LocalOperatorActions:
         parsed = parse_github_issue_url(str(item["source_url"]))
         snapshot = self._client(item).fetch_issue(str(item["repository_identity"]), parsed.issue_number)
         task = execution_task_from_github_issue(snapshot, clock=utc_now)
+        if item.get("execution_id"):
+            frozen = self._frozen_snapshot(item)
+            if _contract_requirements(task.task_contract) != _contract_requirements(frozen.task.task_contract):
+                raise AmbiguousOperation("source contract changed; explicitly reconcile the plan before fixing")
+            source = frozen.task.task_contract.source_intent
+            return {"source_revision": frozen.to_dict()["source_revision"],
+                    "observed_source_revision": snapshot.updated_at, "issue_title": source["title"],
+                    "repository_default_branch": frozen.task.task_contract.metadata.get("default_branch", ""),
+                    "task_contract": frozen.task.task_contract.to_dict(),
+                    "provenance_references": [source["url"], *source.get("references", [])]}
         return {
             "source_revision": snapshot.updated_at,
             "issue_title": snapshot.title,
@@ -594,6 +655,17 @@ class LocalOperatorActions:
             "task_contract": task.task_contract.to_dict() if task.task_contract else {},
             "provenance_references": [snapshot.url, *list(snapshot.references or [])],
         }
+
+    def _frozen_snapshot(self, item):
+        store = store_for_project(self._project(item), existing_only=True)
+        snapshot = store.load(str(item["execution_id"])) if store else None
+        if snapshot is None:
+            raise AmbiguousOperation("original task contract snapshot is unavailable")
+        metadata = dict(item["metadata"])
+        if (metadata.get("task_contract") != snapshot.task.task_contract.to_dict()
+                or metadata.get("task_snapshot", snapshot.reference) != snapshot.reference):
+            raise AmbiguousOperation("task contract no longer matches the original execution snapshot")
+        return snapshot
 
     def _preflight(self, item: Mapping[str, Any]) -> dict[str, Any]:
         metadata = dict(item["metadata"])
@@ -616,6 +688,11 @@ class LocalOperatorActions:
             reason = str(report.get("hint", "worker backend is not ready"))
         elif not checks_ready:
             reason = "no required checks configured and the base branch has no protected check contexts"
+        elif backend_ready:
+            try:
+                configuration_for(self.candidate_reviews, item)
+            except TaskInputError as exc:
+                return {"ready": False, "reason": exc.code}
         return {
             "ready": backend_ready and checks_ready,
             "worker_backend": backend,
@@ -626,6 +703,7 @@ class LocalOperatorActions:
         }
 
     def _execute(self, item: Mapping[str, Any]) -> dict[str, Any]:
+        config = configuration_for(self.candidate_reviews, item)
         parsed = parse_github_issue_url(str(item["source_url"]))
         metadata = dict(item["metadata"])
         orchestrator = ExecutionOrchestrator(self._project(item), self._client(item), sandbox_enabled=True, sandbox_mode="worktree")
@@ -634,14 +712,31 @@ class LocalOperatorActions:
             issue_number=parsed.issue_number,
             adapter=str(metadata.get("worker_backend", "codex")),
         )
+        snapshot = self._frozen_snapshot({**item, "execution_id": run.execution_id})
+        check_admission_identity(self.review_runtime_kwargs.get("codex_review_admission"), snapshot,
+                                 item, self._project(item), config)
+        freeze_configuration(self._automatic_review(item), snapshot, item, config,
+                             create=run.status.value == "queued")
         completed = orchestrator.run_execution(run.execution_id)
+        if completed.status.value == "succeeded":
+            return self._executed_candidate(item, completed)
         return {
             "status": "succeeded" if completed.status.value == "succeeded" else "failed",
             "execution_id": run.execution_id,
+            "task_snapshot": snapshot.reference,
             "worker_job_id": run.worker_job_id,
             "branch_name": run.branch_name,
             "reason": "" if completed.status.value == "succeeded" else completed.status.value,
         }
+
+    def _executed_candidate(self, item, run):
+        config = configuration_for(self.candidate_reviews, item)
+        snapshot = self._frozen_snapshot({**item, "execution_id": run.execution_id})
+        check_admission_identity(self.review_runtime_kwargs.get("codex_review_admission"), snapshot,
+                                 item, self._project(item), config)
+        prepared = prepare_candidate(self._automatic_review(item), snapshot, item, config)
+        return {"status": "succeeded", "execution_id": run.execution_id, "task_snapshot": snapshot.reference,
+                "worker_job_id": run.worker_job_id, "branch_name": run.branch_name, **prepared}
 
     def _ensure_pr(self, item: Mapping[str, Any]) -> dict[str, Any]:
         execution_id = str(item["execution_id"])
@@ -654,92 +749,57 @@ class LocalOperatorActions:
         pr = self._client(item).fetch_pr(binding.repo, binding.pr_number or 0)
         return _pr_result(pr)
 
-    def _review(self, item: Mapping[str, Any]) -> dict[str, Any]:
-        metadata = dict(item["metadata"])
-        execution_id = str(item["execution_id"])
-        store = WorkerJobStore(self._project(item))
-        head_sha = str(metadata.get("head_sha", ""))
-        reviewer_key = f"operator-review:{item['id']}:{head_sha}"
-        api = ExecutionAPI(self._project(item), github_client=self._client(item))
-        diff_artifact = api.persist_pr_diff(execution_id)
-        from goodteam_os.skills.task_start import execution_job_fields
+    def _automatic_review(self, item):
+        return AutomaticCandidateReviewService(self._project(item), **self.review_runtime_kwargs)
 
-        methods = execution_job_fields(store, execution_id=execution_id, project_key=str(item["project_key"]), role="qa")
-        job, _created = store.create_or_reuse_job(
-            **methods,
-            execution_policy="read_only",
-            run_id=execution_id,
-            role="qa",
-            adapter=str(metadata.get("worker_backend", "codex")),
-            task=(
-                f"Independently review PR #{metadata.get('pr_number')} at exact head {head_sha}. "
-                "Read the real diff, task contract, CI evidence, and verification artifacts. "
-                "Do not modify files and do not approve or merge the PR. Report deterministic blockers clearly. "
-                "End with one JSON object using this exact schema: "
-                '{"verdict":"approve|request_changes|escalate","blockers":["..."],'
-                '"deterministic":true|false,"summary":"..."}.'
-            ),
-            context=json.dumps(
-                {
-                    "task_contract": metadata.get("task_contract", {}),
-                    "ci": metadata.get("ci", {}),
-                    "pr_url": metadata.get("pr_url", ""),
-                    "head_sha": head_sha,
-                    "diff_artifact": diff_artifact,
-                },
-                indent=2,
-            ),
-            task_source=str(item["source_url"]),
-            expected_artifacts=["independent exact-head review"],
-            idempotency_key=reviewer_key,
-            execution_id=execution_id,
-            project_key=str(item["project_key"]),
-            attempt=item["attempt"],
-        )
-        result = store.run_job(str(job["id"]))
-        workbench = api.get_review_workbench(execution_id)
-        if result.get("status") != "completed":
-            return {
-                "reviewer_identity": str(job["id"]),
-                "head_sha": head_sha,
-                "blockers": [str(result.get("summary", "independent review failed"))],
-                "deterministic": False,
-                "recommendation": "escalate",
-                "workbench": _review_summary(workbench),
-            }
-        structured = _structured_review_result(Path(str(result.get("result_path", ""))))
-        if structured is None:
-            return {
-                "reviewer_identity": str(job["id"]),
-                "head_sha": head_sha,
-                "builder_identity": str(metadata.get("worker_job_id", "")),
-                "blockers": ["independent reviewer did not return a structured verdict"],
-                "deterministic": False,
-                "recommendation": "escalate",
-                "summary": "Independent review completed without a machine-readable verdict.",
-                "workbench": _review_summary(workbench),
-                "diff_artifact": diff_artifact,
-            }
-        blockers = [str(blocker) for blocker in structured.get("blockers", []) if str(blocker).strip()]
-        verdict = str(structured.get("verdict", "escalate"))
-        if diff_artifact.get("status") not in {"persisted", "deduped"}:
-            blockers.append("exact-head PR diff artifact is unavailable")
-            verdict = "escalate"
-        builder_identity = str(metadata.get("worker_job_id", ""))
-        if builder_identity == str(job["id"]):
-            blockers.append("builder cannot review its own work")
-            verdict = "escalate"
-        return {
-            "reviewer_identity": str(job["id"]),
-            "head_sha": head_sha,
-            "builder_identity": builder_identity,
-            "blockers": blockers,
-            "deterministic": bool(structured.get("deterministic")),
-            "recommendation": "approve" if verdict == "approve" and not blockers else verdict,
-            "summary": str(structured.get("summary", "Independent review completed."))[:500],
-            "workbench": _review_summary(workbench),
-            "diff_artifact": diff_artifact,
-        }
+    def _current_plan_receipt(self, item, service, snapshot, receipt):
+        current = service.validation._current(snapshot)
+        if current is None or current[1]["candidate"]["head_sha"] != item["metadata"].get("head_sha"):
+            raise AmbiguousOperation("current plan check does not match the PR candidate")
+        plan, result, _review = current
+        probe_candidate(service.validation.source_root(snapshot, plan["request"]), result["candidate"]["head_sha"])
+        service.verify_receipt(snapshot, plan, result, receipt)
+        return current
+
+    def _review(self, item: Mapping[str, Any]) -> dict[str, Any]:
+        snapshot = self._frozen_snapshot(item)
+        metadata = dict(item["metadata"])
+        head_sha = str(metadata.get("head_sha", ""))
+        service = self._automatic_review(item)
+        try:
+            if str(item.get("id", "")) in self.candidate_reviews:
+                start_candidate_review(service, snapshot, item, configuration_for(self.candidate_reviews, item))
+            if service.configuration(snapshot.execution_id) is None:
+                raise TaskInputError("automatic_review_configuration_required")
+            # The existing producer owns registered identity, original criteria,
+            # check receipt, exact Git target and the independent Reviewer result.
+            current = service.validation._current(snapshot)
+            if current is None or current[1]["candidate"]["head_sha"] != head_sha:
+                raise TaskInputError("operator_candidate_check_required")
+            # Budgets govern new work, not the lifetime of a completed receipt.
+            # Revalidate current protected machine evidence before admitting any
+            # Reviewer; a human attestation is not a substitute for that result.
+            receipt = current[2]
+            if not isinstance(receipt, dict) or receipt.get("schema_version") != MACHINE_SCHEMA:
+                receipt = service.review_current(snapshot.execution_id)
+            self._current_plan_receipt(item, service, snapshot, receipt)
+            detail = ReviewResultStore(service.workers, receipt["reviewer"]).detail(
+                expected_task_context=receipt["provenance"]["task_skill_context"], include_report=True)
+        except (TaskInputError, SkillError) as exc:
+            return {"head_sha": head_sha, "snapshot": snapshot.reference, "recommendation": "escalate",
+                    "blockers": [exc.code], "summary": exc.code, "deterministic": False,
+                    "acceptance_status": "unknown"}
+        decision = receipt["decision"]
+        return {"head_sha": head_sha, "snapshot": snapshot.reference, "machine_review": receipt,
+                "reviewer_identity": receipt["reviewer"], "builder_identity": metadata.get("worker_job_id", ""),
+                "recommendation": "escalate" if decision == "inconclusive" else decision,
+                "blockers": [] if decision == "approve" else [receipt["reason"]],
+                "summary": receipt["reason"], "deterministic": decision == "request_changes",
+                "criterion_checks": detail["report"]["checks"], "findings": detail["report"]["findings"],
+                "evidence": detail["report"]["evidence"],
+                "acceptance_status": "unknown" if decision == "inconclusive" else (
+                    "accepted_by_review_policy" if decision == "approve" else "changes_requested"),
+                "semantic_verification": "judgment_not_independently_verified"}
 
     def _send_approval(self, item: Mapping[str, Any]) -> dict[str, Any]:
         metadata = dict(item["metadata"])
@@ -777,42 +837,32 @@ class LocalOperatorActions:
         return result
 
     def _fix(self, item: Mapping[str, Any]) -> dict[str, Any]:
-        metadata = dict(item["metadata"])
-        execution_id = str(item["execution_id"])
-        sandbox = SandboxService(self._project(item)).get_sandbox(execution_id)
-        if sandbox.get("status") not in {"active", "retained_for_pr"}:
-            return {"status": "failed", "reason": "retained worktree is unavailable"}
-        reason = str(dict(metadata.get("decision", {}) or {}).get("reason", ""))
-        if not reason:
-            reason = str(dict(metadata.get("ci", {}) or {}).get("reason", ""))
-        if not reason:
-            blockers = list(dict(metadata.get("review", {}) or {}).get("blockers", []))
-            reason = "\n".join(str(blocker) for blocker in blockers)
-        store = WorkerJobStore(self._project(item))
-        key = f"operator-fix:{item['id']}:{item['attempt']}:{metadata.get('head_sha', '')}"
-        from goodteam_os.skills.task_start import execution_job_fields
-
-        methods = execution_job_fields(store, execution_id=execution_id, project_key=str(item["project_key"]), role="implementation")
-        job, _created = store.create_or_reuse_job(
-            **methods,
-            run_id=execution_id,
-            role="implementation",
-            adapter=str(metadata.get("worker_backend", "codex")),
-            task=f"Fix the existing PR in its retained worktree. Reason:\n{reason}",
-            context=json.dumps({"task_contract": metadata.get("task_contract", {}), "head_sha": metadata.get("head_sha", "")}),
-            task_source=str(item["source_url"]),
-            expected_artifacts=["updated existing PR"],
-            idempotency_key=key,
-            execution_id=execution_id,
-            project_key=str(item["project_key"]),
-            attempt=int(item["attempt"]) + 1,
-        )
-        result = store.run_job(str(job["id"]), sandbox_context=sandbox)
-        if result.get("status") != "completed":
-            return {"status": "failed", "reason": str(result.get("summary", "fix worker failed"))}
-        self._publish_sandbox(item, execution_id)
-        pr = self._client(item).fetch_pr(str(item["repository_identity"]), int(metadata["pr_number"]))
-        return {"status": "succeeded", **_pr_result(pr), "fix_worker_job_id": job["id"]}
+        snapshot = self._frozen_snapshot(item)
+        service = self._automatic_review(item)
+        if service.configuration(snapshot.execution_id) is None:
+            return {"status": "blocked", "reason": "automatic_review_configuration_required"}
+        # Do not convert a human suggestion into a machine request_changes or a
+        # new runtime grant. Only the already-bound producer/consumer may fix.
+        current = service.validation._current(snapshot)
+        if current is None or current[2] is None or current[2].get("decision") != "request_changes":
+            return {"status": "blocked", "reason": "bound_plan_findings_required"}
+        self._current_plan_receipt(item, service, snapshot, current[2])
+        result = service.advance(snapshot.execution_id)
+        if result.get("status") != "reviewed":
+            return {"status": "blocked", "reason": result.get("reason", "correction_evidence_pending"),
+                    "correction": result}
+        plan, checked, review = service.validation._current(snapshot)
+        head = checked["candidate"]["head_sha"]
+        if checked["observation"]["status"] != "passed" or review.get("decision") != "approve":
+            raise AmbiguousOperation("correction lacks a passed check and plan review")
+        service.verify_receipt(snapshot, plan, checked, review)
+        workspace = service.validation.source_root(snapshot, plan["request"])
+        probe_candidate(workspace, head)
+        self._publish_sandbox(item, snapshot.execution_id, worktree=workspace)
+        pr = self._client(item).fetch_pr(str(item["repository_identity"]), int(item["metadata"]["pr_number"]))
+        if pr.get("head_sha") != head:
+            raise AmbiguousOperation("published correction does not match the checked candidate")
+        return {"status": "succeeded", **_pr_result(pr), "correction": result}
 
     def _merge(self, item: Mapping[str, Any]) -> dict[str, Any]:
         metadata = dict(item["metadata"])
@@ -826,8 +876,20 @@ class LocalOperatorActions:
         if ci.get("status") != "passed" or ci.get("head_sha") != approved_head:
             raise AmbiguousOperation("required checks are not successful for the approved head")
         review = dict(metadata.get("review", {}) or {})
-        if review.get("head_sha") != approved_head or review.get("blockers"):
-            raise AmbiguousOperation("independent review is stale or still has blockers")
+        snapshot = self._frozen_snapshot(item)
+        service = self._automatic_review(item)
+        receipt = review.get("machine_review")
+        if not isinstance(receipt, dict):
+            raise AmbiguousOperation("independent plan review receipt is missing")
+        try:
+            self._current_plan_receipt(item, service, snapshot, receipt)
+        except (TaskInputError, SkillError) as exc:
+            raise AmbiguousOperation("independent plan review is unavailable: " + exc.code) from exc
+        if (review.get("head_sha") != approved_head or review.get("snapshot") != snapshot.reference
+                or review.get("blockers") or review.get("recommendation") != "approve"
+                or receipt.get("decision") != "approve"
+                or receipt.get("candidate", {}).get("head_sha") != approved_head):
+            raise AmbiguousOperation("independent plan review is stale, incomplete or still has blockers")
         result = self._client(item).merge_pr(
             repo,
             pr_number,
@@ -867,10 +929,11 @@ class LocalOperatorActions:
             )
         return {"rejected": True}
 
-    def _publish_sandbox(self, item: Mapping[str, Any], execution_id: str) -> None:
+    def _publish_sandbox(self, item: Mapping[str, Any], execution_id: str, *, worktree: Path | None = None) -> None:
         metadata = dict(item["metadata"])
-        sandbox = SandboxService(self._project(item)).get_sandbox(execution_id)
-        worktree = Path(str(sandbox.get("worktree_path", "")))
+        if worktree is None:
+            sandbox = SandboxService(self._project(item)).get_sandbox(execution_id)
+            worktree = Path(str(sandbox.get("worktree_path", "")))
         branch = str(metadata.get("branch_name", ""))
         if not worktree.is_dir() or not branch:
             return
@@ -989,3 +1052,11 @@ def _structured_review_result(path: Path) -> dict[str, Any] | None:
         if isinstance(value, dict) and value.get("verdict") in {"approve", "request_changes", "escalate"}:
             candidates.append(value)
     return candidates[-1] if candidates else None
+
+
+def _contract_requirements(contract):
+    """Compare task requirements, not issue labels, comments or fetch revisions."""
+    value = contract.to_dict()
+    source = value.pop("source_intent")
+    value.pop("metadata")
+    return {**value, "source_identity": {key: source.get(key) for key in ("source_type", "repo", "issue_number", "url")}}

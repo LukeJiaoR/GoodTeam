@@ -65,6 +65,16 @@ class CandidateValidationService:
         return self.store.root / execution_key(execution_id)
 
     def source_root(self, snapshot, request):
+        if request.get("builder_worker"):
+            from .candidate_builder import builder_source
+            if request.get("correction_worker"):
+                raise TaskInputError("validation_source_conflict")
+            root, binding = builder_source(self.project_root, snapshot, request["builder_worker"])
+            if request.get("builder_source") != binding:
+                raise TaskInputError("validation_builder_source_changed")
+            return root
+        if "builder_source" in request:
+            raise TaskInputError("validation_builder_mismatch")
         if not request.get("correction_worker"):
             return self.project_root
         from .correction_store import CorrectionAttemptStore
@@ -74,7 +84,7 @@ class CandidateValidationService:
             raise TaskInputError("correction_identity_mismatch")
         return authority.workspace(value)
 
-    def validate(self, execution_id, *, operation_id, head_sha, argv, criteria, seconds=30, correction_worker=""):
+    def validate(self, execution_id, *, operation_id, head_sha, argv, criteria, seconds=30, correction_worker="", builder_worker=""):
         """Called only by an explicit local CLI action or trusted composition.
 
         Commands and criterion mappings are operator input, never extracted from
@@ -99,6 +109,12 @@ class CandidateValidationService:
                    "criteria": sorted(criteria), "seconds": seconds, "producer": "explicit_operator_cli"}
         if correction_worker:
             request["correction_worker"] = correction_worker
+        if builder_worker:
+            from .candidate_builder import builder_source
+            if correction_worker:
+                raise TaskInputError("validation_source_conflict")
+            request["builder_worker"] = builder_worker
+            request["builder_source"] = builder_source(self.project_root, snapshot, builder_worker)[1]
         root = self._root(execution_id)
         with role_lock(root, create=False) as present:
             if not present or self._snapshot(execution_id).data != snapshot.data:
