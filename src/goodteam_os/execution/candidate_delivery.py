@@ -90,14 +90,19 @@ class CandidateDeliveryService:
                 _write(root / "delivery-plan.json", proposed)
         return proposed
 
+    def require_plan(self, execution_id):
+        """Validate retained local choices before any Builder dispatch; never execute."""
+        saved = self.configuration(execution_id)
+        automatic = self.automatic.configuration(execution_id)
+        self._require_same_plan(saved, automatic)
+        if saved is None and automatic is None:
+            raise TaskInputError("delivery_check_plan_missing")
+        return saved, automatic
+
     def advance(self, execution_id, *, acknowledge_external_cost=False):
         """Resume retained evidence; never repeat an indeterminate process or grant admission."""
         try:
-            saved = self.configuration(execution_id)
-            automatic = self.automatic.configuration(execution_id)
-            self._require_same_plan(saved, automatic)
-            if saved is None and automatic is None:
-                raise TaskInputError("delivery_check_plan_missing")
+            saved, automatic = self.require_plan(execution_id)
             run = ExecutionLedger(self.project_root).read_run(execution_id)
             if run is None or run.status is not ExecutionRunStatus.SUCCEEDED:
                 raise TaskInputError("delivery_builder_not_succeeded")

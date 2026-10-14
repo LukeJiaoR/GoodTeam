@@ -529,3 +529,72 @@ def test_operator_publishes_only_validated_commit_and_accepts_bound_review(deliv
     current["metadata"]["pr_number"] = 2
     assert actions._review(current)["reason"] == "delivery_pr_binding_mismatch"
     assert len(pushes) == 4
+
+
+@pytest.mark.parametrize("entrypoint", ["cli", "api"])
+@pytest.mark.parametrize("plan_state, reason", [
+    ("missing", "delivery_check_plan_missing"),
+    ("invalid_receipt", "delivery_plan_invalid"),
+    ("invalid_contract", "validation_command_invalid"),
+    ("invalid_automatic", "automatic_review_binding_invalid"),
+])
+def test_delivery_requires_valid_saved_plan_before_dispatch(
+        delivery, monkeypatch, capsys, entrypoint, plan_state, reason):
+    from goodteam_os.execution.candidate_validation import _bound
+
+    c = delivery
+    authority = admitted(c)
+    service = CandidateDeliveryService(c.project, codex_review_admission=authority)
+    if plan_state != "missing":
+        saved = service.configure(c.execution_id, **c.plan)
+        if plan_state == "invalid_receipt":
+            _write(protected(c) / "delivery-plan.json", {**saved, "receipt_id": "invalid"})
+        elif plan_state == "invalid_contract":
+            _write(protected(c) / "delivery-plan.json", _bound({**saved,
+                "validation_contract": {**saved["validation_contract"], "argv": []}}))
+        else:
+            _write(protected(c) / "automatic-review-start.json", {"receipt_id": "invalid"})
+    api = ExecutionAPI(c.project, codex_review_admission=authority)
+    before = api.ledger_store.read_run(c.execution_id).to_dict()
+    dispatches = []
+
+    def unexpected_dispatch(*args, **kwargs):
+        dispatches.append(args)
+        raise AssertionError("Invalid or absent delivery plan dispatched a Worker")
+
+    monkeypatch.setattr(WorkerJobStore, "run_job", unexpected_dispatch)
+    for _ in range(2):
+        if entrypoint == "cli":
+            assert cli.main(run_args(c, first=False), codex_review_admission=authority) == 2
+            output = capsys.readouterr()
+            assert reason in output.err and not output.out
+        else:
+            with pytest.raises(TaskInputError, match=reason):
+                api.run_execution(c.execution_id, resume_candidate_review=True)
+        assert api.ledger_store.read_run(c.execution_id).to_dict() == before
+        assert not dispatches
+        assert not c.builder_calls.exists() and not c.check_calls.exists() and not c.calls.exists()
+
+
+def test_plain_api_without_delivery_plan_still_runs_builder_once(request, monkeypatch):
+    c = request.getfixturevalue("ctx")
+    git(c.project, "init", "-q")
+    (c.project / ".gitignore").write_text(".goodteam/\n")
+    (c.project / "feature.py").write_text("VALUE = 1\n")
+    git(c.project, "add", ".")
+    git(c.project, "commit", "-qm", "Offline base")
+    execution = c.orchestrator.intake_github_issue(repo="example/project", issue_number=1, adapter="fake")
+    api = ExecutionAPI(c.project)
+    original = WorkerJobStore.run_job
+    calls = []
+
+    def counted(store, job_id, **kwargs):
+        calls.append(job_id)
+        return original(store, job_id, **kwargs)
+
+    monkeypatch.setattr(WorkerJobStore, "run_job", counted)
+    for _ in range(2):
+        result = api.run_execution(execution.execution_id)
+        assert result["run"]["status"] == "succeeded"
+        assert "candidate_delivery" not in result
+    assert len(calls) == 1
