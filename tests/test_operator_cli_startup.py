@@ -190,6 +190,12 @@ def test_brand_new_queue_can_prepare_exact_policy_identity_before_any_builder(re
     assert json.loads(capsys.readouterr().out) == first
     assert c.store.load(first["execution_id"]).task.task_contract.acceptance_criteria == ["preserve OLD_CONDITION", "preserve OLD_CONDITION"]
     c.client.value = original_source
+    from test_approved_plan_binding import approved_workflow
+    approved = approved_workflow(c)
+    assert cli.main(["execution", "bind-plan", "--project-root", str(c.project),
+        "--execution-id", first["execution_id"], "--workflow-run", approved.run_id,
+        "--task-anchor", "Selected task"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "bound"
     # Obtain a model-free fixture for precisely the printed identity, then use
     # normal configuration CLI and component routing without Python API setup.
     bridge = SimpleNamespace(root=c.workspace, repo=c.project)

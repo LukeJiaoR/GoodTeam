@@ -167,6 +167,9 @@ def continue_review_worker(workers, job_id, snapshot, ref):
     """
     if snapshot["subject"] != "role:code_review":
         return None
+    from goodteam_os.execution.approved_plan import require_review_binding
+
+    require_review_binding(workers.project_root, snapshot)
     results = ReviewResultStore(workers, job_id)
     operator = requests._services(workers)[1]
     try:
@@ -215,6 +218,11 @@ def continue_review_worker(workers, job_id, snapshot, ref):
             _mirror(workers, job_id, snapshot, ref, status="running",
                     runtime_status=record["runtime_session"]["verification_kind"])
             def check_current():
+                from goodteam_os.execution.task_snapshot import TaskInputError
+                try:
+                    require_review_binding(workers.project_root, snapshot)
+                except TaskInputError as exc:
+                    raise SkillError(exc.code, "The approved workflow intent changed before Reviewer transport.") from exc
                 check_cancellation(results)
                 runtime.check_current(provider, context_ref)
             def observe_progress(observation):

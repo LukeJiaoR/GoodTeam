@@ -168,6 +168,9 @@ class ExecutionOrchestrator:
                 _require_snapshot_run(snapshot, run, execution_id)
         if original_input is not None and (admitted_input is None or admitted_input.data != original_input.data):
             raise TaskInputError("task_input_job_mismatch")
+        if admitted_input is not None:
+            from .approved_plan import binding_for
+            binding_for(self.project_root, admitted_input)
         if admitted_input is not None and run.status is ExecutionRunStatus.SUCCEEDED:
             return run
 

@@ -97,6 +97,8 @@ class CandidateDeliveryService:
         self._require_same_plan(saved, automatic)
         if saved is None and automatic is None:
             raise TaskInputError("delivery_check_plan_missing")
+        from .approved_plan import binding_for
+        binding_for(self.project_root, self.validation._snapshot(execution_id), required=True)
         return saved, automatic
 
     def advance(self, execution_id, *, acknowledge_external_cost=False):

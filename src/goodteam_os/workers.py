@@ -990,6 +990,8 @@ class WorkerJobStore:
     def _admit_input_dispatch(self, job_root: Path, job: dict[str, Any]):
         snapshot = self.admit_task_input(job_root.name, job)
         if snapshot is not None:
+            from goodteam_os.execution.approved_plan import binding_for
+            binding_for(self.project_root, snapshot)
             self._input_store(snapshot).assert_dispatchable(snapshot)
         return snapshot
 
@@ -2677,7 +2679,10 @@ class WorkerJobStore:
             from goodteam_os.execution.task_context import render_task_contract
             from goodteam_os.execution.correction_input import CorrectionAttemptInput
 
+            from goodteam_os.execution.approved_plan import binding_for, render_binding
+
             sections.extend([
+                render_binding(binding_for(self.project_root, task_input)),
                 task_input.render() if isinstance(task_input, CorrectionAttemptInput) else render_task_contract(task_input),
                 "## Sandbox Context", sandbox_context,
                 "## Supplemental External Memory",
