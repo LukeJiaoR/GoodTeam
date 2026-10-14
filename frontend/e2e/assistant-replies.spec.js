@@ -199,3 +199,39 @@ for (const complete of [true, false]) {
     await chinese.close();
   });
 }
+
+// Read-only response fixture: proves presentation, not Worker/Planner execution.
+test('structured replies retain plan nesting, list markers and checklist alignment', async ({ page, fixture }) => {
+  await importProject(page, fixture);
+  await page.route('**/api/state?*', async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    if (new URL(route.request().url()).searchParams.get('project') === fixture.key) {
+      data.project_assistant.assistant_requests = {};
+      data.project_assistant.timeline = [{ id: 'structured_reply', actor: 'task_assistant', event: 'project_question_answered',
+        content: '3. Implement\n   - Preserve input\n   - Verify output\n4. Review\n- [x] Parent\n  - [ ] Pending one\n  - [ ] Pending two\n  - [ ] Pending three\n7. Continue' }];
+    }
+    await route.fulfill({ response, json: data });
+  });
+  await page.reload();
+  const reply = page.locator('.team-manager-timeline .md-renderer').filter({ hasText: 'Preserve input' });
+  const rootLists = reply.locator(':scope > .md-list');
+  await expect(rootLists).toHaveCount(3);
+  await expect(rootLists.nth(0)).toHaveAttribute('start', '3');
+  await expect(rootLists.nth(2)).toHaveAttribute('start', '7');
+  await expect(rootLists.nth(0)).toHaveCSS('list-style-type', 'decimal');
+  await expect(rootLists.nth(1)).toHaveCSS('list-style-type', 'disc');
+  await expect(rootLists.nth(0).locator(':scope > li')).toHaveCount(2);
+  await expect(rootLists.nth(0).locator(':scope > li').first().locator('ul > li')).toHaveCount(2);
+  const parent = rootLists.nth(1).locator(':scope > li').first();
+  await expect(parent.locator(':scope > input')).toBeChecked();
+  await expect(parent.locator('ul input:checked')).toHaveCount(0);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const checkbox = await parent.locator(':scope > input').boundingBox();
+    const label = await parent.locator(':scope > div > span').boundingBox();
+    expect(checkbox).not.toBeNull();
+    expect(label).not.toBeNull();
+    expect(Math.abs(checkbox.y - label.y)).toBeLessThan(12);
+  }
+});

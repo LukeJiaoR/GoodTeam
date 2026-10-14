@@ -1185,6 +1185,16 @@
   gap: 0.35rem;
 }
 
+/* Tailwind preflight removes native markers; structured output needs them. */
+.md-renderer ol.md-list { list-style-type: decimal; }
+.md-renderer ul.md-list { list-style-type: disc; }
+
+.md-renderer .md-task-item > .md-task-checkbox {
+  align-self: flex-start;
+  flex-shrink: 0;
+  margin-top: 0.25em;
+}
+
 .md-renderer .md-list-item {
   color: #d4d4d8;
 }
