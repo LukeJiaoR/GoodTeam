@@ -14,7 +14,6 @@ from .automatic_review import AutomaticCandidateReviewService
 from .candidate_validation import CandidateValidationService, _bound, _read, _write, validation_contract
 from .ledger import ExecutionLedger
 from .models import ExecutionRunStatus
-from .sandbox import SandboxService
 from .task_snapshot import TaskInputError, digest
 
 SCHEMA = "execution_candidate_delivery.v1"
@@ -104,13 +103,9 @@ class CandidateDeliveryService:
                 raise TaskInputError("delivery_builder_not_succeeded")
             if automatic is None:
                 snapshot = self.validation._snapshot(execution_id)
-                sandbox = SandboxService(self.project_root).get_sandbox(execution_id)
-                request = {}
-                root = self.project_root
-                if sandbox.get("available"):
-                    from .candidate_builder import builder_source
-                    root, _binding = builder_source(self.project_root, snapshot, snapshot.job_id)
-                    request = {"builder_worker": snapshot.job_id}
+                from .candidate_builder import builder_source
+                root, _binding = builder_source(self.project_root, snapshot, snapshot.job_id)
+                request = {"builder_worker": snapshot.job_id}
                 head = _Git(root).read("rev-parse", "HEAD", maximum=128).decode().strip()
                 checked = self.validation.validate(execution_id,
                     operation_id="delivery-check-" + digest(saved["receipt_id"].encode()),

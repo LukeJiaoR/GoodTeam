@@ -200,6 +200,34 @@ def test_check_result_survives_interrupted_handoff_without_rerunning(delivery, c
     assert c.calls.read_text() == "review\n"
 
 
+def test_missing_builder_workspace_blocks_until_its_metadata_is_restored(delivery, monkeypatch):
+    c = delivery
+    authority = admitted(c)
+    original = CandidateDeliveryService.advance
+    path = c.project / ".goodteam" / "executions" / c.execution_id / "sandbox.json"
+    metadata = []
+    def lose_metadata(service, execution_id, **kwargs):
+        assert SandboxService(c.project).get_sandbox(execution_id)["status"] == "retained_for_pr"
+        metadata.append(path.read_bytes())
+        path.unlink()
+        return original(service, execution_id, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(CandidateDeliveryService, "advance", lose_metadata)
+        result = ExecutionAPI(c.project, codex_review_admission=authority).run_execution(
+            c.execution_id, candidate_review=c.plan)
+    assert result["candidate_delivery"]["status"] == "blocked"
+    assert result["candidate_delivery"]["reason"] == "validation_builder_workspace_mismatch"
+    assert c.builder_calls.read_text() == "build\n" and not c.check_calls.exists() and not c.calls.exists()
+    assert git(c.project, "rev-parse", "HEAD") == c.head
+    path.write_bytes(metadata[0])
+    resumed = ExecutionAPI(c.project, codex_review_admission=authority).run_execution(
+        c.execution_id, resume_candidate_review=True)["candidate_delivery"]
+    assert resumed["status"] == "reviewed"
+    assert resumed["candidate_validation"]["candidate"]["head_sha"] != c.head
+    assert c.builder_calls.read_text() == "build\n" and c.check_calls.read_text() == "check\n"
+    assert c.calls.read_text() == "review\n"
+
+
 def test_indeterminate_check_is_not_retried_by_normal_run(delivery, monkeypatch):
     c = delivery
     authority = admitted(c)

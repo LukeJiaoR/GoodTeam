@@ -35,6 +35,8 @@ delivery does not create an unreviewed commit or accept dirty output. The
 original checkout remains separate from the candidate worktree. Worktree
 location, Git administration backlinks, repository and exclusive branch identity
 are checked before use.
+Missing workspace metadata blocks delivery until the retained worktree identity
+is restored. Resumption then validates the Builder's committed artifact.
 
 Resume through the same normal entry without copying head or receipt data:
 
