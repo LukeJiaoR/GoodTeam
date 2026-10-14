@@ -64,16 +64,23 @@ def _service_status_unlocked() -> dict[str, Any]:
     return result
 
 
-def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> dict[str, Any]:
+def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT, *,
+                    operator_review_config=None, local_codex_policy=None, trusted_codex_review_policy=None,
+                    operator_review_config_sha256="") -> dict[str, Any]:
+    from goodteam_os.operator_startup import startup_arguments
+    operator_args = startup_arguments(operator_review_config=operator_review_config,
+        local_codex_policy=local_codex_policy, trusted_codex_review_policy=trusted_codex_review_policy,
+        operator_review_config_sha256=operator_review_config_sha256)
     frontend_dist = resolve_frontend_dist()
     workspace = workspace.expanduser().resolve()
     if not workspace.is_dir():
         raise RuntimeError(f"workspace does not exist: {workspace}")
     with _service_lock():
-        return _restart_service_unlocked(workspace, host=host, port=port, frontend_dist=frontend_dist)
+        return _restart_service_unlocked(workspace, host=host, port=port, frontend_dist=frontend_dist,
+                                         operator_args=operator_args)
 
 
-def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend_dist: Path) -> dict[str, Any]:
+def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend_dist: Path, operator_args=()) -> dict[str, Any]:
     old_state = _read_state()
     _preflight_port(host, port, old_state=old_state)
     _stop_service_unlocked(set_stopped=False)
@@ -104,6 +111,7 @@ def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend
         "--ready-file",
         str(ready_path),
         f"--ready-token={ready_token}",
+        *operator_args,
     ]
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(

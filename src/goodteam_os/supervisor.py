@@ -305,7 +305,15 @@ def run_supervisor(
     identity: str,
     ready_file: Path,
     ready_token: str,
+    operator_review_config=None,
+    local_codex_policy=None,
+    trusted_codex_review_policy=None,
+    operator_review_config_sha256="",
 ) -> int:
+    from goodteam_os.operator_startup import startup_arguments
+    operator_args = startup_arguments(operator_review_config=operator_review_config,
+        local_codex_policy=local_codex_policy, trusted_codex_review_policy=trusted_codex_review_policy,
+        operator_review_config_sha256=operator_review_config_sha256)
     workspace = workspace.resolve()
     state_dir = state_dir.resolve()
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -325,6 +333,7 @@ def run_supervisor(
         port=port,
         frontend_dist=frontend_dist,
         state_dir=state_dir,
+        operator_args=operator_args,
     )
     state_path = state_dir / "server.json"
     log_path = state_dir / "server.log"
@@ -440,6 +449,8 @@ def run_operator_component(
     ready_token: str,
     heartbeat_file: Path,
     heartbeat_token: str,
+    candidate_reviews=None,
+    codex_review_admission=None,
 ) -> int:
     from goodteam_os.operator import OperatorService
 
@@ -451,7 +462,8 @@ def run_operator_component(
 
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
-    service = OperatorService(workspace=workspace, state_dir=state_dir)
+    service = OperatorService(workspace=workspace, state_dir=state_dir,
+                              candidate_reviews=candidate_reviews, codex_review_admission=codex_review_admission)
     service.recover()
     liveness = OperatorLivenessHeartbeat(
         queue=service.queue,
@@ -484,6 +496,7 @@ def _component_specs(
     port: int,
     frontend_dist: Path,
     state_dir: Path,
+    operator_args=(),
 ) -> list[Component]:
     runtime = state_dir / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
@@ -531,7 +544,7 @@ def _component_specs(
         component("telegram", ["_telegram-component", "--workspace", str(workspace)]),
         component(
             "operator",
-            ["_operator-component", "--workspace", str(workspace), "--state-dir", str(state_dir)],
+            ["_operator-component", "--workspace", str(workspace), "--state-dir", str(state_dir), *operator_args],
         ),
     ]
 
