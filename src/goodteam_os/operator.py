@@ -17,7 +17,6 @@ from goodteam_os.skills.codex_runtime import review_worker_kwargs
 from goodteam_os.execution.github import execution_task_from_github_issue
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.pr import PullRequestBindingService
-from goodteam_os.execution.sandbox import SandboxService
 from goodteam_os.operator_github import (
     GhCliGitHubClient,
     parse_github_issue_url,
@@ -181,7 +180,10 @@ class OperatorExecutionStateMachine:
             if phase == "executing":
                 result = self._effect(item, "execute")
                 if result.get("status") != "succeeded":
-                    return self._pause(item, "worker_task_failure", str(result.get("reason", "worker failed")))
+                    retained = self.queue.transition(item["id"], expected_phase="executing",
+                        updates={"execution_id": str(result.get("execution_id", item.get("execution_id", ""))),
+                                 "metadata": self._merged_metadata(item, result)}, event="execution_delivery_blocked")
+                    return self._pause(retained, "worker_task_failure", str(result.get("reason", "worker failed")))
                 return self._advance(
                     item,
                     "pr_ready",
@@ -209,6 +211,10 @@ class OperatorExecutionStateMachine:
                         "fixing",
                         updates={"metadata": metadata, "attempt": int(item["attempt"]) + 1},
                     )
+                if (result.get("recommendation") != "approve" or blockers
+                        or result.get("head_sha") != item["metadata"].get("head_sha")):
+                    return self._pause(item, "delivery_review_unresolved",
+                        str(result.get("reason", "independent review is unresolved")), metadata=metadata)
                 return self._advance(
                     item,
                     "waiting_telegram",
@@ -740,12 +746,12 @@ class LocalOperatorActions:
 
     def _ensure_pr(self, item: Mapping[str, Any]) -> dict[str, Any]:
         execution_id = str(item["execution_id"])
-        self._publish_sandbox(item, execution_id)
+        head = self._publish_sandbox(item, execution_id)
         binding = PullRequestBindingService(
             self._project(item),
             self._client(item),
             base_ref=str(dict(item["metadata"]).get("default_branch", "main")),
-        ).create_or_reuse_pr(execution_id)
+        ).create_for_published_candidate(execution_id, head_sha=head)
         pr = self._client(item).fetch_pr(binding.repo, binding.pr_number or 0)
         return _pr_result(pr)
 
@@ -765,6 +771,19 @@ class LocalOperatorActions:
         snapshot = self._frozen_snapshot(item)
         metadata = dict(item["metadata"])
         head_sha = str(metadata.get("head_sha", ""))
+        if metadata.get("pr_number"):
+            from goodteam_os.execution.github import GitHubExecutionBindingStore
+            binding = GitHubExecutionBindingStore(self._project(item)).read_binding(snapshot.execution_id)
+            if (binding is None or binding.pr_number != int(metadata["pr_number"])
+                    or binding.repo.casefold() != str(item["repository_identity"]).casefold()):
+                return {"head_sha": head_sha, "recommendation": "escalate", "deterministic": False,
+                        "blockers": ["delivery_pr_binding_mismatch"], "reason": "delivery_pr_binding_mismatch",
+                        "acceptance_status": "unknown", "summary": "delivery_pr_binding_mismatch"}
+            pr = self._client(item).fetch_pr(binding.repo, binding.pr_number)
+            if str(pr.get("head_sha", "")) != head_sha:
+                return {"head_sha": head_sha, "recommendation": "escalate", "deterministic": False,
+                        "blockers": ["delivery_pr_head_changed"], "reason": "delivery_pr_head_changed",
+                        "acceptance_status": "unknown", "summary": "delivery_pr_head_changed"}
         service = self._automatic_review(item)
         try:
             if str(item.get("id", "")) in self.candidate_reviews:
@@ -803,6 +822,11 @@ class LocalOperatorActions:
 
     def _send_approval(self, item: Mapping[str, Any]) -> dict[str, Any]:
         metadata = dict(item["metadata"])
+        from goodteam_os.execution.candidate_delivery import CandidateDeliveryService
+        self._frozen_snapshot(item)
+        if CandidateDeliveryService(self._project(item)).review_for_head(
+                str(item["execution_id"]), str(metadata.get("head_sha", ""))).get("recommendation") != "approve":
+            raise AmbiguousOperation("current candidate lacks passed checks and independent review")
         head_sha = str(metadata.get("head_sha", ""))
         cards = self.state_dir / "operator" / "cards"
         cards.mkdir(parents=True, exist_ok=True)
@@ -929,31 +953,35 @@ class LocalOperatorActions:
             )
         return {"rejected": True}
 
-    def _publish_sandbox(self, item: Mapping[str, Any], execution_id: str, *, worktree: Path | None = None) -> None:
+    def _publish_sandbox(self, item: Mapping[str, Any], execution_id: str, *, worktree: Path | None = None) -> str:
         metadata = dict(item["metadata"])
-        if worktree is None:
-            sandbox = SandboxService(self._project(item)).get_sandbox(execution_id)
-            worktree = Path(str(sandbox.get("worktree_path", "")))
+        from goodteam_os.execution.candidate_validation import CandidateValidationService
+        from goodteam_os.execution.idempotency import branch_name_from_execution_id
+        from goodteam_os.memory_storage import role_lock
+        validation = CandidateValidationService(self._project(item))
+        snapshot = validation._snapshot(execution_id)
+        with role_lock(validation._root(execution_id), create=False):
+            current = validation._current(snapshot)
+            if current is None or current[1]["observation"]["status"] not in {"passed", "failed"}:
+                raise AmbiguousOperation("current candidate lacks a completed check receipt")
+            selected = validation.source_root(snapshot, current[0]["request"])
+            head = current[1]["candidate"]["head_sha"]
+            probe_candidate(selected, head)
+            if worktree is not None and Path(worktree).resolve() != selected:
+                raise AmbiguousOperation("publication workspace differs from the checked candidate")
+            worktree = selected
         branch = str(metadata.get("branch_name", ""))
-        if not worktree.is_dir() or not branch:
-            return
-        status = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=worktree, capture_output=True, check=True, text=True
-        ).stdout
-        if status.strip():
-            subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
-            subprocess.run(
-                ["git", "commit", "-m", f"GoodTeam operator {item['id']} attempt {item['attempt']}"],
-                cwd=worktree,
-                check=True,
-            )
+        if (branch != branch_name_from_execution_id(execution_id)
+                or str(item["repository_identity"]).casefold() != snapshot.task.repo.casefold()):
+            raise AmbiguousOperation("validated candidate publication target is unavailable")
         subprocess.run(
-            ["git", "push", "origin", f"HEAD:refs/heads/{branch}"],
+            ["git", "push", "origin", f"{head}:refs/heads/{branch}"],
             cwd=worktree,
             capture_output=True,
             check=True,
             text=True,
         )
+        return head
 
     def _client(self, item: Mapping[str, Any]) -> GhCliGitHubClient:
         return GhCliGitHubClient(

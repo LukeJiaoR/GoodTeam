@@ -63,16 +63,45 @@ class ExecutionAPI:
         )
         return self._status_payload(run.execution_id)
 
-    def run_execution(self, execution_id: str) -> dict[str, Any]:
+    def run_execution(self, execution_id: str, *, candidate_review=None,
+                      resume_candidate_review=False, acknowledge_external_cost=False) -> dict[str, Any]:
+        """Run Builder, then its locally authorized delivery plan in the same entry.
+
+        HTTP callers do not pass either local-only option. Replaying/status
+        reading never authorizes command execution or a Reviewer invocation.
+        """
         run = self.ledger_store.read_run(execution_id)
         if run is None:
             raise ValueError(f"Execution run not found: {execution_id}")
+        delivery = None
+        if candidate_review is not None or resume_candidate_review:
+            from .candidate_delivery import CandidateDeliveryService
+            delivery = CandidateDeliveryService(self.project_root, **self.review_runtime_kwargs)
+            if candidate_review is not None:
+                delivery.configure(execution_id, **candidate_review)
         if run.status is not ExecutionRunStatus.SUCCEEDED:
             run = self._orchestrator().run_execution(execution_id)
-        return self._status_payload(run.execution_id)
+        payload = self._status_payload(run.execution_id)
+        if delivery is not None:
+            payload["candidate_delivery"] = delivery.advance(execution_id,
+                acknowledge_external_cost=acknowledge_external_cost)
+        return payload
 
     def create_or_reuse_pr(self, execution_id: str) -> dict[str, Any]:
         self._require_github_client()
+        from .automatic_review import AutomaticCandidateReviewService
+        from .candidate_validation import CandidateValidationService, _read
+        from goodteam_os.memory_storage import role_lock
+
+        validation = CandidateValidationService(self.project_root)
+        selected = False
+        if validation.store is not None:
+            root = validation._root(execution_id)
+            with role_lock(root, create=False):
+                selected = any(_read(root / name) is not None for name in
+                    ("delivery-plan.json", "operator-candidate-configuration.json", "validation-current.json"))
+        if selected or AutomaticCandidateReviewService(self.project_root).projection(execution_id) is not None:
+            raise ValueError("Automatic candidates require exact-SHA publication and PR binding through the local Operator")
         service = PullRequestBindingService(
             self.project_root,
             self.github_client,

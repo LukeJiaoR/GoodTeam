@@ -102,6 +102,55 @@ class PullRequestBindingService:
                 comments_recorded += 1
         return {"reviews_recorded": reviews_recorded, "comments_recorded": comments_recorded}
 
+    def create_for_published_candidate(self, execution_id: str, *, head_sha: str) -> GitHubBinding:
+        """Bind a PR to an already published, checked head without writing source.
+
+        The local Operator publishes the exact candidate first. The ordinary
+        summary-file transport would create a new, unreviewed commit here.
+        """
+        from .candidate_validation import CandidateValidationService
+        from .candidate_probe import probe_candidate
+        from goodteam_os.memory_storage import role_lock
+
+        validation = CandidateValidationService(self.project_root)
+        original = validation._snapshot(execution_id)
+        with role_lock(validation._root(execution_id), create=False):
+            current = validation._current(original)
+            if (current is None or current[1]["candidate"]["head_sha"] != head_sha
+                    or current[1]["observation"]["status"] not in {"passed", "failed"}):
+                raise ValueError("Published candidate lacks its exact completed check receipt")
+            probe_candidate(validation.source_root(original, current[0]["request"]), head_sha)
+        run = self._completed_run(execution_id)
+        binding = self.read_pr_binding(execution_id)
+        binding = self._binding_from_existing_or_task(execution_id, binding, run)
+        if (binding.repo.casefold() != original.task.repo.casefold()
+                or binding.issue_number != original.task.issue_number or binding.execution_id != execution_id
+                or binding.branch_name != branch_name_from_execution_id(execution_id)):
+            raise ValueError("Published candidate PR binding does not match the original execution")
+        selected = binding
+        if binding.pr_number is None:
+            binding = self.github_client.create_pr(repo=binding.repo, issue_number=binding.issue_number,
+                branch_name=binding.branch_name, execution_id=execution_id, title=self._pr_title(binding),
+                body=self._pr_body(run, binding))
+            # Preserve the real external result even if its head observation
+            # subsequently fails; recovery must not create a duplicate PR.
+            self.binding_store.write_binding(binding)
+        if (binding.repo != selected.repo or binding.issue_number != selected.issue_number
+                or binding.execution_id != selected.execution_id or binding.branch_name != selected.branch_name
+                or binding.pr_number is None):
+            raise ValueError("Published candidate PR binding does not match the original execution")
+        pr = self.github_client.fetch_pr(binding.repo, binding.pr_number or 0)
+        if pr.get("head_sha") != head_sha or pr.get("headRefName") != binding.branch_name:
+            raise ValueError("Published PR no longer matches the reviewed candidate")
+        if run.pr_number != binding.pr_number:
+            self.ledger.create_run(replace(run, pr_number=binding.pr_number, branch_name=binding.branch_name,
+                                           updated_at=self._clock()))
+        if not any(event.payload.get("transition") == "pr_opened"
+                   and event.payload.get("pr_number") == binding.pr_number
+                   and event.payload.get("commit_sha") == head_sha for event in self.ledger.read_events(execution_id)):
+            self._append_pr_event(run, binding, commit_sha=head_sha)
+        return binding
+
     def sync_merge_for_execution(self, execution_id: str) -> dict[str, bool]:
         run, binding = self._run_and_pr_binding(execution_id)
         pr = self.github_client.fetch_pr(binding.repo, binding.pr_number or 0)

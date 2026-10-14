@@ -9,12 +9,11 @@ from goodteam_os.execution.automatic_review import AutomaticCandidateReviewServi
 from goodteam_os.execution.candidate_validation import _read, _write
 from goodteam_os.execution.sandbox import SandboxService
 from goodteam_os.execution.task_snapshot import TaskInputError
-from goodteam_os.operator import LocalOperatorActions
 from goodteam_os.skills import review_execution
 from goodteam_os.team_control_plane import ensure_team_state
 from test_automatic_candidate_review import CandidateRuntime
 from test_candidate_validation import candidate, git, protected, validate  # noqa: F401
-from test_operator_plan_gate import operator_item
+from test_operator_plan_gate import actions as operator_actions, operator_item
 from test_task_input_snapshot import ctx  # noqa: F401
 
 
@@ -126,7 +125,7 @@ def test_builder_receipt_enters_independent_operator_gate(builder, monkeypatch):
     service = AutomaticCandidateReviewService(c.project)
     service.start(c.execution_id, base_sha=c.base, receipt_id=result["receipt_id"], head_sha=c.head,
                   reviewer_adapter="codex", reviewer_model="fixture-model")
-    actions = LocalOperatorActions(workspace=c.workspace, state_dir=c.operator)
+    actions = operator_actions(c)
     item = operator_item(c)
     review = actions._review(item)
     assert review["recommendation"] == "approve"
