@@ -55,6 +55,8 @@ def admitted(c, *, findings=False, **policy_changes):
             "detail": "Requires correction", "evidence_ids": ["E1"], "recommendation": "Preserve OLD_CONDITION"}]
     bridge = SimpleNamespace(root=c.workspace, repo=c.project)
     body = "assert b'OLD_CONDITION' in prompt\n"
+    if getattr(c, "approved_plan", None):
+        body += "assert b'No network or unrelated changes' in prompt and b'locally_registered_derivation' in prompt\n"
     body += "pathlib.Path(" + repr(str(c.calls)) + ").open('a').write('review\\n')\n"
     body += "sys.stdout.buffer.write(" + repr(channel(value)) + ");sys.exit(0)"
     host = native(bridge, body=body)

@@ -22,6 +22,8 @@ from test_operator_state_machine import FakeActions, _queue
 @pytest.fixture
 def entry(request, monkeypatch):
     c = request.getfixturevalue("candidate")
+    from test_approved_plan_binding import register
+    register(c)
     snapshot = c.store.load(c.execution_id)
     contract = snapshot.task.task_contract.to_dict()
     c.item = {"id": "operator-entry", "execution_id": "", "repository_identity": "example/project",

@@ -221,6 +221,12 @@ def build_parser() -> argparse.ArgumentParser:
     intake_github_issue.add_argument("--adapter", default="fake")
     intake_github_issue.add_argument("--role", default="implementation")
 
+    bind_plan = execution_subparsers.add_parser("bind-plan", help="Bind a captured task to existing approved workflow intent")
+    bind_plan.add_argument("--execution-id", required=True)
+    bind_plan.add_argument("--project-root", type=Path, required=True)
+    bind_plan.add_argument("--workflow-run", required=True)
+    bind_plan.add_argument("--task-anchor", required=True, help="Exact unique task heading in the derived breakdown (fix plan for fix profile)")
+
     run_execution = execution_subparsers.add_parser("run")
     run_execution.add_argument("--execution-id", required=True)
     run_execution.add_argument("--project-root", type=Path, required=True)
@@ -611,6 +617,11 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             payload = _run_execution_command(args, **runtime_kwargs)
         except ValueError as exc:
             print(f"execution: {exc}", file=sys.stderr)
+            if str(getattr(exc, "code", "")).startswith("approved_plan_"):
+                print("Use existing RFC/security (or fix-plan) reviews for current approved intent, then "
+                      "execution bind-plan with its workflow run and exact task heading before the first Builder run. "
+                      "Stale captured bindings cannot be silently retargeted; see docs/approved-plan-binding.md.",
+                      file=sys.stderr)
             return 2
         print(json.dumps(payload, indent=2))
         return 0
@@ -676,6 +687,11 @@ def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=N
             adapter=args.adapter,
             role=args.role,
         )
+    if args.execution_command == "bind-plan":
+        from goodteam_os.execution.approved_plan import ApprovedPlanBinding
+        value = ApprovedPlanBinding(args.project_root).register(args.execution_id,
+            workflow_run_id=args.workflow_run, task_anchor=args.task_anchor)
+        return {"status": "bound", "execution_id": args.execution_id, "binding": value}
     if args.execution_command == "run":
         command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
         plan = None

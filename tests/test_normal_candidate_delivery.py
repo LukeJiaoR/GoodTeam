@@ -25,6 +25,8 @@ from test_task_input_snapshot import ctx  # noqa: F401
 @pytest.fixture
 def delivery(request, monkeypatch):
     c = request.getfixturevalue("entry_fixture")
+    from test_approved_plan_binding import register
+    c.approved_plan = register(c)
     c.check_calls = c.workspace / "check-calls"
     c.builder_calls = c.workspace / "builder-calls"
     c.argv = [sys.executable, "-c",
@@ -36,6 +38,7 @@ def delivery(request, monkeypatch):
 from pathlib import Path
 prompt = sys.stdin.read()
 assert 'OLD_CONDITION' in prompt and 'proposed-command' in prompt
+assert 'No network or unrelated changes' in prompt and 'locally_registered_derivation' in prompt
 Path(os.environ['BUILDER_CALLS']).open('a').write('build\\n')
 Path('feature.py').write_text("VALUE = 'fixed'\\n# Built in the assigned worktree\\n")
 subprocess.run(['git', 'add', 'feature.py'], check=True)
@@ -598,3 +601,62 @@ def test_plain_api_without_delivery_plan_still_runs_builder_once(request, monkey
         assert result["run"]["status"] == "succeeded"
         assert "candidate_delivery" not in result
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("entrypoint", ["cli", "api", "operator"])
+def test_missing_approved_intent_never_dispatches_candidate_builder(delivery, monkeypatch, capsys, entrypoint):
+    c = delivery
+    for name in ("approved-plan.json", "approved-plan-required.json"):
+        (protected(c) / name).unlink()
+    authority = admitted(c)
+    calls = []
+    monkeypatch.setattr(WorkerJobStore, "run_job", lambda *_a, **_k: calls.append(True))
+    before = c.orchestrator.ledger.read_run(c.execution_id).to_dict()
+    if entrypoint == "cli":
+        assert cli.main(run_args(c), codex_review_admission=authority) == 2
+        assert "approved_plan_binding_missing" in capsys.readouterr().err
+    elif entrypoint == "api":
+        with pytest.raises(TaskInputError, match="approved_plan_binding_missing"):
+            ExecutionAPI(c.project, codex_review_admission=authority).run_execution(c.execution_id, candidate_review=c.plan)
+    else:
+        current = item(c)
+        config = operator_config(c, authority.policy["model"])
+        actions = LocalOperatorActions(workspace=c.workspace, state_dir=c.operator,
+            candidate_reviews={current["id"]: config}, codex_review_admission=authority)
+        monkeypatch.setattr(actions, "_client", lambda _: c.client)
+        with pytest.raises(TaskInputError, match="approved_plan_binding_missing"):
+            actions._execute(current)
+    assert not calls and c.orchestrator.ledger.read_run(c.execution_id).to_dict() == before
+
+
+@pytest.mark.parametrize("mutation", ["revoked", "missing_binding", "changed_task"])
+def test_direct_reviewer_job_revalidates_protected_approved_intent(delivery, mutation):
+    from goodteam_os.execution.automatic_review import AutomaticCandidateReviewService
+    from goodteam_os.execution.candidate_validation import CandidateValidationService
+    from goodteam_os.state import StateStore
+
+    c = delivery
+    authority = admitted(c)
+    validation = CandidateValidationService(c.project)
+    checked = validation.validate(c.execution_id, operation_id="direct-review-test", head_sha=c.head,
+        argv=[sys.executable, "-c", "print('offline check')"], criteria=[0, 1])
+    service = AutomaticCandidateReviewService(c.project, codex_review_admission=authority)
+    service.start(c.execution_id, base_sha=c.base, receipt_id=checked["receipt_id"], head_sha=c.head,
+        reviewer_adapter="codex", reviewer_model=authority.policy["model"])
+    snapshot = c.store.load(c.execution_id)
+    start_record, context = service._load(snapshot)
+    plan, result, _ = validation._current(snapshot)
+    job_id = service._registered_job(snapshot, start_record, context, plan, result, create=True)
+    states = StateStore(c.workspace)
+    state = states.read_project_current("DEMO")
+    if mutation == "revoked":
+        state.approvals["rfc"] = "rejected"
+        states.write_project_current(state)
+    elif mutation == "missing_binding":
+        (protected(c) / "approved-plan.json").unlink()
+    else:
+        Path(state.artifacts["task_breakdown"]).write_text("changed derived task")
+    for _ in range(2):
+        with pytest.raises(TaskInputError, match="approved_plan"):
+            service.workers.run_job(job_id)
+    assert not c.calls.exists() and not authority.leases

@@ -69,6 +69,9 @@ def check_admission_identity(admission, snapshot, item, project_root, config):
 
 
 def freeze_configuration(service, snapshot, item, config, *, create):
+    from goodteam_os.execution.approved_plan import binding_for
+
+    binding_for(service.project_root, snapshot, required=True)
     if _Git(service.project_root).read("cat-file", "-t", config.base_sha, maximum=64) != b"commit\n":
         raise TaskInputError("automatic_review_base_invalid")
     root = service.validation._root(snapshot.execution_id)

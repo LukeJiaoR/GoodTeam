@@ -82,8 +82,11 @@ class AutomaticCandidateReviewService:
             return saved
 
     def _confirmation(self, snapshot, start):
+        from .approved_plan import binding_for
+
+        binding = binding_for(self.project_root, snapshot)
         return {"schema_version": SCHEMA, "original": snapshot.to_dict(), "start": start,
-                "policy": review_policy(snapshot)}
+                "policy": review_policy(snapshot), **({"approved_plan": binding} if binding is not None else {})}
 
     def _capture(self, snapshot, start):
         scope = registered_project_scope(self.project_root)
@@ -228,7 +231,10 @@ class AutomaticCandidateReviewService:
             "task": ("Review the full original task and this exact candidate. For every required criterion ID, "
                 "include exactly one check whose name is that ID. Mark checked only when assessed with source evidence. "
                 "Unmet requirements must have actionable findings; uncertainty must be inconclusive. "
-                "Do not approve or advance any gate. Return the captured review report protocol."),
+                "Do not approve or advance any gate. Return the captured review report protocol."
+                + (" Also assess the pinned approved workflow intent and derived task mapping. "
+                   "Report any scope or constraint conflict as an actionable finding; uncertain alignment is inconclusive."
+                   if payload.get("approved_plan") else "")),
             "context": canonical_bytes(payload).decode(), "constraints": snapshot.task.task_contract.constraints,
             "expected_artifacts": [], "execution_policy": "read_only", "session_policy": "new",
             "worker_session_ref": "", "task_skill_context": context, "skill_subject": "role:code_review",
