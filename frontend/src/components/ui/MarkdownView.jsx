@@ -183,47 +183,52 @@ export function parseMarkdownBlocks(markdown) {
       continue;
     }
 
-    // 7. Lists (Unordered & Ordered & Checklist)
-    const listMatch = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+    // 7. Lists: retain indentation and marker kind instead of flattening a plan.
+    const listMatch = line.match(/^([ \t]*)([-*+]|\d+\.)\s+(.*)$/);
     if (listMatch) {
-      const listItems = [];
-      while (i < rawLines.length) {
+      const lists = [];
+      const stack = [];
+      while (i < rawLines.length && rawLines[i].trim()) {
         const currentLine = rawLines[i];
-        const match = currentLine.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+        const match = currentLine.match(/^([ \t]*)([-*+]|\d+\.)\s+(.*)$/);
+        const indent = currentLine.match(/^[ \t]*/)[0].replace(/\t/g, '    ').length;
         if (!match) {
-          // If continuation line indented
-          if (currentLine.startsWith('  ') && listItems.length > 0) {
-            listItems[listItems.length - 1].content += `\n${currentLine.trim()}`;
-            i++;
-            continue;
-          }
-          break;
+          // A continuation belongs to the nearest containing item, not whichever
+          // deeply nested item happened to precede it.
+          while (stack.length && indent <= stack.at(-1).indent) stack.pop();
+          if (!stack.length) break;
+          const item = stack.at(-1).list.items.at(-1);
+          if (item.children.length) {
+            const previous = item.children.at(-1);
+            if (previous.type === 'continuation') previous.content += `\n${currentLine.trim()}`;
+            else item.children.push({ type: 'continuation', content: currentLine.trim() });
+          } else item.content += `\n${currentLine.trim()}`;
+          i++;
+          continue;
         }
 
-        const isOrdered = /^\d+\./.test(match[2]);
-        let itemContent = match[3];
+        const ordered = /^\d+\./.test(match[2]);
+        while (stack.length && indent < stack.at(-1).indent) stack.pop();
+        if (stack.length && indent === stack.at(-1).indent && ordered !== stack.at(-1).list.ordered) {
+          stack.pop();
+        }
+        if (!stack.length || indent > stack.at(-1).indent) {
+          const list = { type: 'list', ordered, start: ordered ? Number.parseInt(match[2], 10) : undefined, items: [] };
+          const parent = stack.at(-1)?.list.items.at(-1);
+          (parent ? parent.children : lists).push(list);
+          stack.push({ indent, list });
+        }
+        let content = match[3];
         let checked = null;
-
-        // Check for task checklist - [ ] or - [x]
-        const taskMatch = itemContent.match(/^\[([ xX])\]\s+(.*)$/);
+        const taskMatch = content.match(/^\[([ xX])\]\s+(.*)$/);
         if (taskMatch) {
           checked = taskMatch[1].toLowerCase() === 'x';
-          itemContent = taskMatch[2];
+          content = taskMatch[2];
         }
-
-        listItems.push({
-          isOrdered,
-          checked,
-          content: itemContent,
-        });
+        stack.at(-1).list.items.push({ isOrdered: ordered, checked, content, children: [] });
         i++;
       }
-
-      blocks.push({
-        type: 'list',
-        ordered: listItems[0]?.isOrdered || false,
-        items: listItems,
-      });
+      blocks.push(...lists);
       continue;
     }
 
@@ -249,6 +254,29 @@ export function parseMarkdownBlocks(markdown) {
   }
 
   return blocks;
+}
+
+function MarkdownList({ block }) {
+  const ListTag = block.ordered ? 'ol' : 'ul';
+  return (
+    <ListTag start={block.ordered ? block.start : undefined} className={`md-list ${block.ordered ? 'md-ol' : 'md-ul'}`}>
+      {block.items.map((item, index) => (
+        <li key={index} className={item.checked !== null ? 'md-task-item' : 'md-list-item'}>
+          {item.checked !== null && (
+            <input type="checkbox" checked={item.checked} readOnly className="md-task-checkbox" />
+          )}
+          <div>
+            <span className={item.checked ? 'md-task-done' : undefined}>
+              {renderInlineMarkdown(item.content)}
+            </span>
+            {item.children.map((child, childIndex) => child.type === 'continuation'
+              ? <div key={childIndex}>{renderInlineMarkdown(child.content)}</div>
+              : <MarkdownList key={childIndex} block={child} />)}
+          </div>
+        </li>
+      ))}
+    </ListTag>
+  );
 }
 
 function CodeBlock({ lang, content }) {
@@ -344,33 +372,7 @@ export default function MarkdownView({ content, className = '' }) {
             );
           }
           case 'list': {
-            const ListTag = block.ordered ? 'ol' : 'ul';
-            return (
-              <ListTag key={idx} className={`md-list ${block.ordered ? 'md-ol' : 'md-ul'}`}>
-                {block.items.map((item, itemIdx) => {
-                  if (item.checked !== null) {
-                    return (
-                      <li key={itemIdx} className="md-task-item">
-                        <input
-                          type="checkbox"
-                          checked={item.checked}
-                          readOnly
-                          className="md-task-checkbox"
-                        />
-                        <span className={item.checked ? 'md-task-done' : ''}>
-                          {renderInlineMarkdown(item.content)}
-                        </span>
-                      </li>
-                    );
-                  }
-                  return (
-                    <li key={itemIdx} className="md-list-item">
-                      {renderInlineMarkdown(item.content)}
-                    </li>
-                  );
-                })}
-              </ListTag>
-            );
+            return <MarkdownList key={idx} block={block} />;
           }
           case 'hr': {
             return <hr key={idx} className="md-hr" />;
