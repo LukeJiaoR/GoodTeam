@@ -278,3 +278,24 @@ Remaining #216 gaps:
 - final #216 acceptance audit after the remaining surfaces land
 
 Use `Refs #216`, not `Closes #216`.
+
+## Retained automatic Reviewer reports
+
+The execution Workbench's **Reviewer report** section displays the complete
+protected machine report for the exact check/review/candidate shown on the page.
+It includes findings and remedies, performed or unfinished checks with rationale,
+and captured source citations with line ranges, quotes and source digests. The
+CLI/text view and static HTML/JSON exports carry the same report. Evidence links
+are in-page references; logical review-input paths are never file-opening links.
+
+These are advisory assessments. A checked item means Reviewer inspection, and a
+matched citation confirms the captured excerpt, not the interpretation. An empty
+findings list is not by itself acceptance. Existing candidate/approval controls
+retain their own authority; this section is read-only and adds no dispatch or
+approval action.
+
+The read joins the displayed receipt to protected current history and rechecks
+report provenance and candidate identity. A changed/dirty candidate, a newer
+check even on the same head, missing/corrupt retention, or a report changing
+during the read makes details unavailable rather than substituting another
+report. Private prompts, filesystem roots and raw execution logs are not added.
