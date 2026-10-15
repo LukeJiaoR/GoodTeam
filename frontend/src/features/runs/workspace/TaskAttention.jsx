@@ -32,7 +32,7 @@ export function TaskAttention({
   if (!attention) return null;
   const failureJobs = jobs.filter((job) => (attention.refs || []).includes(job.id) && job.status === 'failed');
   if (attention.kind === 'blocker' && activeJobs.length) return (
-    <section className="task-blocker" aria-label={t('work.blocker.executing')}>
+    <section className="task-blocker" data-attention-id={attention.id} aria-label={t('work.blocker.executing')}>
       <h3>{t('work.blocker.executing')}</h3>
       <p role="status">{t('work.blocker.workerActive')}</p>
       <ul>{activeJobs.map(job => <li key={job.id}>
@@ -45,7 +45,7 @@ export function TaskAttention({
     </section>
   );
   if (attention.kind === 'blocker') return (
-    <section className="task-blocker" aria-label={t('work.blocker.title')}>
+    <section className="task-blocker" data-attention-id={attention.id} aria-label={t('work.blocker.title')}>
       <h3>{t('work.blocker.title')}</h3>
       <p>{blockerSummary(attention, t)}</p>
       <p>{t(String(attention.reason || '').includes('[rate_limit') ? 'work.blocker.actionHelp' : 'work.blocker.genericHelp')}</p>
@@ -75,7 +75,7 @@ export function TaskAttention({
     ? intent.interpretation.items.filter((item) => item?.text)
     : [];
   return (
-    <section className="team-attention" data-kind={attention.kind} aria-label={t('work.manager.attention')}>
+    <section className="team-attention" data-attention-id={attention.id} data-kind={attention.kind} aria-label={t('work.manager.attention')}>
       <p className="team-attention__label">
         <AlertCircle aria-hidden="true" size={15} strokeWidth={2} />
         <span>{t('work.manager.attention')}</span>
@@ -210,7 +210,7 @@ export function ProjectPreparationAttention({ attention, busy, onContinue, t }) 
   };
   const canContinue = kind !== 'project_initialization' || (goal.trim() && brief.trim());
   return (
-    <section className="team-attention" data-kind="project_preparation" aria-label={t('work.manager.attention')}>
+    <section className="team-attention" data-attention-id={attention.id} data-kind="project_preparation" aria-label={t('work.manager.attention')}>
       <p className="team-attention__label"><AlertCircle aria-hidden="true" size={15} />{t('work.taskAssistant.preparationTitle')}</p>
       <h3>{t(`work.taskAssistant.preparation.${kind}`)}</h3>
       <PreparationFacts requirements={requirements} t={t} />

@@ -5,7 +5,7 @@ import './assistantControls.css';
 
 export function ProjectModeControl({ busy, onAction, t }) {
   const [mode, setMode] = useState('');
-  return <section className="assistant-project-mode" aria-label={t('assistant.projectType')}>
+  return <section className="assistant-project-mode" data-attention-id="project-mode" aria-label={t('assistant.projectType')}>
     <fieldset disabled={Boolean(busy)}>
       <legend>{t('assistant.projectType')}</legend>
       <label><input type="radio" name="project-mode" checked={mode === 'new_project'} onChange={() => setMode('new_project')} />
@@ -44,7 +44,7 @@ export default function TaskDraftControls({ draft, busy, modeRequired, resumeRea
     const result = await onAction?.({ action: 'edit_task', ...identity, text, message_id: globalThis.crypto.randomUUID() });
     if (result !== false) setEditing(false);
   };
-  return <section className="team-task-proposal" aria-label={t('work.taskAssistant.proposal')}>
+  return <section className="team-task-proposal" data-proposal-id={draft.id} aria-label={t('work.taskAssistant.proposal')}>
     <strong>{t('work.taskAssistant.proposal')} <small>{t('assistant.revision')} {draft.revision}</small></strong>
     {editing ? <label className="assistant-draft-editor">{t('assistant.taskDraft')}
       <textarea value={text} rows={5} disabled={Boolean(busy)} onChange={(event) => setText(event.target.value)} />

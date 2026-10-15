@@ -15,6 +15,8 @@ import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
 import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
+import ProjectAttentionFocus from '../projects/ProjectAttentionFocus';
+import { readAttentionSelection } from '../projects/projectAttention';
 import CurrentWorkContext from './workspace/CurrentWorkContext.jsx';
 import GoalContinuationPanel from './workspace/GoalContinuationPanel.jsx';
 import useProjectConversation from './useProjectConversation';
@@ -723,6 +725,8 @@ export default function WorkPage() {
   const { reducedMotion } = useReducedMotion();
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
+  const attentionQuery = search.toString();
+  const attentionSelection = useMemo(() => readAttentionSelection(new URLSearchParams(attentionQuery)), [attentionQuery]);
   const viewParam = search.get('view');
   const inspectorView = VIEWS.includes(viewParam) ? viewParam : '';
   const legacyView = VIEWS.includes(viewParam) ? viewParam : 'plan';
@@ -1085,9 +1089,15 @@ export default function WorkPage() {
     runApi.taskAssistantAction(projectKey, { action: 'continue_preparation', step_id: stepId, values })
   )).catch(() => {});
 
-  if (status === 'loading') return <main id="main-content" className="product-page"><WorkSkeleton t={t} /></main>;
-  if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => { void handleRefreshContext(); }} t={t} /></main>;
-  if (!selectedKnown) return <main id="main-content" className="product-page"><ProductError error={{ code: 'run_not_found', message: t('work.errors.runNotFound', { runId }) }} t={t} /></main>;
+  const attentionFocus = attentionSelection ? <ProjectAttentionFocus
+    key={JSON.stringify([projectKey, runId, attentionQuery])}
+    selection={attentionSelection} projectKey={projectKey} runId={runId} data={latestData}
+    freshness={status} refresh={refresh} reducedMotion={reducedMotion}
+    surfaceReady={status === 'ready' && selectedKnown} t={t} /> : null;
+
+  if (status === 'loading') return <main id="main-content" className="product-page">{attentionFocus}<WorkSkeleton t={t} /></main>;
+  if (status === 'error' && !data) return <main id="main-content" className="product-page">{attentionFocus}<ProductError error={error} onRetry={() => { void handleRefreshContext(); }} t={t} /></main>;
+  if (!selectedKnown) return <main id="main-content" className="product-page">{attentionFocus}<ProductError error={{ code: 'run_not_found', message: t('work.errors.runNotFound', { runId }) }} t={t} /></main>;
 
   const inspectorContent = inspectorView ? (
     <>
@@ -1194,6 +1204,7 @@ export default function WorkPage() {
 
   return (
     <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
+      {attentionFocus}
       {currentContext}
       {inputContextRunId ? <TaskInputContext projectKey={projectKey} runId={inputContextRunId} language={language} t={t} /> : null}
       <details className="work-context-disclosure">
