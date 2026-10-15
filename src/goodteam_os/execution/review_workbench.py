@@ -22,6 +22,7 @@ from goodteam_os.execution.review_workbench_rationale_mapping import (
     map_changed_files_to_rationale,
 )
 from goodteam_os.execution.review_workbench_renderer import render_review_workbench
+from goodteam_os.execution.review_workbench_report import retained_report
 from goodteam_os.execution.review_workbench_surfaces import (
     latest_review_decision,
     matching_decision_event,
@@ -71,6 +72,8 @@ class ReviewWorkbenchService:
             "diff": diff,
             "rationale": rationale,
             "evidence": evidence,
+            "candidate_review_report": retained_report(self.project_root, execution_id,
+                                                        evidence.get("candidate_validation", {})),
             "memory_refs": list(evidence.get("memory_provenance_refs", [])),
             "memory_provenance_integrity": dict(
                 evidence.get("memory_provenance_integrity", {})

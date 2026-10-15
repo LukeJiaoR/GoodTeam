@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from goodteam_os.execution.approved_plan_evidence import approved_plan_summary, approved_plan_details
+from goodteam_os.execution.review_workbench_report import render_report_html
 from goodteam_os.execution.pr_diff_contract import relative_artifact_path
 from goodteam_os.execution.review_workbench_browser_sandbox import sandbox_section
 from goodteam_os.execution.review_workbench_coverage import (
@@ -68,6 +69,7 @@ def render_review_workbench_html(
     {_approved_plan_section(review)}
     {_task_contract_section(review)}
     {_candidate_validation_section(review)}
+    {render_report_html(_dict(review.get("candidate_review_report")))}
     {_acceptance_coverage_section(review)}
     {_correction_loop_section(review, decision_actions_enabled=decision_actions_enabled)}
     {_runtime_policy_section(review)}
@@ -866,6 +868,14 @@ ul, ol { margin: 0; padding-left: 18px; }
 .warning-list li { display: grid; gap: 3px; }
 code, time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .empty-state { margin: 0 0 12px; color: #5d6b82; font-weight: 650; }
+.review-report h3 { font-size: 16px; margin-top: 20px; }
+.review-report h4 { font-size: 14px; margin: 0 0 10px; overflow-wrap: anywhere; }
+.review-report summary { cursor: pointer; overflow-wrap: anywhere; padding: 10px 0; }
+.review-report summary:focus-visible, .review-report a:focus-visible { outline: 2px solid #315a9c; outline-offset: 3px; }
+.review-report-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-report-item { border-top: 1px solid #dce2ec; margin-top: 12px; padding-top: 12px; }
+.review-report pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f7f9fc; padding: 12px; border-radius: 6px; }
+.review-report p { overflow-wrap: anywhere; }
 .decision-form { display: grid; gap: 12px; margin-top: 14px; }
 .decision-form label { display: grid; gap: 6px; color: #5d6b82; font-size: 12px; font-weight: 800; text-transform: uppercase; }
 .decision-form input, .decision-form select, .decision-form textarea { border: 1px solid #b8c2d6; border-radius: 6px; color: #151922; font: inherit; font-size: 14px; padding: 9px 10px; text-transform: none; }

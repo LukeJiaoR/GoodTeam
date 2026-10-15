@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from goodteam_os.execution.approved_plan_evidence import approved_plan_summary
+from goodteam_os.execution.review_workbench_report import report_lines
 
 from goodteam_os.execution.review_workbench_coverage import (
     acceptance_coverage_lines,
@@ -63,6 +64,9 @@ def render_review_workbench(review: dict[str, Any]) -> str:
         "",
         "Candidate checks and review judgment:",
         *_render_candidate_checks(evidence.get("candidate_validation", {}), task_input=evidence.get("task_input", {})),
+        "",
+        "Reviewer report:",
+        *report_lines(review.get("candidate_review_report", {})),
         "",
         "Original acceptance coverage:",
         *acceptance_coverage_lines(evidence),
