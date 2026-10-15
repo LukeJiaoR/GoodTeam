@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from goodteam_os.execution.approved_plan_evidence import approved_plan_evidence
 from goodteam_os.execution.candidate_validation import candidate_evidence
 from goodteam_os.execution.correction_loop import correction_evidence
 from goodteam_os.execution.evidence_manifest_extractors import (
@@ -67,6 +68,7 @@ def build_evidence_manifest(
         "github_ref": source["github_ref"],
         "task_contract": contract_manifest,
         "task_input": input_evidence,
+        "approved_plan": approved_plan_evidence(ledger.project_root, execution_id),
         "candidate_validation": validation,
         "correction_loop": correction_evidence(ledger.project_root, execution_id),
         "runtime_policy": runtime_policy_manifest(events),

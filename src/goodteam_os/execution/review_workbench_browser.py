@@ -5,6 +5,7 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
+from goodteam_os.execution.approved_plan_evidence import approved_plan_summary, approved_plan_details
 from goodteam_os.execution.pr_diff_contract import relative_artifact_path
 from goodteam_os.execution.review_workbench_browser_sandbox import sandbox_section
 from goodteam_os.execution.review_workbench_coverage import (
@@ -64,6 +65,7 @@ def render_review_workbench_html(
       <span class="status-pill">Recorded execution: {escape(status or "unknown")}</span>
     </header>
     {_summary_section(review)}
+    {_approved_plan_section(review)}
     {_task_contract_section(review)}
     {_candidate_validation_section(review)}
     {_acceptance_coverage_section(review)}
@@ -83,6 +85,13 @@ def render_review_workbench_html(
 </body>
 </html>
 """
+
+
+def _approved_plan_section(review: dict[str, Any]) -> str:
+    value = _dict(_dict(review.get("evidence")).get("approved_plan"))
+    return ('<section class="panel" id="approved-plan"><details><summary>'
+            + escape(approved_plan_summary(value)) + '</summary>'
+            + _details(approved_plan_details(value)) + '</details></section>')
 
 
 def _summary_section(review: dict[str, Any]) -> str:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from goodteam_os.execution.approved_plan_evidence import approved_plan_summary
+
 from goodteam_os.execution.review_workbench_coverage import (
     acceptance_coverage_lines,
     check_metadata_lines,
@@ -24,6 +26,7 @@ def render_review_workbench(review: dict[str, Any]) -> str:
     replay_graph = dict(review.get("execution_replay_graph", {}))
     lines = [
         f"Execution: {review.get('execution_id', '')}",
+        approved_plan_summary(evidence.get("approved_plan", {})),
         "Current result and next step:",
         *(f"{label}: {value}" for label, value in current_result_details(evidence)),
         "",
