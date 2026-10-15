@@ -15,7 +15,7 @@ from .task_context import MAX_TASK_CONTEXT_BYTES
 from .task_snapshot import TaskInputError, canonical_bytes
 
 
-def render_correction_input(project_root, value):
+def render_correction_input(project_root, value, *, host_seals=False):
     validation = CandidateValidationService(project_root)
     snapshot = validation._snapshot(value.execution_id)
     if snapshot.data != value.original.data:
@@ -49,7 +49,7 @@ def render_correction_input(project_root, value):
                     or any(detail.get(key) != item for key, item in provenance.items())):
                 raise TaskInputError("correction_feedback_mismatch")
             feedback["review_report"] = detail["report"]
-        rendered = "\n\n".join([value.render(), "## Complete Retained Correction Feedback",
+        rendered = "\n\n".join([value.render(host_seals=host_seals), "## Complete Retained Correction Feedback",
             "Use all findings, details and cited evidence below, not only the short decision summary. "
             "Report source paths name the captured review input and do not grant filesystem access. "
             "Host output metadata contains hashes and sizes, not raw logs; do not invent missing output. "
