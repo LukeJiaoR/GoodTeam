@@ -59,6 +59,10 @@ class CorrectionWorkerService:
                     raise TaskInputError("correction_original_transport_unresolved")
                 value = CorrectionAttemptInput.capture(snapshot, loop_id=loop_id, ordinal=len(state["rounds"]) + 1,
                     operation_id=operation_id, review=review, candidate=checked["candidate"], max_seconds=max_seconds)
+                from .correction_feedback import render_correction_input
+                # Fail before reserving a round or creating a worktree when the
+                # complete retained feedback cannot fit. Never trim findings.
+                render_correction_input(self.project_root, value)
                 authority = CorrectionAttemptStore(self.project_root, value.job_id)
                 self.loop.reserve_worker(value, publish=False)
                 authority.commit(value)
