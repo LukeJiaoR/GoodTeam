@@ -83,6 +83,20 @@ verify semantic acceptance or authorize merge, deployment or verified memory.
 
 ## Recovery and process boundaries
 
+Correction prompts resolve the exact captured check and review receipt through
+the retained loop history. Machine reviews deliver the complete protected report:
+all findings, details, recommendations, checks and cited source evidence, including
+items beyond the short decision summary. Public job projections and a newer
+Reviewer report cannot replace this input. The existing immutable attempt and
+review receipt formats are unchanged; human-recorded feedback remains supported.
+
+The handoff also includes the recorded host-check observation. Its output fields
+are hashes and byte counts, not raw stdout/stderr. Missing or inconsistent report
+evidence blocks the handoff. Complete feedback is checked against the existing
+task-context byte limit before reserving a new round and again when assembling
+the Worker prompt; over-budget feedback is never silently truncated. This changes
+neither live-runtime admission nor merge/deployment authority.
+
 Input/required proof, round reservation, workspace-started/ready, job binding,
 authorization, run-started, dispatch, receipt journal and host return live under
 the existing Operator root and stable per-execution lock. This root is not a
