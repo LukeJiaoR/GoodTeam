@@ -44,12 +44,19 @@ def entry(request):
     return c
 
 
-def admitted(c, *, findings=False, **policy_changes):
+def admitted(c, *, findings=False, plan_coverage=True, **policy_changes):
     digest = c.store.load(c.execution_id).payload_digest
     value = report(evidence=[{"id": "E1", "path": "head/feature.py", "line_start": 1, "line_end": 1,
                              "quote": "VALUE = 'fixed'", "observation": "Exact candidate source inspected"}],
                    checks=[{"name": f"criterion:{digest}:{i}", "status": "checked", "evidence_ids": ["E1"],
                             "detail": "Assessed the original requirement"} for i in range(2)])
+    if getattr(c, "approved_plan", None) and plan_coverage:
+        from goodteam_os.execution.automatic_review import review_policy
+        plan_checks = review_policy(c.store.load(c.execution_id), c.approved_plan)["plan_checks"]
+        value["checks"].extend({"name": check["name"], "status": "checked", "evidence_ids": ["E1"],
+            "detail": "Offline fixture: inspected this exact candidate against the approved scope and constraints; "
+                      "the selected local change is aligned. No provider or real semantic accuracy is asserted."}
+            for check in plan_checks)
     if findings:
         value["findings"] = [{"id": "F1", "severity": "medium", "title": "Original condition unresolved",
             "detail": "Requires correction", "evidence_ids": ["E1"], "recommendation": "Preserve OLD_CONDITION"}]

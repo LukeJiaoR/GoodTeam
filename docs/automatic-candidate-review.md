@@ -291,3 +291,28 @@ failed/unknown checks, optional human provenance and static exports. This is
 local integration evidence, not a live provider run or proof of production
 correction admission. Browser launch and live-provider validation are separate
 checks and must be reported separately when performed.
+
+## Approved-intent review coverage
+
+For new automatic reviews with an existing approved-plan binding, policy v2 pins
+one named assessment per approved intent artifact and one for the derived task
+mapping to that binding and its exact artifact versions. The independent
+Reviewer must explain semantic alignment of the actual candidate with the
+relevant intent, scope and constraints, supported by exact candidate source
+references. A plan quote, matching identifier or green check is not itself that
+judgment. Conflicts produce actionable findings; missing, duplicate, unperformed
+or inconclusive assessments cannot satisfy the policy. This uses the existing
+advisory report and bounded fix loop, not a new human gate or Planner.
+
+The retained report contains the assessments, their rationale and evidence; the
+machine receipt pins its report digest, exact head, check receipt and policy.
+These remain reviewer judgments, not independently verified semantic truth.
+Executions without an approved-plan binding retain the exact v1 contract and do
+not gain plan-approval provenance. Missing or stale bindings still block.
+
+A previously frozen v1 automatic review with a plan binding stops with
+`automatic_review_plan_coverage_upgrade_required`: its inputs, reports and
+receipts are preserved, never rewritten or retroactively credited with plan
+coverage. Inspect the old evidence and explicitly start a new execution with
+current approved intent if further automatic work is desired. There is no
+implicit reset, extra provider call or migration of an in-flight job.

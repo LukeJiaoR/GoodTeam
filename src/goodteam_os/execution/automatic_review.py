@@ -29,15 +29,28 @@ from .task_snapshot import TaskInputError, canonical_bytes, digest
 SCHEMA = "automatic_candidate_review.v1"
 MACHINE_SCHEMA = "candidate_machine_review.v1"
 POLICY = "candidate_review_policy.v1"
+PLAN_POLICY = "candidate_review_policy.v2"
 
 
-def review_policy(snapshot):
-    return {"schema_version": POLICY, "protocol": REVIEW_PROTOCOL,
+def review_policy(snapshot, approved_plan=None):
+    policy = {"schema_version": POLICY, "protocol": REVIEW_PROTOCOL,
             "criterion_ids": [f"criterion:{snapshot.payload_digest}:{i}"
                               for i in range(len(snapshot.task.task_contract.acceptance_criteria))],
             "blocking_severities": ["critical", "high", "medium", "low"],
             "require_passed_host_check": True, "require_unique_checked_criteria": True,
             "judgment_verification": "not_independently_verified"}
+    if approved_plan is not None:
+        # This is coverage of semantic judgments, not a keyword check or a new
+        # approval gate. The report retains each judgment's rationale/evidence.
+        binding_id = approved_plan["binding_id"]
+        policy.update(schema_version=PLAN_POLICY, approved_plan_binding_id=binding_id,
+            plan_checks=[
+                {"name": f"{binding_id}:artifact:{item['artifact_key']}",
+                 "artifact_key": item["artifact_key"], "artifact_version": item["artifact_version"]}
+                for item in approved_plan["approved_artifacts"]
+            ] + [{"name": f"{binding_id}:derived-task", "artifact_key": approved_plan["derived_task"]["artifact_key"],
+                  "artifact_version": approved_plan["derived_task"]["artifact_version"]}])
+    return policy
 
 
 def policy_decision(policy, result, report):
@@ -49,8 +62,8 @@ def policy_decision(policy, result, report):
         feedback = "; ".join(f"{row['title']}: {row['recommendation']}" for row in findings)
         return "request_changes", ("Host check failed. " if status == "failed" else "") + feedback[:3500]
     checks = report["checks"]
-    required = policy["criterion_ids"]
-    if (not required or any(sum(row["name"] == name for row in checks) != 1 for name in required)
+    required = policy["criterion_ids"] + [row["name"] for row in policy.get("plan_checks", [])]
+    if (not policy["criterion_ids"] or any(sum(row["name"] == name for row in checks) != 1 for name in required)
             or any(row["status"] != "checked" or not row["evidence_ids"] for row in checks)):
         return "inconclusive", "candidate_review_coverage_incomplete"
     return "approve", "candidate_review_policy_satisfied"
@@ -62,6 +75,17 @@ class AutomaticCandidateReviewService:
         self.validation = CandidateValidationService(self.project_root)
         self.workers = WorkerJobStore(self.project_root, codex_review_admission=codex_review_admission)
         self.clock = clock or time.time
+
+    def _policy(self, snapshot, saved=None):
+        from .approved_plan import binding_for
+
+        binding = binding_for(self.project_root, snapshot)
+        expected = review_policy(snapshot, binding)
+        if binding is not None and saved is not None and saved.get("policy") == review_policy(snapshot):
+            # Never rewrite an in-flight immutable request or reinterpret an old
+            # report as having covered a requirement it was not asked to cover.
+            raise TaskInputError("automatic_review_plan_coverage_upgrade_required")
+        return expected
 
     def configuration(self, execution_id):
         """Read the frozen start, including incomplete-start recovery; never admit work."""
@@ -75,7 +99,7 @@ class AutomaticCandidateReviewService:
                 return None
             if (saved != _bound(saved) or saved.get("schema_version") != SCHEMA
                     or saved.get("snapshot") != snapshot.reference
-                    or saved.get("policy") != review_policy(snapshot)):
+                    or saved.get("policy") != self._policy(snapshot, saved)):
                 raise TaskInputError("automatic_review_binding_invalid")
             if _read(root / "automatic-review-binding.json") is not None:
                 self._load(snapshot)
@@ -86,7 +110,7 @@ class AutomaticCandidateReviewService:
 
         binding = binding_for(self.project_root, snapshot)
         return {"schema_version": SCHEMA, "original": snapshot.to_dict(), "start": start,
-                "policy": review_policy(snapshot), **({"approved_plan": binding} if binding is not None else {})}
+                "policy": review_policy(snapshot, binding), **({"approved_plan": binding} if binding is not None else {})}
 
     def _capture(self, snapshot, start):
         scope = registered_project_scope(self.project_root)
@@ -109,7 +133,7 @@ class AutomaticCandidateReviewService:
         if start is None or binding is None or start != _bound(start):
             raise TaskInputError("automatic_review_binding_missing")
         if (start.get("schema_version") != SCHEMA or start.get("snapshot") != snapshot.reference
-                or start.get("policy") != review_policy(snapshot)
+                or start.get("policy") != self._policy(snapshot, start)
                 or set(binding) != {"start_receipt", "task_skill_context"}
                 or binding["start_receipt"] != start["receipt_id"]):
             raise TaskInputError("automatic_review_binding_invalid")
@@ -156,6 +180,9 @@ class AutomaticCandidateReviewService:
             if saved is not None:
                 if any(saved.get(k) != v for k, v in selected.items()) or saved != _bound(saved):
                     raise TaskInputError("automatic_review_already_started")
+                if (saved.get("schema_version") != SCHEMA or saved.get("snapshot") != snapshot.reference
+                        or saved.get("policy") != self._policy(snapshot, saved)):
+                    raise TaskInputError("automatic_review_binding_invalid")
             else:
                 if _read(root / "automatic-review-binding.json") is not None:
                     raise TaskInputError("automatic_review_binding_missing")
@@ -166,7 +193,7 @@ class AutomaticCandidateReviewService:
                 if _Git(self.project_root).read("cat-file", "-t", base_sha, maximum=64) != b"commit\n":
                     raise TaskInputError("automatic_review_base_invalid")
                 saved = _bound({"schema_version": SCHEMA, "snapshot": snapshot.reference,
-                    "policy": review_policy(snapshot), "started_at": self.clock(),
+                    "policy": self._policy(snapshot), "started_at": self.clock(),
                     "validation_contract": {key: current[0]["request"][key] for key in ("argv", "criteria", "seconds")},
                     **selected})
                 _write(root / "automatic-review-start.json", saved)
@@ -233,7 +260,12 @@ class AutomaticCandidateReviewService:
                 "Unmet requirements must have actionable findings; uncertainty must be inconclusive. "
                 "Do not approve or advance any gate. Return the captured review report protocol."
                 + (" Also assess the pinned approved workflow intent and derived task mapping. "
-                   "Report any scope or constraint conflict as an actionable finding; uncertain alignment is inconclusive."
+                   "For every policy.plan_checks entry include exactly one check named by its name. "
+                   "Assess whether the actual candidate fulfills the approved artifact's relevant intent, scope and constraints; "
+                   "for the derived-task entry assess its alignment with that intent and the original task. "
+                   "Explain the semantic judgment and its limits in detail, with exact candidate source evidence. "
+                   "Merely repeating identifiers, quoting the plan, a passing test, or an empty findings list is not an assessment. "
+                   "Report unmet intent or scope/constraint conflicts as actionable findings; uncertain alignment is inconclusive."
                    if payload.get("approved_plan") else "")),
             "context": canonical_bytes(payload).decode(), "constraints": snapshot.task.task_contract.constraints,
             "expected_artifacts": [], "execution_policy": "read_only", "session_policy": "new",
