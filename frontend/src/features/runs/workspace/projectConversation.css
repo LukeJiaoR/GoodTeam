@@ -10,6 +10,7 @@
 }
 .work-workspace-shell .project-conversation-scope span { flex: 1; overflow-wrap: anywhere; }
 .work-workspace-shell .project-conversation-scope button,
+.work-workspace-shell .project-conversation-follow button,
 .work-workspace-shell .project-composer-modes button,
 .work-workspace-shell .project-task-navigation button:not(.product-button) {
   border: 1px solid transparent;
@@ -122,4 +123,25 @@
 }
 .work-workspace-shell .conversation-entry-context:empty {
   display: none;
+}
+
+/* A visible, non-overlay way back while the reader controls the viewport. */
+.work-workspace-shell .project-conversation-follow {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem .75rem;
+  padding: .5rem .8rem;
+  border-bottom: 1px solid var(--work-border);
+  font-size: .78rem;
+}
+.work-workspace-shell .project-conversation-follow span { flex: 1 1 12rem; overflow-wrap: anywhere; }
+.work-workspace-shell .project-conversation-follow button { flex: 0 0 auto; }
+
+.work-workspace-shell .project-conversation-attention {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: .9rem;
 }
