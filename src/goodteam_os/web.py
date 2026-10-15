@@ -5841,6 +5841,36 @@ def build_project_home(
     }
 
 
+def _project_attention_snapshot(workspace, key, root, readiness, state):
+    from goodteam_os.project_attention import build_project_attention
+
+    # Do not call build_project_work_state or TaskAssistantService.session here:
+    # those routes may initialize/migrate Team/session state. A cross-project
+    # scan must never dispatch, reconcile or write another project's records.
+    session = TaskAssistantSessionStore(workspace, key).read()
+    if session.get("project_key") != key or (state is not None and state.project_key != key):
+        raise ValueError("Attention source belongs to another project")
+    workflow = None
+    if state is not None and not isinstance(state.pending_transition, Mapping):
+        raise ValueError("Workflow transition is invalid")
+    if state is not None and state.pending_transition.get("status") in {"recording", "executing"}:
+        # Work may reconcile this transition when entered. The overview cannot
+        # trigger recovery or claim its pre-transition gate is still current.
+        raise ValueError("Workflow transition is still in progress")
+    if is_active_run(state):
+        state = _dashboard_state_view(state)
+        board = build_agile_board(state)
+        tasks = [task for column in board.get("columns", {}).values() for task in column]
+        workflow = build_team_workspace(
+            state=state, workflow_active=True, project_root=root, project_key=key,
+            tasks=tasks,
+            worker_jobs=WorkerJobStore(root).list_jobs() if root is not None else [],
+            approval_reviews=build_approval_reviews(state, workspace=workspace),
+            intent_commits=IntentCommitStore(workspace, key).list_intents(),
+        )
+    return build_project_attention(project_key=key, readiness=readiness, workflow=workflow, session=session)
+
+
 def build_project_list(workspace: Path) -> dict[str, object]:
     projects: list[dict[str, object]] = []
     state_store = StateStore(workspace)
@@ -5877,8 +5907,15 @@ def build_project_list(workspace: Path) -> dict[str, object]:
             for step in steps
             if isinstance(step, dict) and step.get("status") in {"needs_input", "failed"}
         )
+        try:
+            attention = _project_attention_snapshot(workspace, key, root, readiness, state)
+        except (ValueError, OSError, TypeError, KeyError):
+            # Unknown is not an empty queue. Keep ordinary project navigation
+            # available if an optional attention source cannot be read.
+            attention = None
         projects.append(
             {
+                "attention": attention,
                 "project": {
                     "project_key": key,
                     "display_name": str(target.get("name", key)),

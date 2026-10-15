@@ -1,0 +1,31 @@
+.project-attention, .project-attention-focus {
+  min-width: 0;
+  border: 1px solid var(--product-border);
+  border-radius: 8px;
+  background: var(--product-surface);
+  overflow: hidden;
+}
+.project-attention { margin-bottom: 1.5rem; }
+.project-attention__body { padding: 1rem 1.35rem; }
+.project-attention__body > p { margin: 0; color: var(--product-text-muted); }
+.project-attention__counts { display: flex; flex-wrap: wrap; gap: .75rem 2rem; margin: 0 0 1rem; }
+.project-attention__counts div { display: flex; align-items: baseline; gap: .6rem; }
+.project-attention__counts dt { font-size: .82rem; color: var(--product-text-muted); }
+.project-attention__counts dd { margin: 0; font-size: 1.2rem; font-weight: 700; }
+.project-attention__items { list-style: none; padding: 0; margin: 0; }
+.project-attention__items > li + li { border-top: 1px solid var(--product-border); }
+.project-attention__link { display: flex; align-items: flex-start; gap: 1rem; padding: 1rem 0; color: var(--product-text); text-decoration: none; }
+.project-attention__link:hover { background: var(--product-surface-muted); }
+.project-attention__link > svg { flex-shrink: 0; margin-top: .25rem; }
+.project-attention__copy { min-width: 0; flex: 1; display: grid; gap: .25rem; overflow-wrap: anywhere; }
+.project-attention__copy small { color: var(--product-text-muted); font-size: .8rem; }
+.project-attention-focus { padding: 1rem 1.25rem; margin-bottom: 1rem; overflow-wrap: anywhere; }
+.project-attention-focus h2 { margin: 0 0 .5rem; font-size: 1rem; }
+.project-attention-focus p { margin: .4rem 0; }
+.project-attention-focus__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-top: .75rem; }
+.project-attention__link:focus-visible, .project-attention-focus:focus { outline: 2px solid var(--product-accent); outline-offset: 3px; }
+@media (max-width: 600px) {
+  .project-attention .projects-launcher__heading { gap: .75rem; flex-wrap: wrap; }
+  .project-attention__link { gap: .6rem; flex-wrap: wrap; }
+  .project-attention__copy { flex-basis: 70%; }
+}

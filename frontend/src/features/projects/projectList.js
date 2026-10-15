@@ -1,3 +1,5 @@
+import { normalizeProjectAttention } from './projectAttention';
+
 const KNOWN_LIFECYCLES = new Set(['attention_required', 'preparing', 'ready', 'legacy']);
 
 function isRecord(value) {
@@ -61,6 +63,7 @@ export function normalizeProjectsPayload(payload) {
         lifecycle: KNOWN_LIFECYCLES.has(lifecycle) ? lifecycle : 'legacy',
       },
       attention_count: attentionCount,
+      attention: normalizeProjectAttention(item.attention, item.active_run, projectKey),
       active_run: item.active_run,
     });
   }

@@ -65,6 +65,8 @@ export const WORK_CONTEXT_TARGETS = {
   blocker: { tab: 'execution', selector: '.task-blocker' },
   attention: { tab: 'manager', selector: '.team-attention, .assistant-project-mode, .team-task-proposal' },
   team: { tab: 'manager', selector: '.assistant-team-decision' },
+  projectMode: { tab: 'manager', selector: '.assistant-project-mode' },
+  preparation: { tab: 'manager', selector: '.team-attention[data-kind="project_preparation"]' },
   draft: { tab: 'manager', selector: '.team-task-proposal' },
   recovery: { tab: 'manager', selector: '.assistant-request' },
   composer: { tab: 'manager', selector: '.team-manager-dock textarea, .work-start-panel textarea' },
@@ -73,18 +75,18 @@ export const WORK_CONTEXT_TARGETS = {
   tasks: { tab: 'manager', selector: '#project-task-navigation' },
 };
 
-export function focusWorkContext(root, target, { reducedMotion = false } = {}) {
+export function focusWorkContext(root, target, { reducedMotion = false, isCurrent = () => true, matches = () => true } = {}) {
   const destination = target === 'attention' && root?.querySelector('.team-pane--outcomes .team-attention')
     ? WORK_CONTEXT_TARGETS.approval : WORK_CONTEXT_TARGETS[target];
-  if (!root || !destination) return;
+  if (!root || !destination || !isCurrent()) return;
   const scope = root.dataset.contextScope;
   const tab = root.querySelector(`#team-tab-${destination.tab}`);
   // The existing mobile controller owns which pane is visible.
   if (tab && globalThis.matchMedia?.('(max-width: 767px)')?.matches
       && tab.getAttribute('aria-selected') === 'false') tab.click();
   globalThis.requestAnimationFrame(() => {
-    if (!root.isConnected || root.dataset.contextScope !== scope) return;
-    const node = root.querySelector(destination.selector);
+    if (!root.isConnected || root.dataset.contextScope !== scope || !isCurrent()) return;
+    const node = [...root.querySelectorAll(destination.selector)].find(matches);
     if (!node || node.closest('[hidden], [inert]')) return;
     // Reveal existing execution details before focusing an actor or blocker.
     // This changes disclosure only; it never dispatches work.
