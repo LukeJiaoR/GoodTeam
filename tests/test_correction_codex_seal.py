@@ -92,12 +92,10 @@ def test_host_seals_exact_stopped_attempt_without_touching_original_index(prepar
     assert checked["observation"]["status"] == "passed"
 
 
-@pytest.mark.parametrize("mutation", ["untracked", "ignored", "symlink", "hardlink", "fifo", "index", "head", "output"])
+@pytest.mark.parametrize("mutation", ["ignored", "symlink", "hardlink", "fifo", "index", "head", "output"])
 def test_unsafe_or_mismatched_candidate_never_changes_attempt_ref(prepared, mutation):
     c = returned(prepared)
-    if mutation == "untracked":
-        (c.worktree / "new.py").write_text("new")
-    elif mutation == "ignored":
+    if mutation == "ignored":
         (c.worktree / ".goodteam").mkdir()
         (c.worktree / ".goodteam" / "hidden").write_text("ignored")
     elif mutation in {"symlink", "hardlink", "fifo"}:
@@ -148,6 +146,7 @@ def test_nontermination_cannot_produce_sealable_outcome(prepared, monkeypatch):
 @pytest.mark.parametrize("stage", ["commit-tree", "update-ref", "read-tree"])
 def test_interrupted_seal_never_retries_or_claims_success(prepared, monkeypatch, stage):
     c = returned(prepared)
+    (c.worktree / "new.py").write_bytes(b"new source\n")
     original = _Objects.write
     def interrupted(self, *args, **kwargs):
         if args[0] == stage:
@@ -175,6 +174,7 @@ def test_noop_and_changed_output_identity_are_not_candidates(prepared):
 
 def test_hook_filter_and_fsmonitor_never_run(prepared):
     c = returned(prepared)
+    (c.worktree / "new.py").write_bytes(b"new raw source\r\n")
     sentinel = c.workspace / "forbidden-hook"
     hook = c.project / ".git" / "hooks" / "post-commit"
     hook.write_text(f"#!/bin/sh\ntouch '{sentinel}'\n")
@@ -184,7 +184,7 @@ def test_hook_filter_and_fsmonitor_never_run(prepared):
     reference_hook.chmod(0o755)
     git(c.project, "config", "core.fsmonitor", str(hook))
     git(c.project, "config", "filter.evil.clean", f"touch '{sentinel}'")
-    (c.project / ".git" / "info" / "attributes").write_text("feature.py filter=evil\n")
+    (c.project / ".git" / "info" / "attributes").write_text("*.py filter=evil\n")
     assert seal_stopped_candidate(c.authority)["candidate"]["head_sha"] != c.head
     assert not sentinel.exists()
 
@@ -214,6 +214,7 @@ def test_source_moves_during_seal_before_ref_write(prepared, monkeypatch):
 
 def test_ref_compare_and_swap_does_not_overwrite_moved_branch(prepared, monkeypatch):
     c = returned(prepared)
+    (c.worktree / "new.py").write_bytes(b"new source\n")
     other = git(c.project, "commit-tree", c.value.to_dict()["candidate"]["tree_sha"], "-p", c.head, "-m", "Other host commit")
     original = _Objects.write
     def move(self, *args, **kwargs):

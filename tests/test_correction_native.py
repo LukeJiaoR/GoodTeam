@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import shutil
+import subprocess
 import time
 
 import pytest
@@ -13,13 +14,17 @@ from goodteam_os.execution.correction_loop import CorrectionLoopService
 from goodteam_os.execution.correction_native import POLICY_SCHEMA, TrustedCodexCorrectionAdmission
 from goodteam_os.execution.correction_store import CorrectionAttemptStore
 from goodteam_os.execution.correction_worker import CorrectionWorkerService
-from goodteam_os.execution.task_snapshot import TaskInputError, canonical_bytes
+from goodteam_os.execution.task_snapshot import TaskInputError, canonical_bytes, digest
 from goodteam_os.skills.codex_local import _binary_digest
 from goodteam_os.workers import WorkerJobStore
 from test_automatic_candidate_review import automatic as automatic_fixture  # noqa: F401
 from test_correction_codex_seal import channel
 from test_candidate_validation import git
 from test_task_input_snapshot import ctx  # noqa: F401
+
+
+NEW_CASE_SOURCE = b"assert VALUE == 'fixed'\r\nprint('new case checked')\r\n"
+NEW_CASE_OUTPUT = b"new case checked\n"
 
 
 class OfflineNative(TrustedCodexCorrectionAdmission):
@@ -42,6 +47,7 @@ class OfflineNative(TrustedCodexCorrectionAdmission):
 @pytest.fixture
 def native(request, monkeypatch):
     c = request.getfixturevalue("automatic_fixture")
+    c.add_new_file = getattr(request, "param", False)
     # Real controller/Reviewer fixture establishes exact feedback and prepares
     # the attempt while default production capability still rejects dispatch.
     blocked = c.auto.advance(c.execution_id, acknowledge_external_cost=True)
@@ -57,13 +63,22 @@ def native(request, monkeypatch):
         path.write_text("offline fixture, not a credential")
         path.chmod(0o600)
     c.native_script = c.workspace / "native-fixture.py"
+    source = "VALUE = 'fixed'\n"
+    new_file_script = ""
+    if c.add_new_file:
+        # The frozen original command still executes feature.py. Its new
+        # dependency proves that rechecking observes the added file, without
+        # imports or pytest creating untracked bytecode/cache artifacts.
+        source += "exec(open('tests/new_case.py').read())\n"
+        new_file_script = ("Path('tests').mkdir()\n"
+                           f"Path('tests/new_case.py').write_bytes({NEW_CASE_SOURCE!r})\n")
     c.native_script.write_text("import sys\nfrom pathlib import Path\nprompt=sys.stdin.read()\n"
         "assert 'OLD_CONDITION' in prompt and 'Complete Retained Correction Feedback' in prompt\n"
         "assert 'Do not commit, stage, or write Git metadata' in prompt\n"
         "assert 'Commit a clean candidate there' not in prompt\n"
         f"Path({str(c.effects)!r}).open('a').write('call\\n')\n"
-        "Path('feature.py').write_text(\"VALUE = 'fixed'\\n\")\n"
-        f"sys.stdout.buffer.write({channel(c.value)!r})\n")
+        f"Path('feature.py').write_text({source!r})\n"
+        f"{new_file_script}sys.stdout.buffer.write({channel(c.value)!r})\n")
     # The VM's installed interpreter is owned by a container image UID; use
     # an owned copy solely for this authority fixture, never relax production.
     binary = c.workspace / "offline-python"
@@ -90,9 +105,11 @@ def run(c):
     return c.service.run(c.execution_id, c.job_id, acknowledge_external_cost=True)
 
 
-def test_typed_dispatch_seal_original_check_and_new_head_review(native):
+@pytest.mark.parametrize("native", [False, True], indirect=True, ids=["tracked_edit", "new_regular_file"])
+def test_typed_dispatch_seal_original_check_and_new_head_review(native, monkeypatch):
     c = native
     original_index = (c.project / ".git" / "index").read_bytes()
+    original_source = (c.project / "feature.py").read_bytes()
     result = AutomaticCandidateReviewService(c.project, codex_correction_admission=c.admission).advance(
         c.execution_id, acknowledge_external_cost=True)
     assert result["status"] == "reviewed", result
@@ -101,13 +118,77 @@ def test_typed_dispatch_seal_original_check_and_new_head_review(native):
     assert result["review"]["candidate"] == sealed and sealed["head_sha"] != c.head
     assert result["review"]["base_sha"] == c.base
     assert c.runtime.records[-1]["target"]["head_sha"] == sealed["head_sha"]
+    assert result["review"]["independence"] == "registered_read_only_new_session"
+    assert c.runtime.records[0]["context_ref"] != c.runtime.records[-1]["context_ref"]
     assert git(c.project, "rev-parse", "HEAD") == c.head
     assert (c.project / ".git" / "index").read_bytes() == original_index
+    assert (c.project / "feature.py").read_bytes() == original_source
+    assert not (c.project / "tests").exists()
+    evidence = c.validation.evidence(c.execution_id)
+    checked = evidence["receipt"]
+    assert evidence["check_status"] == "passed" and evidence["acceptance_status"] == "accepted_by_review_policy"
+    initial_plan = _read(c.authority.execution_root / ("validation-plan-" + c.first["operation_key"] + ".json"))
+    checked_plan = _read(c.authority.execution_root / ("validation-plan-" + checked["operation_key"] + ".json"))
+    for key in ("argv", "criteria", "seconds"):
+        assert checked_plan["request"][key] == initial_plan["request"][key]
+    assert checked_plan["request"]["head_sha"] == sealed["head_sha"]
+    assert checked_plan["request"]["correction_worker"] == c.job_id
+    if c.add_new_file:
+        assert subprocess.check_output(["git", "show", sealed["head_sha"] + ":tests/new_case.py"],
+                                       cwd=c.project) == NEW_CASE_SOURCE
+        assert git(c.worktree, "ls-files", "--error-unmatch", "tests/new_case.py") == "tests/new_case.py"
+        assert "head/tests/new_case.py" not in c.runtime.records[0]["sources"]
+        assert c.runtime.records[-1]["sources"]["head/tests/new_case.py"].encode() == NEW_CASE_SOURCE
+        added = next(row for row in c.runtime.records[-1]["target"]["files"] if row["path"] == "tests/new_case.py")
+        assert added["change"] == "A" and added["base"] is None and added["head"]["mode"] == "100644"
+        assert checked["observation"]["output"]["stdout"] == {
+            "sha256": digest(NEW_CASE_OUTPUT), "bytes": len(NEW_CASE_OUTPUT)}
+        assert not list(c.worktree.rglob("__pycache__"))
+        assert git(c.worktree, "ls-files", "--others") == ""
     binding = c.authority.native_binding(c.value)
     assert binding["runtime_verification"] == "contract_fixture" and binding["sandbox_confinement_verified"] is False
     assert correction_runtime_capability("codex")["available"] is False
     c.policy_path.unlink()  # Completed read/replay requires no fresh native grant.
+    monkeypatch.setattr("goodteam_os.execution.candidate_validation.run_explicit_command",
+                        lambda *a, **k: pytest.fail("Terminal restart reran original checks"))
     assert AutomaticCandidateReviewService(c.project).advance(c.execution_id)["status"] == "reviewed"
+    assert c.effects.read_text() == "call\n" and len(c.runtime.records) == 2
+
+
+@pytest.mark.parametrize("native", [True], indirect=True, ids=["new_regular_file"])
+@pytest.mark.parametrize("mutation", ["content", "deleted", "mode", "untracked", "ignored"])
+def test_new_file_drift_blocks_validation_and_terminal_replay(native, monkeypatch, mutation):
+    c = native
+    result = AutomaticCandidateReviewService(c.project, codex_correction_admission=c.admission).advance(
+        c.execution_id, acknowledge_external_cost=True)
+    assert result["status"] == "reviewed", result
+    checked = c.validation.evidence(c.execution_id)["receipt"]
+    plan = _read(c.authority.execution_root / ("validation-plan-" + checked["operation_key"] + ".json"))
+    request = {key: plan["request"][key] for key in (
+        "operation_id", "head_sha", "argv", "criteria", "seconds", "correction_worker")}
+    before = {path.name: path.read_bytes() for path in c.authority.execution_root.glob("validation-*.json")}
+    c.policy_path.unlink()
+    added = c.worktree / "tests" / "new_case.py"
+    if mutation == "content":
+        added.write_text("raise AssertionError('changed after review')\n")
+    elif mutation == "deleted":
+        added.unlink()
+    elif mutation == "mode":
+        added.chmod(0o755)
+    elif mutation == "untracked":
+        added.with_name("late.py").write_text("late addition\n")
+    else:
+        (c.worktree / ".goodteam").mkdir()
+        (c.worktree / ".goodteam" / "late.py").write_text("ignored late addition\n")
+    monkeypatch.setattr("goodteam_os.execution.candidate_validation.run_explicit_command",
+                        lambda *a, **k: pytest.fail("Changed sealed source reached original checks"))
+    for operation in (request["operation_id"], "new-check-after-drift"):
+        with pytest.raises(TaskInputError):
+            c.validation.validate(c.execution_id, **{**request, "operation_id": operation})
+    replay = AutomaticCandidateReviewService(c.project).advance(c.execution_id)
+    assert replay["status"] == "blocked" and replay["acceptance_status"] == "unknown", replay
+    assert c.validation.evidence(c.execution_id)["acceptance_status"] == "unknown"
+    assert {path.name: path.read_bytes() for path in c.authority.execution_root.glob("validation-*.json")} == before
     assert c.effects.read_text() == "call\n" and len(c.runtime.records) == 2
 
 

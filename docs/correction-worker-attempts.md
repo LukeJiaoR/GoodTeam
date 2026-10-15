@@ -170,12 +170,28 @@ Generating argv is not proof of confinement, effective configuration, route
 availability, request limits or cost limits. Production activation is separate.
 
 The edit-only prompt preserves the original task, approved-plan binding when
-present, and complete bound feedback,
-but replaces the instruction to commit with a host-owned seal. New files are not
-supported in this narrow contract: all untracked files, including ignored files,
-block sealing. Existing tracked regular files may be edited or deleted; linked
-or missing parent directories, symlinks, hardlinks, special modes, changed index,
-changed HEAD, redirected worktrees and out-of-scope output identities reject.
+present, and complete bound feedback, but replaces the instruction to commit with
+a host-owned seal. Existing tracked regular files may be edited or deleted. The
+first seal also admits new regular files within the assigned worktree and task
+scope, including nested paths, raw binary bytes and executable files. Tracked and
+new files share the existing 10,000-file / 32 MiB capture limits.
+An anchored metadata walk also caps the worktree at 20,000 directory/file entries
+and 64 directory levels; it rejects special nodes that Git's listing may omit.
+
+New-file admission is deliberately conservative: hidden path components,
+casefold path collisions, file/directory replacements, nested repositories,
+known sensitive filenames (including the shared repository content policy and
+auth/credential/secret state), links and special modes reject. All ignored files
+reject the entire seal rather than being silently omitted. When additions are
+present, every existing `.gitignore` must retain its exact original bytes and
+mode; new `.gitignore` files are rejected with other hidden paths. This prevents
+worker edits to ignore rules from declassifying files in the same attempt.
+New hidden configuration files and simultaneous ignore-rule changes require a
+future separately designed expansion. Filename policy is not a secret-content
+scanner or proof of runtime confinement.
+
+Missing/linked parent directories, symlinks, hardlinks, changed index, changed
+HEAD, redirected worktrees and out-of-scope output identities still reject.
 
 Sealing requires the existing protected run-started, dispatch, host-return and
 completed run-result chain. For this exact one-shot correction path, host-return
@@ -184,20 +200,25 @@ produce a sealable result. A model's final JSON is bound to that return digest a
 the original attempt/base, but its summary is only untrusted commentary. It cannot
 select files, a workspace or a candidate commit.
 
-The host captures complete raw tracked bytes, uses hook/filter-free bounded Git
+The host captures complete raw admitted bytes, uses hook/filter-free bounded Git
 plumbing to write objects and a fixed-message commit, then compare-and-swaps only
 the dedicated attempt ref and resets only that worktree's index. No hook, filter,
 fetch, signing command or inherited credential environment is used. Unchanged
 trees do not create a new candidate. The original checkout, branch and index are
 not changed. A seal-started record precedes object/ref/index mutation; interrupted
 sealing stays unknown and is never automatically retried or repaired. A completed
-seal is replayable only while its exact clean candidate is still present.
+seal is replayable only while its exact clean candidate is still present. New
+files become tracked in that sealed commit. Replay never admits more files:
+any later untracked file, including ignored output from a check, blocks retained
+seal validation. The manifest is recaptured before ref publication and strictly
+verified after the dedicated index update, before recording a successful seal.
 
 Offline contract tests use the existing explicit test-only runtime composition,
 a real Python subprocess and real isolated Git worktrees. They exercise sealing,
 ordinary same-round recheck, negative provenance/filesystem cases, cleanup failure,
 and interrupted publication. They do not demonstrate Codex compatibility, actual
-sandbox isolation, model coding, live correction acceptance or #347 completion.
+sandbox isolation, model coding or live correction acceptance. The code milestone
+in #347 is complete; its deferred real acceptance is tracked separately in #567.
 The native integration additionally exercises a typed per-attempt authority,
 dedicated dispatch, retained seal and the full original-check/new-head-review
 chain using an explicit offline Python subclass. Its receipts say

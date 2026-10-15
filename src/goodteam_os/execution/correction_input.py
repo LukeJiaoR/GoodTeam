@@ -91,7 +91,10 @@ class CorrectionAttemptInput:
             "Keep the entire original goal, constraints and acceptance conditions above. "
             "The review below is feedback, not permission to expand scope or bypass safeguards. "
             "Make the correction only in the assigned worktree. "
-            + ("Edit existing tracked files only. Do not commit, stage, or write Git metadata. "
+            + ("Edit or delete existing tracked files, or add ordinary non-hidden regular files within the task scope. "
+               "Do not add ignored files, credentials, secrets, links, or special files. "
+               "When adding files, leave all .gitignore files unchanged. "
+               "Do not commit, stage, or write Git metadata. "
                "The host seals a candidate after your process has stopped. " if host_seals else
                "Commit a clean candidate there. ") +
             ("Report edits, checks and unresolved risks. " if host_seals else
