@@ -30,6 +30,7 @@ from goodteam_os.web import serve, start_workflow
 from goodteam_os.workers import WorkerJobStore
 
 if TYPE_CHECKING:
+    from goodteam_os.execution.correction_native import TrustedCodexCorrectionAdmission
     from goodteam_os.skills.codex_runtime import CodexReviewAdmission
 
 
@@ -286,6 +287,9 @@ def build_parser() -> argparse.ArgumentParser:
     continue_review = execution_subparsers.add_parser("continue-automatic-review", help="Resume the frozen automatic review without re-entering its inputs")
     continue_review.add_argument("--execution-id", required=True)
     continue_review.add_argument("--project-root", type=Path, required=True)
+    for correction_command in (run_worker, continue_review):
+        correction_command.add_argument("--trusted-codex-correction-policy", type=Path,
+            help="Existing exact-task native correction policy; separate from Reviewer admission.")
     for automatic_command in (validate, continue_review):
         automatic_command.add_argument("--local-codex-policy", type=Path, help="Existing task-bound local Reviewer policy.")
         automatic_command.add_argument("--trusted-codex-review-policy", type=Path, help="Existing task-bound trusted native Reviewer policy.")
@@ -300,8 +304,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAdmission | None = None) -> int:
+def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAdmission | None = None,
+         codex_correction_admission: TrustedCodexCorrectionAdmission | None = None) -> int:
     args = build_parser().parse_args(argv)
+    correction_entry = args.command == "execution" and args.execution_command in {
+        "run-correction-worker", "continue-automatic-review"}
+    correction_policy = getattr(args, "trusted_codex_correction_policy", None)
+    if codex_correction_admission is not None and not correction_entry:
+        raise ValueError("Codex correction composition is supported only by run-correction-worker and continue-automatic-review.")
+    if correction_policy is not None and codex_correction_admission is not None:
+        raise ValueError("Choose one correction startup authority.")
+    if correction_policy is not None:
+        from goodteam_os.execution.correction_native import TrustedCodexCorrectionAdmission
+
+        codex_correction_admission = TrustedCodexCorrectionAdmission(correction_policy)
+    from goodteam_os.execution.correction_native import correction_worker_kwargs
+
+    correction_runtime_kwargs = correction_worker_kwargs(codex_correction_admission)
     operator_entry = args.command in {"restart", "supervise", "_operator-component"}
     if args.command in {"restart", "supervise"} and codex_review_admission is not None:
         raise ValueError("Subprocess startup requires an existing Reviewer policy path, not an in-memory authority.")
@@ -614,7 +633,7 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         return 0
     if args.command == "execution":
         try:
-            payload = _run_execution_command(args, **runtime_kwargs)
+            payload = _run_execution_command(args, **runtime_kwargs, **correction_runtime_kwargs)
         except ValueError as exc:
             print(f"execution: {exc}", file=sys.stderr)
             if str(getattr(exc, "code", "")).startswith("approved_plan_"):
@@ -676,10 +695,13 @@ def _print_service_status(payload: dict[str, object]) -> None:
             print(f"Last failure: {active.get('last_failure_class', '') or 'none'}")
 
 
-def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=None) -> dict[str, object]:
+def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=None,
+                           codex_correction_admission=None) -> dict[str, object]:
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
+    from goodteam_os.execution.correction_native import correction_worker_kwargs
 
-    api = ExecutionAPI(args.project_root, **review_worker_kwargs(codex_review_admission))
+    api = ExecutionAPI(args.project_root, **review_worker_kwargs(codex_review_admission),
+                       **correction_worker_kwargs(codex_correction_admission))
     if args.execution_command == "intake-github-issue":
         return api.intake_github_issue(
             repo=args.repo,

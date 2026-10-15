@@ -70,10 +70,13 @@ def policy_decision(policy, result, report):
 
 
 class AutomaticCandidateReviewService:
-    def __init__(self, project_root, *, clock=None, codex_review_admission=None):
+    def __init__(self, project_root, *, clock=None, codex_review_admission=None, codex_correction_admission=None):
+        from .correction_native import correction_worker_kwargs
+
         self.project_root = Path(project_root).resolve()
         self.validation = CandidateValidationService(self.project_root)
         self.workers = WorkerJobStore(self.project_root, codex_review_admission=codex_review_admission)
+        self.correction_runtime_kwargs = correction_worker_kwargs(codex_correction_admission)
         self.clock = clock or time.time
 
     def _policy(self, snapshot, saved=None):
@@ -400,7 +403,7 @@ class AutomaticCandidateReviewService:
                                 head_sha=review["candidate"]["head_sha"], max_rounds=start["max_rounds"],
                                 wall_seconds=start["wall_seconds"])
                         continue
-                    service = CorrectionWorkerService(self.project_root)
+                    service = CorrectionWorkerService(self.project_root, **self.correction_runtime_kwargs)
                     if phase == "awaiting_fix":
                         with role_lock(root, create=False):
                             _plan, result, _review = self.validation._current(snapshot)
@@ -411,6 +414,10 @@ class AutomaticCandidateReviewService:
                         service.run(execution_id, projected["worker_job_id"], acknowledge_external_cost=acknowledge_external_cost)
                     elif phase == "awaiting_recheck" and projected["worker_job_id"]:
                         job_id = projected["worker_job_id"]
+                        # A completed transport can precede its host seal on
+                        # restart. Finalize retained native output without
+                        # redispatch before selecting the exact check head.
+                        service.finalize(execution_id, job_id)
                         authority = CorrectionAttemptStore(self.project_root, job_id)
                         value = authority.load()
                         workspace = authority.workspace(value)

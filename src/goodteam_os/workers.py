@@ -912,7 +912,7 @@ class _WritebackOutcome(dict):
 
 
 class WorkerJobStore:
-    def __init__(self, project_root: Path, *, codex_review_admission=None):
+    def __init__(self, project_root: Path, *, codex_review_admission=None, codex_correction_admission=None):
         # Internal service composition only; never loaded from job/Team JSON,
         # environment variables, a Skill package, or a persisted success flag.
         if codex_review_admission is not None:
@@ -920,6 +920,9 @@ class WorkerJobStore:
             if not isinstance(codex_review_admission, CodexReviewAdmission):
                 raise ValueError("Codex Reviewer needs a control-plane admission authority, not configuration.")
         self._codex_review_admission = codex_review_admission
+        from goodteam_os.execution.correction_native import correction_worker_kwargs
+        correction_worker_kwargs(codex_correction_admission)
+        self._codex_correction_admission = codex_correction_admission
         self.project_root = project_root
         self.root = project_root / ".goodteam" / "workers" / "jobs"
         self._task_input_store = None
@@ -943,7 +946,8 @@ class WorkerJobStore:
             from goodteam_os.execution.correction_store import CorrectionAttemptStore
             if job_id not in self._correction_input_stores:
                 self._correction_input_stores[job_id] = CorrectionAttemptStore(
-                    self.project_root, job_id, original_store=self._task_input_store)
+                    self.project_root, job_id, original_store=self._task_input_store,
+                    codex_correction_admission=self._codex_correction_admission)
             return self._correction_input_stores[job_id]
         return self._task_input_store
 
@@ -1345,6 +1349,8 @@ class WorkerJobStore:
         job_root = self.root / job_id
         job = self._read_json(job_root / "job.json")
         self._admit_input_dispatch(job_root, job)
+        if self._codex_correction_admission is not None and not job_id.startswith("job-correction-"):
+            raise ValueError("correction_native_task_mismatch")
         if has_skill_fields(job):
             raise ValueError("Unregistered Skill Worker input cannot enter the legacy Runtime path.")
         from goodteam_os.skills.legacy_task_guard import reject_legacy_task_downgrade
@@ -1375,6 +1381,8 @@ class WorkerJobStore:
                 status="failed",
                 summary=f"Adapter does not support enforced read-only execution: {adapter}",
             )
+        elif adapter == "codex" and job_id.startswith("job-correction-") and self._codex_correction_admission is not None:
+            status_payload = self._run_native_correction(job_root, job)
         elif adapter in {"noop", "fake"}:
             if job_root.name.startswith("job-correction-"):
                 prompt = self._worker_prompt(job_root, job, model="builtin-simulation")
@@ -1429,7 +1437,8 @@ class WorkerJobStore:
         if isinstance(prepared_prompt, _PreparedWorkerPrompt):
             memory_citations = list(prepared_prompt.memory.citations)
         status_payload["memory_citations"] = memory_citations
-        if status_payload.get("status") == "completed":
+        if status_payload.get("status") == "completed" and not (
+                job_id.startswith("job-correction-") and self._codex_correction_admission is not None):
             try:
                 writeback = self._write_back_memory(job_root, job)
                 status_payload["memory_writeback"] = writeback
@@ -2359,6 +2368,20 @@ class WorkerJobStore:
             use_pty=spec.needs_pty,
         )
 
+    def _run_native_correction(self, job_root, job):
+        """No legacy command builder, auth projection, default model or retry."""
+        value = self.admit_task_input(job_root.name, job)
+        authority = self._input_store(value)
+        admission = self._codex_correction_admission
+        binding = admission.check(authority, value)
+        spec = admission.command()
+        return self._run_cli_worker(job_root, job, command=list(spec["command"]),
+            model=binding["model_requested"], preflight={"available": True, "native_runtime": binding},
+            label="Trusted native Codex correction", capture="stdout", summarize=_codex_summary,
+            worker_env=spec["environment"], timeout_seconds=binding["max_seconds"],
+            runtime_evidence={"kind": "trusted_native_correction", "external_invocation": True,
+                              "native_runtime": binding, "provider_receipt": "unknown"})
+
     def _worker_runtime_cwd(self, job: dict[str, Any]) -> WorkerRuntimeContext:
         context = job.get("sandbox_context")
         if not isinstance(context, dict) or not context.get("available"):
@@ -2459,6 +2482,13 @@ class WorkerJobStore:
                                   int(authority.assert_dispatchable(task_input)))
             if timeout_seconds < 1:
                 raise ValueError("correction_time_budget_exhausted")
+            if self._codex_correction_admission is not None:
+                timeout_seconds = min(timeout_seconds, self._codex_correction_admission.policy["max_seconds"])
+                selected = self._codex_correction_admission.command()
+                if (tuple(command) != selected["command"] or worker_env != selected["environment"]
+                        or model != self._codex_correction_admission.policy["model"]
+                        or prompt_via != "stdin" or capture != "stdout"):
+                    raise ValueError("correction_native_command_mismatch")
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"
@@ -2537,6 +2567,8 @@ class WorkerJobStore:
                 )
             else:
                 transport_ref = self._memory_transport(job_root, job, prompt)
+                if correction:
+                    authority.check_native_current(task_input)
                 process = subprocess.Popen(
                     process_command,
                     cwd=runtime_context.runtime_cwd,
@@ -2566,8 +2598,11 @@ class WorkerJobStore:
                     from goodteam_os.execution.correction_loop import CorrectionLoopService
                     from goodteam_os.execution.correction_process import communicate_correction
                     loop = CorrectionLoopService(self.project_root)
+                    def check_current():
+                        loop.admit_worker_dispatch(task_input)
+                        authority.check_native_current(task_input)
                     stdout, stderr = communicate_correction(process, process_input, seconds=timeout_seconds,
-                        check_current=lambda: loop.admit_worker_dispatch(task_input))
+                        check_current=check_current)
                 else:
                     stdout, stderr = process.communicate(input=process_input, timeout=timeout_seconds)
                 returncode = int(process.returncode if process.returncode is not None else 1)
@@ -2647,6 +2682,14 @@ class WorkerJobStore:
         # a protected Skill job while the verified Runtime adapter is absent.
         reject_unverified_runtime_entry(job_root, job)
         task_input = self.admit_task_input(job_root.name, job)
+        from goodteam_os.execution.correction_input import CorrectionAttemptInput
+        if isinstance(task_input, CorrectionAttemptInput) and self._codex_correction_admission is not None:
+            from goodteam_os.execution.correction_codex import correction_prompt
+            authority = self._input_store(task_input)
+            self._codex_correction_admission.check(authority, task_input)
+            prompt = correction_prompt(authority)
+            self._input_receipt(job_root, job, prompt, stage="worker_input_prepared")
+            return prompt
         handoff = self._ordinary_memory_handoff(job_root, job)
         if handoff is not None:
             handoff.load(job)

@@ -33,10 +33,13 @@ class ExecutionAPI:
         clock: Clock | None = None,
         sandbox_git_adapter: SandboxGitAdapter | None = None,
         codex_review_admission=None,
+        codex_correction_admission=None,
     ):
         from goodteam_os.skills.codex_runtime import review_worker_kwargs
+        from .correction_native import correction_worker_kwargs
 
         self.review_runtime_kwargs = review_worker_kwargs(codex_review_admission)
+        self.correction_runtime_kwargs = correction_worker_kwargs(codex_correction_admission)
         self.project_root = Path(project_root)
         self.github_client = github_client
         self.clock = clock
@@ -76,7 +79,8 @@ class ExecutionAPI:
         delivery = None
         if candidate_review is not None or resume_candidate_review:
             from .candidate_delivery import CandidateDeliveryService
-            delivery = CandidateDeliveryService(self.project_root, **self.review_runtime_kwargs)
+            delivery = CandidateDeliveryService(self.project_root, **self.review_runtime_kwargs,
+                                               **self.correction_runtime_kwargs)
             if candidate_review is not None:
                 delivery.configure(execution_id, **candidate_review)
             delivery.require_plan(execution_id)
@@ -161,7 +165,8 @@ class ExecutionAPI:
         from .automatic_review import AutomaticCandidateReviewService
         from .task_snapshot import TaskInputError
 
-        service = AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs)
+        service = AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs,
+                                                **self.correction_runtime_kwargs)
         saved = service.configuration(execution_id)
         selected = None
         if saved is not None:
@@ -205,16 +210,19 @@ class ExecutionAPI:
     def start_automatic_review(self, execution_id: str, **request) -> dict[str, Any]:
         """Trusted composition only; captures exact base and original policy."""
         from .automatic_review import AutomaticCandidateReviewService
-        return AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs).start(execution_id, **request)
+        return AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs,
+            **self.correction_runtime_kwargs).start(execution_id, **request)
 
     def advance_automatic_review(self, execution_id: str, *, acknowledge_external_cost=False) -> dict[str, Any]:
         from .automatic_review import AutomaticCandidateReviewService
-        return AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs).advance(
+        return AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs,
+            **self.correction_runtime_kwargs).advance(
             execution_id, acknowledge_external_cost=acknowledge_external_cost)
 
     def stop_automatic_review(self, execution_id: str) -> dict[str, Any]:
         from .automatic_review import AutomaticCandidateReviewService
-        return AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs).stop(execution_id)
+        return AutomaticCandidateReviewService(self.project_root, **self.review_runtime_kwargs,
+            **self.correction_runtime_kwargs).stop(execution_id)
 
     def start_correction_loop(self, execution_id: str, **request) -> dict[str, Any]:
         from goodteam_os.execution.correction_loop import CorrectionLoopService
@@ -222,11 +230,11 @@ class ExecutionAPI:
 
     def prepare_correction_worker(self, execution_id: str, **request) -> dict[str, Any]:
         from .correction_worker import CorrectionWorkerService
-        return CorrectionWorkerService(self.project_root).prepare(execution_id, **request)
+        return CorrectionWorkerService(self.project_root, **self.correction_runtime_kwargs).prepare(execution_id, **request)
 
     def run_correction_worker(self, execution_id: str, job_id: str, *, acknowledge_external_cost=False) -> dict[str, Any]:
         from .correction_worker import CorrectionWorkerService
-        return CorrectionWorkerService(self.project_root).run(execution_id, job_id,
+        return CorrectionWorkerService(self.project_root, **self.correction_runtime_kwargs).run(execution_id, job_id,
             acknowledge_external_cost=acknowledge_external_cost)
 
     def stop_correction_loop(self, execution_id: str, *, loop_id: str) -> dict[str, Any]:

@@ -13,11 +13,12 @@ MAX_CORRECTION_INPUT = 16384
 
 
 def correction_runtime_capability(adapter):
-    """Closed external whitelist until a verified correction envelope is wired.
+    """Default availability; never infer an exact-attempt native permission.
 
     The existing trusted Codex authorities admit their captured Skill/reviewer
     protocols, not this new mutable-worktree correction protocol. An argv flag,
     executable name or operator cost acknowledgement cannot bridge that gap.
+    Explicit typed native authority is checked separately by the attempt store.
     """
     if adapter in {"fake", "noop"}:
         return {"available": True, "status": "simulation_only", "reason": "builtin_without_external_invocation"}

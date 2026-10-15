@@ -1,8 +1,8 @@
-"""Dormant Codex correction protocol; no launcher or admission authority.
+"""Codex edit-only protocol; constructing a command grants no runtime authority.
 
 This 0.159.2 argv proposal requests native sandboxing, not verified confinement.
-Nothing imports it from production dispatch. Existing external admission stays
-closed; native config, login, version and tool permissions are not probed here.
+Only the separately admitted native correction path uses it for dispatch.
+Native config, login, version and tool permissions are not probed here.
 """
 from pathlib import Path
 import json
@@ -42,7 +42,9 @@ def correction_prompt(authority):
     if value.original.to_dict()["adapter"] != "codex":
         raise TaskInputError("correction_codex_contract_invalid")
     authority.workspace(value)
-    prompt = render_correction_input(authority.project_root, value, host_seals=True)
+    from .approved_plan import binding_for, render_binding
+    prompt = render_binding(binding_for(authority.project_root, value)) + "\n\n"
+    prompt += render_correction_input(authority.project_root, value, host_seals=True)
     result = {"schema_version": OUTPUT_SCHEMA, "input": value.reference,
               "base_sha": value.to_dict()["candidate"]["head_sha"], "summary": "Describe edits and remaining risks."}
     prompt += ("\n\nReturn only a JSON object in your final message with this exact shape. "
