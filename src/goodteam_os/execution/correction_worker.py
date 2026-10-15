@@ -17,10 +17,10 @@ from .task_snapshot import TaskInputError, digest
 
 
 class CorrectionWorkerService:
-    def __init__(self, project_root):
+    def __init__(self, project_root, *, codex_correction_admission=None):
         self.project_root = Path(project_root).resolve()
         self.loop = CorrectionLoopService(self.project_root)
-        self.workers = WorkerJobStore(self.project_root)
+        self.workers = WorkerJobStore(self.project_root, codex_correction_admission=codex_correction_admission)
 
     def prepare(self, execution_id, *, loop_id, receipt_id, head_sha, operation_id, max_seconds=120):
         snapshot = self.loop.validation._snapshot(execution_id)
@@ -113,23 +113,28 @@ class CorrectionWorkerService:
                 raise TaskInputError("correction_identity_mismatch")
             started, previous = authority.outcome(value)
             if previous is not None:
-                return self.evidence(execution_id, job_id)
+                return self.finalize(execution_id, job_id)
             if started is not None:
                 raise TaskInputError("correction_worker_outcome_unknown")
             adapter = value.original.to_dict()["adapter"]
-            from .correction_input import correction_runtime_capability
-            capability = correction_runtime_capability(adapter)
+            capability = authority.runtime_capability(value)
             if not capability["available"]:
                 raise TaskInputError(capability["reason"])
             if adapter not in {"fake", "noop"} and acknowledge_external_cost is not True:
                 raise TaskInputError("correction_runtime_authorization_required")
             # Only the explicit CLI/trusted caller may create this authorization;
             # there is no HTTP run/command endpoint in this slice.
-            auth = {"input": value.reference, "producer": "explicit_operator_cli", "max_invocations": 1,
-                    "max_seconds": value.to_dict()["max_seconds"], "external_cost": "operator_acknowledged_unknown"}
+            auth = authority.authorization(value)
             previous_auth = _read(authority.root / "authorization.json")
             if previous_auth is not None and previous_auth != auth:
                 raise TaskInputError("correction_runtime_authorization_required")
+            if "native_runtime" in auth:
+                required = _bound({"input": value.reference, "native_runtime": auth["native_runtime"]})
+                previous_required = _read(authority.root / "native-runtime-required.json")
+                if previous_required is not None and previous_required != required:
+                    raise TaskInputError("correction_native_binding_missing")
+                if previous_required is None:
+                    _write(authority.root / "native-runtime-required.json", required)
             _write(authority.root / "authorization.json", auth)
             authority.assert_dispatchable(value)
             job = self.workers._read_json(self.workers.root / job_id / "job.json")
@@ -149,6 +154,20 @@ class CorrectionWorkerService:
                 raise TaskInputError("correction_worker_outcome_unknown")
             _write(authority.root / "run-result.json", _bound({"input": value.reference,
                 "status": result["status"], "host_return": returned}))
+        return self.finalize(execution_id, job_id)
+
+    def finalize(self, execution_id, job_id):
+        """Finish/replay a returned native artifact without authorizing dispatch."""
+        authority = self.workers._input_store(job_id=job_id)
+        with authority.lock():
+            value = authority.load()
+            if value.execution_id != execution_id:
+                raise TaskInputError("correction_identity_mismatch")
+            native = authority.native_binding(value)
+            _started, result = authority.outcome(value)
+            if native is not None and result is not None and result["status"] == "completed":
+                from .correction_seal import seal_stopped_candidate
+                seal_stopped_candidate(authority)
         return self.evidence(execution_id, job_id)
 
     def evidence(self, execution_id, job_id):
@@ -159,8 +178,11 @@ class CorrectionWorkerService:
             if value.execution_id != execution_id:
                 raise TaskInputError("correction_identity_mismatch")
             started, result = authority.outcome(value)
+            native = authority.native_binding(value)
+            sealed = authority.sealed_candidate(value) if native and _read(authority.root / "seal-result.json") else None
             return {"job_id": job_id, "input": value.reference, "workspace": value.workspace_relative,
                     "status": result["status"] if result else "outcome_unknown" if started else "prepared",
                     "max_invocations": 1, "max_seconds": value.to_dict()["max_seconds"],
                     "provider_receipt": "unknown", "acceptance_status": "unknown", "verification": "unverified",
-                    "runtime_admission": correction_runtime_capability(value.original.to_dict()["adapter"])}
+                    "runtime_admission": correction_runtime_capability(value.original.to_dict()["adapter"]),
+                    **({"native_runtime": native, "candidate": sealed} if native else {})}

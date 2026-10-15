@@ -8,8 +8,9 @@ review policy across bounded correction rounds.
 
 This is a review-policy judgment, not independent proof that every task
 requirement is correct. It does not add runtime permission, publish code, merge,
-deploy, or write verified experience into memory. Production external correction
-executors remain blocked by the existing [correction admission boundary](correction-worker-attempts.md).
+deploy, or write verified experience into memory. External correction executors
+remain blocked by default. A separate exact-attempt native Codex authority can be
+supplied only through the [explicit correction continuation](correction-worker-attempts.md#explicit-native-continuation-default-disabled).
 An admitted Reviewer is not an admitted coding Worker.
 
 ## Local CLI entry and resumption
@@ -77,7 +78,7 @@ merge require current passed checks and a protected machine-review receipt;
 green CI and an empty legacy blockers list cannot pass that gate. Source
 hydration preserves the original snapshot and pauses on changed requirements
 for explicit reconciliation. Corrected candidates use their validated commit ID
-on the existing execution branch. Production correction admission remains closed,
+on the existing execution branch. Default correction admission remains closed,
 and no legacy generic fix Worker is used as a fallback. CI failures or human
 feedback that lack a bound correction receipt remain unresolved.
 
@@ -140,8 +141,9 @@ Continuation reads the frozen inputs and retained results. It cannot change the
 original model or reset the budget; repeating a completed check/review does not
 invoke it again. A terminal recorded result can be reopened or continued without
 recomposing an admission. Missing or unknown outcomes remain blocked, rather than
-retrying a provider invocation. Production correction executors remain unadmitted;
-`--acknowledge-external-cost` cannot remove that blocker.
+retrying a provider invocation. Correction remains unavailable without the
+separate exact-attempt native policy; `--acknowledge-external-cost` alone cannot
+remove that blocker.
 
 The Workbench displays automatic mode and the actual next step even after a
 correction journal exists. Its optional human record remains available, but

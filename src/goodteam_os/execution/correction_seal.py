@@ -1,7 +1,7 @@
-"""Dormant host-only sealing of a stopped correction's tracked-file edits.
+"""Host-only sealing of a stopped correction's tracked-file edits.
 
-No production entrypoint calls this module. No model/runtime is invoked. The
-existing Codex correction gate remains closed. Objects and the dedicated attempt
+No model/runtime is invoked here. Explicit native continuation requires the
+complete protected return chain. Objects and the dedicated attempt
 ref/index are the only Git writes; the original checkout/index remain untouched.
 """
 import os
@@ -135,7 +135,8 @@ def seal_stopped_candidate(authority):
     For the existing one-shot Codex correction path, run-result is published
     only after _run_cli_worker confirms process-group cleanup and run_job records
     its host return. This is a host-path guarantee, not provider attestation or
-    confinement against unrestricted same-UID writers. No public caller exists.
+    confinement against unrestricted same-UID writers. Native continuation and
+    retained candidate validation enforce this artifact before recheck/review.
     """
     with authority.lock():
         value = authority.load()

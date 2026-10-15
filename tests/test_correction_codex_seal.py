@@ -1,7 +1,6 @@
-"""Dormant transport contract and actual offline host sealing, never live Codex."""
+"""Command contract and actual offline host sealing, never live Codex."""
 import json
 import os
-from pathlib import Path
 import subprocess
 
 import pytest
@@ -194,13 +193,8 @@ def test_production_admission_remains_closed():
     for adapter in ("codex", "claude", "pi", "gemini"):
         assert correction_runtime_capability(adapter) == {
             "available": False, "status": "blocked", "reason": "correction_verified_runtime_unavailable"}
-    # No CLI/API/Worker path imports either dormant helper.
-    root = Path(__file__).parents[1] / "src" / "goodteam_os"
-    for path in root.rglob("*.py"):
-        if path.name in {"correction_codex.py", "correction_seal.py"}:
-            continue
-        source = path.read_text()
-        assert "correction_seal" not in source and "correction_codex" not in source
+    # Optional typed native composition is tested separately; default readiness
+    # never becomes a global Codex grant merely because dispatch is implemented.
 
 
 def test_source_moves_during_seal_before_ref_write(prepared, monkeypatch):

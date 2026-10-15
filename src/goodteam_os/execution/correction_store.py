@@ -18,7 +18,10 @@ from .task_snapshot_store import _job_binding, host_return_record, store_for_pro
 
 
 class CorrectionAttemptStore:
-    def __init__(self, project_root, job_id, *, original_store=None):
+    def __init__(self, project_root, job_id, *, original_store=None, codex_correction_admission=None):
+        from .correction_native import correction_worker_kwargs
+        correction_worker_kwargs(codex_correction_admission)
+        self.native_admission = codex_correction_admission
         match = CORRECTION_JOB.fullmatch(str(job_id))
         if match is None:
             raise TaskInputError("correction_job_mismatch")
@@ -177,6 +180,59 @@ class CorrectionAttemptStore:
     def release_start(self):
         self._start_lease = None
 
+    def runtime_capability(self, value):
+        if self.native_admission is not None:
+            return self.native_admission.capability(self, value)
+        from .correction_input import correction_runtime_capability
+        return correction_runtime_capability(value.original.to_dict()["adapter"])
+
+    def native_binding(self, value):
+        """Read retained native identity without granting a new invocation."""
+        required = _read(self.root / "native-runtime-required.json")
+        auth = _read(self.root / "authorization.json")
+        dispatch = _read(self.root / "dispatch.json")
+        returned = _read(self.root / "host-return.json")
+        result = _read(self.root / "run-result.json")
+        candidates = [row.get("native_runtime") for row in (auth, dispatch) if row is not None]
+        for row in (returned, result.get("host_return") if result else None):
+            if row is not None:
+                candidates.append(row.get("dispatch", {}).get("native_runtime"))
+        if required is None and not any(row is not None for row in candidates):
+            return None
+        from .correction_native import RUNTIME_SCHEMA
+        if (required is None or required != _bound(required) or required.get("input") != value.reference
+                or not isinstance(required.get("native_runtime"), dict)
+                or required["native_runtime"].get("schema_version") != RUNTIME_SCHEMA
+                or required["native_runtime"].get("input") != value.reference
+                or auth is None or auth.get("native_runtime") != required["native_runtime"]
+                or any(row != required["native_runtime"] for row in candidates)):
+            raise TaskInputError("correction_native_binding_missing")
+        return required["native_runtime"]
+
+    def authorization(self, value):
+        result = {"input": value.reference, "producer": "explicit_operator_cli", "max_invocations": 1,
+                  "max_seconds": value.to_dict()["max_seconds"], "external_cost": "operator_acknowledged_unknown"}
+        if self.native_admission is not None:
+            result["native_runtime"] = self.native_admission.check(self, value)
+        return result
+
+    def check_native_current(self, value):
+        if self.native_admission is not None:
+            binding = self.native_admission.check(self, value)
+            if self.native_binding(value) != binding:
+                raise TaskInputError("correction_native_binding_missing")
+        elif self.native_binding(value) is not None:
+            raise TaskInputError("correction_native_authorization_required")
+
+    def sealed_candidate(self, value):
+        """Read-only validation admission; never mint a seal from a read route."""
+        if self.native_binding(value) is None:
+            return None
+        from .correction_seal import seal_stopped_candidate
+        if _read(self.root / "seal-result.json") is None:
+            raise TaskInputError("correction_seal_required")
+        return seal_stopped_candidate(self)["candidate"]
+
     def check_runtime_context(self, value, job):
         root = self.workspace(value)
         context = job.get("sandbox_context", {})
@@ -189,8 +245,7 @@ class CorrectionAttemptStore:
     def assert_dispatchable(self, value):
         with self.lock():
             self.accept(value)
-            from .correction_input import correction_runtime_capability
-            capability = correction_runtime_capability(value.original.to_dict()["adapter"])
+            capability = self.runtime_capability(value)
             if not capability["available"]:
                 raise TaskInputError(capability["reason"])
             rows = self.receipts(value)
@@ -202,9 +257,9 @@ class CorrectionAttemptStore:
             from .correction_loop import CorrectionLoopService
             remaining = CorrectionLoopService(self.project_root).admit_worker_dispatch(value)
             authorization = _read(self.root / "authorization.json")
-            if authorization != {"input": value.reference, "producer": "explicit_operator_cli", "max_invocations": 1,
-                    "max_seconds": value.to_dict()["max_seconds"], "external_cost": "operator_acknowledged_unknown"}:
+            if authorization != self.authorization(value):
                 raise TaskInputError("correction_runtime_authorization_required")
+            self.check_native_current(value)
             return remaining
 
     def assert_preparable(self, value):
@@ -254,6 +309,8 @@ class CorrectionAttemptStore:
                 raise TaskInputError("correction_receipt_limit")
             row = _bound({"input": value.reference, "sequence": len(rows) + 1, "stage": stage,
                           "input_digest": input_digest, "observation": "host_boundary", "provider_receipt": "unknown"})
+            if self.native_admission is not None:
+                row = _bound({**row, "native_runtime": self.native_admission.check(self, value)})
             if stage == "transport_attempt":
                 _write(self.root / "dispatch.json", row)
             atomic_write(self.root / "receipts.json", canonical_bytes([*rows, row]))

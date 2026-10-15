@@ -4,17 +4,20 @@
 
 This slice connects the existing supervised correction loop to a distinct Worker
 input, retained Git worktree, one-invocation receipt and same-round recheck. The
-production external-executor admission list is **closed**. Existing Codex
-Skill/reviewer authorities do not yet admit this correction protocol. Codex,
-Claude, Pi, unknown adapters and PTY transport cannot acquire permission from a
-binary name, issue text, an argv safety flag or a cost acknowledgement.
+default external-executor admission list is **closed**. An optional exact-attempt
+trusted native Codex authority connects the edit-only correction protocol to
+dispatch, host sealing, the original check and independent new-head review.
+It is separate from Codex Skill/reviewer authority. Claude, Pi, unknown adapters
+and PTY remain unavailable. No adapter acquires permission from a binary name,
+issue text, an argv safety flag or a cost acknowledgement.
 
-Only built-in `fake` / `noop` simulations are admitted. They cannot implement a
-real repair. The Workbench disables preparation for a blocked captured executor,
+Without explicit native startup authority, only built-in `fake` / `noop`
+simulations are admitted. They cannot implement a real repair. The Workbench
+disables preparation for a blocked captured executor,
 shows the reason, and keeps the existing manual fix/check path available. Changing
-a captured task's adapter is not a supported way to unlock it. A compatible,
-verified Codex execution envelope is the next integration step; this release
-**does not deliver production automatic coding or autonomous task completion**.
+a captured task's adapter is not a supported way to unlock it. The native route
+is code-integrated, with **real Codex acceptance still pending**. It does not
+establish verified OS confinement or autonomous delivery.
 
 ## Connected path
 
@@ -36,8 +39,8 @@ goodteam execution run-correction-worker \
 The default per-attempt time limit is 120 seconds, at most 600, and must fit the
 original loop's remaining wall budget. Built-in simulation needs no cost flag.
 `--acknowledge-external-cost` is a separate explicit operator acknowledgement for
-one external invocation **if** a verified adapter is supported later; it currently
-does not enable any external adapter. Cost is unknown, not a dollar/token cap.
+one external invocation; it does not create native runtime authority. Cost is
+unknown, not a dollar/token cap.
 No HTTP route starts the Worker or accepts an executable command. The JSON-only
 prepare route has the same configured-authority/exact-origin protections as
 start/stop/review. Localhost by itself does not establish user authorization.
@@ -149,12 +152,12 @@ partial proof loss, stop/timeout/output bounds, unchanged original task/worktree
 raw checkout hook/filter exclusion, explicit CLI simulations, blocked-production
 UI, and a subsequent round's identity and source lineage.
 
-## Dormant Codex edit-only contract and host sealing
+## Codex edit-only contract and host sealing
 
-The external admission whitelist is **unchanged**: Codex cannot run a correction
-through the product. The internal `correction_codex` and `correction_seal` modules
-have no CLI, HTTP, Worker dispatch or startup-policy caller. They are preparatory
-implementation, not a supported live adapter or a new way to bypass admission.
+The default admission whitelist is **unchanged**. Only the distinct typed
+`TrustedCodexCorrectionAdmission` can select `correction_codex` and
+`correction_seal` through the Worker path. There is no generic CLI backend
+fallback, native credential projection, implicit model selection or parent retry.
 
 The command proposal is explicitly scoped to the locally observed 0.159.2 CLI
 shape, independently of the older pinned-container and 0.160.0 Reviewer routes.
@@ -166,7 +169,8 @@ are not read or copied by the helper, and remain unverified native authority.
 Generating argv is not proof of confinement, effective configuration, route
 availability, request limits or cost limits. Production activation is separate.
 
-The edit-only prompt preserves the original task and complete bound feedback,
+The edit-only prompt preserves the original task, approved-plan binding when
+present, and complete bound feedback,
 but replaces the instruction to commit with a host-owned seal. New files are not
 supported in this narrow contract: all untracked files, including ignored files,
 block sealing. Existing tracked regular files may be edited or deleted; linked
@@ -194,5 +198,95 @@ a real Python subprocess and real isolated Git worktrees. They exercise sealing,
 ordinary same-round recheck, negative provenance/filesystem cases, cleanup failure,
 and interrupted publication. They do not demonstrate Codex compatibility, actual
 sandbox isolation, model coding, live correction acceptance or #347 completion.
-The remaining live integration must admit and bind the actual native envelope,
-route/model and task authority before connecting either helper to dispatch.
+The native integration additionally exercises a typed per-attempt authority,
+dedicated dispatch, retained seal and the full original-check/new-head-review
+chain using an explicit offline Python subclass. Its receipts say
+`contract_fixture`; they are never evidence of a real Codex call.
+
+## Explicit native continuation (default disabled)
+
+This is a trusted-self-use route, not strict third-party Skill admission. Before
+activation, the operator must select and authorize the exact task, native binary,
+existing login home, model, native-managed configuration/tool exposure and unknown
+cost. The host checks native login/config file metadata without reading their
+contents. It never copies credentials or overrides native provider/tool settings.
+Requesting `workspace-write` and `never` is not proof that native managed external
+tools, shared Git administration or arbitrary same-UID writers are confined.
+No native configuration, account or permissions are activated by installation.
+
+An already prepared attempt supplies its immutable `input` reference and retained
+workspace path. A separately created, private canonical-JSON policy outside the
+project must have exactly these fields (placeholder values below are not a grant):
+
+```json
+{
+  "schema_version": "goodteam.trusted-codex-correction-policy.v1",
+  "project_root": "/absolute/registered/project",
+  "input": {"schema_version": "correction_worker_input.v1", "original": "EXACT ORIGINAL REFERENCE OBJECT", "job_id": "EXACT PREPARED JOB ID", "payload_digest": "EXACT DIGEST"},
+  "workspace": "/absolute/registered/project/.goodteam/sandboxes/EXACT_JOB/worktree",
+  "codex": "/absolute/existing/native/codex",
+  "codex_home": "/absolute/existing/native/home",
+  "version": "0.159.2",
+  "binary_digest": "sha256:EXACT_BINARY_DIGEST",
+  "model": "EXPLICIT_AUTHORIZED_MODEL",
+  "expires_at": 0,
+  "max_seconds": 120,
+  "max_invocations": 1,
+  "trusted_task_inputs": true,
+  "accept_native_managed_configuration": true,
+  "accept_unknown_cost": true,
+  "provider_request_limit": null,
+  "usd_limit": null
+}
+```
+
+`input` must be copied as the complete protected reference, including the original
+reference object, not reconstructed from issue text. `expires_at` must be an
+integer Unix timestamp in the next 24 hours; `max_seconds` is 1–600 and no greater
+than the captured attempt. The private policy must have mode 0600. Binary digest,
+safe file metadata and exact version are checked; version probing is bounded and
+owns its process group. Missing/mismatched native files or a different CLI version
+reject; do not fix this by weakening permissions or silently choosing another route.
+
+Only these CLI entries accept the existing policy:
+
+```sh
+goodteam execution run-correction-worker \
+  --project-root /absolute/registered/project --execution-id EXECUTION_ID \
+  --job-id JOB_ID --trusted-codex-correction-policy /private/existing-policy.json \
+  --acknowledge-external-cost
+
+goodteam execution continue-automatic-review \
+  --project-root /absolute/registered/project --execution-id EXECUTION_ID \
+  --trusted-codex-correction-policy /private/existing-policy.json \
+  --trusted-codex-review-policy /private/existing-reviewer-policy.json \
+  --acknowledge-external-cost
+```
+
+The second entry uses the frozen automatic start and a separate existing Reviewer
+authority. It seals the returned edit, reruns the exact original argv/criteria/time
+selection in that worktree, then requests a fresh independent report for the new
+head. It neither creates a delivery plan nor gives a Builder, HTTP server or
+another attempt native authority. No policy is loaded from project/job JSON or an
+environment switch. Embedded trusted callers may pass the typed correction
+dependency separately; defaults supply neither authority.
+Captured `read_only` or unknown original execution policies reject rather than
+being upgraded to writable execution by correction authority. An explicitly
+selected original model must match the native policy model.
+
+Policy content/expiry, process identity and binary identity are checked again at
+dispatch and during polling. Native required proof precedes execution and remains
+bound through dispatch and host return. Candidate validation, including explicit
+`--correction-worker` and completed-check replay, requires the exact host-sealed
+candidate. Removing a native/seal proof never changes this to the manual path.
+
+A completed return interrupted **before** seal-started can finish sealing on an
+explicit continuation without a new native policy or model call. Once sealing
+started, missing seal-result is unknown and cannot be retried. Terminal checked
+review can be read/replayed without credentials. The original process, check and
+Reviewer are not rerun on successful replay. The check must keep the retained
+worktree clean, including ignored files required by strict seal replay; select
+commands that do not leave caches/artifacts there. New files remain unsupported.
+
+Milestone status: code-integrated and offline-contract-tested; real native CLI,
+model quality, managed-tool behavior and end-to-end #347 acceptance remain pending.

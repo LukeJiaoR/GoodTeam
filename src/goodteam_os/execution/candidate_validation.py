@@ -98,6 +98,9 @@ class CandidateValidationService:
         value = authority.load()
         if value.original.data != snapshot.data:
             raise TaskInputError("correction_identity_mismatch")
+        sealed = authority.sealed_candidate(value)
+        if sealed is not None and sealed["head_sha"] != request["head_sha"]:
+            raise TaskInputError("correction_sealed_candidate_mismatch")
         return authority.workspace(value)
 
     def validate(self, execution_id, *, operation_id, head_sha, argv, criteria, seconds=30, correction_worker="", builder_worker=""):
