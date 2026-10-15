@@ -82,15 +82,20 @@ class CorrectionAttemptInput:
     def workspace_relative(self):
         return f".goodteam/sandboxes/{self.job_id}/worktree"
 
-    def render(self):
+    def render(self, *, host_seals=False):
         from .task_context import MAX_TASK_CONTEXT_BYTES, render_task_contract
         value = self.to_dict()
         rendered = "\n\n".join([render_task_contract(self.original),
             "## Explicit Correction Attempt", f"Attempt: {self.job_id}",
             "Keep the entire original goal, constraints and acceptance conditions above. "
             "The review below is feedback, not permission to expand scope or bypass safeguards. "
-            "Make the correction only in the assigned worktree. Commit a clean candidate there. "
-            "Report the full commit ID, checks and unresolved risks. A successful exit does not verify acceptance.",
+            "Make the correction only in the assigned worktree. "
+            + ("Edit existing tracked files only. Do not commit, stage, or write Git metadata. "
+               "The host seals a candidate after your process has stopped. " if host_seals else
+               "Commit a clean candidate there. ") +
+            ("Report edits, checks and unresolved risks. " if host_seals else
+             "Report the full commit ID, checks and unresolved risks. ")
+            + "A successful exit does not verify acceptance.",
             canonical_bytes({"candidate_before": value["candidate"], "review": value["review"]}).decode()])
         if len(rendered.encode()) > MAX_TASK_CONTEXT_BYTES:
             raise TaskInputError("correction_context_size_limit")

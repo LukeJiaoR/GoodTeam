@@ -148,3 +148,51 @@ access or model coding quality. Additional tests cover single-dispatch contentio
 partial proof loss, stop/timeout/output bounds, unchanged original task/worktree,
 raw checkout hook/filter exclusion, explicit CLI simulations, blocked-production
 UI, and a subsequent round's identity and source lineage.
+
+## Dormant Codex edit-only contract and host sealing
+
+The external admission whitelist is **unchanged**: Codex cannot run a correction
+through the product. The internal `correction_codex` and `correction_seal` modules
+have no CLI, HTTP, Worker dispatch or startup-policy caller. They are preparatory
+implementation, not a supported live adapter or a new way to bypass admission.
+
+The command proposal is explicitly scoped to the locally observed 0.159.2 CLI
+shape, independently of the older pinned-container and 0.160.0 Reviewer routes.
+Its construction performs no binary/version/login/config probe or model call.
+It requests a fresh JSON turn with `workspace-write` sandbox and `never` approval
+policy, without a sandbox/approval bypass or additional writable directory. Its
+environment is a fixed allowlist; login/config stay in the selected native home,
+are not read or copied by the helper, and remain unverified native authority.
+Generating argv is not proof of confinement, effective configuration, route
+availability, request limits or cost limits. Production activation is separate.
+
+The edit-only prompt preserves the original task and complete bound feedback,
+but replaces the instruction to commit with a host-owned seal. New files are not
+supported in this narrow contract: all untracked files, including ignored files,
+block sealing. Existing tracked regular files may be edited or deleted; linked
+or missing parent directories, symlinks, hardlinks, special modes, changed index,
+changed HEAD, redirected worktrees and out-of-scope output identities reject.
+
+Sealing requires the existing protected run-started, dispatch, host-return and
+completed run-result chain. For this exact one-shot correction path, host-return
+can only follow confirmed process-group cleanup; failed/unknown cleanup does not
+produce a sealable result. A model's final JSON is bound to that return digest and
+the original attempt/base, but its summary is only untrusted commentary. It cannot
+select files, a workspace or a candidate commit.
+
+The host captures complete raw tracked bytes, uses hook/filter-free bounded Git
+plumbing to write objects and a fixed-message commit, then compare-and-swaps only
+the dedicated attempt ref and resets only that worktree's index. No hook, filter,
+fetch, signing command or inherited credential environment is used. Unchanged
+trees do not create a new candidate. The original checkout, branch and index are
+not changed. A seal-started record precedes object/ref/index mutation; interrupted
+sealing stays unknown and is never automatically retried or repaired. A completed
+seal is replayable only while its exact clean candidate is still present.
+
+Offline contract tests use the existing explicit test-only runtime composition,
+a real Python subprocess and real isolated Git worktrees. They exercise sealing,
+ordinary same-round recheck, negative provenance/filesystem cases, cleanup failure,
+and interrupted publication. They do not demonstrate Codex compatibility, actual
+sandbox isolation, model coding, live correction acceptance or #347 completion.
+The remaining live integration must admit and bind the actual native envelope,
+route/model and task authority before connecting either helper to dispatch.
