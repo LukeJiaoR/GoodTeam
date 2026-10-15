@@ -41,7 +41,7 @@ class CandidateRuntime(FixtureAuthority):
             from goodteam_os.skills.worker_requests import _services
             snapshot = _services(provider.workers)[2].find_snapshot(command_key=provider.job_id)["snapshot"]
             payload = json.loads(snapshot["job_input"]["request"]["context"])
-        ids = payload["policy"]["criterion_ids"]
+        ids = payload["policy"]["criterion_ids"] + [row["name"] for row in payload["policy"].get("plan_checks", [])]
         value = report(evidence=[{"id": "E1", "path": "head/feature.py", "line_start": 1, "line_end": 1,
             "quote": source.splitlines()[0], "observation": "Exact current source"}],
             checks=[{"name": name, "status": "checked", "evidence_ids": ["E1"], "detail": "Assessed original requirement"} for name in ids])

@@ -66,8 +66,9 @@ def test_normal_entry_long_ci_wait_does_not_consume_first_review_budget(entry, m
     review = c.actions._review(item)
     assert review["recommendation"] == "request_changes"
     assert len(c.runtime.records) == 1
-    assert len(review["criterion_checks"]) == 2
     config = service.configuration(c.execution_id)
+    assert [row["name"] for row in review["criterion_checks"]] == (
+        config["policy"]["criterion_ids"] + [row["name"] for row in config["policy"]["plan_checks"]])
     assert config["base_sha"] == c.config.base_sha
     assert config["initial_receipt"] == result["candidate_check_receipt"]
     assert config["started_at"] == 2001.0
