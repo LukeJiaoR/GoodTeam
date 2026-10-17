@@ -115,6 +115,10 @@ _sleep = time.sleep
 
 
 def classify_worker_failure(summary: str, exit_code: int | None, stderr: str = "") -> str:
+    # A host deadline is authoritative; a CLI transcript can mention auth or
+    # network errors from unrelated tools, source files, or successful checks.
+    if exit_code is None and re.fullmatch(r".+ timed out after \d+ seconds\.", summary):
+        return "timeout"
     del exit_code  # phase-1 classifier is text-pattern based.
     text = f"{summary}\n{stderr}".lower()
     if any(
@@ -159,6 +163,16 @@ def classify_worker_failure(summary: str, exit_code: int | None, stderr: str = "
 
 def is_transient(failure_class: str) -> bool:
     return failure_class in {"auth", "rate_limit", "network", "timeout", "stream_disconnect"}
+
+
+def _worker_attempt_limit(job: dict[str, Any]) -> int:
+    raw_limit = os.environ.get("GOODTEAM_WORKER_MAX_ATTEMPTS", str(WORKER_MAX_ATTEMPTS))
+    if raw_limit not in {str(value) for value in range(1, WORKER_MAX_ATTEMPTS + 1)}:
+        raise ValueError(f"GOODTEAM_WORKER_MAX_ATTEMPTS must be between 1 and {WORKER_MAX_ATTEMPTS}.")
+    captured = job.get("max_attempts", WORKER_MAX_ATTEMPTS)
+    if type(captured) is not int or not 1 <= captured <= WORKER_MAX_ATTEMPTS:
+        raise ValueError("Worker max_attempts is invalid.")
+    return min(int(raw_limit), captured)
 
 
 def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -1079,6 +1093,7 @@ class WorkerJobStore:
             if {"task": task, "context": context, "constraints": constraints or [],
                     "expected_artifacts": expected_artifacts or []} != task_worker_fields(task_input):
                 raise TaskInputError("task_input_operation_conflict")
+        max_attempts = _worker_attempt_limit({}) if adapter in CLI_BACKENDS and task_input is None else None
         job_id = task_input.job_id if task_input is not None else f"job-{uuid4()}"
         job_root = self.root / job_id
         if task_input is not None and isinstance(task_input, CorrectionAttemptInput):
@@ -1108,6 +1123,8 @@ class WorkerJobStore:
             "desired_instances": desired_instances,
             "execution_policy": execution_policy,
         }
+        if max_attempts is not None:
+            job["max_attempts"] = max_attempts
         for key, value in {
             "pi_path": pi_path,
             "pi_provider": pi_provider,
@@ -1397,12 +1414,28 @@ class WorkerJobStore:
             spec = CLI_BACKENDS.get(adapter)
             if spec is None:
                 raise ValueError(f"Unsupported worker adapter: {adapter}")
+            ordinary = self.admit_task_input(job_id, job) is None
+            max_attempts = _worker_attempt_limit(job) if ordinary else WORKER_MAX_ATTEMPTS
             attempts = 0
             retried = False
             last_failure_class = "unknown"
+            attempt_history = []
             while True:
                 attempts += 1
                 status_payload = self._run_cli_backend(job_root, job, spec)
+                if ordinary:
+                    status_payload["max_attempts"] = max_attempts
+                    retained = Path(tempfile.mkdtemp(prefix="attempt-", dir=job_root))
+                    retained_status = dict(status_payload)
+                    for name in ("stdout", "stderr", "result"):
+                        source = job_root / (f"{name}.md" if name == "result" else f"{name}.txt")
+                        if source.is_file():
+                            copy2(source, retained / source.name)
+                            retained_status[f"{name}_path"] = str(retained / source.name)
+                    self._write_json(retained / "status.json", retained_status)
+                    attempt_history.append({"attempt": attempts, "status": status_payload.get("status"),
+                                            "status_path": str(retained / "status.json")})
+                    status_payload["attempt_history"] = list(attempt_history)
                 if status_payload.get("status") == "completed":
                     status_payload["attempts"] = attempts
                     if retried:
@@ -1423,10 +1456,10 @@ class WorkerJobStore:
                 )
                 status_payload["failure_class"] = last_failure_class
                 status_payload["attempts"] = attempts
-                if job_root.name.startswith("job-correction-"):
+                if job_root.name.startswith("job-correction-") or last_failure_class == "timeout":
                     status_payload["disposition"] = "human_handoff"
                     break
-                if not is_transient(last_failure_class) or attempts >= WORKER_MAX_ATTEMPTS:
+                if not is_transient(last_failure_class) or attempts >= max_attempts:
                     status_payload["disposition"] = "escalated"
                     break
                 retried = True
@@ -2321,6 +2354,14 @@ class WorkerJobStore:
             adapter=adapter,
             reasoning_depth=str(job.get("reasoning_depth", "") or ""),
         )
+        sandbox_mode = os.environ.get("GOODTEAM_CODEX_SANDBOX_MODE", "")
+        if adapter == "codex" and sandbox_mode:
+            if sandbox_mode not in {"workspace-write", "read-only"}:
+                raise ValueError("GOODTEAM_CODEX_SANDBOX_MODE must be workspace-write or read-only.")
+            if str(job.get("execution_policy", "standard")) != "read_only":
+                command = [value for value in command if value != "--dangerously-bypass-approvals-and-sandbox"]
+                prompt_index = command.index("-")
+                command[prompt_index:prompt_index] = ["--sandbox", sandbox_mode, "-c", 'approval_policy="never"']
         runtime_evidence = {
             **_worker_runtime_evidence(
                 runtime_context,
@@ -3097,6 +3138,13 @@ def _runtime_policy_evidence(command: list[str]) -> dict[str, Any]:
     if _has_flag_value(values, "--sandbox", "read-only"):
         return _runtime_policy(
             sandbox_mode="read-only",
+            approval_policy="non-interactive",
+            unsafe=False,
+            warning_reason="",
+        )
+    if _has_flag_value(values, "--sandbox", "workspace-write"):
+        return _runtime_policy(
+            sandbox_mode="workspace-write",
             approval_policy="non-interactive",
             unsafe=False,
             warning_reason="",
