@@ -2495,11 +2495,13 @@ def test_codex_adapter_summarizes_stream_disconnect_failure(tmp_path, monkeypatc
 
 
 def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
+    calls = []
     install_fake_popen(
         monkeypatch,
         stdout_text="partial stdout",
-        stderr_text="partial stderr",
+        stderr_text="MCP tool authentication failed; test covers 401 Unauthorized",
         raise_timeout=True,
+        calls=calls,
     )
     store = WorkerJobStore(tmp_path)
     job = store.create_job(
@@ -2517,7 +2519,7 @@ def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
     assert "timed out after 1800 seconds" in result["summary"]
     job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
     assert (job_root / "stdout.txt").read_text(encoding="utf-8") == "partial stdout"
-    assert (job_root / "stderr.txt").read_text(encoding="utf-8") == "partial stderr"
+    assert (job_root / "stderr.txt").read_text(encoding="utf-8") == "MCP tool authentication failed; test covers 401 Unauthorized"
     assert "timed out" in (job_root / "result.md").read_text(encoding="utf-8")
     status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
     assert status["status"] == "failed"
@@ -2525,6 +2527,9 @@ def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
     assert status["invocation_evidence"]["external_invocation"] is True
     assert status["invocation_evidence"]["kind"] == "provider"
     assert status["invocation_evidence"]["command_available"] is True
+    assert len(calls) == 1
+    assert status["failure_class"] == "timeout"
+    assert status["disposition"] == "human_handoff"
 
 
 def test_classify_worker_failure_maps_known_summary_patterns():
@@ -2595,6 +2600,89 @@ def test_cli_retry_recovers_after_transient_failure(tmp_path, monkeypatch):
     assert result["disposition"] == "recovered"
     assert result["failure_class"] == "network"
     assert sleeps == [2]
+    assert [item["status"] for item in result["attempt_history"]] == ["failed", "completed"]
+    first = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    assert first["summary"] == "Codex CLI exited with code 1: 503 Service Unavailable."
+    assert Path(first["stderr_path"]).read_text() == "ERROR: unexpected status 503 Service Unavailable"
+    assert Path(first["result_path"]).read_text() != "# Worker Result\n\nRecovered on retry.\n"
+
+
+def test_cli_attempt_cap_survives_service_restart(tmp_path, monkeypatch):
+    calls = []
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stderr_text": "ERROR: unexpected status 503 Service Unavailable"},
+        {"returncode": 0},
+    ], calls=calls)
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "1")
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="bounded", role="implementation", adapter="codex", task="Fix a bug", context="")
+    monkeypatch.delenv("GOODTEAM_WORKER_MAX_ATTEMPTS")
+
+    result = WorkerJobStore(tmp_path).run_job(job["id"])
+
+    assert job["max_attempts"] == result["max_attempts"] == result["attempts"] == 1
+    assert len(calls) == 1
+    assert result["status"] == "failed"
+    assert result["disposition"] == "escalated"
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "4", "unlimited", "", "1.0"])
+def test_cli_invalid_attempt_cap_never_creates_a_job(tmp_path, monkeypatch, limit):
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", limit)
+    store = WorkerJobStore(tmp_path)
+
+    with pytest.raises(ValueError, match="GOODTEAM_WORKER_MAX_ATTEMPTS"):
+        store.create_job(run_id="bounded", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    assert not store.root.exists()
+
+
+def test_cli_current_attempt_cap_can_reduce_an_existing_job(tmp_path, monkeypatch):
+    calls = []
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stderr_text": "ERROR: stream disconnected before response.completed"},
+        {"returncode": 0},
+    ], calls=calls)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="bounded", role="code_review", adapter="codex", task="Review a fix", context="")
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "1")
+
+    result = store.run_job(job["id"])
+
+    assert len(calls) == 1
+    assert result["max_attempts"] == 1
+    assert result["status"] == "failed"
+
+
+@pytest.mark.parametrize("mode", ["workspace-write", "read-only"])
+def test_codex_opt_in_sandbox_preserves_confinement_flags(tmp_path, monkeypatch, mode):
+    calls = []
+    install_fake_popen(monkeypatch, calls=calls)
+    monkeypatch.setenv("GOODTEAM_CODEX_SANDBOX_MODE", mode)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="bounded", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    result = store.run_job(job["id"])
+
+    command = calls[0]["command"]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert command[command.index("--sandbox") + 1] == mode
+    assert 'approval_policy="never"' in command
+    assert result["runtime_sandbox_mode"] == mode
+    assert result["runtime_unsafe_mode"] is False
+
+
+def test_codex_invalid_sandbox_mode_never_invokes_cli(tmp_path, monkeypatch):
+    calls = []
+    install_fake_popen(monkeypatch, calls=calls)
+    monkeypatch.setenv("GOODTEAM_CODEX_SANDBOX_MODE", "danger-full-access")
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="bounded", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    with pytest.raises(ValueError, match="GOODTEAM_CODEX_SANDBOX_MODE"):
+        store.run_job(job["id"])
+
+    assert calls == []
 
 
 def test_cli_retry_escalates_after_max_transient_failures(tmp_path, monkeypatch):

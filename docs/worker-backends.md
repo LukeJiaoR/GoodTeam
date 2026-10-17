@@ -282,6 +282,26 @@ flowchart TD
 Do not repeatedly retry the same job without changing the cause. A repeated
 failure should produce better evidence, not just more logs.
 
+For an ordinary CLI job with an explicit invocation budget, start the isolated
+service with `GOODTEAM_WORKER_MAX_ATTEMPTS=1`. The cap is captured in each new
+CLI job and cannot increase when the service restarts; the current environment
+can further reduce it. Valid values are 1–3; invalid values fail before dispatch.
+This caps automatic CLI invocations per job, not provider requests or manual
+retries/new jobs. Session backends and native admitted protocols retain their
+own limits. Do not use this setting as a monetary or provider-request cap.
+
+A host CLI timeout stops for human attention without an automatic retry,
+regardless of auth/network text in partial logs. Each completed CLI attempt
+retains its result, stdout, stderr and status under a unique job-local `attempt-*`
+directory; the final status links to that history.
+
+Ordinary Codex runs can opt into `GOODTEAM_CODEX_SANDBOX_MODE=workspace-write`
+(`read-only` is also supported). This removes the legacy bypass flag and passes
+the requested sandbox plus `approval_policy="never"` to Codex. The status records
+the requested command policy; this is not proof of OS confinement or acceptance
+of the separately admitted native correction route. Unset preserves the legacy
+command. Never treat a legacy run as #567 native correction acceptance.
+
 ## Safety Boundaries
 
 Worker backends must stay inside their approved scope.
