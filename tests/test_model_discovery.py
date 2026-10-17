@@ -32,6 +32,18 @@ def test_parallel_provider_and_singleflight(monkeypatch):
     assert calls.count("agy") == 1
 
 
+def test_completed_probe_is_refreshed_after_failure(monkeypatch):
+    observations = iter([
+        [{"backend": "codex", "models_source": "unavailable"}],
+        [{"backend": "codex", "models_source": "live"}],
+    ])
+    monkeypatch.setattr(model_discovery, "_pending", {})
+    monkeypatch.setattr(model_discovery, "_probe", lambda _provider: next(observations))
+
+    assert model_discovery.discover("codex")[0]["models_source"] == "unavailable"
+    assert model_discovery.discover("codex")[0]["models_source"] == "live"
+
+
 def test_fake_cli_timeout_is_not_cached_or_live(tmp_path, monkeypatch):
     cli = tmp_path / "codex"
     cli.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(20)\n")
