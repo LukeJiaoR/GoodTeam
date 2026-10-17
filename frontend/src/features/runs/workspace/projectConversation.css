@@ -145,3 +145,39 @@
   flex-direction: column;
   gap: .9rem;
 }
+
+.work-workspace-shell .project-conversation-follow__summary {
+  display: flex;
+  flex: 1 1 15rem;
+  flex-direction: column;
+  gap: .25rem;
+  min-width: 0;
+}
+.work-workspace-shell .project-conversation-follow__summary span { flex: 0 1 auto; }
+.work-workspace-shell .project-conversation-follow__changes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem .65rem;
+}
+.work-workspace-shell .team-manager-event[data-reading-id]:focus-visible {
+  outline: 2px solid var(--work-accent, currentColor);
+  outline-offset: 3px;
+}
+.work-workspace-shell .project-conversation-follow__events {
+  display: grid;
+  gap: .15rem;
+  margin: 0;
+  padding-inline-start: 1.1rem;
+}
+.work-workspace-shell .project-conversation-follow__events button {
+  padding: .1rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-underline-offset: .15em;
+}

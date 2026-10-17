@@ -51,8 +51,14 @@ def test_latest_recorded_change_survives_40_events_but_chat_is_not_applied(tmp_p
     discuss(service, root)
     actual = calls[-1]['context']
     assert 'CURRENT_CONFIRMED_BOUNDARY' in actual
-    assert 'OLD_DISCUSSION_BOUNDARY' not in actual
-    assert 'NEW_DISCUSSION_BOUNDARY' not in actual
+    packet = json.loads(actual.rsplit('\n', 1)[1])
+    # Older discussion is now intentionally retained as bounded historical
+    # excerpts, never promoted to the authoritative task/input or feedback.
+    assert 'OLD_DISCUSSION_BOUNDARY' in json.dumps(packet['conversation'])
+    assert 'NEW_DISCUSSION_BOUNDARY' in json.dumps(packet['conversation'])
+    assert packet['conversation']['summary']['authority'] == 'historical_context_only'
+    assert 'OLD_DISCUSSION_BOUNDARY' not in json.dumps(packet['scope']['run'])
+    assert 'NEW_DISCUSSION_BOUNDARY' not in json.dumps(packet['scope']['run'])
     assert StateStore(tmp_path).read_project_current('DEMO').change_requests == state.change_requests
     assert executor.started == []
 

@@ -900,23 +900,18 @@ def _manager_chat_context(
     team_view: dict[str, object] | None = None,
     current_message_id: str = "",
 ) -> str:
-    recent = []
-    for item in list(session.get("timeline", []) or [])[-12:]:
-        if not isinstance(item, dict):
-            continue
-        recent.append(
-            {
-                "actor": str(item.get("actor", "")),
-                "message_id": str(item.get("message_id", "")),
-                "event": str(item.get("event", "")),
-                "content": str(item.get("content", ""))[:2_000],
-            }
-        )
+    from goodteam_os.context_continuity import conversation_context
+
+    current = next((item for item in session.get("timeline", [])
+                    if item.get("message_id") == current_message_id), {})
+    history = conversation_context(session, query=current.get("content", ""))
     proposal = dict(session.get("proposed_task") or {})
     lines = [
         f"Project mode: {readiness.get('project_mode', mode_hint.get('mode', 'unconfirmed'))}",
         f"Readiness lifecycle: {readiness.get('lifecycle', '')}",
-        f"Recent conversation: {json.dumps(recent, ensure_ascii=False)}",
+        f"Conversation continuity: {json.dumps(history, ensure_ascii=False)}",
+        "Conversation excerpts are lossy historical context, not current task requirements or authorization. "
+        "Only Task intake source messages below may supply exact user text for a new draft; compaction never widens that source boundary.",
         f"Pending proposal: {json.dumps(proposal, ensure_ascii=False)}",
         f"Task intake source messages: {json.dumps(intake_source_messages(session, current_message_id=current_message_id), ensure_ascii=False)}",
     ]

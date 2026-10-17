@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -254,6 +255,35 @@ class MemoryHandoffStore:
                 return []
             self._load(root, job)
             return self._receipts(root)
+
+    def inspection_snapshot(self, job: dict[str, Any]) -> tuple[dict, list[dict]] | None:
+        """Read one verified observation snapshot without creating even a lock.
+
+        The ordinary write/read helpers can initialize a missing lock inode.
+        Public inspection must instead preserve missing or damaged enrollment.
+        A shared lock on the existing inode excludes concurrent receipt writes.
+        """
+        from .memory_storage import fcntl
+        from .skills.filesystem import directory, open_lock_file
+        from .skills.models import SkillError
+
+        if fcntl is None or os.name != "posix":
+            raise MemoryHandoffError("memory_handoff_inspection_unavailable")
+        root = self.job_root(job)
+        entered = False
+        try:
+            with directory(root) as descriptor:
+                entered = True
+                lock = open_lock_file(descriptor, ".store.lock", create=False)
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_SH)
+                    return self._load(root, job), self._receipts(root)
+                finally:
+                    os.close(lock)
+        except SkillError as exc:
+            if not entered and isinstance(exc.__cause__, FileNotFoundError):
+                return None
+            raise MemoryHandoffError("memory_handoff_inspection_unavailable") from exc
 
 
 def _is_digest(value: object) -> bool:
