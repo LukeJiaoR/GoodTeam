@@ -1,6 +1,9 @@
 import { blockerSummary } from './blockerPresentation';
 import { focusWorkContext } from './currentWorkContext.js';
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
+import { readingChangeSummary, readingCopy, readingScope } from './conversationReading';
+import useConversationReading from './useConversationReading';
+import { timelineCopy } from './timelineCopy';
 import { Settings } from 'lucide-react';
 import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
@@ -12,12 +15,41 @@ import AssistantPendingReply from './AssistantPendingReply';
 import ConversationComposer from './ConversationComposer';
 import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
 
-const NEAR_BOTTOM_THRESHOLD = 64;
-
-function isNearBottom(element) {
-  if (!element) return true;
-  const { scrollTop, scrollHeight, clientHeight } = element;
-  return scrollHeight - scrollTop - clientHeight <= NEAR_BOTTOM_THRESHOLD;
+function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, assistantFocusKey, language, hasPendingItems, t, children }) {
+  const conversationRef = useRef(null);
+  const reading = useConversationReading({ scope, conversationRef, timeline, attentionKey, deliveryKey, assistantFocusKey });
+  const copy = readingCopy(language);
+  const sourceDescription = item => {
+    const text = String(timelineCopy(item, t) || '').replace(/\s+/g, ' ').trim();
+    return text.length > 140 ? `${text.slice(0, 139)}…` : text;
+  };
+  const viewPendingItems = () => {
+    if (hasPendingItems) reading.inspect(conversationRef.current?.querySelector('.project-conversation-attention'));
+  };
+  return <>
+      {reading.paused ? <div className="project-conversation-follow" role="region" aria-label={copy.label}>
+        <div className="project-conversation-follow__summary">
+          <span>{t(hasPendingItems ? 'assistant.project.readingPending' : 'assistant.project.readingHistory')}</span>
+          {reading.unread.items.length ? <span className="project-conversation-follow__changes">
+            <strong>{copy.unread(reading.unread.items.length)}</strong>
+            <span>{readingChangeSummary(reading.unread.items, language)}</span>
+          </span> : null}
+          {reading.unread.items.length ? <ol className="project-conversation-follow__events">
+            {reading.unread.items.slice(0, 3).map(item => <li key={item.id || item.message_id}>
+              <button type="button" onClick={() => reading.inspectEvent(item)}>{sourceDescription(item)}</button>
+            </li>)}
+          </ol> : null}
+          {hasPendingItems && reading.attentionKey !== attentionKey ? <span>{copy.changed}</span> : null}
+          {reading.stale || reading.unread.unavailable ? <span>{reading.stale ? copy.stale : copy.unavailable}</span> : null}
+        </div>
+        {reading.unread.items.length ? <button type="button" onClick={reading.readNewUpdates}>{copy.open}</button> : null}
+        {hasPendingItems ? <button type="button" onClick={viewPendingItems}>{t('assistant.project.viewPending')}</button> : null}
+        <button type="button" onClick={reading.returnToLatest}>{t('assistant.project.returnLatest')}</button>
+      </div> : null}
+      <div className="team-manager-conversation" onScroll={reading.handleScroll} ref={conversationRef} tabIndex={-1}>
+        {children}
+      </div>
+  </>;
 }
 
 export default function ProjectConversation({
@@ -59,97 +91,17 @@ export default function ProjectConversation({
   const managerTone = responding ? 'active' : needsAttention ? 'warning' : 'neutral';
   const managerStatus = t(responding ? 'assistant.project.responding' : needsAttention ? 'assistant.project.needsAttention' : 'assistant.project.available');
   const deliveryKey = (timeline || []).find((item) => item.delivery_status === 'sending')?.id || '';
-  const conversationRef = useRef(null);
-  const attentionRegionRef = useRef(null);
-  const pendingInspectionScrollRef = useRef(null);
-  const scope = JSON.stringify([projectKey, mission?.run_id || '', Boolean(mission?.read_only)]);
-  const [readingPosition, setReadingPosition] = useState(null);
-  // Discard UI-only pause state on navigation or an explicitly sent message.
-  // Reset during render so A → B → A cannot resurrect an old reading notice.
-  if (readingPosition && (readingPosition.scope !== scope
-    || (deliveryKey && readingPosition.deliveryKey !== deliveryKey))) {
-    setReadingPosition(null);
-  }
-  const readingHistory = readingPosition?.scope === scope && readingPosition.paused
-    && (!deliveryKey || readingPosition.deliveryKey === deliveryKey);
+  const scope = readingScope(projectKey, mission);
   const hasPendingItems = Boolean((attention && !(attention.kind === 'blocker' && executionRunning))
     || needsAttention || Object.values(assistantState?.assistant_requests || {}).some(request => ['failed', 'interrupted'].includes(request.status))
     || (proposedTask?.needs_clarification && !proposedTask.run_id && proposedTask.status !== 'cancelled'));
-  const previousScopeRef = useRef(scope);
-  const wasNearBottomRef = useRef(true);
-  const prevAttentionKeyRef = useRef(null);
-  const prevTimelineLengthRef = useRef(0);
-  const prevDeliveryKeyRef = useRef('');
-
-  const attentionKey = `${attention?.id || ''}:${attention?.intent_commit?.status || ''}`;
-
-  useEffect(() => {
-    const node = conversationRef.current;
-    if (!node) return;
-
-    if (previousScopeRef.current !== scope) {
-      previousScopeRef.current = scope;
-      pendingInspectionScrollRef.current = null;
-      wasNearBottomRef.current = true;
-      prevAttentionKeyRef.current = null;
-      prevTimelineLengthRef.current = -1;
-      prevDeliveryKeyRef.current = '';
-    }
-    const attentionChanged = prevAttentionKeyRef.current !== attentionKey;
-    const timelineChanged = prevTimelineLengthRef.current !== (timeline?.length || 0);
-    const deliveryChanged = prevDeliveryKeyRef.current !== deliveryKey;
-    prevDeliveryKeyRef.current = deliveryKey;
-
-    prevAttentionKeyRef.current = attentionKey;
-    prevTimelineLengthRef.current = timeline?.length || 0;
-
-    if ((attention && attentionChanged && wasNearBottomRef.current) || (deliveryKey && deliveryChanged)) {
-      pendingInspectionScrollRef.current = null;
-      node.scrollTop = node.scrollHeight;
-      wasNearBottomRef.current = true;
-    } else if (timelineChanged && wasNearBottomRef.current) {
-      node.scrollTop = node.scrollHeight;
-    }
-  }, [attention, attentionKey, deliveryKey, scope, timeline?.length]);
-
-  useEffect(() => {
-    const node = conversationRef.current;
-    if (!wasNearBottomRef.current) return;
-    const target = node?.querySelector('.assistant-team-decision, .assistant-request, .assistant-pending-reply');
-    if (target) node.scrollTop += target.getBoundingClientRect().top - node.getBoundingClientRect().top - 16;
-  }, [assistantState?.pending_team_decision?.id, requestStatus, scope]);
-
-  const handleConversationScroll = (event) => {
-    const node = event.currentTarget;
-    const inspectedPosition = pendingInspectionScrollRef.current;
-    pendingInspectionScrollRef.current = null;
-    // Inspecting a short control group may land near the bottom. Its browser
-    // scroll event is not a request to resume following subsequent updates.
-    if (inspectedPosition !== null && Math.abs(node.scrollTop - inspectedPosition) < 1) return;
-    wasNearBottomRef.current = isNearBottom(node);
-    const paused = !wasNearBottomRef.current;
-    setReadingPosition(current => current?.scope === scope && current.deliveryKey === deliveryKey && current.paused === paused
-      ? current : { scope, deliveryKey, paused });
-  };
-
-  const returnToLatest = () => {
-    const node = conversationRef.current;
-    if (!node) return;
-    pendingInspectionScrollRef.current = null;
-    node.scrollTop = node.scrollHeight;
-    wasNearBottomRef.current = true;
-    setReadingPosition({ scope, deliveryKey, paused: false });
-    node.focus({ preventScroll: true });
-  };
-
-  const viewPendingItems = () => {
-    const node = conversationRef.current;
-    const target = attentionRegionRef.current;
-    if (!node || !target || !hasPendingItems) return;
-    node.scrollTop += target.getBoundingClientRect().top - node.getBoundingClientRect().top - 16;
-    pendingInspectionScrollRef.current = node.scrollTop;
-    target.focus({ preventScroll: true });
-  };
+  const attentionKey = JSON.stringify([
+    hasPendingItems ? [attention?.kind || '', attention?.id || '', attention?.intent_commit?.status || ''] : [],
+    assistantState?.pending_team_decision ? [assistantState.pending_team_decision.id, assistantState.pending_team_decision.status] : [],
+    Object.entries(assistantState?.assistant_requests || {}).filter(([, request]) => ['failed', 'interrupted'].includes(request.status))
+      .map(([id, request]) => [id, request.status, request.attempt]).sort(),
+    proposedTask?.needs_clarification ? [proposedTask.id, proposedTask.revision] : [],
+  ]);
 
   return (
     <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')} {...sectionProps}>
@@ -177,12 +129,9 @@ export default function ProjectConversation({
         <span>{contextTitle ? t('assistant.project.taskContext', { title: contextTitle }) : t('assistant.project.projectContext')}</span>
         {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
       </div>
-      {readingHistory ? <div className="project-conversation-follow">
-        <span>{t(hasPendingItems ? 'assistant.project.readingPending' : 'assistant.project.readingHistory')}</span>
-        {hasPendingItems ? <button type="button" onClick={viewPendingItems}>{t('assistant.project.viewPending')}</button> : null}
-        <button type="button" onClick={returnToLatest}>{t('assistant.project.returnLatest')}</button>
-      </div> : null}
-      <div className="team-manager-conversation" onScroll={handleConversationScroll} ref={conversationRef} tabIndex={-1}>
+      <ConversationReadingFrame key={scope} scope={scope} timeline={timeline || []} attentionKey={attentionKey}
+        deliveryKey={deliveryKey} assistantFocusKey={`${assistantState?.pending_team_decision?.id || ''}:${requestStatus || ''}`}
+        language={language} hasPendingItems={hasPendingItems} t={t}>
         <>
             {error && !(error.code === 'manager_execution_failed' && requestStatus) ? <ProductError error={error} t={t} /> : null}
             <ol className="team-manager-timeline" aria-label={t('assistant.project.history')}>
@@ -191,7 +140,7 @@ export default function ProjectConversation({
                 <AssistantPendingReply key={`${id}:${request.attempt}`} request={request} t={t} />
               ))}
             </ol>
-            <div className="project-conversation-attention" ref={attentionRegionRef} tabIndex={-1} role="region" aria-label={t('assistant.project.viewPending')}>
+            <div className="project-conversation-attention" tabIndex={-1} role="region" aria-label={t('assistant.project.viewPending')}>
             <AssistantControls
               showRuntime={false}
               runtime={assistantState?.runtime}
@@ -251,7 +200,7 @@ export default function ProjectConversation({
             /> : null}
             </div>
         </>
-      </div>
+      </ConversationReadingFrame>
       {!mission?.read_only || onStart ? (
         <footer className="team-manager-dock">
           <ConversationComposer
