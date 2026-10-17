@@ -1521,6 +1521,66 @@ def test_custom_delivery_standards_fall_back_to_config_without_transient_state(t
     assert "- Config checklist." in implementation
 
 
+def test_implementation_handoff_preserves_worker_execution_evidence(tmp_path):
+    project = tmp_path / "product"
+    project.mkdir()
+    config = tmp_path / "project.local.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "name: Evidence Product",
+                "key: EVIDENCE",
+                "repos:",
+                f"  root: {project}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    report = tmp_path / "worker-result.md"
+    report.write_text(
+        "\n".join(
+            [
+                "# Implementation Result",
+                "",
+                "Changed files:",
+                "- src/channel.go",
+                "",
+                "Verification commands:",
+                "- `go test ./backend/internal/api/connect/channel` passed.",
+                "",
+                "Unresolved risks:",
+                "- `API_KEY=should-not-leak` must remain outside artifacts.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = create_initial_state("run-1", "EVIDENCE", "Validate a bounded change")
+    content = render_downstream_artifact_markdown(
+        "implementation_handoff",
+        state,
+        config,
+        worker_results=[
+            {
+                "role": "implementation",
+                "adapter": "codex",
+                "model": "gpt-5.3-codex",
+                "status": "completed",
+                "summary": "Codex CLI exited with code 0.",
+                "result_path": str(report),
+                "changed_files": [],
+                "artifacts": [],
+            }
+        ],
+    )
+
+    assert "## Execution Evidence" in content
+    assert "Changed files:" in content
+    assert "src/channel.go" in content
+    assert "go test ./backend/internal/api/connect/channel" in content
+    assert "Unresolved risks:" in content
+    assert "API_KEY: [redacted]" in content
+
+
 def test_advance_approved_workflow_waits_for_security_gate_after_rfc(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")

@@ -986,6 +986,8 @@ def render_downstream_artifact_markdown(
                 lines.append(f"- {result.get('role', 'unknown')} / {result.get('adapter', 'unknown')}: {result.get('status', 'unknown')} - {result.get('summary', '')}")
         else:
             lines.extend(["", "## Worker Job Results", "", "- No worker jobs were executed."])
+        lines.extend(["", "## Execution Evidence", ""])
+        lines.extend(format_worker_execution_evidence_lines(results))
     if artifact_key == "qa_report":
         lines.extend(
             [
@@ -995,6 +997,8 @@ def render_downstream_artifact_markdown(
                 *format_worker_evidence_lines(results),
             ]
         )
+        lines.extend(["", "## Worker Reports", ""])
+        lines.extend(format_worker_execution_evidence_lines(results))
         lines.extend(format_contentops_acceptance_evidence(results))
         lines.extend(format_ui_delivery_acceptance_evidence(results))
     if artifact_key == "code_review":
@@ -1057,6 +1061,51 @@ def format_worker_evidence_lines(worker_results: list[dict[str, object]]) -> lis
         lines.append(f"- {role}: `{status}` via `{model or 'unspecified model'}` - {summary}")
         for signal in extract_worker_signals(result_text):
             lines.append(f"  - Evidence: {signal}")
+    return lines
+
+
+def format_worker_execution_evidence_lines(worker_results: list[dict[str, object]]) -> list[str]:
+    """Render bounded, attributable worker reports into handoff artifacts.
+
+    The worker status summary is deliberately small and does not contain the
+    implementation's changed-file or command evidence. Keep the report
+    excerpt separate from the status fields so reviewers can distinguish what
+    GoodTeam observed from what the worker claimed.
+    """
+    if not worker_results:
+        return ["- No worker execution evidence was attached to this artifact."]
+
+    lines: list[str] = []
+    for result in worker_results:
+        role = str(result.get("role", "unknown"))
+        adapter = str(result.get("adapter", "unknown"))
+        status = str(result.get("status", "unknown"))
+        lines.extend([
+            f"### {role} / {adapter}",
+            "",
+            f"- Observed status: `{status}`.",
+            f"- Observed summary: {str(result.get('summary', '')).strip() or 'none reported'}",
+        ])
+        result_path = str(result.get("result_path", "")).strip()
+        if result_path:
+            lines.append(f"- Worker report path: `{result_path}`.")
+        for field, label in (("changed_files", "Changed files reported"), ("artifacts", "Artifacts reported")):
+            values = result.get(field)
+            if isinstance(values, list) and values:
+                lines.append(f"- {label}:")
+                lines.extend(f"  - `{item}`" for item in values)
+            else:
+                lines.append(f"- {label}: none in the worker status record.")
+
+        excerpt = read_worker_result_excerpt(result, max_chars=6000).strip()
+        if excerpt:
+            lines.extend(["", "#### Worker report (sanitized excerpt)", ""])
+            # Quote every line so worker-authored headings cannot be mistaken
+            # for GoodTeam-owned evidence sections.
+            lines.extend(f"> {line}" if line else ">" for line in excerpt.splitlines())
+        else:
+            lines.extend(["", "- Worker report content is unavailable."])
+        lines.append("")
     return lines
 
 
