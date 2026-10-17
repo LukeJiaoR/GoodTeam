@@ -17,6 +17,7 @@ from goodteam_os.execution.correction_store import CorrectionAttemptStore
 from goodteam_os.execution.correction_worker import CorrectionWorkerService
 from goodteam_os.execution.task_snapshot import TaskInputError, canonical_bytes, digest
 from goodteam_os.skills.codex_local import _binary_digest
+from goodteam_os.skills.models import SkillError
 from goodteam_os.workers import WorkerJobStore
 from test_automatic_candidate_review import automatic as automatic_fixture  # noqa: F401
 from test_correction_codex_seal import channel
@@ -26,6 +27,37 @@ from test_task_input_snapshot import ctx  # noqa: F401
 
 NEW_CASE_SOURCE = b"assert VALUE == 'fixed'\r\nprint('new case checked')\r\n"
 NEW_CASE_OUTPUT = b"new case checked\n"
+
+
+def _offline_interpreter(workspace):
+    # Relocating safe macOS Python can break signing or stdlib discovery;
+    # hosted/container interpreters may instead need an owned, private copy.
+    binary = Path(sys.executable).resolve()
+    info = binary.stat()
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        copied = workspace / "offline-python"
+        shutil.copyfile(binary, copied)
+        copied.chmod(0o700)
+        binary = copied
+    return binary
+
+
+def test_offline_interpreter_copies_writable_host_binary_without_changing_it(tmp_path, monkeypatch):
+    workspace = tmp_path.resolve()
+    host = workspace / "host-python"
+    host.write_bytes(b"offline fixture executable")
+    host.chmod(0o775)
+    monkeypatch.setattr(sys, "executable", str(host))
+    with pytest.raises(SkillError, match="unsafe"):
+        _binary_digest(host)
+
+    selected = _offline_interpreter(workspace)
+
+    assert selected != host
+    assert selected.read_bytes() == host.read_bytes()
+    assert selected.stat().st_mode & 0o777 == 0o700
+    assert host.stat().st_mode & 0o777 == 0o775
+    assert _binary_digest(selected)
 
 
 class OfflineNative(TrustedCodexCorrectionAdmission):
@@ -80,14 +112,7 @@ def native(request, monkeypatch):
         f"Path({str(c.effects)!r}).open('a').write('call\\n')\n"
         f"Path('feature.py').write_text({source!r})\n"
         f"{new_file_script}sys.stdout.buffer.write({channel(c.value)!r})\n")
-    # Reuse an owned interpreter: relocating macOS/standalone Python can break
-    # code signing or stdlib discovery. Container-owned binaries need a copy.
-    binary = Path(sys.executable).resolve()
-    if binary.stat().st_uid != os.getuid():
-        copied = c.workspace / "offline-python"
-        shutil.copyfile(binary, copied)
-        copied.chmod(0o700)
-        binary = copied
+    binary = _offline_interpreter(c.workspace)
     c.policy = {"schema_version": POLICY_SCHEMA, "project_root": str(c.project), "input": c.value.reference,
         "workspace": str(c.worktree), "codex": str(binary), "codex_home": str(c.home), "version": "0.159.2",
         "binary_digest": _binary_digest(binary), "model": "offline-native-model", "expires_at": int(time.time()) + 300,
