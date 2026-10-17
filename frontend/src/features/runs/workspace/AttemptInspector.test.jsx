@@ -38,11 +38,72 @@ const deliverySection = () => screen.getByRole('region', { name: 'Delivery and r
 const openReport = () => fireEvent.click(within(deliverySection()).getByRole('button', { name: /handoff/i }));
 const openReviews = () => fireEvent.click(within(deliverySection()).getByRole('button', { name: 'Review evidence for this delivery' }));
 const valueFor = (root, name) => within(root).getByText(name, { selector: 'dt' }).nextElementSibling;
+function observedMemory() {
+  const sha = 'a'.repeat(64), time = '2026-10-17T10:00:00+00:00';
+  return {
+    schema_version: 'goodteam.attempt-memory.v1', project_key: 'DEMO', run_id: 'run',
+    attempt_id: attempt.id, role: attempt.role, adapter: attempt.adapter, status: 'observed', read_only: true,
+    capture: { captured_at: time, packet_digest: sha }, preparation_count: 2, omitted_preparations: 1, transport_attempt_count: 1,
+    preparations: [{ id: 'prepared-one', prepared_at: time, input_digest: sha, fragment_digest: sha,
+      packet_digest: sha, capture_packet_match: true, context_status: 'partial', citation_count: 2, rendered_source_count: 1 }],
+    writeback_count: 3, omitted_writebacks: 1,
+    writebacks: ['result', 'provenance'].map((kind, index) => ({ id: `write-${index}`, kind, observed_at: time,
+      result_digest: sha, outcome: 'partial', counts_complete: false, parsed: 3, attempted: 2,
+      appended: 1, replayed: 0, deduplicated: 1, unattempted: 1, omitted_observations: 0 })),
+    provider_read: 'claimed-read', raw_memory: 'PRIVATE_MEMORY_DO_NOT_RENDER',
+  };
+}
+const memoryInspection = memory => ({ ...inspection, attempt: { ...attempt, memory_observations: memory } });
 function deferred() {
   let resolve;
   const promise = new Promise(done => { resolve = done; });
   return { promise, resolve };
 }
+
+test('renders bound host preparations and separate writeback counts while provider reading remains unknown', () => {
+  setup({ inspection: memoryInspection(observedMemory()) });
+  const memory = screen.getByRole('region', { name: 'Attempt memory' });
+  expect(valueFor(memory, 'Memory input')).toHaveTextContent('Host input preparations: 2');
+  expect(valueFor(memory, 'Memory read evidence')).toHaveTextContent('Unknown');
+  expect(valueFor(memory, 'Memory writeback')).toHaveTextContent('Recorded writeback observations: 3');
+  fireEvent.click(within(memory).getByText('Memory observation details'));
+  const preparation = within(memory).getByRole('region', { name: 'Input preparation' });
+  expect(valueFor(preparation, 'Referenced events')).toHaveTextContent('2');
+  expect(valueFor(preparation, 'Rendered sources')).toHaveTextContent('1');
+  for (const name of ['Result memory', 'Execution audit']) {
+    const row = within(memory).getByRole('region', { name });
+    expect(valueFor(row, 'New WAL events')).toHaveTextContent('1');
+    expect(valueFor(row, 'Same-source replays')).toHaveTextContent('0');
+    expect(valueFor(row, 'Other-source duplicates')).toHaveTextContent('1');
+    expect(row).toHaveTextContent('Counts are lower bounds');
+  }
+  expect(memory).toHaveTextContent('Earlier input preparations omitted from this view: 1');
+  expect(memory).toHaveTextContent('Earlier writeback observations omitted from this view: 1');
+  expect(memory).not.toHaveTextContent(/PRIVATE_MEMORY|claimed-read/);
+  expect(requestJson).not.toHaveBeenCalled();
+});
+
+test('discards visible memory observations as soon as exact-attempt proof becomes mismatched', () => {
+  const memory = observedMemory();
+  const view = setup({ inspection: memoryInspection(memory) });
+  view.rerender(<AttemptInspector {...props} inspection={memoryInspection({ ...memory, attempt_id: 'job-other' })} />);
+  const region = screen.getByRole('region', { name: 'Attempt memory' });
+  for (const name of ['Memory input', 'Memory read evidence', 'Memory writeback']) expect(valueFor(region, name)).toHaveTextContent('Unknown');
+  expect(region).toHaveTextContent('Memory observations do not match this exact project, run, and attempt.');
+  expect(within(region).queryByText('Memory observation details')).not.toBeInTheDocument();
+  expect(requestJson).not.toHaveBeenCalled();
+});
+
+test('capture without preparation or writeback does not invent zero-valued execution claims', () => {
+  setup({ inspection: memoryInspection({ ...observedMemory(), preparation_count: 0, preparations: [], omitted_preparations: 0,
+    transport_attempt_count: 0, writeback_count: 0, writebacks: [], omitted_writebacks: 0 }) });
+  const memory = screen.getByRole('region', { name: 'Attempt memory' });
+  expect(valueFor(memory, 'Memory input')).toHaveTextContent('Pickup packet captured; preparation not recorded');
+  expect(valueFor(memory, 'Memory read evidence')).toHaveTextContent('Unknown');
+  expect(valueFor(memory, 'Memory writeback')).toHaveTextContent('Unknown');
+  expect(valueFor(memory, 'Host call entries')).toHaveTextContent('Not recorded');
+  expect(requestJson).not.toHaveBeenCalled();
+});
 
 test('keeps assignment state, attempt status and actual recorded timestamps separate without fetching', () => {
   setup();

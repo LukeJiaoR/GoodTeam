@@ -1,0 +1,86 @@
+import { test, expect, importProject } from './fixtures.js';
+import { approveGate, clickMutation, getJson, prepareFirstTask, sendTask, workState } from './business-loop-helpers.js';
+
+function boundAttempt(data) {
+  for (const actor of data.team_workspace.execution_actors) {
+    const attempt = data.delivery_summary.attempts.find(item => item.id === actor.current_attempt_id);
+    if (attempt?.memory_observations?.status === 'observed' && attempt.memory_observations.writeback_count > 0) return { actor, attempt };
+  }
+  throw new Error('The fake workflow did not retain an inspectable memory observation.');
+}
+
+async function inspect(page, binding) {
+  const disclosure = page.locator('.team-execution-disclosure');
+  if (!await disclosure.evaluate(element => element.open)) await disclosure.locator('summary').click();
+  const trigger = page.getByRole('button', { name: `Inspect attempt: ${binding.actor.responsibility}`, exact: true });
+  await trigger.click();
+  const panel = page.getByRole('dialog', { name: 'Attempt details', exact: true });
+  await expect(panel.locator('dt').filter({ hasText: /^Selected attempt$/ }).locator('..')).toContainText(binding.attempt.id);
+  return { panel, trigger };
+}
+
+async function verifyMemory(panel, expected) {
+  const memory = panel.getByRole('region', { name: 'Attempt memory', exact: true });
+  const fact = name => memory.locator('dt').filter({ hasText: new RegExp(`^${name}$`) }).locator('..');
+  await expect(fact('Memory input')).toContainText('Pickup packet captured; preparation not recorded');
+  await expect(fact('Memory read evidence')).toHaveText('Memory read evidenceUnknown');
+  await expect(fact('Memory writeback')).toContainText(`Recorded writeback observations: ${expected.writeback_count}`);
+  await expect(fact('Host call entries')).toContainText('Not recorded');
+  await expect(memory).toContainText('Host records do not establish provider receipt or reading.');
+  await memory.getByText('Memory observation details', { exact: true }).click();
+  for (const item of expected.writebacks) {
+    const row = memory.getByRole('region', { name: item.kind === 'result' ? 'Result memory' : 'Execution audit', exact: true });
+    await expect(row).toContainText(item.result_digest);
+    await expect(row.locator('dt').filter({ hasText: /^New WAL events$/ }).locator('..')).toHaveText(`New WAL events${item.appended}`);
+    await expect(row.locator('dt').filter({ hasText: /^Same-source replays$/ }).locator('..')).toHaveText(`Same-source replays${item.replayed}`);
+    await expect(row.locator('dt').filter({ hasText: /^Other-source duplicates$/ }).locator('..')).toHaveText(`Other-source duplicates${item.deduplicated}`);
+  }
+  return memory;
+}
+
+test('attempt memory shows exact host receipts and archived isolation without claiming reads', async ({ page, fixture }, testInfo) => {
+  await importProject(page, fixture);
+  await sendTask(page, fixture, 'Implement searchable task history.');
+  const runId = await prepareFirstTask(page, fixture, []);
+  for (const gate of ['takeover', 'prd', 'rfc', 'security', 'release']) await approveGate(page, fixture, gate);
+  await expect.poll(async () => (await workState(page, fixture.key)).state.current_node).toBe('complete');
+  const first = await workState(page, fixture.key);
+  const binding = boundAttempt(first);
+  const expected = binding.attempt.memory_observations;
+  expect(expected).toMatchObject({ project_key: fixture.key, run_id: runId, attempt_id: binding.attempt.id,
+    provider_receipt: 'unknown', provider_read: 'unknown', preparation_count: 0, transport_attempt_count: 0 });
+  await page.goto(`/projects/${fixture.key}/work`);
+  const draft = page.getByRole('textbox', { name: 'Message', exact: true });
+  await draft.fill('Keep this unsent while inspecting memory.');
+  const posts = [];
+  page.on('request', request => { if (request.method() === 'POST') posts.push(request.url()); });
+  const { panel, trigger } = await inspect(page, binding);
+  await verifyMemory(panel, expected);
+  await page.screenshot({ path: testInfo.outputPath('attempt-memory-desktop.png'), fullPage: true });
+  await panel.getByRole('button', { name: 'Close attempt details' }).click();
+  await expect(trigger).toBeFocused();
+  await expect(draft).toHaveValue('Keep this unsent while inspecting memory.');
+  expect(posts).toEqual([]);
+
+  await draft.fill('');
+  await sendTask(page, fixture, 'Add a separate task filter.');
+  const next = await clickMutation(page, page.getByRole('button', { name: 'Start this task', exact: true }),
+    `/api/projects/${fixture.key}/task-assistant/actions`);
+  expect(next.run_id).not.toBe(runId);
+  const current = await workState(page, fixture.key);
+  expect(current.delivery_summary.attempts.every(item => item.memory_observations.run_id === next.run_id)).toBe(true);
+  const archived = await getJson(page, `/api/projects/${fixture.key}/runs/${runId}`);
+  const saved = archived.delivery_summary.attempts.find(item => item.id === binding.attempt.id);
+  expect(saved.memory_observations).toEqual(expected);
+  await page.goto(`/projects/${fixture.key}/work/runs/${runId}`);
+  const historical = await inspect(page, binding);
+  await verifyMemory(historical.panel, expected);
+  await expect(historical.panel).toContainText('Historical task · read-only');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(historical.panel.getByRole('button', { name: 'Close attempt details' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('attempt-memory-mobile.png'), fullPage: true });
+  await historical.panel.getByRole('button', { name: 'Close attempt details' }).click();
+  await page.goto(`/projects/${fixture.key}/work`);
+  await expect(page.getByRole('dialog', { name: 'Attempt details' })).toHaveCount(0);
+});
