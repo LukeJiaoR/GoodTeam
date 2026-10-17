@@ -816,6 +816,11 @@ def render_artifact_markdown(
         )
     if artifact_key not in {"qa_report", "code_review", "release_notes"}:
         for section in contract.get("sections", []):
+            if artifact_key == "implementation_handoff" and section.get("title") == "Execution Evidence":
+                # The downstream renderer appends observed status and the
+                # worker's sanitized report below. Do not leave a template
+                # instruction that can be mistaken for the evidence itself.
+                continue
             lines.extend(["", f"## {section['title']}", ""])
             for item in section.get("items", []):
                 lines.append(f"- {item}")

@@ -1574,6 +1574,7 @@ def test_implementation_handoff_preserves_worker_execution_evidence(tmp_path):
     )
 
     assert "## Execution Evidence" in content
+    assert content.count("## Execution Evidence") == 1
     assert "Changed files:" in content
     assert "src/channel.go" in content
     assert "go test ./backend/internal/api/connect/channel" in content
