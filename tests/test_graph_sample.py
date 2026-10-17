@@ -161,7 +161,11 @@ def test_worker_context_for_role_omits_advisory_section_when_no_messages(tmp_pat
     context = worker_context_for_role(state, "qa", workspace=tmp_path)
 
     assert "Human / Operator Role Messages" not in context
-    assert context == "Run: run-1\nProject: CONTENTOPS\nGoal: Ship billing\nArtifacts:\n- none"
+    assert context.startswith("Run: run-1\nProject: CONTENTOPS\nGoal: Ship billing\nArtifacts:\n- none\n")
+    assert "## Task continuity handoff (read-only)" in context
+    handoff = json.loads(context.splitlines()[-1])
+    assert handoff["recipient_role"] == "qa"
+    assert handoff["task_state"]["run_id"] == "run-1"
 
 
 def test_implementation_worker_job_specs_include_qa_role_messages_only(tmp_path):

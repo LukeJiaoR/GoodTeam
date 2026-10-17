@@ -50,9 +50,15 @@ class AgileDevState:
     # A versioned reference to the task-start method lock, never live settings.
     # Empty is the explicit legacy representation; reads do not manufacture locks.
     task_skill_context: dict[str, object] = field(default_factory=dict)
+    # A derived bounded handoff, never an independent source of workflow truth.
+    # Legacy reads rebuild it; persisted copies are refreshed on every write.
+    continuity_state: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.task_skill_context = _state_skill_context(self)
+        from goodteam_os.context_continuity import task_state_context
+
+        self.continuity_state = task_state_context(self)
 
 
 def create_initial_state(run_id: str, project_key: str, idea: str) -> AgileDevState:
@@ -238,6 +244,9 @@ class StateStore:
 
     def _write(self, path: Path, state: AgileDevState) -> None:
         context = _state_skill_context(state)
+        from goodteam_os.context_continuity import task_state_context
+
+        state.continuity_state = task_state_context(state)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = asdict(state)
         payload["task_skill_context"] = context
@@ -259,6 +268,9 @@ class StateStore:
 
     def _write_checkpoint(self, directory: Path, state: AgileDevState) -> Path:
         context = _state_skill_context(state)
+        from goodteam_os.context_continuity import task_state_context
+
+        state.continuity_state = task_state_context(state)
         directory.mkdir(parents=True, exist_ok=True)
         while True:
             path = self._next_checkpoint_path(directory, state.current_node)
