@@ -22,7 +22,7 @@ function lastVisibleId(node) {
 
 // Mounted per project/run/read-only scope. Layout synchronization is necessary:
 // applying a durable DOM anchor after paint would flash/jump to the latest item.
-export default function useConversationReading({ scope, conversationRef, timeline, attentionKey, deliveryKey, assistantFocusKey }) {
+export default function useConversationReading({ scope, conversationRef, timeline, attentionKey, deliveryKey, assistantFocusKey, visible = true }) {
   const [initial] = useState(() => loadReadingPosition(scope));
   const [reading, setReading] = useState(() => ({ paused: initial ? !initial.following : false,
     seenId: initial?.seenId || '', attentionKey: initial?.attentionKey || attentionKey, stale: false }));
@@ -57,6 +57,12 @@ export default function useConversationReading({ scope, conversationRef, timelin
     const node = conversationRef.current;
     if (!node) return;
     const state = current.current;
+    if (!visible) {
+      // Responsive tabs keep this component mounted. Their hidden layout is
+      // neither a readable viewport nor a place to restore a saved anchor.
+      state.away = true;
+      if (!state.initialized) return;
+    }
     const updateKey = JSON.stringify([timelineKey, attentionKey, assistantFocusKey]);
     const changed = state.updateKey !== updateKey;
     state.updateKey = updateKey;
@@ -67,10 +73,11 @@ export default function useConversationReading({ scope, conversationRef, timelin
       // with an intermediate empty response.
       if (initial && !ids.length && !sending) return;
       state.initialized = true;
+      if (!initial) state.away = false; // A first visible visit establishes its baseline.
       const unread = unreadConversation(timeline, state.seenId);
       const changed = Boolean(initial && (unread.items.length || unread.unavailable || state.attentionKey !== attentionKey));
       state.paused = Boolean(initial && (!initial.following || changed));
-      if (state.paused) {
+      if (state.paused || (initial && state.away)) {
         const row = rows(node).find(item => item.dataset.readingId === initial?.anchor?.id);
         if (row) {
           const offset = Math.min(node.clientHeight, Math.max(-row.getBoundingClientRect().height, initial.anchor.offset));
@@ -82,8 +89,8 @@ export default function useConversationReading({ scope, conversationRef, timelin
     if (state.away && (unreadConversation(timeline, state.seenId).items.length || state.attentionKey !== attentionKey)) state.paused = true;
     // An unchanged response is not evidence the reader has caught up. Keep
     // the away boundary through delayed/stale polls until deliberate reading.
-    if (sending) { state.away = false; state.paused = false; state.inspection = null; }
-    if (hidden()) {
+    if (sending && visible && !hidden()) { state.away = false; state.paused = false; state.inspection = null; }
+    if (!visible || hidden()) {
       // Background polls must never consume unread items or move the viewport.
       if (unreadConversation(timeline, state.seenId).items.length || state.attentionKey !== attentionKey) state.paused = true;
     } else if (!state.paused && !state.away && (changed || sending)) {
@@ -100,7 +107,7 @@ export default function useConversationReading({ scope, conversationRef, timelin
   // A fresh poll after visibility return must compare the away frontier even
   // when it arrives after the tab becomes visible. Unchanged polls never scroll.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, timeline, timelineKey, attentionKey, deliveryKey, assistantFocusKey]);
+  }, [scope, timeline, timelineKey, attentionKey, deliveryKey, assistantFocusKey, visible]);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -126,7 +133,7 @@ export default function useConversationReading({ scope, conversationRef, timelin
   const handleScroll = event => {
     const node = event.currentTarget;
     const state = current.current;
-    if (hidden() || !state.initialized) return;
+    if (!visible || hidden() || !state.initialized) return;
     const inspected = state.inspection;
     state.inspection = null;
     if (inspected !== null && Math.abs(node.scrollTop - inspected) < 1) return;
@@ -139,7 +146,7 @@ export default function useConversationReading({ scope, conversationRef, timelin
   };
   const returnToLatest = () => {
     const node = conversationRef.current;
-    if (!node) return;
+    if (!node || !visible || hidden()) return;
     current.current.initialized = true;
     current.current.away = false;
     current.current.inspection = null;
@@ -152,7 +159,7 @@ export default function useConversationReading({ scope, conversationRef, timelin
   };
   const inspect = (target, acknowledge = false) => {
     const node = conversationRef.current;
-    if (!node || !target) return;
+    if (!node || !target || !visible || hidden()) return;
     node.scrollTop += target.getBoundingClientRect().top - node.getBoundingClientRect().top - 16;
     current.current.inspection = node.scrollTop;
     if (acknowledge) {

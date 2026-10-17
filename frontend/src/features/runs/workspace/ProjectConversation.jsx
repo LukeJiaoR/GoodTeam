@@ -15,9 +15,9 @@ import AssistantPendingReply from './AssistantPendingReply';
 import ConversationComposer from './ConversationComposer';
 import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
 
-function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, assistantFocusKey, language, hasPendingItems, t, children }) {
+function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, assistantFocusKey, visible, language, hasPendingItems, t, children }) {
   const conversationRef = useRef(null);
-  const reading = useConversationReading({ scope, conversationRef, timeline, attentionKey, deliveryKey, assistantFocusKey });
+  const reading = useConversationReading({ scope, conversationRef, timeline, attentionKey, deliveryKey, assistantFocusKey, visible });
   const copy = readingCopy(language);
   const sourceDescription = item => {
     const text = String(timelineCopy(item, t) || '').replace(/\s+/g, ' ').trim();
@@ -131,7 +131,7 @@ export default function ProjectConversation({
       </div>
       <ConversationReadingFrame key={scope} scope={scope} timeline={timeline || []} attentionKey={attentionKey}
         deliveryKey={deliveryKey} assistantFocusKey={`${assistantState?.pending_team_decision?.id || ''}:${requestStatus || ''}`}
-        language={language} hasPendingItems={hasPendingItems} t={t}>
+        visible={!sectionProps?.hidden} language={language} hasPendingItems={hasPendingItems} t={t}>
         <>
             {error && !(error.code === 'manager_execution_failed' && requestStatus) ? <ProductError error={error} t={t} /> : null}
             <ol className="team-manager-timeline" aria-label={t('assistant.project.history')}>

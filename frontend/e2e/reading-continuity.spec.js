@@ -200,6 +200,34 @@ test('an away latest frontier and hidden in-flight arrival remain unread until e
   await askThroughApi(page, fixture, 'delayed-after-unchanged');
   await expect(progress(page)).toContainText('2 unread updates');
   expect((await checkpoint(page, fixture.key)).seenId).toBe(beforeDelayed.seenId);
+
+  // Responsive navigation keeps the conversation mounted while another pane
+  // is visible. Its polls must retain the same away boundary as a browser tab.
+  await latestButton(page).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Draft while viewing execution');
+  const beforePanelHidden = await checkpoint(page, fixture.key);
+  await page.locator('#team-tab-execution').click();
+  await expect(page.locator('#team-panel-manager')).toBeHidden();
+  await askThroughApi(page, fixture, 'hidden-conversation-panel');
+  await expect(page.locator('[data-reading-id="reply:hidden-conversation-panel"]')).toHaveCount(1);
+  expect((await checkpoint(page, fixture.key)).seenId).toBe(beforePanelHidden.seenId);
+  expect((await checkpoint(page, fixture.key)).anchor).toEqual(beforePanelHidden.anchor);
+  await page.locator('#team-tab-manager').click();
+  await expect(progress(page)).toContainText('2 unread updates');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue('Draft while viewing execution');
+  await latestButton(page).click();
+  const beforePanelDelay = await checkpoint(page, fixture.key);
+  await page.locator('#team-tab-execution').click();
+  const unchangedPanelPoll = page.waitForResponse(response => new URL(response.url()).pathname === '/api/state');
+  await page.locator('#team-tab-manager').click();
+  await unchangedPanelPoll;
+  await askThroughApi(page, fixture, 'delayed-after-panel-return');
+  await expect(progress(page)).toContainText('2 unread updates');
+  expect((await checkpoint(page, fixture.key)).seenId).toBe(beforePanelDelay.seenId);
+  await latestButton(page).click();
+  await expect(progress(page)).toHaveCount(0);
+  expect((await checkpoint(page, fixture.key)).seenId).toBe('reply:delayed-after-panel-return');
 });
 
 test('missing anchors, corrupted storage and unavailable storage recover without moving drafts or approvals', async ({ page, fixture }, testInfo) => {

@@ -444,3 +444,83 @@ test('inspecting a later source event does not acknowledge skipped unread events
   expect(screen.getByRole('button', { name: 'Read new updates' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'assistant.project.returnLatest' })).toBeInTheDocument();
 });
+
+test.each([430, 1200])('a hidden mounted conversation preserves its bookmark, frontier and draft at scroll %i', position => {
+  const { container, rerender } = render(view({ timeline: history }));
+  const node = measuredHistory(container);
+  node.scrollTop = position;
+  fireEvent.scroll(node);
+  const input = container.querySelector('textarea');
+  fireEvent.change(input, { target: { value: 'Keep my draft while viewing execution' } });
+  const saved = readingStorage();
+  rerender(view({ timeline: history, sectionProps: { hidden: true } }));
+  const arrival = { id: 'while-panel-hidden', actor: 'system', content: 'Unseen update' };
+  rerender(view({ timeline: [...history, arrival], sectionProps: { hidden: true } }));
+  fireEvent.scroll(node); // Hidden layout changes cannot act as deliberate reading.
+  expect(node.scrollTop).toBe(position);
+  expect(readingStorage().seenId).toBe(saved.seenId);
+  expect(readingStorage().anchor).toEqual(saved.anchor);
+  expect(input.value).toBe('Keep my draft while viewing execution');
+  rerender(view({ timeline: [...history, arrival] }));
+  expect(node.scrollTop).toBe(position);
+  expect(readingStorage().seenId).toBe(saved.seenId);
+  expect(readingStorage().anchor).toEqual(saved.anchor);
+  expect(screen.getByRole('region', { name: 'Reading progress' })).toHaveTextContent('1 unread updates');
+});
+
+test('returning from a hidden conversation preserves its away boundary through unchanged polls until explicit reading', () => {
+  const { container, rerender } = render(view({ timeline: history }));
+  const node = measuredHistory(container);
+  node.scrollTop = 1200;
+  fireEvent.scroll(node);
+  const saved = readingStorage();
+  rerender(view({ timeline: history, sectionProps: { hidden: true } }));
+  rerender(view({ timeline: history.map(item => ({ ...item })) }));
+  rerender(view({ timeline: history.map(item => ({ ...item })) }));
+  const arrival = { id: 'after-panel-return', actor: 'system', content: 'Delayed unseen update' };
+  rerender(view({ timeline: [...history, arrival] }));
+  expect(node.scrollTop).toBe(1200);
+  expect(readingStorage().seenId).toBe(saved.seenId);
+  expect(readingStorage().anchor).toEqual(saved.anchor);
+  expect(screen.getByRole('button', { name: 'Read new updates' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'assistant.project.returnLatest' }));
+  expect(readingStorage().seenId).toBe(arrival.id);
+  Object.defineProperty(node, 'scrollHeight', { configurable: true, value: 1800 });
+  rerender(view({ timeline: [...history, arrival, { id: 'after-reading', actor: 'system', content: 'Latest update' }] }));
+  expect(node.scrollTop).toBe(1800);
+  expect(readingStorage().seenId).toBe('after-reading');
+});
+
+test.each([false, true])('an initially hidden conversation defers checkpoint restoration until shown, following=%s', following => {
+  const anchor = following ? { id: 'history-6', offset: 0 } : { id: 'history-2', offset: -30 };
+  saveReadingPosition({ scope: readingScope('DEMO', props.mission), following, seenId: 'history-7',
+    anchor, attentionKey: '[[],[],[],[]]' });
+  const saved = readingStorage();
+  const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function() {
+    if (this.closest('[hidden]')) return { top: 0, bottom: 0, height: 0 };
+    if (this.classList.contains('team-manager-conversation')) return { top: 100, bottom: 500, height: 400 };
+    if (this.dataset.readingId) {
+      const i = history.findIndex(item => item.id === this.dataset.readingId);
+      const top = 100 + i * 200 - this.closest('.team-manager-conversation').scrollTop;
+      return { top, bottom: top + 200, height: 200 };
+    }
+    return { top: 0, bottom: 0, height: 0 };
+  });
+  try {
+    const { container, rerender } = render(view({ timeline: history, sectionProps: { hidden: true } }));
+    const node = container.querySelector('.team-manager-conversation');
+    Object.defineProperties(node, { scrollHeight: { configurable: true, value: 1600 }, clientHeight: { configurable: true, value: 400 } });
+    expect(node.scrollTop).toBe(0);
+    expect(readingStorage()).toEqual(saved);
+    rerender(view({ timeline: history.map(item => ({ ...item })), sectionProps: { hidden: true } }));
+    expect(readingStorage()).toEqual(saved);
+    rerender(view({ timeline: history }));
+    expect(node.scrollTop).toBe(following ? 1200 : 430);
+    fireEvent.scroll(node); // The restore itself does not advance the frontier.
+    expect(readingStorage().anchor).toEqual(anchor);
+    const arrival = { id: 'after-hidden-mount', actor: 'system', content: 'Unseen update' };
+    rerender(view({ timeline: [...history, arrival] }));
+    expect(readingStorage().seenId).toBe(saved.seenId);
+    expect(screen.getByRole('button', { name: 'Read new updates' })).toBeInTheDocument();
+  } finally { rect.mockRestore(); }
+});

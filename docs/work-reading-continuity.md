@@ -61,6 +61,12 @@ during pending/source inspection persists the logical bookmark rather than the
 temporary inspection viewport. Fresh unchanged polling responses cannot move a paused reader or repeatedly
 scroll a following reader.
 
+The existing responsive Execution and Outcomes tabs follow the same rule while
+the conversation remains mounted but hidden. Hidden layout cannot restore or
+replace a bookmark, and an initially hidden conversation waits until shown
+before measuring its saved anchor. Returning through an unchanged poll retains
+the away frontier for delayed updates; explicit reading resumes normal following.
+
 ## Verification
 
 This is Tier 4 browser-visible behavior with no backend/control-plane mutations.
