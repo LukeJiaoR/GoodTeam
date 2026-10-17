@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
@@ -79,11 +80,14 @@ def native(request, monkeypatch):
         f"Path({str(c.effects)!r}).open('a').write('call\\n')\n"
         f"Path('feature.py').write_text({source!r})\n"
         f"{new_file_script}sys.stdout.buffer.write({channel(c.value)!r})\n")
-    # The VM's installed interpreter is owned by a container image UID; use
-    # an owned copy solely for this authority fixture, never relax production.
-    binary = c.workspace / "offline-python"
-    shutil.copyfile(Path("/usr/bin/python3").resolve(), binary)
-    binary.chmod(0o700)
+    # Reuse an owned interpreter: relocating macOS/standalone Python can break
+    # code signing or stdlib discovery. Container-owned binaries need a copy.
+    binary = Path(sys.executable).resolve()
+    if binary.stat().st_uid != os.getuid():
+        copied = c.workspace / "offline-python"
+        shutil.copyfile(binary, copied)
+        copied.chmod(0o700)
+        binary = copied
     c.policy = {"schema_version": POLICY_SCHEMA, "project_root": str(c.project), "input": c.value.reference,
         "workspace": str(c.worktree), "codex": str(binary), "codex_home": str(c.home), "version": "0.159.2",
         "binary_digest": _binary_digest(binary), "model": "offline-native-model", "expires_at": int(time.time()) + 300,

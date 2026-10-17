@@ -38,7 +38,10 @@ def discover(provider=""):
     for name in ((provider,) if provider else PROVIDERS):
         with _lock:
             future = _pending.get(name)
-            created = future is None
+            # A completed probe is no longer an observation in flight. Remove
+            # it before the next request so a timeout or failed discovery
+            # cannot be served as a cached catalog.
+            created = future is None or future.done()
             if created:
                 future = _pool.submit(_probe, name)
                 _pending[name] = future

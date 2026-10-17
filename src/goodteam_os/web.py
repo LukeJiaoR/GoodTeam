@@ -278,7 +278,7 @@ def append_action(
     action_log.parent.mkdir(parents=True, exist_ok=True)
     event = {
         "timestamp": datetime.now(UTC).isoformat(),
-        "project_key": normalize_project_key(project_key),
+        "project_key": normalize_project_key(project_key) if project_key else "",
         "run_id": run_id,
         "actor": actor,
         "action": action,
