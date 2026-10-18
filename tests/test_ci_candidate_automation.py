@@ -24,7 +24,7 @@ const notices = [];
 const api = (name, response) => async (args) => {
   calls.push({ name, args });
   if (fixture.errors?.includes(name)) throw new Error(`API failed: ${name}`);
-  return { data: typeof response === 'function' ? response(args) : response };
+  return { data: structuredClone(typeof response === 'function' ? response(args) : response) };
 };
 const github = { rest: {
   actions: {
@@ -32,10 +32,11 @@ const github = { rest: {
       id: args.workflow_id === 'ci.yml' ? 11 : 12,
     })),
     listWorkflowRuns: api('listWorkflowRuns', args => ({
+      total_count: (args.event === 'workflow_dispatch' ? fixture.candidate_runs : fixture.pr_runs).length,
       workflow_runs: args.event === 'workflow_dispatch' ? fixture.candidate_runs : fixture.pr_runs,
     })),
     getWorkflowRun: api('getWorkflowRun', fixture.validation_run),
-    listJobsForWorkflowRun: api('listJobsForWorkflowRun', { jobs: fixture.jobs }),
+    listJobsForWorkflowRun: api('listJobsForWorkflowRun', { total_count: fixture.jobs.length, jobs: fixture.jobs }),
     createWorkflowDispatch: api('createWorkflowDispatch', {}),
     reRunWorkflow: api('reRunWorkflow', {}),
   },
@@ -60,7 +61,15 @@ const github = { rest: {
 } };
 github.paginate = async (method, args, mapper) => {
   const response = await method(args);
-  return mapper ? mapper(response) : response.data;
+  // Octokit's paginate plugin normalizes total_count + namespace responses
+  // before invoking a mapper. A raw REST-shaped fake would hide SDK failures.
+  if (response.data && 'total_count' in response.data && !('url' in response.data)) {
+    const total = response.data.total_count;
+    delete response.data.total_count;
+    response.data = response.data[Object.keys(response.data)[0]];
+    response.data.total_count = total;
+  }
+  return mapper ? [].concat(mapper(response)) : response.data;
 };
 const summary = { addHeading() { return this; }, addRaw() { return this; }, async write() {} };
 const core = { notice: message => notices.push(message), summary };

@@ -92,10 +92,11 @@ jobs:
                 // The dispatch may already exist before its pending status does.
                 // The run name binds the target independently of run.head_sha,
                 // which identifies the reviewed workflow definition on main.
+                // Octokit paginate already unwraps workflow/job list responses.
                 const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
                   owner, repo, workflow_id: ci.data.id, event: "workflow_dispatch",
                   branch: "main", head_sha: base, per_page: 100,
-                }, response => response.data.workflow_runs);
+                });
                 if (runs.some(run => run.display_title === "CI " + target && run.head_sha === base)) {
                   return "Candidate dispatch already exists: " + target;
                 }
@@ -147,14 +148,14 @@ jobs:
                 }
                 const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
                   owner, repo, workflow_id: ci.data.id, event: "pull_request", head_sha: target, per_page: 100,
-                }, response => response.data.workflow_runs);
+                });
                 const gateRun = runs.find(item => item.head_sha === target &&
                   item.head_branch === current.head.ref && item.head_repository?.full_name === repository &&
                   item.pull_requests?.some(pr => pr.number === current.number));
                 if (!gateRun || gateRun.status !== "completed" || gateRun.conclusion === "success") continue;
                 const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
                   owner, repo, run_id: gateRun.id, filter: "latest", per_page: 100,
-                }, response => response.data.jobs);
+                });
                 const gate = jobs.find(job => job.name === "CI / gate");
                 const prepared = jobs.find(job => job.name === "Prepare CI mode");
                 const metadataOnly = ["classify", "backend", "browser"].every(name =>
