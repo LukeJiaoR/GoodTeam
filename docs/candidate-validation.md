@@ -55,7 +55,9 @@ completed `ci.yml` dispatch on current `main` for that exact target. It refreshe
 only a matching open same-repository PR's metadata-only run whose failed gate
 started before that validation result. It rechecks the live PR head/base,
 preserves failed test/prepare results, and does not repeatedly rerun a gate that
-started after validation. The resulting `CI / gate` remains the merge authority.
+started after validation. Stacked PRs also re-read their current parent branch
+and must contain its exact head before their metadata gate is refreshed. The
+resulting `CI / gate` remains the merge authority.
 
 Automation becomes active after these workflows land on `main`. Existing
 candidates must be synchronized with that new base and republished. Publication

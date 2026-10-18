@@ -124,15 +124,27 @@ jobs:
               }
 
               const pulls = await github.paginate(github.rest.pulls.list, {
-                owner, repo, state: "open", base: "main", per_page: 100,
+                owner, repo, state: "open", per_page: 100,
               });
               const refreshed = [];
               for (const pull of pulls) {
                 if (pull.head?.sha !== target || pull.head.repo?.full_name !== repository) continue;
                 const current = (await github.rest.pulls.get({ owner, repo, pull_number: pull.number })).data;
                 if (current.state !== "open" || current.head?.sha !== target ||
-                    current.head.repo?.full_name !== repository || current.base?.ref !== "main" ||
-                    current.base.sha !== base) continue;
+                    current.head.repo?.full_name !== repository || !current.base?.ref ||
+                    !exactSha.test(current.base.sha || "")) continue;
+                if (current.base.ref === "main") {
+                  if (current.base.sha !== base) continue;
+                } else {
+                  const parent = await github.rest.repos.getBranch({
+                    owner, repo, branch: current.base.ref,
+                  });
+                  if (parent.data.commit.sha !== current.base.sha) continue;
+                  const ancestry = await github.rest.repos.compareCommitsWithBasehead({
+                    owner, repo, basehead: current.base.sha + "..." + target,
+                  });
+                  if (ancestry.data.merge_base_commit.sha !== current.base.sha) continue;
+                }
                 const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
                   owner, repo, workflow_id: ci.data.id, event: "pull_request", head_sha: target, per_page: 100,
                 }, response => response.data.workflow_runs);

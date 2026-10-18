@@ -44,10 +44,13 @@ const github = { rest: {
     getRef: api('getRef', { object: { sha: fixture.current_ref } }),
   },
   repos: {
-    getBranch: api('getBranch', { commit: { sha: fixture.base } }),
-    compareCommitsWithBasehead: api('compareCommitsWithBasehead', {
-      merge_base_commit: { sha: fixture.merge_base },
-    }),
+    getBranch: api('getBranch', args => ({ commit: {
+      sha: args.branch === 'main' ? fixture.base : fixture.pr_base,
+    } })),
+    compareCommitsWithBasehead: api('compareCommitsWithBasehead', args => ({
+      merge_base_commit: { sha: args.basehead.startsWith(fixture.base + '...')
+        ? fixture.merge_base : fixture.pr_merge_base },
+    })),
     listCommitStatusesForRef: api('listCommitStatusesForRef', fixture.statuses),
   },
   pulls: {
@@ -116,7 +119,8 @@ def _fixture():
         "refs": [{"ref": "refs/heads/codex/candidate-pr577-aaaaaaa",
                   "object": {"type": "commit", "sha": TARGET}}],
         "statuses": [], "candidate_runs": [], "pr_runs": [pr_run], "jobs": jobs,
-        "validation_run": validation_run, "pulls": [pull], "current_pull": pull,
+        "validation_run": validation_run, "pulls": [pull], "current_pull": json.loads(json.dumps(pull)),
+        "pr_base": "d" * 40, "pr_merge_base": "d" * 40,
     }
 
 
@@ -315,3 +319,17 @@ def test_latest_failure_overrides_an_older_success():
     fixture = _validated_fixture()
     fixture["statuses"].insert(0, {"context": "merge-candidate/validated", "state": "failure"})
     assert not _mutations(_execute(fixture))
+
+
+@pytest.mark.parametrize("case", ["current", "moved_parent", "unrelated_parent"])
+def test_stacked_pr_refresh_requires_the_current_parent_branch_head(case):
+    fixture = _validated_fixture()
+    fixture["current_pull"]["base"] = {"ref": "codex/parent", "sha": "d" * 40}
+    if case == "moved_parent":
+        fixture["pr_base"] = "e" * 40
+    elif case == "unrelated_parent":
+        fixture["pr_merge_base"] = "e" * 40
+    result = _execute(fixture)
+    assert "error" not in result
+    assert len(_mutations(result)) == (1 if case == "current" else 0)
+    assert all("base" not in call["args"] for call in result["calls"] if call["name"] == "listPulls")
