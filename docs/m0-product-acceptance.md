@@ -127,6 +127,22 @@ Fake-Worker fixtures, documentation changes, a smoke report and this checklist
 must not be counted as five real tasks. A task rescued by internal-state editing
 cannot be PASS. Keep failures and unknown measurements visible.
 
+### Reading the full-smoke report
+
+`scripts/full-acceptance-smoke.sh` reports harness outcomes, not this M0 gate.
+A successful dry run returns exit zero with status `planned`: it only prepares
+the execution plan. Non-positive cycle counts and empty suite selections are
+rejected, and missing or inconsistent suite/cycle results cannot pass.
+
+The report labels fake/noop execution as `simulated`; its coverage matrix marks
+successful simulated runs separately and leaves unselected or unexecuted suites
+as `NOT RUN`. Selecting a real backend is recorded as `real-worker-requested`,
+not proof of a useful real task or verified provider identity. All modes leave
+M0 real-task acceptance `not_assessed` until the actual protocol above is met.
+Configured target locations do not establish process confinement. Suggested
+dashboard URLs and an empty screenshot index do not mean a server or browser
+was started or checked.
+
 ## Completion and escalation
 
 Preserve #411's gate: at least five real tasks across two or more projects; at
