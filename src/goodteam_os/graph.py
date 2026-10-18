@@ -988,7 +988,12 @@ def render_downstream_artifact_markdown(
         if results:
             lines.extend(["", "## Worker Job Results", ""])
             for result in results:
-                lines.append(f"- {result.get('role', 'unknown')} / {result.get('adapter', 'unknown')}: {result.get('status', 'unknown')} - {result.get('summary', '')}")
+                lines.append(
+                    f"- {_worker_artifact_text(result.get('role', 'unknown'))} / "
+                    f"{_worker_artifact_text(result.get('adapter', 'unknown'))}: "
+                    f"{_worker_artifact_text(result.get('status', 'unknown'))} - "
+                    f"{_worker_artifact_text(result.get('summary', ''))}"
+                )
         else:
             lines.extend(["", "## Worker Job Results", "", "- No worker jobs were executed."])
         lines.extend(["", "## Execution Evidence", ""])
@@ -1058,10 +1063,10 @@ def format_worker_evidence_lines(worker_results: list[dict[str, object]]) -> lis
         return ["- No worker verification evidence was attached to this artifact."]
     lines: list[str] = []
     for result in worker_results:
-        role = str(result.get("role", "unknown"))
-        status = str(result.get("status", "unknown"))
-        summary = str(result.get("summary", ""))
-        model = str(result.get("model", "") or "")
+        role = _worker_artifact_text(result.get("role", "unknown"))
+        status = _worker_artifact_text(result.get("status", "unknown"))
+        summary = _worker_artifact_text(result.get("summary", ""))
+        model = _worker_artifact_text(result.get("model", "") or "")
         result_text = read_worker_result_excerpt(result)
         lines.append(f"- {role}: `{status}` via `{model or 'unspecified model'}` - {summary}")
         for signal in extract_worker_signals(result_text):
@@ -1082,23 +1087,23 @@ def format_worker_execution_evidence_lines(worker_results: list[dict[str, object
 
     lines: list[str] = []
     for result in worker_results:
-        role = str(result.get("role", "unknown"))
-        adapter = str(result.get("adapter", "unknown"))
-        status = str(result.get("status", "unknown"))
+        role = _worker_artifact_text(result.get("role", "unknown"))
+        adapter = _worker_artifact_text(result.get("adapter", "unknown"))
+        status = _worker_artifact_text(result.get("status", "unknown"))
         lines.extend([
             f"### {role} / {adapter}",
             "",
             f"- Observed status: `{status}`.",
-            f"- Observed summary: {str(result.get('summary', '')).strip() or 'none reported'}",
+            f"- Observed summary: {_worker_artifact_text(result.get('summary', '')).strip() or 'none reported'}",
         ])
-        result_path = str(result.get("result_path", "")).strip()
+        result_path = _worker_artifact_text(result.get("result_path", "")).strip()
         if result_path:
             lines.append(f"- Worker report path: `{result_path}`.")
         for field, label in (("changed_files", "Changed files reported"), ("artifacts", "Artifacts reported")):
             values = result.get(field)
             if isinstance(values, list) and values:
                 lines.append(f"- {label}:")
-                lines.extend(f"  - `{item}`" for item in values)
+                lines.extend(f"  - `{_worker_artifact_text(item)}`" for item in values)
             else:
                 lines.append(f"- {label}: none in the worker status record.")
 
@@ -1212,12 +1217,31 @@ def read_worker_result_excerpt(result: dict[str, object], *, max_chars: int = 30
     return sanitize_artifact_excerpt(path.read_text(encoding="utf-8", errors="replace"), max_chars=max_chars)
 
 
-def sanitize_artifact_excerpt(text: str, *, max_chars: int = 3000) -> str:
+def _worker_artifact_text(value: object) -> str:
+    # Sanitize each metadata value before adding Markdown, so an authorization
+    # record cannot swallow a later, independently supplied file/evidence item.
+    return sanitize_artifact_excerpt(str(value), max_chars=None)
+
+
+def sanitize_artifact_excerpt(text: str, *, max_chars: int | None = 3000) -> str:
+    # Reports are free-form text, not a parsed header map. Redact the complete
+    # authorization record, including quoted/escaped keys, multi-part schemes
+    # and HTTP folded continuation lines. Guessing the end from a space/comma
+    # would retain Bearer credentials or Digest parameters. Adjacent indented
+    # lines are deliberately treated as part of that sensitive record.
+    authorization = re.compile(
+        r"(?im)(?<![\w-])((?:__)?(?:proxy[-_]|http_)?authorization(?:__)?(?![\w-])"
+        r"(?:[\\\"'`*\]\)]|[^\S\r\n])*[:=,|>])"
+        r"(?:[^\S\r\n]*(?:(?:bearer|basic|digest|negotiate)[^\S\r\n]*)?"
+        r"(?:\r\n|\n|\r)[^\r\n]*|[^\r\n]*)"
+        r"(?:(?:\r\n|\n|\r)[ \t]+[^\r\n]*)*"
+    )
+    redacted = authorization.sub(r"\1 [redacted]", text)
     secretish = re.compile(
         r"(?i)(api[_-]?key|access[_-]?token|bot[_-]?token|authorization|secret|password)\s*[:=]\s*\S+"
     )
-    redacted = secretish.sub(r"\1: [redacted]", text)
-    return redacted[:max_chars]
+    redacted = secretish.sub(r"\1: [redacted]", redacted)
+    return redacted if max_chars is None else redacted[:max_chars]
 
 
 def extract_worker_signals(text: str) -> list[str]:

@@ -2530,6 +2530,10 @@ def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
     assert len(calls) == 1
     assert status["failure_class"] == "timeout"
     assert status["disposition"] == "human_handoff"
+    retained = json.loads(Path(status["attempt_history"][0]["status_path"]).read_text())
+    assert retained["attempts"] == 1
+    assert retained["failure_class"] == "timeout"
+    assert retained["disposition"] == "human_handoff"
 
 
 def test_classify_worker_failure_maps_known_summary_patterns():
@@ -2549,6 +2553,7 @@ def test_classify_worker_failure_maps_known_summary_patterns():
     assert classify_worker_failure(claude_auth, 1) == "auth"
     assert classify_worker_failure(claude_rate, 1) == "rate_limit"
     assert classify_worker_failure("Codex CLI timed out after 1800 seconds.", None) == "timeout"
+    assert classify_worker_failure("Synthetic CLI timed out after 0.05 seconds.", None, "401 Unauthorized") == "timeout"
     assert classify_worker_failure("Codex CLI exited with code 1: 503 Service Unavailable.", 1) == "network"
     assert classify_worker_failure("Codex CLI exited with code 1.", 1, "Cannot find module 'x'") == "scaffold"
     assert classify_worker_failure("Codex CLI exited with code 1.", 1, "random failure") == "unknown"
@@ -2605,6 +2610,133 @@ def test_cli_retry_recovers_after_transient_failure(tmp_path, monkeypatch):
     assert first["summary"] == "Codex CLI exited with code 1: 503 Service Unavailable."
     assert Path(first["stderr_path"]).read_text() == "ERROR: unexpected status 503 Service Unavailable"
     assert Path(first["result_path"]).read_text() != "# Worker Result\n\nRecovered on retry.\n"
+    assert first["attempts"] == 1
+    assert first["failure_class"] == "network"
+    assert first["disposition"] == "retrying"
+    second = json.loads(Path(result["attempt_history"][1]["status_path"]).read_text())
+    assert second["attempts"] == 2
+    assert second["disposition"] == "completed"
+    assert "failure_class" not in second
+
+
+@pytest.mark.parametrize("transcript_alias", ["stdout_path", "stderr_path", "result_path"])
+def test_cli_attempt_archive_rebases_output_aliases_without_mutating_outcome(tmp_path, monkeypatch, transcript_alias):
+    install_fake_worker_version(monkeypatch)
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stdout_text": "first output", "stderr_text": "503 Service Unavailable",
+         "result_text": "First failed result"},
+        {"returncode": 0, "stdout_text": "second output", "result_text": "Second successful result"},
+    ])
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="retained", role="implementation", adapter="codex", task="Fix a bug", context="")
+    original_run = store._run_cli_backend
+    outcomes = []
+    at_retry = []
+
+    def run_with_transcript_alias(job_root, job, spec):
+        outcome = original_run(job_root, job, spec)
+        outcome["runtime_transcript_path"] = outcome[transcript_alias]
+        outcome["invocation_evidence"]["runtime_transcript_path"] = outcome[transcript_alias]
+        outcomes.append((outcome, outcome.prepared_prompt, outcome.transport_ref))
+        return outcome
+
+    def before_retry(_seconds):
+        retained_path, = (store.root / job["id"]).glob("attempt-*/status.json")
+        at_retry.append(json.loads(retained_path.read_text()))
+
+    monkeypatch.setattr(store, "_run_cli_backend", run_with_transcript_alias)
+    monkeypatch.setattr("goodteam_os.workers._sleep", before_retry)
+    result = store.run_job(job["id"])
+
+    assert result is outcomes[-1][0]
+    assert result.prepared_prompt is outcomes[-1][1]
+    assert result.transport_ref == outcomes[-1][2]
+    assert result.prepared_prompt is not None and result.transport_ref
+    first = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    first_root = Path(result["attempt_history"][0]["status_path"]).parent
+    for key, expected in (("stdout_path", "first output"), ("stderr_path", "503 Service Unavailable"),
+                          ("result_path", "First failed result")):
+        assert Path(first[key]).parent == first_root
+        assert first["invocation_evidence"][key] == first[key]
+        assert Path(first["invocation_evidence"][key]).read_text() == expected
+        assert result["invocation_evidence"][key] == result[key]
+        assert Path(result[key]).parent == store.root / job["id"]
+    assert first["runtime_transcript_path"] == first[transcript_alias]
+    assert first["invocation_evidence"]["runtime_transcript_path"] == first[transcript_alias]
+    assert result["invocation_evidence"]["runtime_transcript_path"] == result[transcript_alias]
+    assert not {"prepared_prompt", "transport_ref"} & set(first)
+    assert at_retry[0]["attempts"] == 1
+    assert at_retry[0]["failure_class"] == "network"
+    assert at_retry[0]["disposition"] == "retrying"
+
+
+def test_cli_first_success_archive_has_complete_attempt_outcome(tmp_path, monkeypatch):
+    install_fake_worker_version(monkeypatch)
+    install_fake_popen(monkeypatch)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="retained", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    result = store.run_job(job["id"])
+
+    retained = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    assert retained["status"] == "completed"
+    assert retained["attempts"] == 1
+    assert retained["disposition"] == "completed"
+    assert "failure_class" not in retained
+    assert "disposition" not in result
+    assert "failure_class" not in result
+
+
+def test_cli_archives_keep_each_distinct_failure_cause_before_recovery(tmp_path, monkeypatch):
+    install_fake_worker_version(monkeypatch)
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stderr_text": "503 Service Unavailable"},
+        {"returncode": 1, "stderr_text": "401 Unauthorized"},
+        {"returncode": 0},
+    ])
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "3")
+    monkeypatch.setattr("goodteam_os.workers._sleep", lambda _seconds: None)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="distinct", role="implementation", adapter="codex", task="Synthetic test", context="")
+
+    result = store.run_job(job["id"])
+
+    archived = [json.loads(Path(item["status_path"]).read_text()) for item in result["attempt_history"]]
+    assert [item.get("failure_class") for item in archived] == ["network", "auth", None]
+    assert [item["attempts"] for item in archived] == [1, 2, 3]
+    assert [item["disposition"] for item in archived] == ["retrying", "retrying", "completed"]
+    assert result["disposition"] == "recovered" and result["failure_class"] == "auth"
+
+
+@pytest.mark.parametrize("stderr", ["Provider request timed out", "Upstream tool timeout"])
+@pytest.mark.parametrize("recovers", [True, False])
+def test_cli_nonzero_provider_timeout_keeps_bounded_transient_retry(tmp_path, monkeypatch, stderr, recovers):
+    calls = []
+    sleeps = []
+    install_fake_worker_version(monkeypatch)
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stderr_text": stderr},
+        {"returncode": 0 if recovers else 1, "stderr_text": "" if recovers else stderr},
+    ], calls=calls)
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "2")
+    monkeypatch.setattr("goodteam_os.workers._sleep", sleeps.append)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="timeout", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    result = store.run_job(job["id"])
+
+    assert len(calls) == 2
+    assert sleeps == [2]
+    assert result["status"] == ("completed" if recovers else "failed")
+    assert result["attempts"] == result["max_attempts"] == 2
+    assert result["failure_class"] == "timeout"
+    assert result["disposition"] == ("recovered" if recovers else "escalated")
+    retained = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    assert retained["failure_class"] == "timeout"
+    assert retained["disposition"] == "retrying"
+    final = json.loads(Path(result["attempt_history"][1]["status_path"]).read_text())
+    assert final["disposition"] == ("completed" if recovers else "escalated")
+    assert final.get("failure_class") == (None if recovers else "timeout")
 
 
 def test_cli_attempt_cap_survives_service_restart(tmp_path, monkeypatch):
@@ -2710,6 +2842,10 @@ def test_cli_retry_escalates_after_max_transient_failures(tmp_path, monkeypatch)
     assert result["failure_class"] == "stream_disconnect"
     assert result["disposition"] == "escalated"
     assert len(sleeps) == WORKER_MAX_ATTEMPTS - 1
+    retained = [json.loads(Path(item["status_path"]).read_text()) for item in result["attempt_history"]]
+    assert [item["attempts"] for item in retained] == list(range(1, WORKER_MAX_ATTEMPTS + 1))
+    assert all(item["failure_class"] == "stream_disconnect" for item in retained)
+    assert [item["disposition"] for item in retained] == ["retrying", "retrying", "escalated"]
 
 
 def test_cli_non_transient_failure_is_not_retried(tmp_path, monkeypatch):
@@ -2738,6 +2874,10 @@ def test_cli_non_transient_failure_is_not_retried(tmp_path, monkeypatch):
     assert result["disposition"] == "escalated"
     assert len(calls) == 1
     assert sleeps == []
+    retained = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    assert retained["attempts"] == 1
+    assert retained["failure_class"] == "scaffold"
+    assert retained["disposition"] == "escalated"
 
 
 def test_codex_worker_prompt_requires_bounded_smoke_cleanup(tmp_path, monkeypatch):

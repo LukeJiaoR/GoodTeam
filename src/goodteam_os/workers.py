@@ -114,10 +114,14 @@ _MEMORY_WRITEBACK_BULLET_RE = re.compile(r"^\s*[-*•]\s+(.+?)\s*$")
 _sleep = time.sleep
 
 
+def _is_host_cli_timeout(summary: str, exit_code: int | None) -> bool:
+    return exit_code is None and re.fullmatch(r".+ timed out after \d+(?:\.\d+)? seconds\.", summary) is not None
+
+
 def classify_worker_failure(summary: str, exit_code: int | None, stderr: str = "") -> str:
     # A host deadline is authoritative; a CLI transcript can mention auth or
     # network errors from unrelated tools, source files, or successful checks.
-    if exit_code is None and re.fullmatch(r".+ timed out after \d+ seconds\.", summary):
+    if _is_host_cli_timeout(summary, exit_code):
         return "timeout"
     del exit_code  # phase-1 classifier is text-pattern based.
     text = f"{summary}\n{stderr}".lower()
@@ -1423,44 +1427,40 @@ class WorkerJobStore:
             while True:
                 attempts += 1
                 status_payload = self._run_cli_backend(job_root, job, spec)
+                status_payload["attempts"] = attempts
+                completed = status_payload.get("status") == "completed"
+                disposition = "completed"
+                if not completed:
+                    stderr = ""
+                    stderr_path = status_payload.get("stderr_path")
+                    if isinstance(stderr_path, str) and stderr_path:
+                        try:
+                            stderr = Path(stderr_path).read_text(encoding="utf-8")
+                        except OSError:
+                            stderr = ""
+                    summary = str(status_payload.get("summary", ""))
+                    exit_code = status_payload.get("exit_code")
+                    last_failure_class = classify_worker_failure(summary, exit_code, stderr=stderr)
+                    status_payload["failure_class"] = last_failure_class
+                    if job_root.name.startswith("job-correction-") or _is_host_cli_timeout(summary, exit_code):
+                        disposition = "human_handoff"
+                    elif not is_transient(last_failure_class) or attempts >= max_attempts:
+                        disposition = "escalated"
+                    else:
+                        disposition = "retrying"
+                    status_payload["disposition"] = disposition
                 if ordinary:
                     status_payload["max_attempts"] = max_attempts
-                    retained = Path(tempfile.mkdtemp(prefix="attempt-", dir=job_root))
-                    retained_status = dict(status_payload)
-                    for name in ("stdout", "stderr", "result"):
-                        source = job_root / (f"{name}.md" if name == "result" else f"{name}.txt")
-                        if source.is_file():
-                            copy2(source, retained / source.name)
-                            retained_status[f"{name}_path"] = str(retained / source.name)
-                    self._write_json(retained / "status.json", retained_status)
-                    attempt_history.append({"attempt": attempts, "status": status_payload.get("status"),
-                                            "status_path": str(retained / "status.json")})
+                    attempt_history.append(self._retain_cli_attempt(job_root, status_payload, disposition=disposition))
                     status_payload["attempt_history"] = list(attempt_history)
-                if status_payload.get("status") == "completed":
-                    status_payload["attempts"] = attempts
+                if completed:
+                    # The public job outcome keeps its historical recovery fields;
+                    # the successful attempt above has no failure of its own.
                     if retried:
                         status_payload["failure_class"] = last_failure_class
                         status_payload["disposition"] = "recovered"
                     break
-                stderr = ""
-                stderr_path = status_payload.get("stderr_path")
-                if isinstance(stderr_path, str) and stderr_path:
-                    try:
-                        stderr = Path(stderr_path).read_text(encoding="utf-8")
-                    except OSError:
-                        stderr = ""
-                last_failure_class = classify_worker_failure(
-                    str(status_payload.get("summary", "")),
-                    status_payload.get("exit_code"),
-                    stderr=stderr,
-                )
-                status_payload["failure_class"] = last_failure_class
-                status_payload["attempts"] = attempts
-                if job_root.name.startswith("job-correction-") or last_failure_class == "timeout":
-                    status_payload["disposition"] = "human_handoff"
-                    break
-                if not is_transient(last_failure_class) or attempts >= max_attempts:
-                    status_payload["disposition"] = "escalated"
+                if disposition != "retrying":
                     break
                 retried = True
                 backoff = WORKER_RETRY_BACKOFF_SECONDS[min(attempts - 1, len(WORKER_RETRY_BACKOFF_SECONDS) - 1)]
@@ -1499,6 +1499,32 @@ class WorkerJobStore:
             self._input_store(task_input).record_host_return(task_input,
                 status=status_payload["status"], output_digest=digest(result_bytes))
         return status_payload
+
+    def _retain_cli_attempt(self, job_root: Path, status: dict[str, Any], *, disposition: str) -> dict[str, Any]:
+        retained = Path(tempfile.mkdtemp(prefix="attempt-", dir=job_root))
+        retained_status = {**status, "disposition": disposition}
+        copied_paths = {}
+        for name in ("stdout", "stderr", "result"):
+            source = job_root / (f"{name}.md" if name == "result" else f"{name}.txt")
+            if source.is_file():
+                target = retained / source.name
+                copy2(source, target)
+                copied_paths[str(source)] = str(target)
+                retained_status[f"{name}_path"] = str(target)
+        # Output aliases must refer to the retained bytes, without changing the
+        # live outcome's nested evidence or its private prompt/transport identity.
+        evidence = status.get("invocation_evidence")
+        if isinstance(evidence, dict):
+            retained_status["invocation_evidence"] = dict(evidence)
+        for metadata in (retained_status, retained_status.get("invocation_evidence", {})):
+            if isinstance(metadata, dict):
+                for key in ("stdout_path", "stderr_path", "result_path", "runtime_transcript_path"):
+                    value = metadata.get(key)
+                    if isinstance(value, str) and value in copied_paths:
+                        metadata[key] = copied_paths[value]
+        self._write_json(retained / "status.json", retained_status)
+        return {"attempt": status["attempts"], "status": status.get("status"),
+                "status_path": str(retained / "status.json")}
 
     def _ordinary_memory_handoff(self, job_root: Path, job: dict[str, Any]) -> MemoryHandoffStore | None:
         if job_root.name.startswith(("job-input-", "job-correction-")):
