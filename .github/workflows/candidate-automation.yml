@@ -1,0 +1,165 @@
+name: Candidate automation
+
+on:
+  workflow_run:
+    workflows: [Candidate published, CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-automation-${{ github.event.workflow_run.display_title }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+      statuses: read
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            // workflow_run uses the default-branch definition. Never check out
+            // candidate code, consume its reports, or evaluate its text here.
+            const { owner, repo } = context.repo;
+            const repository = owner + "/" + repo;
+            const source = context.payload.workflow_run;
+            const prefix = "refs/heads/codex/candidate-";
+            const exactSha = /^[0-9a-f]{40}$/u;
+            const ciPath = ".github/workflows/ci.yml";
+            const publicationPath = ".github/workflows/candidate-published.yml";
+
+            async function reconcile() {
+              if (context.eventName !== "workflow_run" || context.ref !== "refs/heads/main") {
+                throw new Error("Candidate automation must use the reviewed main definition");
+              }
+              if (source?.status !== "completed" || source.head_repository?.full_name !== repository) {
+                return "Ignored an incomplete or foreign workflow run.";
+              }
+              const publication = source.path === publicationPath;
+              if (!publication && source.path !== ciPath) return "Ignored an unrelated workflow.";
+              const expected = await github.rest.actions.getWorkflow({
+                owner, repo, workflow_id: publication ? "candidate-published.yml" : "ci.yml",
+              });
+              if (source.workflow_id !== expected.data.id) return "Ignored a different workflow identity.";
+
+              let target;
+              if (publication) {
+                if (!["push", "create"].includes(source.event) || source.conclusion !== "success" ||
+                    !source.head_branch?.startsWith("codex/candidate-")) {
+                  return "Ignored an unsuccessful or unselected publication.";
+                }
+                target = source.head_sha;
+              } else if (source.event === "workflow_dispatch" && source.head_branch === "main") {
+                target = /^CI ([0-9a-f]{40})$/u.exec(source.display_title || "")?.[1];
+              } else if (source.event === "pull_request") {
+                target = source.head_sha;
+              }
+              if (!exactSha.test(target || "")) return "No exact candidate SHA was selected.";
+
+              const refs = await github.paginate(github.rest.git.listMatchingRefs, {
+                owner, repo, ref: "heads/codex/candidate-", per_page: 100,
+              });
+              const selected = refs.find(ref => ref.ref.startsWith(prefix) &&
+                ref.object?.type === "commit" && ref.object.sha === target &&
+                (!publication || ref.ref === "refs/heads/" + source.head_branch));
+              if (!selected) return "Candidate publication was removed or superseded: " + target;
+
+              const main = await github.rest.repos.getBranch({ owner, repo, branch: "main" });
+              const base = main.data.commit.sha;
+              if (target === base) return "Candidate has no changes from main: " + target;
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner, repo, basehead: base + "..." + target,
+              });
+              if (comparison.data.merge_base_commit.sha !== base) {
+                return "Candidate must include current main " + base + ": " + target;
+              }
+              const ci = publication ? await github.rest.actions.getWorkflow({
+                owner, repo, workflow_id: "ci.yml",
+              }) : expected;
+              const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
+                owner, repo, ref: target, per_page: 100,
+              });
+              const status = statuses.find(item => item.context === "merge-candidate/validated");
+
+              if (publication) {
+                if (status) return "Preserved existing candidate result " + status.state + ": " + target;
+                // The dispatch may already exist before its pending status does.
+                // The run name binds the target independently of run.head_sha,
+                // which identifies the reviewed workflow definition on main.
+                const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                  owner, repo, workflow_id: ci.data.id, event: "workflow_dispatch",
+                  branch: "main", head_sha: base, per_page: 100,
+                }, response => response.data.workflow_runs);
+                if (runs.some(run => run.display_title === "CI " + target && run.head_sha === base)) {
+                  return "Candidate dispatch already exists: " + target;
+                }
+                const current = await github.rest.git.getRef({
+                  owner, repo, ref: selected.ref.slice("refs/".length),
+                });
+                if (current.data.object.sha !== target) return "Candidate moved before dispatch: " + target;
+                await github.rest.actions.createWorkflowDispatch({
+                  owner, repo, workflow_id: ci.data.id, ref: "main", inputs: { target_sha: target },
+                });
+                return "Dispatched exact candidate " + target + " from reviewed main " + base + ".";
+              }
+
+              if (status?.state !== "success") return "Candidate has no successful result: " + target;
+              const runPrefix = "https://github.com/" + repository + "/actions/runs/";
+              const runId = (status.target_url || "").startsWith(runPrefix)
+                ? status.target_url.slice(runPrefix.length) : "";
+              if (!/^[0-9]+$/u.test(runId)) return "Candidate result has no repository run binding.";
+              const validation = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(runId) });
+              const run = validation.data;
+              if (run.workflow_id !== ci.data.id || run.path !== ciPath || run.event !== "workflow_dispatch" ||
+                  run.head_branch !== "main" || run.head_sha !== base || run.display_title !== "CI " + target ||
+                  run.head_repository?.full_name !== repository || run.status !== "completed" ||
+                  run.conclusion !== "success" || run.html_url !== status.target_url) {
+                return "Candidate result does not bind a successful exact-SHA run on current main.";
+              }
+
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                owner, repo, state: "open", base: "main", per_page: 100,
+              });
+              const refreshed = [];
+              for (const pull of pulls) {
+                if (pull.head?.sha !== target || pull.head.repo?.full_name !== repository) continue;
+                const current = (await github.rest.pulls.get({ owner, repo, pull_number: pull.number })).data;
+                if (current.state !== "open" || current.head?.sha !== target ||
+                    current.head.repo?.full_name !== repository || current.base?.ref !== "main" ||
+                    current.base.sha !== base) continue;
+                const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                  owner, repo, workflow_id: ci.data.id, event: "pull_request", head_sha: target, per_page: 100,
+                }, response => response.data.workflow_runs);
+                const gateRun = runs.find(item => item.head_sha === target &&
+                  item.head_branch === current.head.ref && item.head_repository?.full_name === repository &&
+                  item.pull_requests?.some(pr => pr.number === current.number));
+                if (!gateRun || gateRun.status !== "completed" || gateRun.conclusion === "success") continue;
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                  owner, repo, run_id: gateRun.id, filter: "latest", per_page: 100,
+                }, response => response.data.jobs);
+                const gate = jobs.find(job => job.name === "CI / gate");
+                const prepared = jobs.find(job => job.name === "Prepare CI mode");
+                const metadataOnly = ["classify", "backend", "browser"].every(name =>
+                  jobs.some(job => job.name === name && job.conclusion === "skipped"));
+                const otherFailure = jobs.some(job => job.name !== "CI / gate" &&
+                  !["success", "skipped", "neutral"].includes(job.conclusion));
+                const started = Date.parse(gate?.started_at || "");
+                const validated = Date.parse(status.created_at || "");
+                if (!metadataOnly || prepared?.conclusion !== "success" || gate?.conclusion !== "failure" ||
+                    otherFailure || !Number.isFinite(started) || !Number.isFinite(validated) ||
+                    started >= validated) continue;
+                await github.rest.actions.reRunWorkflow({ owner, repo, run_id: gateRun.id });
+                refreshed.push("#" + current.number + " (run " + gateRun.id + ")");
+              }
+              return "Validated " + target + "; refreshed metadata gates: " + (refreshed.join(", ") || "none needed");
+            }
+
+            const result = await reconcile();
+            core.notice(result);
+            await core.summary.addHeading("Candidate automation").addRaw(result + "\n").write();
