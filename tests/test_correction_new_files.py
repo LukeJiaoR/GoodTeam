@@ -15,12 +15,19 @@ from test_task_input_snapshot import ctx  # noqa: F401
 
 @pytest.fixture
 def source(tmp_path):
-    git(tmp_path, "init", "-q")
-    (tmp_path / "original.txt").write_bytes(b"original\n")
-    (tmp_path / ".gitignore").write_text("ignored/\n*.cache\n")
-    git(tmp_path, "add", ".")
-    git(tmp_path, "commit", "-qm", "Offline input")
-    return tmp_path, git(tmp_path, "rev-parse", "HEAD")
+    project, root = tmp_path / "project", tmp_path / "worktree"
+    project.mkdir()
+    git(project, "init", "-q")
+    (project / "original.txt").write_bytes(b"original\n")
+    (project / ".gitignore").write_text("ignored/\n*.cache\n")
+    git(project, "add", ".")
+    git(project, "commit", "-qm", "Offline input")
+    head = git(project, "rev-parse", "HEAD")
+    # Correction attempts use linked worktrees: .git is a pointer file, not a
+    # directory into which a case-insensitive .Git/data write can disappear.
+    git(project, "worktree", "add", "--detach", str(root), head)
+    assert (root / ".git").is_file()
+    return root, head
 
 
 def add(root, name, data=b"new\n"):
@@ -53,8 +60,20 @@ def test_nested_binary_executable_additions_and_addition_only_progress(request):
     assert not (c.project / "new sources").exists()
 
 
-@pytest.mark.parametrize("name", [".env", ".ENV.production", ".goodteam/cache", ".Git/data", "nested/.gitignore",
-    "nested/.codex/auth.json", "AUTH.JSON", "Credentials.JSON", "secrets/data", "private.KEY", "id_ed25519"])
+SENSITIVE_NEW_PATHS = [".env", ".ENV.production", ".goodteam/cache", ".Git/data", "nested/.gitignore",
+    "nested/.codex/auth.json", "AUTH.JSON", "Credentials.JSON", "secrets/data", "private.KEY", "id_ed25519"]
+
+
+@pytest.mark.parametrize("name", SENSITIVE_NEW_PATHS)
+def test_sensitive_new_path_names_reject_without_filesystem_aliasing(name):
+    with pytest.raises(TaskInputError, match="correction_seal_new_path_rejected"):
+        seal._new_paths(name.encode() + b"\0", {})
+
+
+# A root .Git/data cannot coexist with the worktree's .git pointer on a
+# case-insensitive volume. Exercise the real metadata/read boundary using a
+# nested alias, and retain the exact root spelling in the raw path test above.
+@pytest.mark.parametrize("name", ["nested/.Git/data" if p == ".Git/data" else p for p in SENSITIVE_NEW_PATHS])
 def test_sensitive_and_hidden_paths_reject_before_reading_addition(source, monkeypatch, name):
     root, _ = source
     added = add(root, name)
@@ -65,6 +84,18 @@ def test_sensitive_and_hidden_paths_reject_before_reading_addition(source, monke
     monkeypatch.setattr(seal, "regular_file", read)
     with pytest.raises((TaskInputError, SkillError)):
         capture(source)
+
+
+def test_root_git_alias_is_not_exempt_from_metadata_validation(source):
+    root, _ = source
+    # A two-step rename preserves the alias spelling on either kind of volume
+    # without trying to create a directory over the real worktree pointer.
+    temporary = root / "git-pointer"
+    (root / ".git").rename(temporary)
+    temporary.rename(root / ".Git")
+    assert ".Git" in {path.name for path in root.iterdir()}
+    with pytest.raises(TaskInputError, match="correction_seal_source_unsupported"):
+        seal._worktree_leaves(root)
 
 
 @pytest.mark.parametrize("name", ["ignored/file.txt", "artifact.cache"])
@@ -124,16 +155,54 @@ def test_new_files_require_safe_regular_nodes(source, tmp_path, mutation):
         capture(source)
 
 
+@pytest.mark.parametrize("ignorecase", ["false", "true"])
 @pytest.mark.parametrize("name", ["ORIGINAL.txt", "original.txt/child", "folder/A.txt"])
-def test_new_path_identity_collisions_fail_closed(source, name):
+def test_new_path_identity_collisions_fail_closed(source, name, ignorecase):
     root, _ = source
-    if name == "original.txt/child":
+    git(root, "config", "core.ignorecase", ignorecase)
+    if name in {"ORIGINAL.txt", "original.txt/child"}:
+        # Remove the old node first so writing ORIGINAL.txt cannot silently
+        # modify original.txt while keeping its spelling on the filesystem.
         (root / "original.txt").unlink()
     if name == "folder/A.txt":
-        add(root, "Folder/b.txt")
+        old = add(root, "Folder/b.txt")
+        git(root, "add", "Folder/b.txt")
+        git(root, "commit", "-qm", "Tracked directory spelling")
+        source = root, git(root, "rev-parse", "HEAD")
+        # Retain Folder in Git's exact tree, not as a second live directory
+        # that would alias folder on a case-insensitive volume.
+        old.unlink()
+        old.parent.rmdir()
     add(root, name)
+    assert name in seal._worktree_leaves(root)
     with pytest.raises((TaskInputError, SkillError)):
         capture(source)
+
+
+@pytest.mark.parametrize(("tracked", "paths"), [
+    (("original.txt",), ("ORIGINAL.txt",)),
+    (("original.txt",), ("original.txt/child",)),
+    (("Folder/b.txt",), ("folder/A.txt",)),
+    (("folder/A.txt",), ("Folder/b.txt",)),
+    (("directory/child",), ("directory",)),
+    ((), ("new.txt", "NEW.txt")),
+    ((), ("Folder/b.txt", "folder/A.txt")),
+    ((), ("folder/A.txt", "Folder/b.txt")),
+    ((), ("new", "new/child")),
+    ((), ("new/child", "new")),
+])
+def test_conflicting_new_path_sets_reject_independent_of_filesystem(tracked, paths):
+    # Some pairs cannot coexist on the host volume. Feed their exact Git wire
+    # representation to the admission guard on every platform, without skips.
+    raw = b"".join(path.encode() + b"\0" for path in paths)
+    with pytest.raises(TaskInputError, match="correction_seal_new_path_rejected"):
+        seal._new_paths(raw, dict.fromkeys(tracked))
+
+
+def test_distinct_new_paths_can_share_exact_directory_spelling():
+    paths = ["Folder/A.txt", "Folder/nested/b.txt", "original-copy.txt"]
+    raw = b"".join(path.encode() + b"\0" for path in paths)
+    assert seal._new_paths(raw, dict.fromkeys(["original.txt", "Folder/existing.txt"])) == paths
 
 
 @pytest.mark.parametrize("limit", ["files", "bytes"])
