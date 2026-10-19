@@ -5,6 +5,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import MutableMapping
@@ -22,11 +23,15 @@ REAL_WORKER_MODES = {"codex", "anthropic", "claude", "gemini", "agy", "opencode"
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    suites = [suite.strip() for suite in args.suite.split(",") if suite.strip()]
+    if not suites or args.cycles < 1:
+        parser.error("select at least one smoke suite and a positive cycle count")
+    if len(suites) != len(set(suites)):
+        parser.error("select each smoke suite only once")
     repo_root = Path(args.repo_root).resolve()
     output_root = _resolve_output_root(args.output_root, repo_root)
     workspace = output_root / "workspace"
     dirs = _ensure_output_dirs(output_root)
-    suites = [suite.strip() for suite in args.suite.split(",") if suite.strip()]
     worker_mode = "anthropic" if args.worker_mode == "claude" else args.worker_mode
     if worker_mode in REAL_WORKER_MODES and not args.dry_run and not args.allow_real_worker:
         raise SystemExit(f"{args.worker_mode} worker is explicit opt-in only; rerun with --allow-real-worker.")
@@ -47,6 +52,10 @@ def main(argv: list[str] | None = None) -> int:
         "cycles": args.cycles,
         "worker_mode": worker_mode,
         "dry_run": args.dry_run,
+        "evidence_mode": "planned" if args.dry_run else (
+            "simulated" if worker_mode in SAFE_WORKER_MODES else "real-worker-requested"
+        ),
+        "real_task_acceptance": "not_assessed",
         "dashboard_urls": {"root": dashboard_url},
         "ports": {"dashboard": args.dashboard_port},
         "warnings": list(isolation_warnings),
@@ -123,8 +132,14 @@ def main(argv: list[str] | None = None) -> int:
                  "message": str(run.get("blocked_reason", {}).get("message") or "Approval is required.")}
                 for run in report.get("runs", []) if isinstance(run, dict) and run.get("status") == "blocked"
             ]
+        elif _complete_smoke_report(report, suites, args.cycles, args.dry_run):
+            summary["status"] = "planned" if args.dry_run else "passed"
         else:
-            summary["status"] = "passed"
+            summary["status"] = "failed"
+            summary["failures"] = [{
+                "classification": "test",
+                "message": "Smoke report does not contain the expected outcome for every selected suite/cycle.",
+            }]
 
     summary["environment_overrides"] = env_updates
     summary["completed_at"] = datetime.now(UTC).isoformat()
@@ -151,6 +166,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dashboard-port", type=int, default=8788)
     parser.add_argument("--issue", default="")
     return parser
+
+
+def _complete_smoke_report(report: dict[str, object], suites: list[str], cycles: int, dry_run: bool) -> bool:
+    expected_status = "planned" if dry_run else "passed"
+    runs = report.get("runs", [])
+    if report.get("status") != expected_status or not isinstance(runs, list):
+        return False
+    expected = Counter((suite, cycle) for suite in suites for cycle in range(1, cycles + 1))
+    actual = Counter()
+    for run in runs:
+        if not isinstance(run, dict) or _reported_run_status(run, dry_run) != expected_status:
+            return False
+        suite, cycle = run.get("suite"), run.get("cycle")
+        actual[(suite, cycle)] += 1
+    return actual == expected
+
+
+def _reported_run_status(run: dict[str, object], dry_run: bool) -> str:
+    status = run.get("status")
+    if not isinstance(run.get("suite"), str) or type(run.get("cycle")) is not int:
+        return "invalid"
+    if run["cycle"] < 1 or not isinstance(status, str):
+        return "invalid"
+    allowed = {"failed", "blocked", "planned" if dry_run else "passed"}
+    return status if status in allowed else "invalid"
 
 
 def _resolve_output_root(raw_output_root: Path | None, repo_root: Path) -> Path:
@@ -343,15 +383,45 @@ def _write_screenshot_index(screenshots_dir: Path, summary: dict[str, object]) -
 
 
 def _write_coverage_matrix(path: Path, summary: dict[str, object]) -> None:
-    rows = [
-        ("isolated output root", "PASS", str(summary["output_root"])),
-        ("contentops isolated by default", "PASS", str(summary.get("target_roots", {}).get("contentops", ""))),
-        ("self worktree safe root", "PASS", str(summary.get("target_roots", {}).get("self", ""))),
-        ("standard report/summary/matrix dirs", "PASS", str(path.parent)),
-        ("real workers explicit opt-in", "PASS", str(summary["worker_mode"])),
-        ("failure class product/test/env", "PASS", ", ".join(sorted({str(item.get("classification")) for item in summary.get("failures", []) if isinstance(item, dict)})) or "none"),
+    rows = []
+    suites = list(summary["suites"])
+    report = summary.get("smoke_report", {})
+    runs = [run for run in report.get("runs", []) if isinstance(run, dict)]
+    for suite in dict.fromkeys(["contentops", "self", *suites]):
+        if suite not in suites:
+            rows.append((suite, "NOT RUN", "Suite not selected."))
+            continue
+        target = str(summary.get("target_roots", {}).get(suite, ""))
+        if not target:
+            location = "NOT AVAILABLE"
+        elif _is_inside(Path(target), Path(str(summary["output_root"]))):
+            location = "WITHIN OUTPUT ROOT"
+        else:
+            location = "OUTSIDE OUTPUT ROOT"
+        rows.append((f"{suite} target location", location, target or "No target was recorded."))
+        for cycle in range(1, int(summary["cycles"]) + 1):
+            matches = [run for run in runs if run.get("suite") == suite and run.get("cycle") == cycle]
+            if len(matches) != 1:
+                result = "NOT RUN" if not matches else "INVALID EVIDENCE"
+                evidence = "No unique suite/cycle outcome was recorded."
+            else:
+                run = matches[0]
+                result = {"planned": "PLANNED", "passed": "PASS", "failed": "FAIL", "blocked": "BLOCKED"}.get(
+                    _reported_run_status(run, bool(summary["dry_run"])), "INVALID EVIDENCE",
+                )
+                if result == "PASS" and summary["evidence_mode"] == "simulated":
+                    result = "SIMULATED PASS"
+                evidence = str(run.get("run_id") or run.get("next_task") or "See summary.json smoke_report.")
+            rows.append((f"{suite} cycle {cycle}", result, evidence))
+    rows.extend([
+        ("desktop browser", "NOT RUN", "This harness does not launch a browser or capture screenshots."),
+        ("M0 real-task acceptance", "NOT ASSESSED", "Use docs/m0-product-acceptance.md and the #411 scorecard."),
+    ])
+    lines = [
+        "# Full Smoke Coverage Matrix", "",
+        "Target locations describe configuration, not verified process confinement. Planned and simulated runs are not real-task acceptance.",
+        "", "| Check | Result | Evidence |", "| --- | --- | --- |",
     ]
-    lines = ["# Full Smoke Coverage Matrix", "", "| Check | Result | Evidence |", "| --- | --- | --- |"]
     lines.extend(f"| {name} | {result} | `{evidence}` |" for name, result, evidence in rows)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -361,12 +431,15 @@ def _write_markdown_report(path: Path, summary: dict[str, object]) -> None:
         "# GoodTeam Full Acceptance Smoke Report",
         "",
         f"Result: **{summary['status']}**",
+        f"Evidence mode: **{summary['evidence_mode']}**",
+        "",
+        "This is smoke-harness evidence only. M0 real-task acceptance is not assessed; desktop browser checks are not run.",
         "",
         f"- Git SHA: `{summary.get('git_sha', '')}`",
         f"- Output root: `{summary['output_root']}`",
         f"- Workspace: `{summary['workspace']}`",
         f"- Worker mode: `{summary['worker_mode']}`",
-        f"- Dashboard root: `{summary.get('dashboard_urls', {}).get('root', '')}`",
+        f"- Suggested dashboard URL (server not started or checked): `{summary.get('dashboard_urls', {}).get('root', '')}`",
         f"- Summary: `{path.parent / 'summary.json'}`",
         f"- Coverage matrix: `{path.parent / 'coverage-matrix.md'}`",
         f"- Screenshots index: `{summary.get('dashboard_screenshot_index', '')}`",
