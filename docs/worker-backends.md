@@ -291,9 +291,28 @@ retries/new jobs. Session backends and native admitted protocols retain their
 own limits. Do not use this setting as a monetary or provider-request cap.
 
 A host CLI timeout stops for human attention without an automatic retry,
-regardless of auth/network text in partial logs. Each completed CLI attempt
-retains its result, stdout, stderr and status under a unique job-local `attempt-*`
-directory; the final status links to that history.
+regardless of auth/network text in partial logs. This requires both the host's
+deadline summary and no process exit code. A normal nonzero CLI exit reporting a
+provider or tool timeout remains eligible for bounded transient retries.
+
+Each finished ordinary CLI attempt retains its result, stdout, stderr and status
+under a unique job-local `attempt-*` directory before another retry begins. The
+retained status includes its attempt count, failure class when failed, and the
+decision to retry, escalate, hand off, or finish successfully. Top-level and
+`invocation_evidence` output paths, including transcript aliases of copied files,
+refer to the retained bytes. The final job status links to this history and keeps
+the existing `recovered` disposition and previous failure class after recovery;
+the successful attempt's own status has no inherited failure class.
+
+Worker report excerpts and displayed Worker-result metadata are sanitized before
+entering handoff/QA artifacts or their project `docs` mirrors. Recognized
+Authorization records are removed as complete values, including scheme tokens,
+Digest parameters, quoted/code/table forms and folded continuation lines, before
+the excerpt limit is applied. Indented lines immediately following such a record
+are treated conservatively as part of it; use a blank line to separate ordinary
+report evidence. Metadata values are sanitized separately so later file/artifact
+entries remain visible. This is bounded artifact redaction, not a general secret
+scanner; it does not rewrite original Worker logs or previously stored artifacts.
 
 Ordinary Codex runs can opt into `GOODTEAM_CODEX_SANDBOX_MODE=workspace-write`
 (`read-only` is also supported). This removes the legacy bypass flag and passes
