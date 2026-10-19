@@ -312,6 +312,13 @@ so business acceptance uses fallback fonts without relying on the public CDN;
 browser console and unhandled-error checks remain enabled.
 Each CI invocation uses a unique temporary directory and loopback
 port; the server refuses reuse and cleans only its owned directory on shutdown.
+After the server exits, cleanup revalidates that directory's identity and owner
+token, then restores owner-write permission only on directories within that
+temporary tree. This allows removal of sealed reviewer inputs without changing
+production input sealing or file modes. Symlinks are removed without traversing
+their targets. `npm run test:node --prefix frontend` covers real subprocess
+shutdown with 0555 input directories and 0444 files, ownership rejection,
+outside links, repeated cleanup, and surfaced filesystem errors.
 
 CI installs Chromium and its system dependencies on the ephemeral GitHub-hosted
 runner with `npx playwright install --with-deps chromium`.
