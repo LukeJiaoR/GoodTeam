@@ -34,6 +34,13 @@ jobs:
             const ciPath = ".github/workflows/ci.yml";
             const publicationPath = ".github/workflows/candidate-published.yml";
 
+            function matchesWorkflowPath(run, path, branch) {
+              // GitHub may qualify a workflow path with @ref. Bind that suffix
+              // to the expected branch instead of stripping an arbitrary ref.
+              return run.path === path || (typeof branch === "string" && branch.length > 0 &&
+                run.path === path + "@" + branch);
+            }
+
             async function reconcile() {
               if (context.eventName !== "workflow_run" || context.ref !== "refs/heads/main") {
                 throw new Error("Candidate automation must use the reviewed main definition");
@@ -41,8 +48,10 @@ jobs:
               if (source?.status !== "completed" || source.head_repository?.full_name !== repository) {
                 return "Ignored an incomplete or foreign workflow run.";
               }
-              const publication = source.path === publicationPath;
-              if (!publication && source.path !== ciPath) return "Ignored an unrelated workflow.";
+              const publication = matchesWorkflowPath(source, publicationPath, source.head_branch);
+              if (!publication && !matchesWorkflowPath(source, ciPath, source.head_branch)) {
+                return "Ignored an unrelated workflow.";
+              }
               const expected = await github.rest.actions.getWorkflow({
                 owner, repo, workflow_id: publication ? "candidate-published.yml" : "ci.yml",
               });
@@ -117,7 +126,8 @@ jobs:
               if (!/^[0-9]+$/u.test(runId)) return "Candidate result has no repository run binding.";
               const validation = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(runId) });
               const run = validation.data;
-              if (run.workflow_id !== ci.data.id || run.path !== ciPath || run.event !== "workflow_dispatch" ||
+              if (run.workflow_id !== ci.data.id || !matchesWorkflowPath(run, ciPath, "main") ||
+                  run.event !== "workflow_dispatch" ||
                   run.head_branch !== "main" || run.head_sha !== base || run.display_title !== "CI " + target ||
                   run.head_repository?.full_name !== repository || run.status !== "completed" ||
                   run.conclusion !== "success" || run.html_url !== status.target_url) {
