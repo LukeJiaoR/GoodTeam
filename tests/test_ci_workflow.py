@@ -82,6 +82,28 @@ def _assert_ci_candidate_boundary(workflow):
     assert "needs.prepare.outputs.mode == 'candidate'" in jobs["record-candidate"]["if"]
 
 
+def _assert_candidate_automation_boundary(workflow):
+    assert workflow.get("permissions") == {"contents": "read"}
+    assert workflow.get("on") == {
+        "workflow_run": {"workflows": ["Candidate published", "CI"], "types": ["completed"]},
+    }
+    assert set(workflow["jobs"]) == {"reconcile"}
+    job = workflow["jobs"]["reconcile"]
+    assert job.get("runs-on") == "ubuntu-latest"
+    assert "uses" not in job and "environment" not in job and "secrets" not in job
+    assert job.get("permissions") == {
+        "contents": "read", "actions": "write", "statuses": "read", "pull-requests": "read",
+    }
+    assert len(job["steps"]) == 1
+    step = job["steps"][0]
+    assert step.get("uses") == "actions/github-script@v8"
+    assert "run" not in step and set(step["with"]) == {"script"}
+    assert "${{" not in step["with"]["script"]
+    assert 'context.ref !== "refs/heads/main"' in step["with"]["script"]
+    assert "secrets" not in yaml.safe_dump(workflow)
+    assert "actions/checkout@" not in yaml.safe_dump(workflow)
+
+
 @pytest.mark.parametrize("path", sorted([*WORKFLOW.parent.glob("*.yml"), *WORKFLOW.parent.glob("*.yaml")]))
 def test_all_workflows_follow_runner_policy(path):
     # BaseLoader keeps GitHub's `on` key as a string (YAML 1.1 treats it as True).
@@ -89,6 +111,8 @@ def test_all_workflows_follow_runner_policy(path):
     assert "actions/upload-artifact@" not in path.read_text(encoding="utf-8"), path.name
     if path.name == "ci.yml":
         _assert_ci_candidate_boundary(workflow)
+    elif path.name == "candidate-automation.yml":
+        _assert_candidate_automation_boundary(workflow)
     elif path.name == "openwiki-update.yml":
         assert set(workflow["on"]) == {"workflow_dispatch"}
         assert workflow["jobs"]
@@ -136,7 +160,7 @@ def test_runner_policy_requires_explicit_read_only_workflow_permissions(permissi
         })
 
 
-def test_ci_is_pr_or_manual_only_with_candidate_input():
+def test_ci_is_pr_or_dispatch_only_with_candidate_input():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     trigger = workflow.split("permissions:", 1)[0]
 
@@ -154,6 +178,25 @@ def test_ci_is_pr_or_manual_only_with_candidate_input():
     assert "github.event.pull_request.head.repo.full_name == github.repository" in workflow
     assert "target_sha must include the current main HEAD" in workflow
     assert "PR head does not include the current base SHA" in workflow
+    assert "run-name: CI ${{ inputs.target_sha || github.event.pull_request.head.sha || github.sha }}" in workflow
+
+
+@pytest.mark.parametrize("override", [
+    {"runs-on": ["self-hosted", "linux"]},
+    {"permissions": {"contents": "read", "actions": "write", "statuses": "write"}},
+    {"steps": [{"uses": "actions/checkout@v6"}]},
+    {"environment": "production"},
+    {"secrets": "inherit"},
+    {"uses": "./other.yml"},
+])
+def test_automation_write_permission_never_extends_to_candidate_execution(override):
+    workflow = yaml.load(
+        Path(".github/workflows/candidate-automation.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader,
+    )
+    _assert_candidate_automation_boundary(workflow)
+    workflow["jobs"]["reconcile"].update(override)
+    with pytest.raises(AssertionError):
+        _assert_candidate_automation_boundary(workflow)
 
 
 def test_ci_runs_exact_sha_candidate_checks_on_github_hosted_runners():

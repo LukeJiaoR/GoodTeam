@@ -41,11 +41,14 @@ opened and updated before candidate CI; a Draft is not evidence of validation or
 permission to merge. When preparing the final candidate for merge:
 
 1. Sync with the current `main`, require a clean working tree, and record `git rev-parse HEAD`. The candidate must contain the current `main` HEAD.
-2. Publish that committed SHA to a temporary candidate branch and verify the
+2. Publish that committed SHA to a temporary `codex/candidate-*` branch and verify the
    remote ref. Keep an existing ready-for-review PR's head unchanged until
    validation succeeds; Draft PR heads may change during local iteration.
-3. Run the reviewed default-branch workflow against that exact SHA:
-   `gh workflow run ci.yml --repo LukeJiaoR/GoodTeam --ref main -f "target_sha=<40-char-sha>"`.
+3. Candidate publication automatically dispatches the reviewed `main` workflow
+   against that exact SHA. Observe the `Candidate published` and
+   `Candidate automation` runs; do not add a mandatory human dispatch step.
+   The existing `gh workflow run ci.yml --repo LukeJiaoR/GoodTeam --ref main
+   -f "target_sha=<40-char-sha>"` command remains an optional recovery path.
 4. Wait for the run to succeed and for commit status
    `merge-candidate/validated` to be green.
 5. Only then open a ready-for-review PR, update an existing ready PR, or mark a
@@ -56,7 +59,9 @@ permission to merge. When preparing the final candidate for merge:
 The PR-side `CI / gate` is the authority for whether the current exact head is
 eligible to merge. Draft PR events can run this lightweight check and fail while
 validation is missing; opening a Draft does not trigger full candidate CI. After
-candidate validation, rerun the metadata gate if needed. Never copy a status from
+candidate validation, automation refreshes a metadata gate that started before
+the successful result. A gate that still fails afterward remains a real blocker.
+Never copy a status from
 an older SHA or bypass the gate because a previous branch state passed.
 
 Record the candidate SHA, pinned base SHA, run URL, planned job outcomes, and

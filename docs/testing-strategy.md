@@ -253,8 +253,13 @@ classifier or workflow also run both full stacks.
 `CI / gate` is the stable required status check. It succeeds only when
 classification passes, the backend job matches its planned mode, and the browser
 job (including planned frontend checks) succeeds. Browser acceptance may be skipped only
-when both stacks are unaffected. A manual `workflow_dispatch` bypasses
-changed-file selection and always runs full backend, frontend, and browser verification.
+when both stacks are unaffected. Publishing a final `codex/candidate-*` branch
+automatically dispatches the reviewed `main` workflow for its exact SHA. That
+dispatch classifies the candidate diff against pinned current `main` and runs
+the resulting verification plan. An exact-head PR metadata gate that started
+before the successful candidate result is refreshed automatically. See
+[`candidate-validation.md`](candidate-validation.md) for dispatch identity,
+deduplication, credential boundaries and recovery.
 
 New commits cancel obsolete runs for the same pull request. The workflow also
 covers stacked pull requests targeting another feature branch.

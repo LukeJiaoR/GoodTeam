@@ -1,4 +1,5 @@
 name: CI
+run-name: CI ${{ inputs.target_sha || github.event.pull_request.head.sha || github.sha }}
 
 on:
   pull_request:
@@ -343,7 +344,7 @@ jobs:
             );
             const candidate = statuses.find((status) => status.context === "merge-candidate/validated");
             if (!candidate || candidate.state !== "success") {
-              core.setFailed("Exact PR head " + process.env.TARGET_SHA + " has not passed manual candidate CI.");
+              core.setFailed("Exact PR head " + process.env.TARGET_SHA + " has not passed candidate CI.");
               return;
             }
             core.notice("Exact candidate status accepted from " + (candidate.target_url || "recorded status"));

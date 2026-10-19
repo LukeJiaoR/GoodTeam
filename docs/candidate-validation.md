@@ -6,8 +6,8 @@ GoodTeam no longer needs to spend a full remote CI run on every development push
 
 1. Develop on a short-lived branch and run focused local checks while iterating. Open or update a Draft PR whenever it is useful for review; full candidate CI is not a prerequisite for a Draft.
 2. When preparing the final candidate for merge, sync it with the current `main`, make the working tree clean, and record `git rev-parse HEAD`. Candidate dispatch refuses a SHA that does not contain the current `main` HEAD.
-3. Publish the committed SHA to a temporary candidate branch and verify that the remote ref points to it. GitHub must be able to resolve the commit before dispatch. For an existing ready-for-review PR, keep its current head unchanged while validating the replacement candidate; Draft heads may change during local iteration. Publishing the temporary ref is not evidence that validation passed.
-4. Run the trusted workflow definition from `main` against the recorded SHA:
+3. Publish the committed SHA to a temporary `codex/candidate-*` branch and verify that the remote ref points to it. This publication selects the final candidate for automatic validation; ordinary development branches do not trigger heavy CI. GitHub must be able to resolve the commit before dispatch. For an existing ready-for-review PR, keep its current head unchanged while validating the replacement candidate; Draft heads may change during local iteration. Publishing the temporary ref is not evidence that validation passed.
+4. The read-only `Candidate published` workflow announces the branch creation or push. The `Candidate automation` workflow on reviewed `main` checks the live candidate ref and current base, then dispatches `ci.yml` from `main` with the exact recorded SHA. No human dispatch or separately logged-in local terminal is required. The existing command remains available for recovery:
 
    ```bash
    gh workflow run ci.yml --repo LukeJiaoR/GoodTeam --ref main \
@@ -15,7 +15,7 @@ GoodTeam no longer needs to spend a full remote CI run on every development push
    ```
 
 5. Wait for the run to finish successfully. It classifies the diff from `main`, runs the planned browser/backend jobs on GitHub-hosted runners, and records commit status `merge-candidate/validated`.
-6. Open a ready-for-review PR, update an existing ready PR, or mark a Draft ready only after its exact head has that successful status. The PR-side `CI / gate` must also succeed on that head before merge; if it ran before the status was recorded, rerun the metadata gate.
+6. Open a ready-for-review PR, update an existing ready PR, or mark a Draft ready only after its exact head has that successful status. The PR-side `CI / gate` must also succeed on that head before merge. Automation refreshes the exact-head metadata gate if it started before the successful candidate result; a gate that fails after that refresh remains a blocker.
 7. Any new commit invalidates the old evidence automatically because the PR head SHA changes. Re-run candidate CI for the new SHA before merge.
 8. If `main` advances after validation, the PR gate requires the head to include the new base SHA. Sync `main`, producing a new SHA, and run candidate CI again.
 
@@ -28,6 +28,44 @@ CI on every iteration. A Draft's existence or review feedback does not satisfy
 merge validation. Run candidate CI when preparing to merge, then ensure the
 metadata gate succeeds for that exact head and current base. These rules do not
 waive required checks or change runner and credential isolation.
+
+## Automatic dispatch and gate refresh
+
+Publish final candidates under `codex/candidate-*`, for example
+`codex/candidate-pr577-a5a4d35`. Branch creation through the GitHub API and
+subsequent Git pushes both announce publication. The publisher has read-only
+permissions and does not check out or execute candidate code.
+
+The downstream `workflow_run` controller uses the default-branch definition.
+Its only write permission is `actions: write`; it reads repository metadata,
+commit statuses and PR identities. It does not check out source, read candidate
+reports, evaluate supplied commands, write statuses, use provider secrets, merge
+or deploy. Existing CI code-execution jobs retain `contents: read`, and only the
+existing isolated status writers can record candidate outcomes.
+
+Before dispatch the controller verifies the originating workflow identity,
+same-repository branch, exact SHA, current candidate ref and current `main`
+ancestry. Existing pending, successful or failed candidate results are preserved.
+The `CI <target_sha>` run name also prevents duplicate dispatch while the pending
+status is not yet visible. Real failures and ambiguous API outcomes are reported;
+they do not cause an unbounded retry loop or a fabricated successful status.
+
+On CI completion, the controller binds the successful status URL back to a
+completed `ci.yml` dispatch on current `main` for that exact target. It refreshes
+only a matching open same-repository PR's metadata-only run whose failed gate
+started before that validation result. It rechecks the live PR head/base,
+preserves failed test/prepare results, and does not repeatedly rerun a gate that
+started after validation. Stacked PRs also re-read their current parent branch
+and must contain its exact head before their metadata gate is refreshed. The
+resulting `CI / gate` remains the merge authority.
+
+Automation becomes active after these workflows land on `main`. Existing
+candidates must be synchronized with that new base and republished. Publication
+must emit a GitHub branch/push event: GitHub suppresses most events produced by a
+workflow's own `GITHUB_TOKEN`, so workflow-based publishers must use their
+existing appropriately authorized GitHub App or user identity. Do not add or
+broaden credentials implicitly. A missing event, disabled workflow or API
+permission error is an infrastructure failure, not a required human approval.
 
 The candidate dispatch must use `--ref main`: the workflow definition is therefore the reviewed default-branch policy while the checked-out application source is the explicit candidate SHA.
 
