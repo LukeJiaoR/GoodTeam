@@ -121,6 +121,25 @@ def decisions(server):
     return [item for item in server.state()["action_items"] if item["action"] == "approval_decided"]
 
 
+def wait_for_readiness_input(server):
+    def poll():
+        home = server.ok("/api/projects/RECOVERY/home")
+        readiness = home["readiness"]
+        execution = readiness["execution"]
+        status = execution["status"]
+        if status in {"failed", "cancelled"}:
+            step_id = execution.get("current_step_id", "unknown")
+            step = next((item for item in readiness["steps"] if item["id"] == step_id), {})
+            error = step.get("error") or {}
+            raise AssertionError(
+                f"Recovery fixture readiness {status} at {step_id}: "
+                f"{error.get('code', 'unknown')}: {error.get('message', 'No step error was recorded.')}"
+            )
+        return home if status == "needs_input" else False
+
+    return wait_until(poll)
+
+
 def prepare_security_gate(server):
     target = server.root / "target"
     target.mkdir()
@@ -133,8 +152,7 @@ def prepare_security_gate(server):
     proposal = draft["session"]["proposed_task"]
     confirmation = {"action": "confirm_task", "proposal_id": proposal["id"], "expected_revision": proposal["revision"]}
     server.ok(base + "/actions", confirmation)
-    wait_until(lambda: server.ok("/api/projects/RECOVERY/home")["readiness"]["execution"]["status"] == "needs_input")
-    home = server.ok("/api/projects/RECOVERY/home")
+    home = wait_for_readiness_input(server)
     step = next(item for item in home["readiness"]["steps"] if item["id"] == "command_verification")
     server.ok(base + "/actions", {"action": "continue_preparation", "step_id": "command_verification",
                                   "values": {"confirmed_command_ids": [item["id"] for item in step["input_requirements"]["commands"]]}})
