@@ -85,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     _write_log(dirs["logs"] / "environment.log", json.dumps(summary, indent=2))
 
     try:
+        if summary.get("worker_backend_preflight", {}).get("status") == "fail":
+            raise RuntimeError(summary["worker_backend_preflight"].get("message", "worker preflight failed"))
         registry = build_smoke_project_registry(workspace, repo_root)
         summary["project_configs"] = {suite: str(project.project_config) for suite, project in registry.items()}
         summary["target_roots"] = {suite: str(project.target_root) for suite, project in registry.items()}
@@ -115,13 +117,6 @@ def main(argv: list[str] | None = None) -> int:
             for run in report.get("runs", [])
             if isinstance(run, dict) and str(run.get("status", "")) == "failed"
         ]
-        if summary.get("worker_backend_preflight", {}).get("status") == "fail":
-            failed_runs.append(
-                {
-                    "classification": "env",
-                    "message": str(summary["worker_backend_preflight"].get("message", "worker preflight failed")),
-                }
-            )
         summary["failures"] = failed_runs
         if failed_runs or report.get("status") == "failed":
             summary["status"] = "failed"
