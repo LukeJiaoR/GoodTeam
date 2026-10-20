@@ -1,5 +1,11 @@
+import json
+from pathlib import Path
+
+import pytest
+
 from goodteam_os.project_registry import (
     ProjectRegistry,
+    ProjectRegistryReadError,
     get_default_registry_path,
 )
 
@@ -90,10 +96,152 @@ def test_list_registered_configs_ignores_missing_files(tmp_path):
     assert configs == [existing_config.resolve()]
 
 
-def test_corrupt_registry_handling(tmp_path):
+def _registry_operation(registry, operation, tmp_path):
+    if operation == "register":
+        return registry.register_project(tmp_path / "new.local.yaml", key="NEW")
+    if operation == "unregister":
+        return registry.unregister_project("OLD")
+    if operation == "list":
+        return registry.list_registered_projects()
+    if operation == "configs":
+        return registry.list_registered_configs()
+    return registry.find_project("OLD")
+
+
+@pytest.mark.parametrize("operation", ["register", "unregister", "list", "configs", "find"])
+@pytest.mark.parametrize(
+    "original",
+    [
+        b"not json",
+        b'{"version": 1, "projects": [',
+        b"\xff",
+        b"[]",
+        b"null",
+        b"{}",
+        b'{"version": 1, "projects": null}',
+        b'{"version": 1, "projects": {}}',
+        b'{"version": 2, "projects": []}',
+        b'{"version": true, "projects": []}',
+        b'{"version": 1, "projects": ["OLD"]}',
+        b'{"version": 1, "projects": [{"key": "OLD"}]}',
+        b'{"version": 1, "projects": [{"config_path": " "}]}',
+        b'{"version": 1, "projects": [{"config_path": 123}]}',
+        b'{"version": 1, "projects": [{"config_path": "/old.yaml", "key": []}]}',
+        b'{"version": 1, "projects": [{"config_path": "/old.yaml", "root": null}]}',
+        b'{"version": 1, "projects": [{"config_path": "/old.yaml", "state_path": []}]}',
+        b'{"version": 1, "projects": [{"config_path": "/old.yaml", "updated_at": 1}]}',
+        b'{"version": 1, "projects": [{"config_path": "/old.yaml"}], "projects": []}',
+        b'{"version": 1, "projects": [{"config_path": "/old.yaml", "config_path": "/other.yaml"}]}',
+        b'{"version": 1, "projects": [], "extra": {"keep": 1, "keep": 2}}',
+        b'{"version": 1, "projects": [], "extra": NaN}',
+        b'{"version": 1, "projects": [], "extra": Infinity}',
+        b'{"version": 1, "projects": [], "extra": -Infinity}',
+        b'{"version": 1, "projects": [], "extra": 1e999}',
+        b'{"version": 1, "projects": [], "extra": -1e999}',
+        pytest.param(b"[" * 2000 + b"0" + b"]" * 2000, id="excessive-nesting"),
+    ],
+)
+def test_corrupt_registry_blocks_operations_and_preserves_bytes(tmp_path, monkeypatch, operation, original):
     registry_file = tmp_path / "projects.json"
-    registry_file.write_text("not json", encoding="utf-8")
+    registry_file.write_bytes(original)
+    registry = ProjectRegistry(registry_file)
+
+    def unexpected_write(data):
+        pytest.fail("An unreadable registry must never reach the writer")
+
+    monkeypatch.setattr(registry, "_write_data", unexpected_write)
+    with pytest.raises(ProjectRegistryReadError, match="registry has been left unchanged") as error:
+        _registry_operation(registry, operation, tmp_path)
+
+    assert str(registry_file) in str(error.value)
+    assert error.value.__cause__ is not None
+    assert registry_file.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [registry_file]
+
+
+@pytest.mark.parametrize("operation", ["register", "unregister", "list", "configs", "find"])
+@pytest.mark.parametrize("read_error", [PermissionError("read denied"), OSError("read failed")])
+def test_unreadable_registry_blocks_operations_and_preserves_bytes(tmp_path, monkeypatch, operation, read_error):
+    registry_file = tmp_path / "projects.json"
+    original = b'{"version": 1, "projects": [{"key": "OLD", "config_path": "/old.yaml"}]}'
+    registry_file.write_bytes(original)
+    registry = ProjectRegistry(registry_file)
+    read_text = Path.read_text
+
+    def unreadable(path, *args, **kwargs):
+        if path == registry_file:
+            raise read_error
+        return read_text(path, *args, **kwargs)
+
+    def unexpected_write(data):
+        pytest.fail("An unreadable registry must never reach the writer")
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    monkeypatch.setattr(registry, "_write_data", unexpected_write)
+    with pytest.raises(ProjectRegistryReadError) as error:
+        _registry_operation(registry, operation, tmp_path)
+
+    assert error.value.__cause__ is read_error
+    assert registry_file.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [registry_file]
+
+
+@pytest.mark.parametrize("operation", ["register", "unregister", "list"])
+def test_registry_directory_is_not_treated_as_a_missing_file(tmp_path, operation):
+    registry_path = tmp_path / "projects.json"
+    registry_path.mkdir()
+    sentinel = registry_path / "keep"
+    sentinel.write_bytes(b"original")
+    registry = ProjectRegistry(registry_path)
+
+    with pytest.raises(ProjectRegistryReadError):
+        _registry_operation(registry, operation, tmp_path)
+
+    assert sentinel.read_bytes() == b"original"
+    assert list(tmp_path.iterdir()) == [registry_path]
+
+
+def test_missing_registry_is_empty_until_first_registration(tmp_path):
+    registry_file = tmp_path / "new-home" / "projects.json"
     registry = ProjectRegistry(registry_file)
 
     assert registry.list_registered_projects() == []
     assert registry.list_registered_configs() == []
+    assert registry.find_project("OLD") is None
+    assert registry.unregister_project("OLD") is False
+    assert not registry_file.parent.exists()
+
+    registry.register_project(tmp_path / "new.local.yaml", key="NEW")
+    assert registry_file.is_file()
+    assert registry.find_project("NEW")["key"] == "NEW"
+
+
+def test_legacy_version_and_unknown_fields_are_preserved(tmp_path):
+    registry_file = tmp_path / "projects.json"
+    original_entry = {"config_path": str(tmp_path / "old.yaml"), "key": "OLD", "custom": {"keep": True, "weight": 1.25}}
+    registry_file.write_text(json.dumps({"projects": [original_entry], "custom_top": ["keep"]}), encoding="utf-8")
+    registry = ProjectRegistry(registry_file)
+
+    registry.register_project(tmp_path / "new.yaml", key="NEW")
+    assert registry.find_project("OLD") == original_entry
+    assert registry.unregister_project("NEW") is True
+    assert json.loads(registry_file.read_text(encoding="utf-8")) == {
+        "version": 1,
+        "projects": [original_entry],
+        "custom_top": ["keep"],
+    }
+
+
+def test_registry_can_be_used_after_explicit_repair(tmp_path):
+    registry_file = tmp_path / "projects.json"
+    registry_file.write_bytes(b"not json")
+    registry = ProjectRegistry(registry_file)
+
+    with pytest.raises(ProjectRegistryReadError):
+        registry.register_project(tmp_path / "new.yaml", key="NEW")
+    assert registry_file.read_bytes() == b"not json"
+
+    registry_file.write_text('{"version": 1, "projects": []}', encoding="utf-8")
+    registry.register_project(tmp_path / "new.yaml", key="NEW")
+    assert registry.find_project("NEW")["key"] == "NEW"
+    assert registry.unregister_project("NEW") is True
