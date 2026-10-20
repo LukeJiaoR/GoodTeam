@@ -155,18 +155,36 @@ def handle_goal_action(workspace, project_key, root, request):
 
 def goal_view(workspace, goal):
     """Read actual run facts without changing a Goal dispatch receipt."""
+    return goal_views(workspace, [goal])[0]
+
+
+def goal_views(workspace, goals):
+    """Project a batch with fresh, request-local workflow reads per project.
+
+    Archives stay lazy, and no snapshots survive this call. This is a read
+    projection, not an atomic snapshot across the ledger and workflow files.
+    """
+    states = StateStore(Path(workspace))
+    current_by_project, archived_by_project = {}, {}
+    return [_goal_view(goal, states, current_by_project, archived_by_project) for goal in goals]
+
+
+def _goal_view(goal, states, current_by_project, archived_by_project):
     from goodteam_os.web import current_approval_gate
 
     result = deepcopy(goal)
-    states = StateStore(Path(workspace))
-    current = states.read_project_current(goal["project_key"])
-    archived = None
+    project_key = goal["project_key"]
+    if project_key not in current_by_project:
+        current_by_project[project_key] = states.read_project_current(project_key)
+    current = current_by_project[project_key]
     for work in result["work_units"]:
         state = current if current and current.run_id == work["run_id"] else None
         if state is None and work["status"] in {"dispatching", "running"}:
-            if archived is None:
-                archived = {item.run_id: item for _, item in states.list_project_archived(goal["project_key"])}
-            state = archived.get(work["run_id"])
+            if project_key not in archived_by_project:
+                archived_by_project[project_key] = {
+                    item.run_id: item for _, item in states.list_project_archived(project_key)
+                }
+            state = archived_by_project[project_key].get(work["run_id"])
         if state is None:
             continue
         work["observed_approval"] = ""
