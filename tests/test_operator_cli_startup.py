@@ -12,6 +12,7 @@ from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.operator_startup import SCHEMA, load_config, startup_arguments
 from goodteam_os.execution.task_snapshot import TaskInputError
 from goodteam_os.skills.models import SkillError
+from test_codex_review_runtime import AdmissionFixture
 from test_codex_trusted import FixtureTrustedAdmission, native, policy
 from test_operator_candidate_entry import entry  # noqa: F401
 from test_candidate_validation import candidate  # noqa: F401
@@ -89,6 +90,45 @@ def test_component_cli_composes_existing_authority_and_typed_config(startup, mon
     assert cli.main(component_args(c)) == 0
     assert captured["candidate_reviews"][c.item["id"]] == c.config
     assert isinstance(captured["codex_review_admission"], FixtureTrustedAdmission)
+
+
+def test_component_cli_rejects_injected_authority_without_candidate_config(tmp_path, monkeypatch):
+    c = SimpleNamespace(workspace=tmp_path / "workspace", operator=tmp_path / "state", flags=[])
+    admission = AdmissionFixture()
+    captured = {}
+    monkeypatch.setattr(cli, "run_operator_component", lambda **kw: captured.update(kw) or 0)
+
+    with pytest.raises(ValueError, match="requires --operator-review-config"):
+        cli.main(component_args(c), codex_review_admission=admission)
+
+    assert captured == {}
+    assert admission.acquires == admission.calls == admission.finishes == []
+    assert not c.workspace.exists() and not c.operator.exists()
+
+
+def test_component_cli_without_reviewer_keeps_default_startup(tmp_path, monkeypatch):
+    c = SimpleNamespace(workspace=tmp_path / "workspace", operator=tmp_path / "state", flags=[])
+    captured = {}
+    monkeypatch.setattr(cli, "run_operator_component", lambda **kw: captured.update(kw) or 0)
+
+    assert cli.main(component_args(c)) == 0
+    assert captured == {
+        "workspace": c.workspace, "state_dir": c.operator,
+        "ready_file": c.operator / "ready", "ready_token": "ready",
+        "heartbeat_file": c.operator / "beat", "heartbeat_token": "beat",
+    }
+
+
+@pytest.mark.parametrize("policy_flag", ["--local-codex-policy", "--trusted-codex-review-policy"])
+def test_component_cli_still_rejects_policy_without_candidate_config(tmp_path, monkeypatch, policy_flag):
+    c = SimpleNamespace(workspace=tmp_path / "workspace", operator=tmp_path / "state",
+                        flags=[policy_flag, str(tmp_path / "policy.json")])
+    monkeypatch.setattr(cli, "run_operator_component", lambda **kw: pytest.fail("must not start Operator"))
+
+    with pytest.raises(ValueError, match="requires --operator-review-config"):
+        cli.main(component_args(c))
+
+    assert not c.workspace.exists() and not c.operator.exists()
 
 
 def test_component_runner_injects_configuration_into_existing_service(startup, monkeypatch):
