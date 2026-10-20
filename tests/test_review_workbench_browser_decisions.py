@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http_transport_helpers import prepare_body_reader
 import json
 from io import BytesIO
 from pathlib import Path
@@ -361,6 +362,7 @@ def _capture_dashboard_requests(workspace: Path, monkeypatch):
                 self.path = path
                 self.wfile = BytesIO()
                 self.rfile = BytesIO(raw_body)
+                prepare_body_reader(self)
                 self.responses = []
                 self.response_headers = {}
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http_transport_helpers import prepare_body_reader
 import pytest
 import json
 from io import BytesIO
@@ -224,6 +225,7 @@ def capture_execution_handlers(workspace, monkeypatch, client: FakeGitHubClient)
                 self.path = path
                 self.wfile = BytesIO()
                 self.rfile = BytesIO(body_bytes)
+                prepare_body_reader(self)
                 self.responses = []
                 self.response_headers = {}
 
