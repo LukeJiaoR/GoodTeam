@@ -63,11 +63,23 @@ function GoalForm({ busy, onAction, onClose, t }) {
   </form>;
 }
 
+function GoalAssessmentRetry({ disabled, submitting, retryTarget, onRetry, t }) {
+  const [consent, setConsent] = useState(false);
+  return <section className="goal-continuation-gate" aria-label={t('work.goal.retryAssessment')}>
+    <p>{t('work.goal.retryAssessmentHelp', { attempt: retryTarget.attempt + 1 })}</p>
+    <label className="goal-continuation-checkbox"><input type="checkbox" disabled={disabled} checked={consent} onChange={event => setConsent(event.target.checked)} />{t('work.goal.retryConsent')}</label>
+    <Button disabled={disabled || !consent} busy={submitting === 'retry_goal_assessment'} onClick={() => {
+      if (disabled || !consent) return;
+      setConsent(false);
+      return onRetry();
+    }}>{t('work.goal.retryAssessment')}</Button>
+  </section>;
+}
+
 function GoalSnapshot({ goal, busy, readOnly, currentRunId, approvalReviews, onOpenReview, onAction, t }) {
   const pending = useRef(false);
   const requestKeys = useRef(new Map());
   const [submitting, setSubmitting] = useState('');
-  const [retryConsent, setRetryConsent] = useState(false);
   const gate = goal.gate;
   const work = (goal.work_units || []).at(-1);
   const executionStatus = work?.observed_execution_status || work?.execution_status;
@@ -153,15 +165,14 @@ function GoalSnapshot({ goal, busy, readOnly, currentRunId, approvalReviews, onO
         </div>
       </> : null}
     </section> : null}
-    {canRetry && !readOnly ? <section className="goal-continuation-gate" aria-label={t('work.goal.retryAssessment')}>
-      <p>{t('work.goal.retryAssessmentHelp', { attempt: retryTarget.attempt + 1 })}</p>
-      <label className="goal-continuation-checkbox"><input type="checkbox" disabled={disabled} checked={retryConsent} onChange={event => setRetryConsent(event.target.checked)} />{t('work.goal.retryConsent')}</label>
-      <Button disabled={disabled || !retryConsent} busy={submitting === 'retry_goal_assessment'} onClick={() => {
-        setRetryConsent(false);
-        return act({ action: 'retry_goal_assessment', work_id: work.id, run_id: work.run_id,
-          evidence_digest: retryTarget.evidence_digest, failed_job_id: retryTarget.job_id, confirmed: true });
-      }}>{t('work.goal.retryAssessment')}</Button>
-    </section> : null}
+    {canRetry && !readOnly ? <GoalAssessmentRetry
+      key={JSON.stringify([goal.id, goal.revision, work.id, work.run_id,
+        retryTarget.work_id, retryTarget.run_id, retryTarget.attempt,
+        retryTarget.job_id, retryTarget.evidence_digest])}
+      disabled={disabled} submitting={submitting} retryTarget={retryTarget} t={t}
+      onRetry={() => act({ action: 'retry_goal_assessment', work_id: work.id, run_id: work.run_id,
+        evidence_digest: retryTarget.evidence_digest, failed_job_id: retryTarget.job_id, confirmed: true })}
+    /> : null}
     {!terminal && !readOnly ? <div className="goal-continuation-actions">
       <Button variant="secondary" disabled={disabled} busy={submitting === 'stopped'} onClick={() => act({ action: 'stop_goal', status: 'stopped' })}>{t('work.goal.stop')}</Button>
       <Button variant="secondary" disabled={disabled} busy={submitting === 'canceled'} onClick={() => act({ action: 'stop_goal', status: 'canceled' })}>{t('work.goal.cancel')}</Button>
