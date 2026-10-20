@@ -1,3 +1,5 @@
+from http_transport_helpers import prepare_body_reader
+
 import json
 from io import BytesIO
 
@@ -40,6 +42,7 @@ def capture_post_handler(tmp_path, monkeypatch):
                 self.path = path
                 self.wfile = BytesIO()
                 self.rfile = BytesIO(body_bytes)
+                prepare_body_reader(self)
                 self.responses = []
                 self.response_headers = {}
 

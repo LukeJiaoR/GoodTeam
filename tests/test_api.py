@@ -1,3 +1,5 @@
+from http_transport_helpers import prepare_body_reader
+
 import hashlib
 import json
 import threading
@@ -113,6 +115,7 @@ def capture_post_handler(tmp_path, monkeypatch, *, host: str = "127.0.0.1", port
                 self.path = path
                 self.wfile = wfile if wfile is not None else BytesIO()
                 self.rfile = BytesIO(body_bytes)
+                prepare_body_reader(self)
                 self.responses = []
                 self.response_headers = {}
 
@@ -1818,6 +1821,7 @@ workers:
                 self.path = "/api/project-config"
                 self.wfile = BytesIO()
                 self.rfile = BytesIO(body_bytes)
+                prepare_body_reader(self)
                 self.responses = []
                 self.response_headers = {}
 

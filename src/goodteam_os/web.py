@@ -14,7 +14,12 @@ from contextvars import ContextVar
 from dataclasses import asdict, replace
 from datetime import datetime, UTC
 from html import escape
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from goodteam_os.http_transport import (
+    BoundedHTTPRequestHandler as BaseHTTPRequestHandler,
+    BoundedThreadingHTTPServer as ThreadingHTTPServer,
+    RequestBodyError,
+    read_request_body,
+)
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, quote, unquote_to_bytes, urlparse
@@ -6621,7 +6626,7 @@ def _project_api_error_response(
     error: Exception,
 ) -> tuple[int, dict[str, object]]:
     request_id = uuid4().hex
-    if isinstance(error, ProjectApiError):
+    if isinstance(error, (ProjectApiError, RequestBodyError)):
         status = error.status
         code = error.code
         message = error.message
@@ -6957,8 +6962,7 @@ def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexRe
                     )
                     return
             try:
-                content_length = int(self.headers.get("Content-Length", "0"))
-                raw_body = self.rfile.read(content_length)
+                raw_body = read_request_body(self)
                 if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
                     response = (
@@ -8134,8 +8138,7 @@ def serve(
                 )
                 return
             try:
-                content_length = int(self.headers.get("Content-Length", "0"))
-                raw_body = self.rfile.read(content_length)
+                raw_body = read_request_body(self)
                 if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
                     project_response = (
