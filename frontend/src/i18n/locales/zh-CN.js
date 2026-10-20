@@ -55,6 +55,7 @@ export const zhCN = {
   "work.goal.title": "有限持续目标",
   "work.goal.new": "设定目标",
   "work.goal.latest": "最新目标",
+  "work.goal.historical": "历史目标",
   "work.goal.optional": "可选择授权团队围绕明确目标持续推进；现有任务保持原样。",
   "work.goal.objective": "目标",
   "work.goal.criteria": "验收标准（每行一项）",

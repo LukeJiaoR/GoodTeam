@@ -280,11 +280,16 @@ class GoalStore:
                 if row is None:
                     raise GoalError("Unknown Goal history cursor for this project.")
                 boundary = row["rowid"]
-            rows = db.execute(
-                "SELECT id FROM goals WHERE project_key=? AND (? IS NULL OR rowid<?) "
-                "ORDER BY rowid DESC LIMIT ?",
-                (self.project_key, boundary, boundary, limit + 1),
-            ).fetchall()
+            if boundary is None:
+                rows = db.execute(
+                    "SELECT id FROM goals WHERE project_key=? ORDER BY rowid DESC LIMIT ?",
+                    (self.project_key, limit + 1),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT id FROM goals WHERE project_key=? AND rowid<? ORDER BY rowid DESC LIMIT ?",
+                    (self.project_key, boundary, limit + 1),
+                ).fetchall()
             selected = rows[:limit]
             return {
                 "goals": [self._snapshot(db, row["id"]) for row in reversed(selected)],

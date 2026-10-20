@@ -77,7 +77,7 @@ function GoalAssessmentRetry({ disabled, submitting, retryTarget, onRetry, t }) 
   </section>;
 }
 
-function GoalSnapshot({ goal, busy, readOnly, currentRunId, approvalReviews, onOpenReview, onAction, t }) {
+function GoalSnapshot({ goal, busy, readOnly, historical = false, currentRunId, approvalReviews, onOpenReview, onAction, t }) {
   const pending = useRef(false);
   const requestKeys = useRef(new Map());
   const [submitting, setSubmitting] = useState('');
@@ -114,7 +114,7 @@ function GoalSnapshot({ goal, busy, readOnly, currentRunId, approvalReviews, onO
   const retryTarget = goal.assessment_retry_target;
   const canRetry = goal.status === 'blocked' && retryTarget?.work_id === work?.id
     && retryTarget?.run_id === work?.run_id && retryTarget?.attempt < 3 && Boolean(retryTarget?.job_id);
-  return <article className="goal-continuation-snapshot" aria-label={t('work.goal.latest')}>
+  return <article className="goal-continuation-snapshot" aria-label={t(historical ? 'work.goal.historical' : 'work.goal.latest')}>
     <header><strong>{goal.objective}</strong><StatusBadge tone={tone(goal.status)}>{label(goal.status, t)}</StatusBadge></header>
     <p className="goal-continuation-meta">{t('work.goal.progress', { used: (goal.work_units || []).filter(unit => unit.started_at).length, max: goal.max_work_units })} · {t('work.goal.revision', { revision: goal.revision })}</p>
     <details><summary>{t('work.goal.details')}</summary>
@@ -213,7 +213,7 @@ function GoalHistory({ projectKey, cursor, t }) {
   return <section aria-label={t('work.goal.history')}>
     {pages.flat().map(goal => <details key={goal.id}>
       <summary>{goal.objective} · {label(goal.status, t)}</summary>
-      <GoalSnapshot goal={goal} readOnly busy={false} currentRunId="" approvalReviews={[]} t={t} />
+      <GoalSnapshot goal={goal} readOnly historical busy={false} currentRunId="" approvalReviews={[]} t={t} />
       <details><summary>{t('work.goal.fullRecord')}</summary><pre className="goal-history-record">{JSON.stringify(goal, null, 2)}</pre></details>
     </details>)}
     {next ? <Button variant="secondary" busy={busy} disabled={busy} onClick={load}>{t('work.goal.loadOlder')}</Button> : null}
@@ -224,6 +224,7 @@ function GoalHistory({ projectKey, cursor, t }) {
 export default function GoalContinuationPanel({ goals = [], projectKey = '', historyCursor = '', busy, readOnly = false, activeRun = false, currentRunId = '', approvalReviews = [], onOpenReview, error, onAction, t }) {
   const [creating, setCreating] = useState(false);
   const latest = goals.at(-1);
+  const canonicalProjectKey = latest?.project_key || projectKey;
   const activeGoal = goals.some(goal => !TERMINAL.has(goal.status));
   return <section className="goal-continuation" aria-label={t('work.goal.title')}>
     <header className="goal-continuation-heading"><h2>{t('work.goal.title')}</h2>
@@ -231,7 +232,7 @@ export default function GoalContinuationPanel({ goals = [], projectKey = '', his
     </header>
     {activeRun && !activeGoal && !readOnly ? <p>{t('work.goal.waitForRun')}</p> : null}
     {latest ? <GoalSnapshot key={latest.id} goal={latest} busy={busy} readOnly={readOnly} currentRunId={currentRunId} approvalReviews={approvalReviews} onOpenReview={onOpenReview} onAction={onAction} t={t} /> : <p>{t('work.goal.optional')}</p>}
-    {projectKey && historyCursor ? <GoalHistory key={`${projectKey}:${latest?.id || ''}`} projectKey={projectKey} cursor={historyCursor} t={t} /> : null}
+    {canonicalProjectKey && historyCursor ? <GoalHistory key={`${canonicalProjectKey}:${latest?.id || ''}`} projectKey={canonicalProjectKey} cursor={historyCursor} t={t} /> : null}
     {creating && !readOnly && !activeGoal ? <GoalForm busy={busy || activeRun} onAction={onAction} onClose={() => setCreating(false)} t={t} /> : null}
     {error ? <ProductError error={error} t={t} /> : null}
   </section>;

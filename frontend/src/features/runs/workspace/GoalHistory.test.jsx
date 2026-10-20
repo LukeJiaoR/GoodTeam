@@ -12,6 +12,17 @@ const panel = (project = 'A') => <GoalContinuationPanel key={project} projectKey
 
 afterEach(() => vi.restoreAllMocks());
 
+it('uses the canonical project identity from the current Goal on a lowercase route', async () => {
+  const read = vi.spyOn(runApi, 'getGoalHistory').mockResolvedValue({
+    project_key: 'DEMO', goals: [goal('older', 'DEMO')], next_before: '',
+  });
+  render(<GoalContinuationPanel projectKey="demo" goals={[goal('latest', 'DEMO')]}
+    historyCursor="latest" t={t} onAction={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Load older goals' }));
+  await screen.findByText('Goal older · Stopped');
+  expect(read.mock.calls[0].slice(0, 2)).toEqual(['DEMO', 'latest']);
+});
+
 it('loads only on request, orders multiple pages newest first, and retains complete evidence', async () => {
   const old = { ...goal('1'), history: [{ evidence: 'complete older evidence' }] };
   const read = vi.spyOn(runApi, 'getGoalHistory').mockResolvedValueOnce({ project_key: 'A', goals: [goal('3'), goal('4')], next_before: '3' })

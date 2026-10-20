@@ -18,7 +18,8 @@ test('an old confirmation cannot archive a replacement task started from the sam
   // product HTTP handlers in the isolated fixture workspace, with fake Workers.
   let releaseReads;
   const readsPaused = new Promise((resolve) => { releaseReads = resolve; });
-  const stateUrl = `**/api/state?project=${fixture.key}`;
+  const stateUrl = url => url.pathname === '/api/state'
+    && url.searchParams.get('project') === fixture.key;
   await page.route(stateUrl, async (route) => { await readsPaused; await route.continue(); });
   const otherTab = await context.newPage();
   otherTab.on('pageerror', (error) => fixture.errors.push(error.message));
@@ -82,7 +83,8 @@ test('stale task updates disable actions and a real refresh restores the existin
   const before = await snapshot(page, fixture, evidence);
   const archive = page.getByRole('button', { name: 'Archive current task', exact: true });
   await archive.click();
-  const stateUrl = `**/api/state?project=${fixture.key}`;
+  const stateUrl = url => url.pathname === '/api/state'
+    && url.searchParams.get('project') === fixture.key;
   // Explicit negative-path fault injection: no successful business response
   // is mocked. A malformed poll must preserve the last visible task as stale.
   await page.route(stateUrl, (route) => route.fulfill({

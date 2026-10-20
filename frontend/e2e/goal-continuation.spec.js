@@ -7,7 +7,8 @@ test('Goal confirmation and exact one-unit gate remain explicit on desktop and m
   const commands = [];
   let goal = null;
   await importProject(page, fixture);
-  await page.route(`**/api/state?project=${encodeURIComponent(fixture.key)}`, async route => {
+  await page.route(url => url.pathname === '/api/state'
+    && url.searchParams.get('project') === fixture.key, async route => {
     const response = await route.fetch();
     const payload = await response.json();
     payload.task_assistant_session = { ...payload.task_assistant_session, goals: goal ? [goal] : [] };
@@ -92,7 +93,8 @@ test('Goal workflow approval waiting uses the current review panel and stays dis
     work_units: [{ id: 'waiting-work', run_id: runId, task: 'Implement keyboard search', status: 'running',
       observed_execution_status: 'awaiting_approval', observed_approval: 'takeover' }],
   };
-  await page.route(`**/api/state?project=${encodeURIComponent(fixture.key)}`, async route => {
+  await page.route(url => url.pathname === '/api/state'
+    && url.searchParams.get('project') === fixture.key, async route => {
     const response = await route.fetch();
     const payload = await response.json();
     payload.task_assistant_session = { ...payload.task_assistant_session, goals: [goal] };

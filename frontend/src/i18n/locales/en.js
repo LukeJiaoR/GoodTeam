@@ -55,6 +55,7 @@ export const en = {
   "work.goal.title": "Bounded Goal",
   "work.goal.new": "Set a Goal",
   "work.goal.latest": "Latest Goal",
+  "work.goal.historical": "Historical Goal",
   "work.goal.optional": "Optionally authorize the team to continue toward an explicit goal. Existing tasks stay unchanged.",
   "work.goal.objective": "Objective",
   "work.goal.criteria": "Acceptance criteria (one per line)",

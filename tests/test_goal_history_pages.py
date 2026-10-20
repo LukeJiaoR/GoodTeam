@@ -40,6 +40,28 @@ def test_pages_preserve_complete_records_and_stable_boundaries(tmp_path, monkeyp
     assert store.page_goals(limit=1)['goals'][0] == newer
     assert store.list_goals() == expected + [newer]
 
+def test_cursor_page_seeks_from_rowid_boundary(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    store, goals = history(tmp_path, count=8)
+    statements = []
+    connect = store._connection
+
+    @contextmanager
+    def traced():
+        with connect() as db:
+            db.set_trace_callback(statements.append)
+            yield db
+
+    monkeypatch.setattr(store, '_connection', traced)
+    page = store.page_goals(limit=2, before=goals[4]['id'])
+    assert page['goals'] == goals[2:4]
+    query, = [statement for statement in statements
+              if statement.startswith("SELECT id FROM goals WHERE project_key=")]
+    with connect() as db:
+        plan = " ".join(row["detail"] for row in db.execute("EXPLAIN QUERY PLAN " + query))
+    assert "SEARCH goals USING INTEGER PRIMARY KEY (rowid<?)" in plan
+
 
 @pytest.mark.parametrize('limit', [0, -1, 51, True, 1.5, '2', None])
 def test_invalid_limit(tmp_path, limit):
