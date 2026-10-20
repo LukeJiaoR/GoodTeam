@@ -358,13 +358,14 @@ def start_goal_service(workspace):
     stop = GoalServiceStop()
 
     def run():
+        validated_idle = {}
         while not stop.wait(1):
             if not (workspace / "state" / "goals.sqlite3").is_file():
+                validated_idle.clear()
                 continue
             try:
                 store = GoalStore(workspace)
-                pending = {item["goal_id"] for item in store.pending_outbox()}
-                goals = [goal for goal in store.list_goals() if goal["status"] == "active" or goal.get("active_work") or goal["id"] in pending]
+                goals = store.list_continuation_goals(validated_idle=validated_idle)
                 for goal in goals:
                     if stop.is_set():
                         break
@@ -373,7 +374,9 @@ def start_goal_service(workspace):
                     except Exception:
                         _LOG.exception("Goal continuation stopped before dispatch")
             except Exception:
+                validated_idle.clear()
                 _LOG.exception("Goal continuation ledger unavailable; no work dispatched")
     stop.thread = threading.Thread(target=run, name="goodteam-goal-continuation", daemon=True)
     stop.thread.start()
     return stop
+
