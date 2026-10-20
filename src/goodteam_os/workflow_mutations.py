@@ -113,10 +113,15 @@ def finish_transition(state):
     state.blockers = [item for item in state.blockers if item != INTERRUPTED_TRANSITION]
 
 
-def interrupt_transition(workspace, project_key):
+def interrupt_transition(workspace, project_key, *, expected_run_id=None, expected_idea=None):
     store = StateStore(workspace)
     state = store.read_project_current(project_key)
     if state is None or state.pending_transition.get("status") not in ACTIVE_TRANSITIONS:
+        return state
+    # A Goal may have observed an older current run before recovery acquired
+    # the workflow lock. Check and mutate this same fresh state while locked.
+    if ((expected_run_id is not None and state.run_id != expected_run_id)
+            or (expected_idea is not None and state.idea != expected_idea)):
         return state
     state.pending_transition["status"] = "interrupted"
     state.next_node = "blocked"
@@ -126,10 +131,11 @@ def interrupt_transition(workspace, project_key):
     return state
 
 
-def recover_transition(workspace, project_key):
+def recover_transition(workspace, project_key, *, expected_run_id=None, expected_idea=None):
     try:
         with workflow_guard(workspace, project_key):
-            return interrupt_transition(workspace, project_key)
+            return interrupt_transition(workspace, project_key,
+                                        expected_run_id=expected_run_id, expected_idea=expected_idea)
     except WorkflowBusyError:
         return StateStore(workspace).read_project_current(project_key)
 
