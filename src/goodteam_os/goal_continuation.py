@@ -255,7 +255,8 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
                 and current.pending_transition.get("status") in {"recording", "executing"}):
             from goodteam_os.workflow_mutations import recover_transition
 
-            current = recover_transition(workspace, project_key)
+            current = recover_transition(workspace, project_key,
+                                         expected_run_id=work["run_id"], expected_idea=work["task"])
         try:
             key, target, root = _project_target_and_root(workspace, project_key)
             config = _project_config_for_key(workspace, key)
