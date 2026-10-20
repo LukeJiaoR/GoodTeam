@@ -2529,17 +2529,41 @@ _project_config_paths_in_work_state: ContextVar[dict[tuple[Path, str], Path] | N
 )
 
 
-def build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
+def _goal_page_limit(query, *, default=1):
+    raw = query.get("goal_limit", [str(default)])[0]
+    if not isinstance(raw, str) or len(raw) > 2 or not raw.isascii() or not raw.isdecimal() or not 1 <= int(raw) <= 50:
+        raise ProjectApiError("invalid_goal_page", "Goal page limit must be between 1 and 50.", 400)
+    return int(raw)
+
+
+def build_goal_history(workspace: Path, project_key: str, *, limit: int = 20, before: str = ""):
+    from goodteam_os.goal_continuation import goal_views
+    from goodteam_os.goals import GoalError, GoalStore
+
+    key = normalize_project_key(project_key)
+    _project_config_for_key(workspace, key)
+    if not (workspace / "state" / "goals.sqlite3").is_file():
+        if before:
+            raise ProjectApiError("invalid_goal_page", "Unknown Goal history cursor.", 400)
+        return {"goals": [], "next_before": "", "project_key": key}
+    try:
+        page = GoalStore(workspace, key).page_goals(limit=limit, before=before)
+    except GoalError as exc:
+        raise ProjectApiError("invalid_goal_page", str(exc), 400) from exc
+    return {**page, "goals": goal_views(workspace, page["goals"]), "project_key": key}
+
+
+def build_project_work_state(workspace: Path, project_key: str, *, goal_limit: int | None = None) -> dict[str, object]:
     # Reuse only path resolution within this projection. Config contents stay
     # live, and subsequent requests/mutations perform their own lookup.
     token = _project_config_paths_in_work_state.set({})
     try:
-        return _build_project_work_state(workspace, project_key)
+        return _build_project_work_state(workspace, project_key, goal_limit=goal_limit)
     finally:
         _project_config_paths_in_work_state.reset(token)
 
 
-def _build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
+def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: int | None = None) -> dict[str, object]:
     from goodteam_os.delivery_outcomes import build_delivery_summary
 
     project_config = _project_config_for_key(workspace, project_key)
@@ -2548,7 +2572,7 @@ def _build_project_work_state(workspace: Path, project_key: str) -> dict[str, ob
     state = _dashboard_state_view(retry_state)
     project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
     task_assistant_session = (
-        TaskAssistantService(workspace, project_config=project_config).session(project_key, project_root)
+        TaskAssistantService(workspace, project_config=project_config).session(project_key, project_root, **({"goal_limit": goal_limit} if goal_limit is not None else {}))
         if project_root is not None
         else None
     )
@@ -7759,6 +7783,15 @@ def serve(
                 except Exception as exc:
                     self._send_api_error(exc)
                 return
+            if parsed.path == "/api/goal-history":
+                try:
+                    self._send_json(200, build_goal_history(
+                        workspace, project_key, limit=_goal_page_limit(query, default=20),
+                        before=query.get("before", [""])[0],
+                    ))
+                except Exception as exc:
+                    self._send_api_error(exc)
+                return
             if parsed.path == "/api/state":
                 try:
                     if not project_key:
@@ -7770,7 +7803,7 @@ def serve(
                             "resources": build_resource_items(legacy_state),
                         }
                     else:
-                        res_data = build_project_work_state(workspace, project_key)
+                        res_data = build_project_work_state(workspace, project_key, **({"goal_limit": _goal_page_limit(query)} if "goal_limit" in query else {}))
                     self._send_json(200, res_data)
                 except Exception as exc:
                     self._send_api_error(exc)

@@ -83,17 +83,26 @@ class TaskAssistantService:
         self.project_config = Path(project_config) if project_config is not None else None
         self.manager_turn = manager_turn
 
-    def session(self, project_key: str, root: Path) -> dict[str, object]:
+    def session(self, project_key: str, root: Path, *, goal_limit: int | None = None) -> dict[str, object]:
         from goodteam_os.goal_continuation import goal_views
 
         store = TaskAssistantSessionStore(self.workspace, project_key)
         assistant_requests.recover_interrupted(store)
         session = store.read()
         # Goal reads only project persisted snapshots; viewing Work never advances them.
-        goals = (
-            goal_views(self.workspace, GoalStore(self.workspace, project_key).list_goals())
-            if (self.workspace / "state" / "goals.sqlite3").is_file() else []
-        )
+        if goal_limit is not None and (type(goal_limit) is not int or not 1 <= goal_limit <= 50):
+            raise ValueError("Goal page limit must be between 1 and 50.")
+        goals, goal_page = [], None
+        if (self.workspace / "state" / "goals.sqlite3").is_file():
+            goal_store = GoalStore(self.workspace, project_key)
+            if goal_limit is None:
+                goals = goal_views(self.workspace, goal_store.list_goals())
+            else:
+                page = goal_store.page_goals(limit=goal_limit)
+                goals = goal_views(self.workspace, page["goals"])
+                goal_page = {"next_before": page["next_before"]}
+        if goal_limit is not None:
+            session["goal_page"] = goal_page or {"next_before": ""}
         if not session["timeline"]:
             opening = initial_task_assistant_session(project_key, assess_project_mode(root))
             session.update({key: opening[key] for key in ("timeline", "status", "project_mode_hint", "suggestions")})
@@ -113,6 +122,8 @@ class TaskAssistantService:
         )
         session["runtime"] = runtime_view(self.project_config, session)
         session["goals"] = goals
+        if goal_limit is not None:
+            session["goal_page"] = goal_page or {"next_before": ""}
         return self._with_team_decision_status(self._with_readiness_attention(session, readiness), project_key)
 
     def _with_team_decision_status(self, session, project_key):

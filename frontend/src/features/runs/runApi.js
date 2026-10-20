@@ -7,9 +7,14 @@ const jsonPost = (path, body, { signal } = {}) => requestJson(path, {
   signal,
 });
 
-export const getProjectState = (projectKey, { signal } = {}) => requestJson(
-  `/api/state?project=${encodeURIComponent(projectKey)}`,
+export const getProjectState = (projectKey, { signal, goalLimit } = {}) => requestJson(
+  `/api/state?project=${encodeURIComponent(projectKey)}${goalLimit === undefined ? '' : `&goal_limit=${encodeURIComponent(goalLimit)}`}`,
   { signal },
+);
+
+export const getGoalHistory = (projectKey, before, { signal } = {}) => requestJson(
+  `/api/goal-history?project=${encodeURIComponent(projectKey)}&before=${encodeURIComponent(before)}&goal_limit=10`,
+  { signal, cache: 'no-store' },
 );
 
 export const getProjectRuns = (projectKey, { signal } = {}) => requestJson(
@@ -99,6 +104,7 @@ export const runApi = {
   getDevLoop,
   getMessages,
   getProjectState,
+  getGoalHistory,
   getProjectRun,
   getProjectRuns,
   getTaskInputContext,

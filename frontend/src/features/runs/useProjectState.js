@@ -36,7 +36,7 @@ export default function useProjectState(projectKey, { api = runApi, poll = true 
       });
     }
     try {
-      const payload = await apiRef.current.getProjectState(requestProjectKey, { signal });
+      const payload = await apiRef.current.getProjectState(requestProjectKey, { signal, goalLimit: 1 });
       if (
         signal?.aborted
         || requestGeneration !== generation.current

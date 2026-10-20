@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { runApi } from '../runApi';
 import Button from '../../../components/ui/Button';
 import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
@@ -170,7 +171,46 @@ function GoalSnapshot({ goal, busy, readOnly, currentRunId, approvalReviews, onO
   </article>;
 }
 
-export default function GoalContinuationPanel({ goals = [], busy, readOnly = false, activeRun = false, currentRunId = '', approvalReviews = [], onOpenReview, error, onAction, t }) {
+function GoalHistory({ projectKey, cursor, t }) {
+  const [pages, setPages] = useState([]);
+  const [next, setNext] = useState(cursor);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const pending = useRef(null);
+  useEffect(() => () => pending.current?.abort(), []);
+  const load = async () => {
+    if (!next || pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
+    setBusy(true);
+    setError(null);
+    try {
+      const page = await runApi.getGoalHistory(projectKey, next, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (page?.project_key !== projectKey || !Array.isArray(page.goals)
+        || typeof page.next_before !== 'string'
+        || page.goals.some(goal => !goal?.id || goal.project_key !== projectKey)) throw new Error(t('work.goal.historyUnavailable'));
+      setPages(current => [...current, [...page.goals].reverse()]);
+      setNext(page.next_before);
+    } catch (caught) {
+      if (!controller.signal.aborted) setError(caught);
+    } finally {
+      if (!controller.signal.aborted) setBusy(false);
+      if (pending.current === controller) pending.current = null;
+    }
+  };
+  return <section aria-label={t('work.goal.history')}>
+    {pages.flat().map(goal => <details key={goal.id}>
+      <summary>{goal.objective} · {label(goal.status, t)}</summary>
+      <GoalSnapshot goal={goal} readOnly busy={false} currentRunId="" approvalReviews={[]} t={t} />
+      <details><summary>{t('work.goal.fullRecord')}</summary><pre className="goal-history-record">{JSON.stringify(goal, null, 2)}</pre></details>
+    </details>)}
+    {next ? <Button variant="secondary" busy={busy} disabled={busy} onClick={load}>{t('work.goal.loadOlder')}</Button> : null}
+    {error ? <ProductError error={error} t={t} /> : null}
+  </section>;
+}
+
+export default function GoalContinuationPanel({ goals = [], projectKey = '', historyCursor = '', busy, readOnly = false, activeRun = false, currentRunId = '', approvalReviews = [], onOpenReview, error, onAction, t }) {
   const [creating, setCreating] = useState(false);
   const latest = goals.at(-1);
   const activeGoal = goals.some(goal => !TERMINAL.has(goal.status));
@@ -180,6 +220,7 @@ export default function GoalContinuationPanel({ goals = [], busy, readOnly = fal
     </header>
     {activeRun && !activeGoal && !readOnly ? <p>{t('work.goal.waitForRun')}</p> : null}
     {latest ? <GoalSnapshot key={latest.id} goal={latest} busy={busy} readOnly={readOnly} currentRunId={currentRunId} approvalReviews={approvalReviews} onOpenReview={onOpenReview} onAction={onAction} t={t} /> : <p>{t('work.goal.optional')}</p>}
+    {projectKey && historyCursor ? <GoalHistory key={`${projectKey}:${latest?.id || ''}`} projectKey={projectKey} cursor={historyCursor} t={t} /> : null}
     {creating && !readOnly && !activeGoal ? <GoalForm busy={busy || activeRun} onAction={onAction} onClose={() => setCreating(false)} t={t} /> : null}
     {error ? <ProductError error={error} t={t} /> : null}
   </section>;
