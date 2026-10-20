@@ -84,14 +84,14 @@ class TaskAssistantService:
         self.manager_turn = manager_turn
 
     def session(self, project_key: str, root: Path) -> dict[str, object]:
-        from goodteam_os.goal_continuation import goal_view
+        from goodteam_os.goal_continuation import goal_views
 
         store = TaskAssistantSessionStore(self.workspace, project_key)
         assistant_requests.recover_interrupted(store)
         session = store.read()
         # Goal reads only project persisted snapshots; viewing Work never advances them.
         goals = (
-            [goal_view(self.workspace, goal) for goal in GoalStore(self.workspace, project_key).list_goals()]
+            goal_views(self.workspace, GoalStore(self.workspace, project_key).list_goals())
             if (self.workspace / "state" / "goals.sqlite3").is_file() else []
         )
         if not session["timeline"]:
