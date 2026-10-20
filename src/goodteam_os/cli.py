@@ -366,6 +366,8 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
 
     runtime_kwargs = review_worker_kwargs(codex_review_admission)
+    if args.command == "_operator-component" and runtime_kwargs and candidate_reviews is None:
+        raise ValueError("Operator Reviewer policy requires --operator-review-config.")
     if candidate_reviews is not None and any(config.reviewer_adapter != "codex"
             or config.reviewer_model != codex_review_admission.policy["model"] for config in candidate_reviews.values()):
         raise ValueError("Operator Reviewer selection must match the existing policy model and adapter.")
