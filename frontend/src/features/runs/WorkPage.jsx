@@ -1266,6 +1266,8 @@ export default function WorkPage() {
       <GoalContinuationPanel
         key={projectKey}
         goals={data.task_assistant_session?.goals || []}
+        projectKey={projectKey}
+        historyCursor={data.task_assistant_session?.goal_page?.next_before || ''}
         busy={busy || conversation.busy}
         readOnly={isHistorical || contextIsLoading}
         activeRun={Boolean(data.active_run)}

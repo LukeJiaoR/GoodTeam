@@ -259,6 +259,43 @@ class GoalStore:
             validated_idle.clear()
             raise
 
+    def page_goals(self, *, limit: int = 20, before: str = "") -> dict[str, Any]:
+        """Newest page, returned in chronological order; never trim a snapshot.
+
+        The boundary is a persisted Goal identity scoped to this project. New
+        Goals cannot shift older pages, unlike an offset. Each call reads fresh
+        revisions; this is not a frozen multi-request ledger snapshot.
+        """
+        if not self.project_key:
+            raise GoalError("A project key is required for Goal history.")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise GoalError("Goal page limit must be between 1 and 50.")
+        if not isinstance(before, str) or len(before) > 128:
+            raise GoalError("Invalid Goal history cursor.")
+        with self._transaction() as db:
+            boundary = None
+            if before:
+                row = db.execute("SELECT rowid FROM goals WHERE id=? AND project_key=?",
+                                 (before, self.project_key)).fetchone()
+                if row is None:
+                    raise GoalError("Unknown Goal history cursor for this project.")
+                boundary = row["rowid"]
+            if boundary is None:
+                rows = db.execute(
+                    "SELECT id FROM goals WHERE project_key=? ORDER BY rowid DESC LIMIT ?",
+                    (self.project_key, limit + 1),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT id FROM goals WHERE project_key=? AND rowid<? ORDER BY rowid DESC LIMIT ?",
+                    (self.project_key, boundary, limit + 1),
+                ).fetchall()
+            selected = rows[:limit]
+            return {
+                "goals": [self._snapshot(db, row["id"]) for row in reversed(selected)],
+                "next_before": selected[-1]["id"] if len(rows) > limit else "",
+            }
+
     def list_work(self, goal_id: str) -> list[dict[str, Any]]:
         return self.get_goal(goal_id)["work_units"]
 
