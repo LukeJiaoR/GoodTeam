@@ -2680,7 +2680,8 @@ def _allowed_cors_origin(origin: str, *, host: str, port: int) -> str:
     if hostname not in allowed_hosts:
         return ""
     expected_port = port if parsed.scheme == "http" else 443
-    if parsed.port not in {None, expected_port}:
+    origin_port = parsed.port if parsed.port is not None else (80 if parsed.scheme == "http" else 443)
+    if origin_port != expected_port:
         return ""
     return origin
 
