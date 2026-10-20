@@ -186,10 +186,14 @@ def test_controller_uses_only_trusted_default_branch_metadata():
     assert "${{" not in job["steps"][0]["with"]["script"]
 
 
+@pytest.mark.parametrize("qualified_path", [False, True])
 @pytest.mark.parametrize("event", ["push", "create"])
-def test_publication_dispatches_main_with_exact_candidate_and_pinned_base(event):
+def test_publication_dispatches_main_with_exact_candidate_and_pinned_base(event, qualified_path):
     fixture = _fixture()
-    fixture["context"]["payload"]["workflow_run"]["event"] = event
+    source = fixture["context"]["payload"]["workflow_run"]
+    source["event"] = event
+    if qualified_path:
+        source["path"] += "@" + source["head_branch"]
     result = _execute(fixture)
     assert "error" not in result
     assert _mutations(result) == [{"name": "createWorkflowDispatch", "args": {
@@ -199,6 +203,91 @@ def test_publication_dispatches_main_with_exact_candidate_and_pinned_base(event)
     comparisons = [call["args"]["basehead"] for call in result["calls"]
                    if call["name"] == "compareCommitsWithBasehead"]
     assert comparisons == [f"{BASE}...{TARGET}"]
+
+
+@pytest.mark.parametrize("run_kind", ["publication", "validation_source", "pr_source", "validation_result"])
+@pytest.mark.parametrize("path_kind", [
+    "wrong_branch", "empty_ref", "extra_ref", "full_ref", "wrong_workflow", "repository_prefix",
+    "foreign_repository_prefix", "absolute", "traversal", "trailing_space", "missing", "not_string",
+])
+def test_workflow_paths_reject_unbound_refs_and_malformed_paths(run_kind, path_kind):
+    fixture = _fixture() if run_kind == "publication" else _validated_fixture()
+    if run_kind == "pr_source":
+        fixture["context"]["payload"]["workflow_run"] = {
+            **fixture["pr_runs"][0], "path": ".github/workflows/ci.yml",
+        }
+    run = (fixture["validation_run"] if run_kind == "validation_result"
+           else fixture["context"]["payload"]["workflow_run"])
+    path, branch = run["path"], run["head_branch"]
+    paths = {
+        "wrong_branch": path + "@codex/candidate-other",
+        "empty_ref": path + "@",
+        "extra_ref": path + "@" + branch + "@other",
+        "full_ref": path + "@refs/heads/" + branch,
+        "wrong_workflow": ".github/workflows/other.yml@" + branch,
+        "repository_prefix": REPOSITORY + "/" + path + "@" + branch,
+        "foreign_repository_prefix": "other/fork/" + path + "@" + branch,
+        "absolute": "/" + path + "@" + branch,
+        "traversal": ".github/workflows/../workflows/" + path.rsplit("/", 1)[-1] + "@" + branch,
+        "trailing_space": path + "@" + branch + " ",
+        "missing": None,
+        "not_string": {"path": path},
+    }
+    run["path"] = paths[path_kind]
+    result = _execute(fixture)
+    assert "error" not in result
+    assert not _mutations(result)
+
+
+@pytest.mark.parametrize("run_kind", ["publication", "validation_source", "pr_source", "validation_result"])
+@pytest.mark.parametrize("case", [
+    "foreign_repository", "wrong_workflow", "wrong_event", "mismatched_branch", "missing_branch", "empty_branch",
+    "null_branch", "non_string_branch",
+])
+def test_qualified_paths_do_not_relax_run_identity_checks(run_kind, case):
+    fixture = _fixture() if run_kind == "publication" else _validated_fixture()
+    if run_kind == "pr_source":
+        fixture["context"]["payload"]["workflow_run"] = {
+            **fixture["pr_runs"][0], "path": ".github/workflows/ci.yml",
+        }
+    run = (fixture["validation_run"] if run_kind == "validation_result"
+           else fixture["context"]["payload"]["workflow_run"])
+    run["path"] += "@" + run["head_branch"]
+    if case == "foreign_repository":
+        run["head_repository"] = {"full_name": "other/fork"}
+    elif case == "wrong_workflow":
+        run["workflow_id"] = 999
+    elif case == "wrong_event":
+        run["event"] = "schedule"
+    elif case == "mismatched_branch":
+        run["head_branch"] = "codex/unreviewed"
+    elif case == "missing_branch":
+        del run["head_branch"]
+        run["path"] = run["path"].split("@", 1)[0] + "@undefined"
+    elif case == "empty_branch":
+        run["head_branch"] = ""
+        run["path"] = run["path"].split("@", 1)[0] + "@"
+    elif case == "null_branch":
+        run["head_branch"] = None
+        run["path"] = run["path"].split("@", 1)[0] + "@null"
+    else:
+        run["head_branch"] = {}
+        run["path"] = run["path"].split("@", 1)[0] + "@[object Object]"
+    result = _execute(fixture)
+    assert "error" not in result
+    assert not _mutations(result)
+
+
+@pytest.mark.parametrize("run_kind", ["validation_source", "validation_result"])
+def test_dispatch_path_cannot_authorize_a_matching_unreviewed_branch(run_kind):
+    fixture = _validated_fixture()
+    run = (fixture["validation_run"] if run_kind == "validation_result"
+           else fixture["context"]["payload"]["workflow_run"])
+    run["head_branch"] = "codex/unreviewed"
+    run["path"] += "@codex/unreviewed"
+    result = _execute(fixture)
+    assert "error" not in result
+    assert not _mutations(result)
 
 
 @pytest.mark.parametrize("case", [
@@ -256,8 +345,17 @@ def test_unknown_dispatch_outcome_is_reported_without_retry_or_fabricated_status
     assert len(_mutations(result)) == 1
 
 
-def test_successful_candidate_automatically_refreshes_only_the_exact_head_metadata_gate():
-    result = _execute(_validated_fixture())
+@pytest.mark.parametrize("qualified_source", [False, True])
+@pytest.mark.parametrize("qualified_validation", [False, True])
+def test_successful_candidate_automatically_refreshes_only_the_exact_head_metadata_gate(
+    qualified_source, qualified_validation,
+):
+    fixture = _validated_fixture()
+    if qualified_source:
+        fixture["context"]["payload"]["workflow_run"]["path"] += "@main"
+    if qualified_validation:
+        fixture["validation_run"]["path"] += "@main"
+    result = _execute(fixture)
     assert "error" not in result
     assert _mutations(result) == [{"name": "reRunWorkflow", "args": {
         "owner": "LukeJiaoR", "repo": "GoodTeam", "run_id": 200,
@@ -315,11 +413,14 @@ def test_refresh_never_promotes_unverified_stale_or_genuinely_failed_results(cas
     assert not _mutations(_execute(fixture))
 
 
-def test_late_pr_gate_completion_after_candidate_result_is_also_reconciled():
+@pytest.mark.parametrize("qualified_path", [False, True])
+def test_late_pr_gate_completion_after_candidate_result_is_also_reconciled(qualified_path):
     fixture = _validated_fixture()
     fixture["context"]["payload"]["workflow_run"] = {
         **fixture["pr_runs"][0], "path": ".github/workflows/ci.yml",
     }
+    if qualified_path:
+        fixture["context"]["payload"]["workflow_run"]["path"] += "@codex/feature"
     fixture["jobs"][-1]["completed_at"] = "2026-10-18T03:00:00Z"
     assert [call["name"] for call in _mutations(_execute(fixture))] == ["reRunWorkflow"]
 
