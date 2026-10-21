@@ -2768,6 +2768,14 @@ class WorkerJobStore:
         memory = self._validated_worker_memory(job_root, role=str(job["role"]))
         pickup_context = memory.fragment
         sandbox_context = _worker_sandbox_context_prompt(job)
+        markdown_artifact = "Output markdown only." in (job_root / "constraints.md").read_text(encoding="utf-8")
+        final_output_instruction = (
+            "Return the complete requested markdown artifact as your final assistant response, "
+            "not a changed-files or verification summary. The adapter saves this response as the current job result. "
+            f"If you also write a deliverable file, write it under the current job directory {job_root}; "
+            "shared project/docs files are not accepted as this job's output."
+            if markdown_artifact else "At the end, summarize changed files, verification commands, and unresolved risks."
+        )
         sections = [
                 f"# GoodTeam Worker Job {job['id']}",
                 f"Role: {job['role']}",
@@ -2778,7 +2786,7 @@ class WorkerJobStore:
                 "When modifying files, keep changes inside the current project root.",
                 "If Sandbox Context is available, treat workspace_path as the intended execution workspace.",
                 "Use bounded smoke checks. If you start dev servers, browser sessions, watchers, or other long-running processes, run them in a way you can stop and stop any dev servers, browser sessions, or watchers before exiting.",
-                "At the end, summarize changed files, verification commands, and unresolved risks.",
+                final_output_instruction,
                 "## Role Prompt",
                 (job_root / "role_prompt.md").read_text(encoding="utf-8"),
         ]

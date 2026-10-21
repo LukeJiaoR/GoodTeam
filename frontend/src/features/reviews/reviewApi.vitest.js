@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { decideReview } from './reviewApi';
+import { acceptRefinement, discardRefinement, answerOpenQuestions, decideReview } from './reviewApi';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -35,5 +35,28 @@ test('posts the exact approval target binding with an approved decision', async 
     expected_target_id: 'security',
     expected_artifact_key: 'rfc',
     expected_artifact_version: 'sha256:rfc-v3',
+  });
+});
+
+
+test.each([acceptRefinement, discardRefinement])('proposal mutations post every expected identity field', async (mutate) => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' });
+  vi.stubGlobal('fetch', fetch);
+  await mutate('DEMO', 'prd', { expectedProposal: {
+    proposal_id: 'proposal-1', run_id: 'run-1', artifact_key: 'prd',
+    base_version: 'sha256:base', proposal_version: 'sha256:proposal',
+  } });
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    project_key: 'DEMO', artifact: 'prd', expected_run_id: 'run-1', expected_artifact_key: 'prd',
+    expected_artifact_version: 'sha256:base', expected_proposal_id: 'proposal-1', expected_proposal_version: 'sha256:proposal',
+  });
+});
+
+test('answers post the displayed artifact binding', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' });
+  vi.stubGlobal('fetch', fetch);
+  await answerOpenQuestions('DEMO', 'prd', [], { expectedArtifact: { runId: 'run-1', artifactVersion: 'sha256:base' } });
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    project_key: 'DEMO', artifact: 'prd', answers: [], expected_run_id: 'run-1', expected_artifact_version: 'sha256:base',
   });
 });

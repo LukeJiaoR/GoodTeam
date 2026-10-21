@@ -2678,7 +2678,11 @@ def test_save_artifact_updates_current_run_artifact_and_logs_edit(tmp_path):
 
     assert payload["artifact"] == "prd"
     assert payload["bytes"] == len("# PRD\n\nAfter".encode("utf-8"))
-    assert artifact.read_text(encoding="utf-8") == "# PRD\n\nAfter"
+    assert artifact.read_text(encoding="utf-8") == "# PRD\n\nBefore"
+    assert Path(payload["path"]).read_text(encoding="utf-8") == "# PRD\n\nAfter"
+    current = StateStore(tmp_path).read_current()
+    assert current.artifacts["prd"] == payload["path"]
+    assert current.approvals["prd"] == "pending"
     edit_log = tmp_path / "state" / "edit-log.jsonl"
     assert edit_log.is_file()
     assert '"artifact": "prd"' in edit_log.read_text(encoding="utf-8")
@@ -4060,6 +4064,12 @@ def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_pa
         artifact_path = Path(path)
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_text("# Artifact\n", encoding="utf-8")
+    prior_staging = tmp_path / "artifacts" / "runs" / "run-1" / "staging_report" / "staging-report.md"
+    prior_staging.parent.mkdir(parents=True)
+    prior_staging.write_text("# Prior staging evidence\n")
+    state.artifacts["staging_report"] = str(prior_staging)
+    state.artifacts["release_notes"] = "old-release-evidence"
+    state.approvals["release"] = "approved"
     StateStore(tmp_path).write_project_current(state)
 
     run_jobs = {"count": 0}
@@ -4101,6 +4111,11 @@ def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_pa
     assert payload["current_node"] == "staging_review_gate"
     assert payload["next_node"] == "await_staging_approval"
     assert payload["blockers"] == []
+    assert payload["artifacts"]["staging_report"] != str(prior_staging)
+    assert prior_staging.read_text() == "# Prior staging evidence\n"
+    assert payload["approvals"]["release"] == "pending"
+    assert "release_notes" not in payload["artifacts"]
+    assert payload["approvals"]["rfc"] == "approved"
 
 
 def test_decide_approval_rejects_gate_that_is_not_actionable(tmp_path):

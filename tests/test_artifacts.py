@@ -15,4 +15,8 @@ def test_artifact_store_writes_sibling_proposed_file(tmp_path):
     path = store.write_proposed_markdown("run-1", "prd", "prd.md", "# Proposed PRD\n")
 
     assert path.read_text(encoding="utf-8") == "# Proposed PRD\n"
-    assert str(path).endswith("artifacts/runs/run-1/prd/prd.proposed.md")
+    assert path.parent == tmp_path / "artifacts" / "runs" / "run-1" / "prd"
+    assert path.name.startswith("prd.") and path.name.endswith(".proposed.md")
+    newer = store.write_proposed_markdown("run-1", "prd", "prd.md", "# New proposal\n")
+    assert newer != path
+    assert path.read_text(encoding="utf-8") == "# Proposed PRD\n"
