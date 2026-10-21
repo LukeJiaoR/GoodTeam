@@ -1727,7 +1727,8 @@ def test_release_gate_artifacts_include_worker_evidence_not_placeholders(tmp_pat
     assert "## UI Delivery Evidence" in qa_report
     assert "Direct frontend implementation: covered" in qa_report
     assert "Browser screenshot evidence: covered" in qa_report
-    assert "Release recommendation: approve for local starter release with documented caveats" in release_notes
+    assert "Release recommendation: pending human review" in release_notes
+    assert "resetting the generated SQLite database" not in release_notes
 
 
 def test_delivery_workflow_stops_when_codex_worker_fails(tmp_path, monkeypatch):

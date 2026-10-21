@@ -1031,7 +1031,7 @@ def render_downstream_artifact_markdown(
                 "",
                 "## Release Decision",
                 "",
-                "- Release recommendation: approve for local starter release with documented caveats.",
+                "- Release recommendation: pending human review of the exact artifacts and verification evidence.",
                 "- Human approval is required at the release gate before retro memory closes the run.",
                 "",
                 "## Verification Evidence",
@@ -1044,7 +1044,7 @@ def render_downstream_artifact_markdown(
                 "",
                 "## Rollback",
                 "",
-                "- For the local starter, rollback by restoring the previous project directory or resetting the generated SQLite database from documented local setup steps.",
+                "- Rollback is unverified unless the project-specific delivery evidence documents and validates it. Do not reset databases or replace project directories based on this summary.",
                 "- Do not roll forward with release approval if a QA result contains `release-blocking`, `fail`, or `blocked` status.",
             ]
         )
@@ -1207,7 +1207,7 @@ def format_release_caveats_lines(state: AgileDevState, worker_results: list[dict
     if state.blockers:
         caveats.append(f"- Blockers remain: {'; '.join(state.blockers)}")
     if not caveats:
-        caveats.append("- No unresolved caveats were reported in attached worker summaries.")
+        caveats.append("- Caveats are not exhaustively assessed by this summary. Inspect the attached Worker reports and verification gaps before approval.")
     return caveats
 
 
@@ -1548,6 +1548,8 @@ def run_delivery_until_release_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    # A new delivery attempt can never reuse a previous implementation's correction.
+    state.release_candidate = {}
     if "review_report" in state.artifacts:
         invalidate_artifact(state, "review_report")
     if "task_breakdown" in state.artifacts:
@@ -1612,6 +1614,11 @@ def run_delivery_until_release_gate(
         )
         _register_written_markdown(state, artifact_key, path)
 
+    if state.change_requests.get("release", "").strip():
+        from goodteam_os.release_artifacts import bind_release_candidate
+
+        bind_release_candidate(state)
+
     if staging_backend_enabled(source_type=state.source_type, project_config=project_config):
         return run_staging_until_gate(state, workspace, project_config)
 
@@ -1670,6 +1677,13 @@ def run_release_until_gate(
     *,
     worker_results: list[dict[str, object]] | None = None,
 ) -> AgileDevState:
+    content = render_downstream_artifact_markdown(
+        "release_notes", state, project_config, worker_results=worker_results,
+    )
+    if state.change_requests.get("release", "").strip():
+        from goodteam_os.release_artifacts import validated_release_candidate
+
+        content = validated_release_candidate(state, workspace)
     if "release_notes" in state.artifacts:
         invalidate_artifact(state, "release_notes")
     store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config),
@@ -1678,7 +1692,7 @@ def run_release_until_gate(
         state.run_id,
         "release_notes",
         _artifact_filename("release_notes"),
-        render_downstream_artifact_markdown("release_notes", state, project_config, worker_results=worker_results),
+        content,
     )
     _register_written_markdown(state, "release_notes", release_path)
     state.current_node = "release_review_gate"
@@ -1816,17 +1830,21 @@ def run_implementation_workers(
         return []
     store = WorkerJobStore(runtime_root)
     retry_max, retry_on_classes = retry_policy_for_node(workflow_node_name)
-    return [
-        run_worker_job_with_retry(
-            store=store,
-            job_spec=job_spec,
-            retry_max=retry_max,
-            retry_on_classes=retry_on_classes,
-            state=state,
-            workspace=workspace,
+    results = []
+    for job_spec in implementation_worker_job_specs(state, target, workspace=workspace):
+        result = run_worker_job_with_retry(
+            store=store, job_spec=job_spec, retry_max=retry_max,
+            retry_on_classes=retry_on_classes, state=state, workspace=workspace,
         )
-        for job_spec in implementation_worker_job_specs(state, target, workspace=workspace)
-    ]
+        results.append(result)
+        if (job_spec["role"] == "implementation" and result.get("status") == "completed"
+                and state.change_requests.get("release", "").strip()):
+            from goodteam_os.release_artifacts import capture_release_candidate
+
+            if workspace is None:
+                raise RuntimeError("Release correction requires a durable workflow workspace.")
+            capture_release_candidate(state, workspace, project_config, [result])
+    return results
 
 
 def dispatch_gate_reviewer_jobs(
@@ -1905,6 +1923,7 @@ def implementation_worker_job_specs(
     workspace: Path | None = None,
 ) -> list[dict[str, object]]:
     delivery_mode = getattr(state, "delivery_mode", "init_project")
+    release_deliverables = ["release-notes.md"] if state.change_requests.get("release", "").strip() else []
     return [
         {
             "run_id": state.run_id,
@@ -1931,7 +1950,7 @@ def implementation_worker_job_specs(
                 "Do not touch real product repositories outside this isolated workspace.",
                 "Do not store secrets.",
             ],
-            "expected_artifacts": implementation_expected_artifacts(delivery_mode),
+            "expected_artifacts": implementation_expected_artifacts(delivery_mode) + release_deliverables,
             **_worker_job_fields(target, "implementation", state),
         },
         {

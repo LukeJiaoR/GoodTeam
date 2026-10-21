@@ -99,3 +99,29 @@ RFC/security approval, regeneration, and retained historical bytes. A separate
 router fixture verifies that a late proposal from a previous run cannot populate
 the refreshed run. Real adapter output quality still requires a separate bounded
 operator smoke; fake Workers do not establish that evidence.
+
+## Release correction delivery
+
+A confirmed release change request still uses the existing UI, Implementation,
+QA delivery route. It does not create an additional Release Worker job. The
+Implementation job must write the corrected complete Markdown document to
+`release-notes.md` in its own job directory, as specified in its prompt. A shared
+`docs/release-notes.md`, generic final summary, or output from another job cannot
+satisfy that contract.
+
+The controller snapshots this output immediately after Implementation completes,
+before QA starts. After successful QA it binds the snapshot to the current run,
+project, implementation job, exact change request, and RFC/implementation/QA/code
+review artifact identities. The snapshot and digest persist in workflow state,
+so staging retries and service restarts do not require rereading mutable Worker
+files. Staging evidence is reviewed separately; the Implementation document must
+not claim that later QA/staging checks already passed.
+
+The release gate consumes the validated snapshot verbatim rather than replacing
+it with template prose. Missing, tampered, or stale corrections stop progression
+with an actionable error. A missing implementation output can be corrected by a
+bound retry of the interrupted delivery decision. If upstream evidence changed,
+revise/reapprove the upstream RFC to regenerate delivery. Historical artifacts
+remain available; no failure, retry, or missing correction approves release.
+Initial template summaries remain explicitly unverified and do not invent
+project-specific rollback instructions or infer that no caveats exist.

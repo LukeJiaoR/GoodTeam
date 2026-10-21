@@ -245,7 +245,11 @@ def test_http_legacy_revision_display_hint_does_not_invalidate_persisted_binding
         assert target["available"] and target["mode"] == "retry_revision"
         code, result = post(base, "/api/retry", {"project_key": "DEMO", "expected_run_id": target["run_id"],
                                                "expected_retry_version": target["version"]})
-        assert code == 200 and result["retried"] is True, result
+        # The bound retry was accepted, but a fake implementation did not emit
+        # the newly required owned release correction. Fail closed with an
+        # actionable client error, not a stale-binding error or template success.
+        assert code == 400, result
+        assert "Release correction is missing or stale" in result["message"]
         assert all(item["adapter"] == "fake" for item in ctx.workers.list_jobs())
 
 

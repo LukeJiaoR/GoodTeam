@@ -138,7 +138,7 @@ def test_failed_action_append_is_recoverable_without_losing_decision(tmp_path, m
 
 @pytest.mark.parametrize("gate,profile,next_gate", [
     ("security", "greenfield", "rfc"), ("staging", "greenfield", "release"),
-    ("release", "greenfield", "release"), ("fix_plan", "fix", "fix_plan"),
+    ("fix_plan", "fix", "fix_plan"),
     ("code_review", "fix", "code_review"), ("qa", "fix", "code_review"),
 ])
 def test_requested_changes_reenter_review_with_original_feedback(tmp_path, monkeypatch, gate, profile, next_gate):

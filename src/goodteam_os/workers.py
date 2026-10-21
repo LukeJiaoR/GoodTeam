@@ -2776,6 +2776,14 @@ class WorkerJobStore:
             "shared project/docs files are not accepted as this job's output."
             if markdown_artifact else "At the end, summarize changed files, verification commands, and unresolved risks."
         )
+        if job.get("role") == "implementation" and "release-notes.md" in job.get("expected_artifacts", []):
+            final_output_instruction += (
+                f" The release change request requires a complete corrected release document at {job_root / 'release-notes.md'}."
+                " Write it in this exact job-local path, not only in shared docs. Preserve verified corrections,"
+                " unresolved risks and skipped checks; do not invent rollback instructions or evidence."
+                " QA and staging after this job are not yet verified; describe those checks as pending."
+                " The controller will retain these bytes for release review; missing output blocks release."
+            )
         sections = [
                 f"# GoodTeam Worker Job {job['id']}",
                 f"Role: {job['role']}",
