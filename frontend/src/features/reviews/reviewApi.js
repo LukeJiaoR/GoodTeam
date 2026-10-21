@@ -43,8 +43,21 @@ export const refineArtifact = (projectKey, artifact, content, options = {}) => {
     ...expectedArtifactFields(options || {}),
   }, { signal });
 };
-export const acceptRefinement = (projectKey, artifact, options) => post('/api/accept-refinement', { project_key: projectKey, artifact }, options);
-export const discardRefinement = (projectKey, artifact, options) => post('/api/discard-refinement', { project_key: projectKey, artifact }, options);
+function expectedProposalFields({ expectedProposal = {} } = {}) {
+  return {
+    expected_run_id: expectedProposal.run_id,
+    expected_artifact_key: expectedProposal.artifact_key,
+    expected_artifact_version: expectedProposal.base_version,
+    expected_proposal_id: expectedProposal.proposal_id,
+    expected_proposal_version: expectedProposal.proposal_version,
+  };
+}
+export const acceptRefinement = (projectKey, artifact, options = {}) => post('/api/accept-refinement', {
+  project_key: projectKey, artifact, ...expectedProposalFields(options),
+}, options);
+export const discardRefinement = (projectKey, artifact, options = {}) => post('/api/discard-refinement', {
+  project_key: projectKey, artifact, ...expectedProposalFields(options),
+}, options);
 export const decideReview = (projectKey, approval, decision, note = '', options = {}) => {
   const { expectedApproval = {}, signal } = options || {};
   const binding = expectedApproval && typeof expectedApproval === 'object'
@@ -65,7 +78,9 @@ export const decideReview = (projectKey, approval, decision, note = '', options 
   }, { signal });
 };
 export const recoverTakeoverBrief = (projectKey, note = '', options) => post('/api/recover-takeover-brief', { project_key: projectKey, ...(note ? { note } : {}) }, options);
-export const answerOpenQuestions = (projectKey, artifact, answers, options) => post('/api/answer-open-questions', { project_key: projectKey, artifact, answers }, options);
+export const answerOpenQuestions = (projectKey, artifact, answers, options = {}) => post('/api/answer-open-questions', {
+  project_key: projectKey, artifact, answers, ...expectedArtifactFields(options),
+}, options);
 
 export const reviewApi = {
   acceptRefinement, answerOpenQuestions, decideReview, discardRefinement, getArtifact, getOpenQuestions,

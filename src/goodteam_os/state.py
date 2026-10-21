@@ -51,6 +51,9 @@ class AgileDevState:
     # Empty is the explicit legacy representation; reads do not manufacture locks.
     task_skill_context: dict[str, object] = field(default_factory=dict)
 
+    artifact_proposals: dict[str, dict[str, str]] = field(default_factory=dict)
+    artifact_generations: dict[str, str] = field(default_factory=dict)
+
     def __post_init__(self) -> None:
         self.task_skill_context = _state_skill_context(self)
 

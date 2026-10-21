@@ -91,6 +91,7 @@ from goodteam_os.project_readiness_executor import (
     ReadinessExecutionError,
 )
 from goodteam_os.reviewer_evidence_snapshot import build_reviewer_evidence_snapshot
+from goodteam_os.artifact_revisions import invalidate_artifact
 from goodteam_os.reviewer_dispatch import (
     artifact_version_for_path,
     retry_failed_reviewer_jobs_for_gate,
@@ -4779,7 +4780,9 @@ def regenerate_rfc_review_gate(
 ) -> AgileDevState:
     if should_generate_artifact_with_worker(project_config, "architect"):
         return run_architecture_until_gate(state=state, workspace=workspace, project_config=project_config)
-    rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config)).write_markdown(
+    invalidate_artifact(state, "rfc")
+    rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config),
+                             revision_tokens=state.artifact_generations).write_markdown(
         state.run_id,
         "rfc",
         "rfc.md",
@@ -4884,7 +4887,9 @@ def _retry_bound_workflow(*, workspace, key, state, project_config):
         from goodteam_os.graph import render_staging_report_markdown
         from goodteam_os.artifacts import ArtifactStore
 
-        store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+        invalidate_artifact(state, "staging_report")
+        store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config),
+                              revision_tokens=state.artifact_generations)
         staging_path = store.write_markdown(
             state.run_id,
             "staging_report",
@@ -5212,6 +5217,8 @@ def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") 
     raw_content = path.read_bytes()
     content = raw_content.decode("utf-8")
     return {
+        **({"proposal_binding": dict(state.artifact_proposals[artifact_key.removesuffix("_proposed")])}
+           if artifact_key.endswith("_proposed") and artifact_key.removesuffix("_proposed") in state.artifact_proposals else {}),
         "artifact": artifact_key,
         "path": str(path),
         "content": content,
@@ -5235,8 +5242,12 @@ def answer_open_questions(
     project_key: str,
     artifact_key: str,
     answers: list[object],
+    expected_run_id: str = "", expected_artifact_version: str = "",
 ) -> dict[str, object]:
     artifact = read_artifact(workspace=workspace, artifact_key=artifact_key, project_key=project_key)
+    if (not expected_run_id or not expected_artifact_version or expected_run_id != artifact["run_id"]
+            or expected_artifact_version != artifact["artifact_version"]):
+        raise ProjectApiError("stale_artifact", "Reload the artifact before answering its questions.", 409)
     guidance_parts: list[str] = []
     for raw_answer in answers:
         if not isinstance(raw_answer, dict):
@@ -5265,7 +5276,21 @@ def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_k
         expected_artifact_version and expected_artifact_version != artifact_version_for_path(str(path))
     ):
         raise ProjectApiError("stale_artifact", "This artifact changed. Reload it before saving your edits.", 409)
-    path.write_text(content, encoding="utf-8")
+    if path.read_text(encoding="utf-8") != content:
+        from goodteam_os.artifacts import ArtifactStore
+        from goodteam_os.graph import _register_written_markdown
+
+        invalidate_artifact(state, artifact_key, rewind=True)
+        path = ArtifactStore(workspace, revision_tokens=state.artifact_generations).write_markdown(
+            state.run_id, artifact_key, path.name, content)
+        _register_written_markdown(state, artifact_key, path)
+        store = StateStore(workspace)
+        if project_key:
+            store.write_project_current(state)
+            store.write_project_checkpoint(state)
+        else:
+            store.write_current(state)
+            store.write_checkpoint(state)
 
     key = normalize_project_key(project_key or state.project_key)
     project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
@@ -8152,6 +8177,11 @@ def serve(
                     self._send_json(status, result)
                     return
                 request = json.loads(raw_body.decode("utf-8") or "{}")
+                if normalized_path in {"/artifact", "/refine-artifact", "/answer-open-questions"}:
+                    if not all(isinstance(request.get(field), str) and request[field].strip()
+                               for field in ("expected_run_id", "expected_artifact_version")):
+                        raise ProjectApiError("artifact_binding_required",
+                            "Reload the current artifact before editing or refining it.", 400)
                 if is_execution_path:
                     execution_response = handle_execution_post(normalized_path, request)
                     if execution_response is None:
@@ -8370,18 +8400,30 @@ def serve(
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
                         answers=raw_answers if isinstance(raw_answers, list) else [],
+                        expected_run_id=request.get("expected_run_id", ""),
+                        expected_artifact_version=request.get("expected_artifact_version", ""),
                     )
                 elif normalized_path == "/accept-refinement":
                     result = accept_refinement(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
+                        expected_run_id=request.get("expected_run_id", ""),
+                        expected_artifact_key=request.get("expected_artifact_key", ""),
+                        expected_artifact_version=request.get("expected_artifact_version", ""),
+                        expected_proposal_id=request.get("expected_proposal_id", ""),
+                        expected_proposal_version=request.get("expected_proposal_version", ""),
                     )
                 elif normalized_path == "/discard-refinement":
                     result = discard_refinement(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
+                        expected_run_id=request.get("expected_run_id", ""),
+                        expected_artifact_key=request.get("expected_artifact_key", ""),
+                        expected_artifact_version=request.get("expected_artifact_version", ""),
+                        expected_proposal_id=request.get("expected_proposal_id", ""),
+                        expected_proposal_version=request.get("expected_proposal_version", ""),
                     )
                 elif normalized_path == "/open-path":
                     result = open_path_in_file_manager(
