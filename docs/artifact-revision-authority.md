@@ -120,7 +120,8 @@ not claim that later QA/staging checks already passed.
 The release gate consumes the validated snapshot verbatim rather than replacing
 it with template prose. Missing, tampered, or stale corrections stop progression
 with an actionable error. A missing implementation output can be corrected by a
-bound retry of the interrupted delivery decision. If upstream evidence changed,
+bound retry of the failed delivery. The recorded approval decision is complete;
+missing output blocks delivery before QA rather than interrupting the decision. If upstream evidence changed,
 revise/reapprove the upstream RFC to regenerate delivery. Historical artifacts
 remain available; no failure, retry, or missing correction approves release.
 Initial template summaries remain explicitly unverified and do not invent
