@@ -187,6 +187,9 @@ export const zhCN = {
   "work.composer.awaitingReply": "等待回复",
 
   "work.blocker.genericHelp": "先查看故障详情，检查对应 Worker 的执行配置；处理原因后再重试。",
+  "work.blocker.artifactRevision": "交付产物已修改，下游审批需要新的证据。",
+  "work.blocker.artifactRevisionHelp": "将需要保留的修改纳入上游 RFC，保存为新版本。重新评审 RFC 和安全门后，系统会重新生成交付产物；已编辑的产物保留在历史中。",
+  "work.blocker.reviseRfc": "修订上游 RFC",
 
   "work.blocker.actionHelp": "先检查执行 Worker 使用的账号、模型与服务额度。限流原因和恢复时间尚不明确；确认服务可用后，再重试执行。",
   "work.blocker.configure": "检查执行配置",

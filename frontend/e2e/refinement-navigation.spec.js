@@ -42,3 +42,38 @@ test('proposal ownership survives neither review navigation nor browser back', a
     expected_proposal_id: binding.proposal_id, expected_proposal_version: binding.proposal_version,
   }]);
 });
+
+test('a late proposal from the previous run cannot populate the refreshed run', async ({ page }) => {
+  let runId = 'old-run';
+  let releaseProposal;
+  const proposalReady = new Promise((resolve) => { releaseProposal = resolve; });
+  let generationStarted;
+  const started = new Promise((resolve) => { generationStarted = resolve; });
+  await page.route('**/api/state?**', (route) => route.fulfill({ json: {
+    state: { run_id: runId }, approval_reviews: [{
+      approval: 'prd', artifact: 'prd', title: 'PRD', content: `${runId} PRD BODY`,
+      artifact_path: `/runs/${runId}/prd.md`, artifact_version: `sha256:${runId}`, is_actionable: true,
+    }],
+  } }));
+  await page.route('**/api/open-questions?**', (route) => route.fulfill({ json: { questions: [] } }));
+  await page.route('**/api/refine-artifact', async (route) => {
+    generationStarted();
+    await proposalReady;
+    await route.fulfill({ json: { proposal_binding: {
+      proposal_id: 'old-proposal', run_id: 'old-run', artifact_key: 'prd',
+      base_version: 'sha256:old-run', proposal_version: 'sha256:old-proposal',
+    } } });
+  });
+  const proposalReads = [];
+  await page.route('**/api/artifact?**', (route) => { proposalReads.push(route.request().url()); return route.fulfill({ json: {} }); });
+  await page.goto('/projects/DEMO/review/prd');
+  await page.getByRole('button', { name: 'Propose refinement', exact: true }).click();
+  await started;
+  runId = 'new-run';
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.getByText('new-run PRD BODY', { exact: true })).toBeVisible();
+  releaseProposal();
+  await expect(page.getByRole('button', { name: 'Propose refinement', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Accept revision', exact: true })).toHaveCount(0);
+  expect(proposalReads).toEqual([]);
+});

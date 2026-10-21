@@ -60,6 +60,10 @@ def invalidate_artifact(state, artifact_key, *, rewind=False):
     if rewind and own_gates:
         from goodteam_os.nodes.review_gate import gate_next_node
 
+        # An explicit upstream revision restarts review and regeneration for
+        # these descendants. Keep blockers unrelated to the restarted evidence.
+        resolved = tuple(f"Artifact {key} changed. Derived approvals and artifacts were invalidated." for key in affected)
+        state.blockers = [message for message in state.blockers if not message.startswith(resolved)]
         gate = own_gates[0]
         state.current_node = f"{gate}_review_gate"
         state.next_node = gate_next_node(state, gate=gate, approved_next=profile.approved_next_for_gate(gate))
@@ -74,7 +78,9 @@ def invalidate_artifact(state, artifact_key, *, rewind=False):
         state.pending_transition = {}
         message = (f"Artifact {artifact_key} changed. Derived approvals and artifacts were invalidated. "
                    "Regenerate the affected delivery artifacts and review them before continuing; "
-                   "automatic resume is unavailable for this intermediate artifact.")
+                   "automatic resume is unavailable for this intermediate artifact. "
+                   "Incorporate the required changes into the upstream RFC, save a new RFC revision, "
+                   "then reapprove RFC and security to regenerate delivery.")
         if message not in state.blockers:
             state.blockers.append(message)
     return affected

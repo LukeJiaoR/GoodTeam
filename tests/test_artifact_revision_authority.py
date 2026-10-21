@@ -165,6 +165,42 @@ def test_intermediate_edit_blocks_old_downstream_gate(tmp_path, monkeypatch):
         decide_approval(workspace=tmp_path, project_key='DEMO', approval='release', decision='approved')
 
 
+@pytest.mark.parametrize('runner', ['legacy', 'topo_v2'])
+def test_intermediate_edit_recovers_through_upstream_revision_and_fresh_reviews(tmp_path, monkeypatch, runner):
+    from goodteam_os.web import save_artifact
+
+    state, _, _ = seed(tmp_path, monkeypatch, runner)
+    edited = save_artifact(workspace=tmp_path, project_key='DEMO', artifact_key='qa_report', content='# Revised QA\n')
+    original_rfc = Path(state.artifacts['rfc']).read_text()
+    save_artifact(workspace=tmp_path, project_key='DEMO', artifact_key='rfc',
+                  content=original_rfc + '\nRequire the revised QA acceptance criteria.\n')
+    current = StateStore(tmp_path).read_project_current('DEMO')
+    assert current.blockers == []
+    assert current.next_node == 'await_rfc_approval'
+    assert current.approvals['prd'] == 'approved'
+    assert all(current.approvals[gate] == 'pending' for gate in ('rfc', 'security', 'staging', 'release'))
+    assert 'qa_report' not in current.artifacts
+    note = 'Model-free acceptance: re-review the upstream requirements before regenerating delivery.'
+    approved = decide_approval(workspace=tmp_path, project_key='DEMO', approval='rfc', decision='approved', note=note)
+    assert approved['next_node'] == 'await_security_approval'
+    assert 'qa_report' not in approved['artifacts']
+    regenerated = decide_approval(workspace=tmp_path, project_key='DEMO', approval='security', decision='approved', note=note)
+    assert regenerated['next_node'] == 'await_release_approval'
+    assert regenerated['blockers'] == []
+    assert regenerated['approvals']['release'] == 'pending'
+    assert regenerated['artifacts']['qa_report'] not in {state.artifacts['qa_report'], edited['path']}
+    assert Path(edited['path']).read_text() == '# Revised QA\n'
+    assert Path(state.artifacts['qa_report']).read_text() == '# Old qa_report\n'
+
+
+def test_upstream_recovery_preserves_unrelated_blockers(tmp_path, monkeypatch):
+    state, _, _ = seed(tmp_path, monkeypatch)
+    invalidate_artifact(state, 'qa_report', rewind=True)
+    state.blockers.append('Operator hold: inspect deployment credentials.')
+    invalidate_artifact(state, 'rfc', rewind=True)
+    assert state.blockers == ['Operator hold: inspect deployment credentials.']
+
+
 @pytest.mark.parametrize('adapter', ['codex', 'anthropic', 'gemini', 'pi'])
 def test_real_adapter_prompt_requests_owned_markdown_not_generic_summary(tmp_path, adapter):
     from goodteam_os.workers import WorkerJobStore

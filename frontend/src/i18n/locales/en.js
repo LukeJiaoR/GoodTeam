@@ -187,6 +187,9 @@ export const en = {
   "work.composer.awaitingReply": "Awaiting reply",
 
   "work.blocker.genericHelp": "Review the failure details and the affected Worker’s settings, then retry after addressing the cause.",
+  "work.blocker.artifactRevision": "A delivery artifact was edited. Downstream approvals require fresh evidence.",
+  "work.blocker.artifactRevisionHelp": "Move the required changes into the upstream RFC and save a new revision. Review RFC and security again to regenerate delivery. The edited artifact remains in history.",
+  "work.blocker.reviseRfc": "Revise upstream RFC",
 
   "work.blocker.actionHelp": "Check the execution Worker’s account, model and provider quota. The exact limit and recovery time are unknown; retry after confirming the service is available.",
   "work.blocker.configure": "Check execution settings",

@@ -13,6 +13,33 @@ that preserves an arbitrary human edit. Editing those artifacts blocks the run
 with an explicit explanation rather than leaving a downstream approval actionable.
 Automatic regeneration/resume for intermediate edits is not provided by this change.
 
+## Recovering an intermediate delivery edit
+
+For a greenfield run blocked after editing a task breakdown, UI specification,
+implementation handoff, QA report, or code review:
+
+1. In Work, inspect **Task paused**. It explains that downstream approvals need
+   fresh evidence and offers **Revise upstream RFC**. Ordinary **Retry failed
+   stage** is unavailable for this state; changing Worker settings is unnecessary.
+2. Keep the edited report as a reference. Open **Revise upstream RFC**, choose
+   **Edit Source**, and incorporate the requirements or acceptance criteria that
+   the regenerated delivery must satisfy. **Save artifact** must save changed
+   content; saving identical RFC bytes does not start a revision.
+3. Inspect and approve the revised RFC, then inspect and approve the security
+   gate again. Neither saving the RFC nor approving it alone dispatches delivery.
+   This explicit upstream revision resolves only the artifact-revision blockers
+   for its descendants. Unrelated blockers remain recorded.
+4. Delivery runs again and produces fresh artifacts. Inspect the new QA,
+   staging (when enabled), and release evidence before approving those gates.
+   The manually edited intermediate report and earlier report files remain in
+   history; regeneration produces a new current report rather than adopting the
+   earlier manual report as fresh execution evidence.
+
+The old downstream approval cannot be submitted while the run is blocked.
+Reload an open review after recovery; proposals and approvals from the previous
+revision remain stale. This procedure uses the existing artifact save and review
+paths and does not add an automatic resume action.
+
 ## Dashboard mutation contract
 
 `POST /api/artifact`, `/api/refine-artifact`, and `/api/answer-open-questions`
@@ -56,3 +83,19 @@ real stdout-adapter capture with a synthetic subprocess transport. No paid model
 or production execution is needed. Frontend routing tests cover navigation and
 late responses; the separate Chromium regression requires a browser-capable
 execution environment.
+
+Focused recovery and browser commands:
+
+```sh
+PYTHONPATH=src .venv/bin/python -m pytest tests/test_artifact_revision_authority.py -q
+npm run build --prefix frontend
+npm run test:e2e --prefix frontend -- refinement-navigation.spec.js artifact-revision-authority.spec.js
+```
+
+The browser suite uses isolated fake-Worker projects with real HTTP mutations to
+verify cross-tab proposal replacement, stale rejection without mutation, exact
+accept/discard payloads, blocked-edit guidance, the RFC recovery link, renewed
+RFC/security approval, regeneration, and retained historical bytes. A separate
+router fixture verifies that a late proposal from a previous run cannot populate
+the refreshed run. Real adapter output quality still requires a separate bounded
+operator smoke; fake Workers do not establish that evidence.

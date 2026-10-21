@@ -1,4 +1,4 @@
-import { blockerSummary } from './blockerPresentation';
+import { blockerSummary, isArtifactRevisionBlocker } from './blockerPresentation';
 import { useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -30,6 +30,7 @@ export function TaskAttention({
 }) {
   const intent = attention?.intent_commit || null;
   if (!attention) return null;
+  const artifactRevision = isArtifactRevisionBlocker(attention);
   const failureJobs = jobs.filter((job) => (attention.refs || []).includes(job.id) && job.status === 'failed');
   if (attention.kind === 'blocker' && activeJobs.length) return (
     <section className="task-blocker" data-attention-id={attention.id} aria-label={t('work.blocker.executing')}>
@@ -48,13 +49,13 @@ export function TaskAttention({
     <section className="task-blocker" data-attention-id={attention.id} aria-label={t('work.blocker.title')}>
       <h3>{t('work.blocker.title')}</h3>
       <p>{blockerSummary(attention, t)}</p>
-      <p>{t(String(attention.reason || '').includes('[rate_limit') ? 'work.blocker.actionHelp' : 'work.blocker.genericHelp')}</p>
+      <p>{t(artifactRevision ? 'work.blocker.artifactRevisionHelp' : String(attention.reason || '').includes('[rate_limit') ? 'work.blocker.actionHelp' : 'work.blocker.genericHelp')}</p>
       {failureJobs.length ? <p className="task-blocker-record">{t('work.blocker.recorded')} <time dateTime={failureJobs.map(job => job.updated_at).sort().at(-1)}>{new Date(failureJobs.map(job => job.updated_at).sort().at(-1)).toLocaleString()}</time></p> : null}
-      {projectKey ? <Link className="product-button product-button--secondary" to={routes.projectTeam(projectKey)}>{t('work.blocker.configure')}</Link> : null}
+      {projectKey ? <Link className="product-button product-button--secondary" to={artifactRevision ? routes.projectReviewItem(projectKey, 'rfc') : routes.projectTeam(projectKey)}>{t(artifactRevision ? 'work.blocker.reviseRfc' : 'work.blocker.configure')}</Link> : null}
       <details><summary>{t('work.blocker.details')}</summary><pre>{attention.reason}</pre></details>
       {error ? <p role="alert">{t('work.blocker.retryFailed')} {error.message || String(error)}</p> : null}
       {busy === 'retry' ? <p role="status">{t('work.blocker.retrying')}</p> : null}
-      {(attention.actions || []).includes('retry') && onRetry ? <WorkflowRetryAction retry={retry} busy={busy === 'retry'} onRetry={onRetry} t={t} /> : null}
+      {!artifactRevision && (attention.actions || []).includes('retry') && onRetry ? <WorkflowRetryAction retry={retry} busy={busy === 'retry'} onRetry={onRetry} t={t} /> : null}
     </section>
   );
   const actions = new Set(attention.actions || []);
