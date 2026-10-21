@@ -20,9 +20,24 @@ def _request(state):
     return hashlib.sha256(state.change_requests.get('release', '').encode()).hexdigest()
 
 
+class ReleaseCandidateError(ValueError):
+    """Expected delivery artifact validation failure, not an interrupted decision."""
+
+
+def block_release_candidate(state, error):
+    from goodteam_os.state import ApprovalDecision
+
+    state.current_node = 'implementation'
+    state.next_node = 'blocked'
+    state.approvals['release'] = ApprovalDecision.PENDING
+    if str(error) not in state.blockers:
+        state.blockers.append(str(error))
+    return state
+
+
 def _blocked():
-    return ValueError('Release correction is missing or stale. Regenerate delivery from the upstream RFC '
-                        'and review it again; the current implementation job must return job-local release-notes.md. '
+    return ReleaseCandidateError('Release correction is missing or stale. Retry delivery and review it again; '
+                        'the current implementation job must return job-local release-notes.md. '
                         'The rejected template was not substituted.')
 
 

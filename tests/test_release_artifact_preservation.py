@@ -113,8 +113,9 @@ def test_stale_candidate_is_never_replaced_with_template(tmp_path, monkeypatch, 
         Path(state.release_candidate['path']).write_text('# Tampered\n')
     else:
         Path(state.release_candidate['path']).unlink()
-    with pytest.raises(ValueError, match='missing or stale'):
-        run_release_until_gate(state, tmp_path, Path(state.source_ref))
+    result = run_release_until_gate(state, tmp_path, Path(state.source_ref))
+    assert result.next_node == 'blocked'
+    assert any('missing or stale' in item for item in result.blockers)
     assert state.artifacts == previous
 
 
@@ -138,11 +139,10 @@ def test_missing_owned_correction_preserves_history_and_blocks(tmp_path, monkeyp
     content = original.read_text()
     # Builtin implementation returns only a generic result, not the requested
     # job-local release document. It must not silently satisfy this contract.
-    with pytest.raises(ValueError, match='missing or stale'):
-        decide_approval(workspace=tmp_path, project_key='DEMO', approval='release',
-                        decision='changes_requested', note='Correct the rollback instructions.')
+    decide_approval(workspace=tmp_path, project_key='DEMO', approval='release',
+                    decision='changes_requested', note='Correct the rollback instructions.')
     current = StateStore(tmp_path).read_project_current('DEMO')
     assert current.next_node == 'blocked'
-    assert current.pending_transition['status'] == 'interrupted'
+    assert current.pending_transition['status'] == 'completed'
     assert current.approvals['release'] != 'approved'
     assert original.read_text() == content

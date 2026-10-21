@@ -1615,9 +1615,14 @@ def run_delivery_until_release_gate(
         _register_written_markdown(state, artifact_key, path)
 
     if state.change_requests.get("release", "").strip():
-        from goodteam_os.release_artifacts import bind_release_candidate
+        from goodteam_os.release_artifacts import (
+            ReleaseCandidateError, bind_release_candidate, block_release_candidate,
+        )
 
-        bind_release_candidate(state)
+        try:
+            bind_release_candidate(state)
+        except ReleaseCandidateError as exc:
+            return block_release_candidate(state, exc)
 
     if staging_backend_enabled(source_type=state.source_type, project_config=project_config):
         return run_staging_until_gate(state, workspace, project_config)
@@ -1681,9 +1686,14 @@ def run_release_until_gate(
         "release_notes", state, project_config, worker_results=worker_results,
     )
     if state.change_requests.get("release", "").strip():
-        from goodteam_os.release_artifacts import validated_release_candidate
+        from goodteam_os.release_artifacts import (
+            ReleaseCandidateError, block_release_candidate, validated_release_candidate,
+        )
 
-        content = validated_release_candidate(state, workspace)
+        try:
+            content = validated_release_candidate(state, workspace)
+        except ReleaseCandidateError as exc:
+            return block_release_candidate(state, exc)
     if "release_notes" in state.artifacts:
         invalidate_artifact(state, "release_notes")
     store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config),
@@ -1839,11 +1849,19 @@ def run_implementation_workers(
         results.append(result)
         if (job_spec["role"] == "implementation" and result.get("status") == "completed"
                 and state.change_requests.get("release", "").strip()):
-            from goodteam_os.release_artifacts import capture_release_candidate
+            from goodteam_os.release_artifacts import ReleaseCandidateError, capture_release_candidate
 
             if workspace is None:
                 raise RuntimeError("Release correction requires a durable workflow workspace.")
-            capture_release_candidate(state, workspace, project_config, [result])
+            try:
+                capture_release_candidate(state, workspace, project_config, [result])
+            except ReleaseCandidateError as exc:
+                # Runtime completion does not establish that required delivery
+                # artifacts exist. Retain the process result on disk; report the
+                # controller's artifact validation failure through normal triage.
+                results[-1] = {**result, "status": "failed", "failure_class": "artifact_validation",
+                               "summary": str(exc)}
+                break
     return results
 
 

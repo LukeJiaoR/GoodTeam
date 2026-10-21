@@ -50,16 +50,18 @@ def test_missing_release_output_recovers_through_bound_public_retry(tmp_path, mo
     state, repo, calls = setup_delivery(tmp_path, monkeypatch, runner, produce=produce)
     old_path = Path(state.artifacts['release_notes'])
     old_content = old_path.read_bytes()
-    with pytest.raises(ValueError, match='missing or stale'):
-        web.decide_approval(workspace=tmp_path, project_key='DEMO', approval='release',
-                            decision='changes_requested', note='Correct rollback and retain the browser gap.')
+    result = web.decide_approval(workspace=tmp_path, project_key='DEMO', approval='release',
+                                decision='changes_requested', note='Correct rollback and retain the browser gap.')
+    assert result['decision'] == 'changes_requested'
     interrupted = StateStore(tmp_path).read_project_current('DEMO')
-    assert interrupted.next_node == 'blocked'
-    assert interrupted.pending_transition['status'] == 'interrupted'
+    assert interrupted.next_node in {'blocked', 'failure_triage'}
+    assert interrupted.pending_transition['status'] == 'completed'
+    assert any('missing or stale' in message for message in interrupted.blockers)
     assert len(calls) == 2  # Missing output stops before QA.
     produce['enabled'] = True
     recovered = retry(tmp_path)
     assert recovered['next_node'] == 'await_release_approval'
+    assert not any('missing or stale' in message for message in recovered['blockers'])
     assert recovered['pending_transition']['status'] == 'completed'
     assert Path(recovered['artifacts']['release_notes']).read_bytes() == CORRECTED
     assert Path(recovered['release_candidate']['path']).read_bytes() == CORRECTED
