@@ -20,7 +20,7 @@ test('unsent conversation survives page changes and reload without sending', asy
 
 test('task context opens explicitly on desktop and narrow screens', async ({ page, fixture }, testInfo) => {
   await importProject(page, fixture);
-  const disclosure = page.locator('.work-context-disclosure');
+  const disclosure = page.locator('details.work-context-disclosure');
   const summary = disclosure.locator('summary');
   await expect(summary).toBeVisible();
   await summary.focus();
