@@ -1,5 +1,6 @@
 """Public release correction recovery with synthetic process transports only."""
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,8 @@ CORRECTED = b'# Corrected release\r\n\r\nRollback: revert only the patch. Browse
 
 def setup_delivery(tmp_path, monkeypatch, runner, *, produce):
     state, _, repo = seed(tmp_path, monkeypatch, runner)
+    from test_graph_sample import prepare_workflow_fixture
+    prepare_workflow_fixture(state, Path(state.source_ref))
     state.approvals['release'] = 'pending'
     StateStore(tmp_path).write_project_current(state)
     config = Path(state.source_ref)
@@ -30,8 +33,14 @@ def setup_delivery(tmp_path, monkeypatch, runner, *, produce):
             if job['role'] == 'implementation' and job['status'] == 'running':
                 (metadata.parent / 'release-notes.md').write_bytes(CORRECTED)
 
+    real_popen = subprocess.Popen
     install_fake_popen(monkeypatch, stdout_text='# Verification\nStatus: passed\n',
                        snapshot=output, calls=calls)
+    worker_popen = subprocess.Popen
+    monkeypatch.setattr(subprocess, 'Popen', lambda command, *args, **kwargs: (
+        worker_popen(command, *args, **kwargs) if str(command[0]).startswith('/fake/bin/')
+        else real_popen(command, *args, **kwargs)
+    ))
     return state, repo, calls
 
 
@@ -72,7 +81,7 @@ def test_missing_release_output_recovers_through_bound_public_retry(tmp_path, mo
 
 
 @pytest.mark.parametrize('runner', ['legacy', 'topo_v2'])
-def test_staging_failure_retry_restart_retains_correction_without_new_workers(tmp_path, monkeypatch, runner):
+def test_unattested_staging_retry_restart_retains_correction_without_new_workers(tmp_path, monkeypatch, runner):
     state, repo, calls = setup_delivery(tmp_path, monkeypatch, runner, produce={'enabled': True})
     config = Path(state.source_ref)
     config.write_text(config.read_text() + '''deployment_backend:
@@ -83,19 +92,21 @@ def test_staging_failure_retry_restart_retains_correction_without_new_workers(tm
   staging_healthcheck_command: echo synthetic-healthcheck
 ''')
     ssh_calls = []
+    real_run = subprocess.run
 
     def synthetic_run(command, **kwargs):
         if command == ['/fake/bin/claude', '--version']:
             return SimpleNamespace(returncode=0, stdout='synthetic claude version', stderr='')
-        assert command[0] == 'ssh', command
-        ssh_calls.append(command)
-        return SimpleNamespace(returncode=1 if len(ssh_calls) == 1 else 0,
-                               stdout='synthetic transport', stderr='')
+        if command[0] == 'ssh':
+            ssh_calls.append(command)
+            raise AssertionError('Workflow staging must attest the retained candidate before SSH.')
+        return real_run(command, **kwargs)
 
     monkeypatch.setattr('goodteam_os.staging.subprocess.run', synthetic_run)
     blocked = web.decide_approval(workspace=tmp_path, project_key='DEMO', approval='release',
                                   decision='changes_requested', note='Correct rollback and retain the browser gap.')
     assert blocked['next_node'] == 'blocked'
+    assert ssh_calls == []
     candidate = dict(blocked['release_candidate'])
     assert candidate['inputs']
     # Alter the original worker document, then use freshly loaded state via the
@@ -103,12 +114,8 @@ def test_staging_failure_retry_restart_retains_correction_without_new_workers(tm
     job_path = repo / '.goodteam/workers/jobs' / candidate['job_id'] / 'release-notes.md'
     job_path.write_text('# Stale mutable source\n')
     retried = retry(tmp_path)
-    assert retried['next_node'] == 'await_staging_approval'
+    assert retried['next_node'] == 'blocked'
     assert retried['release_candidate'] == candidate
     assert len(calls) == 3
-    approved = web.decide_approval(workspace=tmp_path, project_key='DEMO', approval='staging',
-                                   decision='approved', note='Synthetic transport evidence accepted for this isolated contract test.')
-    assert approved['next_node'] == 'await_release_approval'
-    assert Path(approved['artifacts']['release_notes']).read_bytes() == CORRECTED
-    assert approved['release_candidate'] == candidate
-    assert len(calls) == 3
+    assert Path(retried['release_candidate']['path']).read_bytes() == CORRECTED
+    assert ssh_calls == []
