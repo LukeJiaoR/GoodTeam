@@ -16,7 +16,7 @@ test('current identity and decision stay visible without opening the context dra
     await prepareFirstTask(page, fixture, evidence);
     await expect(bar).toHaveAttribute('data-state', 'awaiting_review');
     await page.mouse.move(0, 0);
-    await expect(page.locator('.work-context-disclosure')).not.toHaveAttribute('open', '');
+    await expect(page.locator('details.work-context-disclosure')).not.toHaveAttribute('open', '');
     await expect(bar).toBeVisible();
     const before = await snapshot(page, fixture, evidence);
     await bar.getByRole('button', { name: 'Go to required decision' }).click();
@@ -35,7 +35,7 @@ test('current identity and decision stay visible without opening the context dra
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await testInfo.attach('current-work-dark-1440', { body: await page.screenshot(), contentType: 'image/png' });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.locator('.work-context-disclosure summary').click();
+    await page.locator('details.work-context-disclosure summary').click();
     await expect(page.locator('.work-run-context')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await testInfo.attach('active-task-context-mobile', { body: await page.screenshot(), contentType: 'image/png' });

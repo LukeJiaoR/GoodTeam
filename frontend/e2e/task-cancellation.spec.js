@@ -1,7 +1,7 @@
 import { test, expect, importProject } from './fixtures.js';
 import { clickMutation, prepareFirstTask, sendTask, snapshot } from './business-loop-helpers.js';
 
-test('an old confirmation cannot archive a replacement task started from the same project', async ({ page, context, fixture }, testInfo) => {
+test('an in-flight archive request cannot archive a replacement task started from the same project', async ({ page, context, fixture }, testInfo) => {
   const evidence = [];
   await importProject(page, fixture);
   await sendTask(page, fixture, 'Implement a searchable project list.');
@@ -14,13 +14,20 @@ test('an old confirmation cannot archive a replacement task started from the sam
   await page.getByRole('button', { name: 'Archive current task', exact: true }).click();
   await expect(page.getByText(/moves the current task to history/)).toBeVisible();
 
-  // Delay only the old tab's reads; both tasks and every write use the real
-  // product HTTP handlers in the isolated fixture workspace, with fake Workers.
-  let releaseReads;
-  const readsPaused = new Promise((resolve) => { releaseReads = resolve; });
-  const stateUrl = url => url.pathname === '/api/state'
-    && url.searchParams.get('project') === fixture.key;
-  await page.route(stateUrl, async (route) => { await readsPaused; await route.continue(); });
+  // Hold the already-submitted old request while the other tab replaces its
+  // task. Polls continue normally; every write reaches the real HTTP handler.
+  let releaseArchive;
+  const archivePaused = new Promise((resolve) => { releaseArchive = resolve; });
+  let captureArchive;
+  const archiveCaptured = new Promise((resolve) => { captureArchive = resolve; });
+  const terminateUrl = url => url.pathname === '/api/terminate';
+  await page.route(terminateUrl, async (route) => {
+    if (route.request().method() === 'POST') {
+      captureArchive(route.request().postDataJSON());
+      await archivePaused;
+    }
+    await route.continue();
+  });
   const otherTab = await context.newPage();
   otherTab.on('pageerror', (error) => fixture.errors.push(error.message));
   otherTab.on('console', (message) => { if (message.type() === 'error') fixture.errors.push(message.text()); });
@@ -36,6 +43,11 @@ test('an old confirmation cannot archive a replacement task started from the sam
   };
   page.on('console', conflictConsole);
   try {
+    const pending = page.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/terminate');
+    await page.getByRole('button', { name: 'Archive current task', exact: true }).click();
+    expect(await archiveCaptured).toEqual({ project_key: fixture.key, expected_run_id: firstRun });
+
     const stop = await otherTab.request.post('/api/terminate', {
       data: { project_key: fixture.key, expected_run_id: firstRun },
     });
@@ -48,9 +60,7 @@ test('an old confirmation cannot archive a replacement task started from the sam
     expect(started.run_id).not.toBe(firstRun);
     const before = await snapshot(otherTab, fixture, evidence);
 
-    const pending = page.waitForResponse((response) => response.request().method() === 'POST'
-      && new URL(response.url()).pathname === '/api/terminate');
-    await page.getByRole('button', { name: 'Archive current task', exact: true }).click();
+    releaseArchive();
     const rejected = await pending;
     expect(rejected.request().postDataJSON()).toEqual({ project_key: fixture.key, expected_run_id: firstRun });
     expect(rejected.status()).toBe(409);
@@ -60,7 +70,6 @@ test('an old confirmation cannot archive a replacement task started from the sam
     expect(after.state.run_id).toBe(started.run_id);
     expect(evidence.at(-1).ledger).toEqual(evidence.at(-2).ledger);
 
-    releaseReads();
     await expect(page.getByRole('region', { name: 'Current task and next step' })).toContainText('Add keyboard navigation.');
     await expect(page.getByText(/moves the current task to history/)).toHaveCount(0);
     await testInfo.attach('task-bound-cancellation', {
@@ -68,8 +77,8 @@ test('an old confirmation cannot archive a replacement task started from the sam
     });
     await testInfo.attach('replacement-task-preserved', { body: await page.screenshot(), contentType: 'image/png' });
   } finally {
-    releaseReads();
-    await page.unroute(stateUrl);
+    releaseArchive();
+    await page.unroute(terminateUrl);
     page.off('console', conflictConsole);
     await otherTab.close();
   }
