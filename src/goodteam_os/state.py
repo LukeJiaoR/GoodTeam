@@ -53,6 +53,7 @@ class AgileDevState:
 
     artifact_proposals: dict[str, dict[str, str]] = field(default_factory=dict)
     artifact_generations: dict[str, str] = field(default_factory=dict)
+    release_candidate: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.task_skill_context = _state_skill_context(self)
