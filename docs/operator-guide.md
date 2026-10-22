@@ -217,9 +217,25 @@ reports and candidates live under the Operator state directory's
 `dispatch-workspaces/` subtree (`GOODTEAM_STATE_DIR` overrides that directory).
 They are not automatically deleted.
 
-Registered Skill-backed tasks and exact-source reviews retain their existing
-captured protocols and admission rules. This standalone dispatch isolation does
-not establish a repository baseline for the ordinary sequential workflow.
+Real sequential workflows also require a valid Git root and HEAD at task start.
+The run retains its HEAD, complete index and raw tracked/nonignored untracked
+input in one independent task directory. UI, implementation and QA share that
+directory in sequence so each sees the previous result. Job metadata stays in
+the original project store. Later source edits are not incorporated into the
+task. The state carries `repository_baseline`; recovery only reopens that
+binding and never captures a replacement from the source. A missing baseline,
+missing task directory or changed root identity blocks real execution. Start a
+new task after repairing the source rather than resuming an unbound older run.
+
+Cumulative workflow results describe the whole task, rather than attributing
+the same changes to individual Workers. Retained candidates require inspection
+before applying them to a project. Workflow documents remain in the workflow
+artifact store instead of being mirrored into the live source checkout. The
+current SSH staging adapter cannot attest this retained candidate, so workflow
+staging stops before deployment rather than approving a separately configured
+remote ref. Fake/noop/manual simulations do not claim
+this Git execution evidence. Registered Skill-backed tasks and exact-source
+reviews retain their existing captured protocols and admission rules.
 
 ```mermaid
 sequenceDiagram

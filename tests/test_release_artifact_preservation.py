@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -33,6 +34,8 @@ def test_release_change_request_has_owned_document_producer(tmp_path, monkeypatc
     import json
     state, _, repo = seed(tmp_path, monkeypatch, runner)
     from goodteam_os.state import StateStore
+    from test_graph_sample import prepare_workflow_fixture
+    prepare_workflow_fixture(state, Path(state.source_ref))
     state.approvals['release'] = 'pending'
     StateStore(tmp_path).write_project_current(state)
     from test_workers import install_fake_popen
@@ -45,8 +48,14 @@ def test_release_change_request_has_owned_document_producer(tmp_path, monkeypatc
             if job['role'] == 'implementation' and job['status'] == 'running':
                 (metadata.parent / 'release-notes.md').write_text(corrected)
     calls = []
+    real_popen = subprocess.Popen
     install_fake_popen(monkeypatch, stdout_text='# Verification\nStatus: passed\n',
                        snapshot=subprocess_output, calls=calls)
+    worker_popen = subprocess.Popen
+    monkeypatch.setattr(subprocess, 'Popen', lambda command, *args, **kwargs: (
+        worker_popen(command, *args, **kwargs) if str(command[0]).startswith('/fake/bin/')
+        else real_popen(command, *args, **kwargs)
+    ))
     original_path = Path(state.artifacts['release_notes'])
     original = original_path.read_text()
     request = 'Remove SQLite rollback; retain the known browser coverage gap and the verified patch instructions.'

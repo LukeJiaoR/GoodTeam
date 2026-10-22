@@ -18,8 +18,13 @@ from goodteam_os.state import create_initial_state
 from goodteam_os.workers import WorkerJobStore
 
 
-def _state():
-    return create_initial_state("run-1", "DEMO", "Ship the product")
+def _state(project_root: Path | None = None):
+    state = create_initial_state("run-1", "DEMO", "Ship the product")
+    if project_root is not None:
+        from test_graph_sample import prepare_repository_fixture
+
+        prepare_repository_fixture(state, project_root)
+    return state
 
 
 def _target(*profile_ids: str, dispatch: dict[str, object] | None = None) -> dict[str, object]:
@@ -588,9 +593,10 @@ def test_parallel_reviewer_jobs_apply_legacy_worker_type_settings_without_team_s
         }
     }
 
+    state = _state(tmp_path)
     dispatch_reviewer_jobs_for_gate(
         store=store,
-        state=_state(),
+        state=state,
         target=target,
         approval="staging",
         artifact_key="staging_report",
@@ -627,7 +633,7 @@ def test_graph_parallel_mode_without_rollout_acknowledgement_does_not_create_rev
 
 def test_graph_full_parallel_opt_in_creates_idempotent_reviewer_jobs_with_identity(tmp_path: Path):
     config, project_root = _project_config(tmp_path, dispatch=_parallel_dispatch())
-    state = _state()
+    state = _state(project_root)
 
     run_fix_qa(state, tmp_path, config)
     run_fix_qa(state, tmp_path, config)
@@ -652,9 +658,10 @@ def test_different_artifact_version_does_not_reuse_reviewer_job(tmp_path: Path):
     artifact = _artifact(tmp_path, content="# Staging\n\nFirst.\n")
     target = _target("correctness-security", dispatch=_parallel_dispatch())
 
+    state = _state(tmp_path)
     first = dispatch_reviewer_jobs_for_gate(
         store=store,
-        state=_state(),
+        state=state,
         target=target,
         approval="staging",
         artifact_key="staging_report",
@@ -664,7 +671,7 @@ def test_different_artifact_version_does_not_reuse_reviewer_job(tmp_path: Path):
     artifact.write_text("# Staging\n\nSecond.\n", encoding="utf-8")
     second = dispatch_reviewer_jobs_for_gate(
         store=store,
-        state=_state(),
+        state=state,
         target=target,
         approval="staging",
         artifact_key="staging_report",
@@ -702,9 +709,10 @@ def test_projection_matches_fanout_statuses_by_profile_id(tmp_path: Path):
         "architecture-maintainability",
         dispatch=_parallel_dispatch(),
     )
+    state = _state(tmp_path)
     dispatch_reviewer_jobs_for_gate(
         store=store,
-        state=_state(),
+        state=state,
         target=target,
         approval="staging",
         artifact_key="staging_report",

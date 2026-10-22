@@ -71,6 +71,13 @@ def capture_release_candidate(state, workspace, project_config, results):
     if (job.get('id') != job_id or job.get('run_id') != state.run_id or job.get('role') != 'implementation'
             or job.get('status') != 'completed' or 'release-notes.md' not in job.get('expected_artifacts', [])):
         raise _blocked()
+    baseline = getattr(state, 'repository_baseline', {})
+    if baseline:
+        from goodteam_os.workflow_workspace import validate_workflow_job_context
+
+        if job.get('workflow_workspace') != baseline:
+            raise _blocked()
+        validate_workflow_job_context(runtime, job)
     source = job_root / 'release-notes.md'
     content = current_job_artifact(job_root, {'result_path': str(source)},
                                    artifact_key='release_notes', filename='release-notes.md')
@@ -82,6 +89,8 @@ def capture_release_candidate(state, workspace, project_config, results):
     state.release_candidate = dict(run_id=state.run_id, project_key=state.project_key, job_id=job_id,
                                    request=_request(state), inputs={}, path=str(path),
                                    version=artifact_version_for_path(str(path)))
+    if baseline:
+        state.release_candidate['repository_baseline'] = baseline
 
 
 def bind_release_candidate(state):
@@ -102,4 +111,27 @@ def validated_release_candidate(state, workspace):
             or not path.is_relative_to(root) or not path.is_file()
             or not candidate.get('version') or candidate['version'] != artifact_version_for_path(str(path))):
         raise _blocked()
+    if candidate.get('repository_baseline', {}) != getattr(state, 'repository_baseline', {}):
+        raise _blocked()
     return path.read_bytes().decode('utf-8')
+
+
+def retain_repository_candidate(state):
+    """Publish only the same task bytes that completed implementation and QA."""
+    baseline = getattr(state, 'repository_baseline', {})
+    if not baseline:
+        return
+    from goodteam_os.workflow_workspace import collect_workflow_workspace
+
+    source = Path(str(baseline.get('source_root', '')))
+    current = collect_workflow_workspace(source, baseline, project_key=state.project_key, run_id=state.run_id)
+    reviewed = state.release_candidate.get('repository_result')
+    if not reviewed:
+        raise ReleaseCandidateError('The retained task has no completed delivery and QA candidate. Run delivery before release.')
+    if reviewed.get('result_commit') != current['result_commit']:
+        raise ReleaseCandidateError('The retained task code changed after QA. Retry delivery and review the new candidate.')
+    candidate = collect_workflow_workspace(source, baseline, project_key=state.project_key,
+                                           run_id=state.run_id, candidate=True)
+    if candidate['result_commit'] != current['result_commit'] or candidate['integration']['status'] != 'succeeded':
+        raise ReleaseCandidateError('The retained task code could not produce the reviewed release candidate.')
+    state.release_candidate['repository_result'] = candidate

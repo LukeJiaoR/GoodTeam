@@ -224,8 +224,11 @@ def test_new_parallel_reviewer_has_explicit_readonly_policy(tmp_path):
     artifact = root / "report.md"
     artifact.write_text("Original evidence", encoding="utf-8")
     store = WorkerJobStore(root)
+    state = create_initial_state("run-1", "DEMO", "Review")
+    from test_graph_sample import prepare_repository_fixture
+    prepare_repository_fixture(state, root)
     result = dispatch_reviewer_jobs_for_gate(
-        store=store, state=create_initial_state("run-1", "DEMO", "Review"),
+        store=store, state=state,
         target={"reviewer_profiles": {"implementation": ["correctness-security"]},
                 "reviewer_dispatch": {"mode": "parallel", "phases": {"implementation": "parallel"},
                                       "rollout": {"enabled": True, "acknowledge": "parallel-reviewer-dispatch-is-advisory"}}},

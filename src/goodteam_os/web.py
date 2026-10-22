@@ -3773,6 +3773,25 @@ def start_workflow(
         team_state = ensure_team_state(workspace, key, project_config)
         if team_state is not None:
             state.team_snapshot = build_team_execution_snapshot(team_state)
+    if not dry_run and target:
+        from goodteam_os.workflow_workspace import adapter_requires_workflow_workspace, prepare_workflow_workspace
+
+        runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+        from goodteam_os.reviewer_profiles import get_reviewer_profile
+
+        roles = ("project_intake", "product_requirement", "architect", "ui", "implementation", "qa", "release")
+        needs_repository = any(adapter_requires_workflow_workspace(resolve_role_adapter(target, role)) for role in roles)
+        needs_repository = needs_repository or any(
+            adapter_requires_workflow_workspace(get_reviewer_profile(profile_id).adapter)
+            for profiles in normalize_reviewer_profile_config(target).values() for profile_id in profiles
+        )
+        from goodteam_os.staging import staging_backend_enabled
+
+        needs_repository = needs_repository or staging_backend_enabled(source_type=source_type, project_config=project_config)
+        if needs_repository:
+            if runtime_root is None:
+                raise ValueError("A real workflow requires its configured Git repository baseline.")
+            state.repository_baseline = prepare_workflow_workspace(runtime_root, project_key=key, run_id=state.run_id)
     if not dry_run:
         from goodteam_os.skills.task_context import workflow_skill_context
         from goodteam_os.skills.task_locks import TaskSkillIdentity
@@ -3834,7 +3853,7 @@ def start_workflow(
     previous = StateStore(workspace).read_project_current(key)
     if previous is not None and not is_active_run(previous):
         StateStore(workspace).archive_project_current(key, reason="rejected" if previous.next_node == "rejected" else "complete")
-    if state.task_skill_context:
+    if state.task_skill_context or state.repository_baseline:
         # Lock ownership and the portable reference are durable BEFORE any graph
         # node may dispatch. Failure leaves an inspectable blocked task, not a
         # template-generated success or a recapture from current methods.
@@ -4863,7 +4882,7 @@ def regenerate_rfc_review_gate(
     if should_generate_artifact_with_worker(project_config, "architect"):
         return run_architecture_until_gate(state=state, workspace=workspace, project_config=project_config)
     invalidate_artifact(state, "rfc")
-    rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config),
+    rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
                              revision_tokens=state.artifact_generations).write_markdown(
         state.run_id,
         "rfc",
@@ -4965,12 +4984,23 @@ def _retry_bound_workflow(*, workspace, key, state, project_config):
     staging_retry = any(blocker.startswith("staging ") for blocker in state.blockers)
     state.blockers = []
     if staging_retry:
-        staging_result = run_staging_backend(project_config=project_config)
+        from goodteam_os.workflow_workspace import collect_workflow_workspace, workspace_for_workflow
+
+        execution_root = None
+        repository_candidate = {}
+        if state.repository_baseline:
+            source = Path(str(state.repository_baseline.get("source_root", "")))
+            execution_root = workspace_for_workflow(source, state.repository_baseline,
+                                                     project_key=state.project_key, run_id=state.run_id)
+            repository_candidate = collect_workflow_workspace(source, state.repository_baseline,
+                                                               project_key=state.project_key, run_id=state.run_id)
+        staging_result = run_staging_backend(project_config=project_config, execution_root=execution_root,
+                                             repository_candidate=repository_candidate)
         from goodteam_os.graph import render_staging_report_markdown
         from goodteam_os.artifacts import ArtifactStore
 
         invalidate_artifact(state, "staging_report")
-        store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config),
+        store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
                               revision_tokens=state.artifact_generations)
         staging_path = store.write_markdown(
             state.run_id,

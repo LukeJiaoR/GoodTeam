@@ -30,6 +30,7 @@ JOB_REQUEST_FIELDS = (
     "execution_id", "project_key", "pi_path", "pi_provider", "pi_model",
     "pi_thinking_level", "pi_session_dir", "reasoning_depth", "additional_prompt",
     "desired_instances", "execution_policy", "worker_id", "worker_name",
+    "workflow_workspace",
 )
 SELECTION_IDENTITY_FIELDS = (
     "run_id", "role", "profile_id", "approval", "gate", "phase", "artifact_key",
