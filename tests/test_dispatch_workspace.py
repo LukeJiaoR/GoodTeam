@@ -180,6 +180,57 @@ def test_replay_reopens_fixed_baseline_without_recapturing_source(repo):
         prepare_dispatch_workspace(repo, "replay", None)
 
 
+def test_replay_allows_another_job_to_publish_while_artifact_directory_opens(repo, monkeypatch):
+    workspace = prepare_dispatch_workspace(repo, "concurrent-publish", ["one", "two"])
+    (workspace.workspace("two") / "tracked.txt").write_bytes(b"second job result\n")
+    real_open = os.open
+    published = []
+
+    def open_during_publish(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if path == workspace.artifact_root.name and flags & os.O_DIRECTORY and not published:
+            published.append(True)
+            published.append(workspace.collect("two"))
+        return descriptor
+
+    monkeypatch.setattr(os, "open", open_during_publish)
+    replay = prepare_dispatch_workspace(repo, "concurrent-publish", None)
+
+    assert replay.metadata == workspace.metadata
+    assert published[1]["changed_files"] == ["tracked.txt"]
+    assert replay.collect("one")["changed_files"] == []
+
+
+def test_artifact_traversal_rejects_symlinks(repo, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError):
+        prepare_dispatch_workspace(repo, "linked", ["one"], artifact_root=linked / "run")
+    assert not list(outside.iterdir())
+
+
+def test_artifact_traversal_rejects_directory_replacement(repo, tmp_path, monkeypatch):
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    real_open = os.open
+    replaced = []
+
+    def open_replacement(path, flags, *args, **kwargs):
+        if path == artifacts.name and flags & os.O_DIRECTORY and not replaced:
+            replaced.append(True)
+            artifacts.rename(tmp_path / "old-artifacts")
+            artifacts.mkdir()
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", open_replacement)
+    with pytest.raises(DispatchWorkspaceError, match="identity or permissions changed"):
+        prepare_dispatch_workspace(repo, "replaced", ["one"], artifact_root=artifacts)
+    assert not list(artifacts.iterdir())
+
+
 @pytest.mark.parametrize("unsupported", ["symlink", "sparse", "split", "gitlink"])
 def test_unsupported_source_capture_fails_closed(repo, tmp_path, unsupported):
     if unsupported == "symlink":

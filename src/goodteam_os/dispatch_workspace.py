@@ -29,6 +29,7 @@ from goodteam_os.repository_snapshot import (
     _parse_index_records,
     _trusted_git_executable,
 )
+from goodteam_os.skills.filesystem import directory
 
 
 class DispatchWorkspaceError(ValueError):
@@ -65,8 +66,15 @@ def _artifact_root(project_root: Path, run_id: str, artifact_root: Path | None) 
     ancestor = root
     while not ancestor.exists():
         ancestor = ancestor.parent
-    with AnchoredRepository(ancestor):
-        pass
+    before = ancestor.lstat()
+    with directory(ancestor) as descriptor:
+        # Other jobs publish snapshots and temporary indexes in this directory.
+        # Its contents may change while its identity and permissions stay fixed.
+        fields = ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid")
+        for current in (os.fstat(descriptor), ancestor.lstat()):
+            if (not stat.S_ISDIR(current.st_mode)
+                    or any(getattr(before, field) != getattr(current, field) for field in fields)):
+                raise DispatchWorkspaceError("Dispatch artifact directory identity or permissions changed.")
     return root
 
 
