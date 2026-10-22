@@ -109,6 +109,29 @@ project. Readiness facts, detected or confirmed project mode, and pending steps
 are persisted in the workspace and handled through Task Assistant after a browser
 reload or GoodTeam server restart.
 
+The project home API reports a fresh `git_baseline` with `state` (`non_git`,
+`unborn`, `valid_head`, or `invalid`), `head_sha`, and `baseline_required`.
+Registration and read-only preparation do not require Git. A new empty project
+created through `/api/project-config` initializes Git by default and commits only
+its newly generated README and ignore file. Existing repositories keep their
+history, branch, and identity configuration.
+
+If initialization fails, the response includes an actionable error and retains
+`baseline_required: true`; a leftover `.git` directory is not a valid baseline.
+To initialize an imported non-Git directory or retry an unborn repository,
+explicitly select regular files in the same-origin `POST /api/git-init` body:
+
+```json
+{"project_key": "MYAPP", "initial_files": ["README.md", "src/app.py"]}
+```
+
+Unselected staged and untracked files stay outside the initial commit. Without
+`initial_files`, this endpoint only reports the missing baseline; it does not
+stage the directory. A valid HEAD makes retries idempotent. Invalid metadata or
+a root inside another Git worktree must be repaired or reselected before retry.
+This initialization state does not itself establish a task-bound execution
+snapshot or isolate workflow Workers.
+
 Task Assistant distinguishes a successfully loaded project from one that is
 ready to start work, asks for preparation input when needed, and surfaces the
 persisted result in the conversation. Mode-specific initialization and

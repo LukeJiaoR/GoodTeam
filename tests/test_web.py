@@ -3128,7 +3128,15 @@ def test_create_local_project_config_initializes_git_on_fresh_root(tmp_path):
     assert (project_root / "README.md").read_text(encoding="utf-8") == "# AI Content Studio\n"
     assert (project_root / ".gitignore").is_file()
     assert commit_count.stdout.strip() == "1"
-    assert payload["git"] == {"initialized": True, "remote_created": False, "warnings": []}
+    assert payload["git"]["initialized"] is True
+    assert payload["git"]["baseline_required"] is False
+    assert payload["git"]["state"] == "valid_head"
+    assert payload["git"]["head_sha"] == subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert payload["git"]["remote_created"] is False
+    assert payload["git"]["warnings"] == []
 
 
 def test_create_local_project_config_create_remote_without_token_warns(tmp_path, monkeypatch):
@@ -3142,12 +3150,11 @@ def test_create_local_project_config_create_remote_without_token_warns(tmp_path,
         project_name="AI Content Studio",
         project_key="CONTENTOPS",
         project_root=str(project_root),
-        init_git=False,
         create_remote=True,
     )
 
     assert Path(payload["project_config"]).is_file()
-    assert payload["git"]["initialized"] is False
+    assert payload["git"]["initialized"] is True
     assert payload["git"]["remote_created"] is False
     assert "create-remote requested but no GITHUB_TOKEN/GH_TOKEN set" in payload["git"]["warnings"]
 
@@ -3157,10 +3164,13 @@ def test_create_local_project_config_create_remote_uses_gh_token(tmp_path, monke
     project_root.mkdir()
     calls = []
     monkeypatch.setenv("GITHUB_TOKEN", "token-from-env")
+    real_run = subprocess.run
 
     def fake_run(command, **kwargs):
-        calls.append({"command": command, **kwargs})
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[0] == "gh":
+            calls.append({"command": command, **kwargs})
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return real_run(command, **kwargs)
 
     monkeypatch.setattr(web.subprocess, "run", fake_run)
 
@@ -3169,14 +3179,16 @@ def test_create_local_project_config_create_remote_uses_gh_token(tmp_path, monke
         project_name="AI Content Studio",
         project_key="CONTENTOPS",
         project_root=str(project_root),
-        init_git=False,
         create_remote=True,
         remote_private=False,
     )
 
     gh_calls = [call for call in calls if call["command"][:3] == ["gh", "repo", "create"]]
     assert Path(payload["project_config"]).is_file()
-    assert payload["git"] == {"initialized": False, "remote_created": True, "warnings": []}
+    assert payload["git"]["initialized"] is True
+    assert payload["git"]["baseline_required"] is False
+    assert payload["git"]["remote_created"] is True
+    assert payload["git"]["warnings"] == []
     assert len(gh_calls) == 1
     assert gh_calls[0]["command"] == [
         "gh",

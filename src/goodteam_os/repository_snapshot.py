@@ -90,6 +90,27 @@ class RepositorySnapshot:
         return asdict(self)
 
 
+def inspect_repository_git(
+    root: Path,
+    expected_identity: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Classify a root without reading project files or changing Git state.
+
+    Invalid metadata and nested directories raise instead of masquerading as
+    non-Git or unborn repositories. Callers may register non-Git projects, but
+    Git-dependent execution must require ``state == "valid_head"``.
+    """
+    root = _absolute_root(root)
+    identity = _expected_root_identity(root, expected_identity)
+    try:
+        with AnchoredRepository(root, expected_identity=identity) as repository:
+            result = _inspect_git(repository)
+            repository.verify_root()
+            return {**result, "root_identity": identity}
+    except RepositoryAccessError as exc:
+        raise RepositorySnapshotError(exc.code, str(exc), details=exc.details) from exc
+
+
 def capture_repository_snapshot(
     root: Path,
     project_key: str,
@@ -578,15 +599,15 @@ def _capture_once(
     }
 
 
-def _capture_git(
-    repository: AnchoredRepository,
-    limits: SnapshotLimits,
-) -> tuple[dict[str, object] | None, dict[str, object] | None, dict[str, object] | None]:
+def _inspect_git(repository: AnchoredRepository) -> dict[str, object]:
     repository.verify_root()
     probe = _run_git(repository.root, ["rev-parse", "--is-inside-work-tree"])
     if probe.returncode != 0:
-        if b"not a git repository" in probe.stderr.lower():
-            return None, None, None
+        if (
+            b"not a git repository" in probe.stderr.lower()
+            and not os.path.lexists(repository.root / ".git")
+        ):
+            return {"state": "non_git", "head_sha": None, "branch": None}
         raise _git_failed(probe)
     if probe.stdout.strip() != b"true":
         raise RepositorySnapshotError(
@@ -603,21 +624,49 @@ def _capture_git(
             details={"operation": "rev-parse"},
         )
 
-    head = _run_git(repository.root, ["rev-parse", "--verify", "HEAD"])
-    if head.returncode not in {0, 128}:
-        raise _git_failed(head)
-    head_sha = os.fsdecode(head.stdout.strip()) if head.returncode == 0 else None
     branch_result = _run_git(
         repository.root,
-        ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        ["symbolic-ref", "--quiet", "HEAD"],
     )
     if branch_result.returncode not in {0, 1}:
         raise _git_failed(branch_result)
-    branch = (
+    branch_ref = (
         os.fsdecode(branch_result.stdout.strip())
         if branch_result.returncode == 0
         else None
     )
+    head = _run_git(repository.root, ["rev-parse", "--verify", "HEAD^{commit}"])
+    head_sha = os.fsdecode(head.stdout.strip()) if head.returncode == 0 else None
+    if head_sha is None:
+        # An absent branch is unborn. A branch pointing to a missing/non-commit
+        # object, or a broken detached HEAD, is invalid and cannot be repaired
+        # by silently creating a new initial commit.
+        if head.returncode != 128 or not branch_ref or not branch_ref.startswith("refs/heads/"):
+            raise _git_failed(head)
+        branch_exists = _run_git(
+            repository.root, ["show-ref", "--verify", "--quiet", branch_ref]
+        )
+        if branch_exists.returncode != 1:
+            raise _git_failed(head)
+    elif not _is_git_object_id(head_sha):
+        raise _git_failed(head)
+    repository.verify_root()
+    return {
+        "state": "valid_head" if head_sha else "unborn",
+        "head_sha": head_sha,
+        "branch": branch_ref.removeprefix("refs/heads/") if branch_ref else None,
+    }
+
+
+def _capture_git(
+    repository: AnchoredRepository,
+    limits: SnapshotLimits,
+) -> tuple[dict[str, object] | None, dict[str, object] | None, dict[str, object] | None]:
+    git_state = _inspect_git(repository)
+    if git_state["state"] == "non_git":
+        return None, None, None
+    head_sha = git_state["head_sha"]
+    branch = git_state["branch"]
     object_format = os.fsdecode(
         _require_git(repository.root, ["rev-parse", "--show-object-format"]).strip()
     )
