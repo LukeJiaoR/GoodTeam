@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import subprocess
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -130,12 +132,95 @@ def dispatch_tracks(
     logical_task_id: str = "",
     codex_review_admission: CodexReviewAdmission | None = None,
 ) -> dict[str, object]:
+    # Exact-source reviews own a separate immutable source protocol. Ordinary
+    # writing tracks must retain one baseline and workspace across replay.
+    arguments = dict(project_root=project_root, tracks=tracks, verify_commands=verify_commands,
+                     constraints_file=constraints_file, research_report_file=research_report_file,
+                     projects_dir=projects_dir, allow_unsafe=allow_unsafe,
+                     logical_task_id=logical_task_id or str(uuid4()),
+                     codex_review_admission=codex_review_admission)
+    if any(track.get("review_target") is not None for track in tracks):
+        return _dispatch_tracks(**arguments)
+    from goodteam_os.skills.task_start import registered_project_scope
+
+    registered_scope = registered_project_scope(project_root)
+    from goodteam_os.dispatch_workspace import dispatch_artifact_root, dispatch_workspace_lock
+    from goodteam_os.memory_storage import atomic_write, read_bytes
+    from goodteam_os.skills.models import canonical_json, content_digest
+
+    logical_id = str(arguments["logical_task_id"])
+    run_id = "dispatch-" + content_digest(logical_id.encode("utf-8"))[7:]
+    artifact_root = dispatch_artifact_root(project_root, run_id)
+    request = {"project_root": str(project_root.absolute()), "tracks": tracks,
+               "verify_commands": verify_commands or {}, "constraints": _constraints_from_file(constraints_file),
+               "constraints_source": str(constraints_file) if constraints_file else "",
+               "research_report_source": str(research_report_file) if research_report_file else "",
+               "research_digest": hashlib.sha256(research_report_file.read_bytes()).hexdigest()
+               if research_report_file else ""}
+    def dispatch_locked():
+        saved = read_bytes(artifact_root / "request.json")
+        encoded = canonical_json(request).encode("utf-8")
+        if saved is not None and saved != encoded:
+            if registered_scope is not None:
+                from goodteam_os.skills.models import SkillConflict
+
+                raise SkillConflict("operation_conflict", "dispatch_request_changed: use the original inputs or a new task ID.")
+            raise ValueError("dispatch_request_changed: use the original inputs or a new task ID.")
+        if saved is None:
+            atomic_write(artifact_root / "request.json", encoded)
+        report = read_bytes(artifact_root / "report.json")
+        if report is not None:
+            from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
+
+            prepare_dispatch_workspace(project_root, run_id, None)
+            return json.loads(report)
+        try:
+            result = _dispatch_tracks(**arguments)
+        except SkillError:
+            # Existing protected tasks predate this ordinary-dispatch guard.
+            # A rejected first request must not replace their original identity.
+            if saved is None and not (artifact_root / "baseline.json").exists():
+                (artifact_root / "request.json").unlink(missing_ok=True)
+            raise
+        # Skill tasks retain their own protected result/revocation checks and
+        # do not own an ordinary dispatch Git baseline.
+        if "baseline" in result:
+            atomic_write(artifact_root / "report.json", canonical_json(result).encode("utf-8"))
+        return result
+
+    from goodteam_os.skills.models import SkillError
+
+    # The storage lock translates its own Skill filesystem errors. Preserve
+    # task-protocol errors by raising them after the lock has been released.
+    failure = None
+    with dispatch_workspace_lock(project_root, run_id):
+        try:
+            return dispatch_locked()
+        except SkillError as exc:
+            failure = exc
+    raise failure
+
+
+def _dispatch_tracks(
+    *, project_root: Path, tracks: list[dict[str, object]],
+    verify_commands: dict[str, str] | None = None, constraints_file: Path | None = None,
+    research_report_file: Path | None = None, projects_dir: Path | None = None,
+    allow_unsafe: bool = False, logical_task_id: str = "",
+    codex_review_admission: CodexReviewAdmission | None = None,
+) -> dict[str, object]:
     safety_kwargs: dict[str, object] = {"allow_unsafe": allow_unsafe}
     if projects_dir is not None:
         safety_kwargs["projects_dir"] = projects_dir
     safety = ensure_dispatch_project_root_is_safe(project_root, **safety_kwargs)
     if not safety["safe"]:
         raise ValueError(str(safety["reason"]))
+    roles = [str(track.get("role", "")) for track in tracks]
+    if not roles or len(set(roles)) != len(roles):
+        raise ValueError("Dispatch requires at least one track and distinct roles.")
+    if any(track.get("review_target") is not None for track in tracks) and (
+        len(tracks) != 1 or tracks[0].get("role") != "code_review"
+    ):
+        raise ValueError("Exact-source review requires one code_review track.")
     # Validate trusted composition before recording a task. Neither track JSON
     # nor a Skill may supply admission, and each execution thread retains it.
     store = WorkerJobStore(project_root, **_review_runtime_kwargs(codex_review_admission))
@@ -188,11 +273,19 @@ def dispatch_tracks(
         )
         for index, track in enumerate(tracks)
     ]
+    isolated = None
+    if not any(job.get("skill_execution_snapshot_ref") for job in jobs_by_role):
+        from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
+
+        isolated = prepare_dispatch_workspace(project_root, run_id, [str(job["id"]) for job in jobs_by_role])
     results_by_role: dict[str, dict[str, object]] = {}
     max_workers = max(1, len(jobs_by_role))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(_run_dispatched_job, project_root, job, dict(verify_commands or {}),
+                            **({"dispatch_context": {"available": True, "mode": "dispatch_isolated",
+                                "workspace_path": str(isolated.workspace(str(job["id"]))),
+                                "execution_id": run_id, "sandbox_id": str(job["id"])}} if isolated else {}),
                             **_review_runtime_kwargs(codex_review_admission)): str(job["role"])
             for job in jobs_by_role
         }
@@ -201,16 +294,27 @@ def dispatch_tracks(
             try:
                 results_by_role[role] = future.result()
             except Exception as exc:
-                results_by_role[role] = _exception_report(role=role, error=exc)
+                results_by_role[role] = {**_exception_report(role=role, error=exc),
+                                        "job_id": next(str(job["id"]) for job in jobs_by_role if job["role"] == role)}
 
     jobs = [results_by_role.get(str(job["role"]), _exception_report(role=str(job["role"]), error=RuntimeError("missing result"))) for job in jobs_by_role]
+    if isolated:
+        for job in jobs:
+            try:
+                captured = isolated.collect(str(job["job_id"]))
+                if job.get("result_commit") != captured["result_commit"]:
+                    raise ValueError("dispatch_result_changed: Worker files changed after verification.")
+                job.update(captured, attribution_status="captured")
+            except Exception as exc:
+                job.update(changed_files=None, attribution_status="unknown", attribution_error=str(exc),
+                           outcome="needs_human")
     ok = [job for job in jobs if job.get("outcome") == "ok"]
     reviews = [job for job in jobs if job.get("outcome") == "review_received"]
     needs_human = [job for job in jobs if job.get("outcome") == "needs_human"]
     file_to_roles: dict[str, set[str]] = defaultdict(set)
     for job in jobs:
         role = str(job.get("role", ""))
-        for path in job.get("changed_files", []):
+        for path in job.get("changed_files") or []:
             if role and isinstance(path, str):
                 file_to_roles[path].add(role)
     file_collisions = [
@@ -218,8 +322,15 @@ def dispatch_tracks(
         for path, roles in sorted(file_to_roles.items())
         if len(roles) > 1
     ]
+    integration = {"status": "not_applicable"}
+    if isolated:
+        integration = ({"status": "blocked", "reason": "worker_or_evidence_failed"} if needs_human
+                       else isolated.integrate([str(job["job_id"]) for job in jobs],
+                            expected_results={str(job["job_id"]): str(job["result_commit"]) for job in jobs}))
+    execution_ok = not needs_human
     return {
-        "all_ok": not needs_human and not file_collisions,
+        "all_ok": execution_ok and integration["status"] in {"succeeded", "not_applicable"},
+        "execution_ok": execution_ok,
         "has_collisions": bool(file_collisions),
         "file_collisions": file_collisions,
         "jobs": jobs,
@@ -228,6 +339,9 @@ def dispatch_tracks(
         "needs_human": needs_human,
         "run_id": run_id,
         "project_root": str(project_root),
+        "integration": integration,
+        **({"baseline": {name: value for name, value in isolated.metadata.items() if name != "files"}}
+           if isolated else {}),
     }
 
 
@@ -251,7 +365,7 @@ def _create_track_job(
 ) -> dict[str, Any]:
     from goodteam_os.skills.worker_requests import WORKER_METADATA_LOADER, subject_for_role
 
-    fields = {}
+    fields = {"idempotency_key": command_key}
     if method_context:
         fields = {"task_skill_context": method_context, "skill_subject": subject_for_role(str(track["role"])),
                   "skill_loader_version": WORKER_METADATA_LOADER, "project_key": project_key,
@@ -281,10 +395,17 @@ def _create_track_job(
 def _run_dispatched_job(
     project_root: Path, job: dict[str, Any], verify_commands: dict[str, str], *,
     codex_review_admission: CodexReviewAdmission | None = None,
+    dispatch_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     store = WorkerJobStore(project_root, **_review_runtime_kwargs(codex_review_admission))
     try:
-        status = store.run_job(str(job["id"]))
+        saved_status = project_root / ".goodteam" / "workers" / "jobs" / str(job["id"]) / "status.json"
+        if dispatch_context and saved_status.exists():
+            status = store._read_json(saved_status)
+            if status.get("status") == "running":
+                raise ValueError("dispatch_worker_running: the original attempt must be stopped or reconciled first.")
+        else:
+            status = store.run_job(str(job["id"]), **({"sandbox_context": dispatch_context} if dispatch_context else {}))
     except Exception as exc:
         return _job_report(
             project_root=project_root,
@@ -322,13 +443,39 @@ def _run_dispatched_job(
             verify={"passed": None, "skipped": True, "reason": "advisory_review"}, review=detail)
 
     verify: dict[str, object] = {"passed": True, "skipped": True, "reason": "not_configured"}
+    captured = {}
+    if dispatch_context:
+        from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
+        from goodteam_os.memory_storage import atomic_write, read_bytes
+        from goodteam_os.skills.models import canonical_json
+
+        isolated = prepare_dispatch_workspace(project_root, str(dispatch_context["execution_id"]), None)
+        captured = isolated.collect(str(job["id"]))
+        receipt = saved_status.with_name("dispatch-verify.json")
+        saved = read_bytes(receipt)
+        if saved is not None:
+            record = json.loads(saved)
+            if record.get("status") != "finished" or record.get("result_commit") != captured["result_commit"]:
+                status = {**status, "status": "failed", "summary": "Verification was interrupted or its Worker files changed; inspect retained output."}
+                verify = {"passed": False, "skipped": True, "reason": "verification_evidence_changed"}
+            else:
+                verify = record["verify"]
+            return {**_job_report(project_root=project_root, job=job, status=status, verify=verify), **captured}
+        atomic_write(receipt, canonical_json({"status": "started", "result_commit": captured["result_commit"]}).encode("utf-8"))
     if str(status.get("status")) == "completed":
         command = verify_commands.get(str(job["role"]), "").strip()
         if command:
-            verify = run_track_verify(command, cwd=project_root)
+            runtime_root = Path(str(dispatch_context["workspace_path"])) if dispatch_context else project_root
+            if dispatch_context:
+                store._worker_runtime_cwd({**job, "sandbox_context": dispatch_context})
+            verify = run_track_verify(command, cwd=runtime_root)
     else:
         verify = {"passed": False, "skipped": True, "reason": "worker_failed"}
-    return _job_report(project_root=project_root, job=job, status=status, verify=verify)
+    if dispatch_context:
+        captured = isolated.collect(str(job["id"]))
+        atomic_write(receipt, canonical_json({"status": "finished", "verify": verify,
+                     "result_commit": captured["result_commit"]}).encode("utf-8"))
+    return {**_job_report(project_root=project_root, job=job, status=status, verify=verify), **captured}
 
 
 def _job_report(
@@ -357,7 +504,8 @@ def _job_report(
         "disposition": str(status.get("disposition", "")),
         "result_path": "" if locked_review else str(job_root / "result.md"),
         "status_path": str(job_root / "status.json"),
-        "changed_files": [] if locked_review else changed_files(project_root),
+        "changed_files": [] if locked_review else None,
+        "attribution_status": "not_applicable" if locked_review else "unknown",
         **({"review": review, "approval_changed": False} if review is not None else {}),
         "memory_writeback": status.get("memory_writeback", {}),
         "verify": verify,
@@ -374,23 +522,12 @@ def _exception_report(*, role: str, error: Exception) -> dict[str, object]:
         "summary": str(error),
         "result_path": "",
         "status_path": "",
-        "changed_files": [],
+        "changed_files": None,
+        "attribution_status": "unknown",
         "memory_writeback": {},
         "verify": {"passed": False, "skipped": True, "reason": "exception"},
         "outcome": "needs_human",
     }
-
-
-def changed_files(project_root: Path) -> list[str]:
-    completed = subprocess.run(
-        ["git", "-C", str(project_root), "diff", "--name-only"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return []
-    return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
 
 
 def _constraints_from_file(path: Path | None) -> list[str]:

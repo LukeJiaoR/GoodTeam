@@ -1,6 +1,8 @@
 import json
 import os
+import shlex
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -371,8 +373,7 @@ def test_isolation_guard_rejects_project_root_inside_configured_repo(tmp_path):
     assert str(repo.resolve()) in result["reason"]
 
 
-def test_job_report_surfaces_failure_metadata(tmp_path, monkeypatch):
-    monkeypatch.setattr("goodteam_os.dispatch.changed_files", lambda _: [])
+def test_job_report_surfaces_failure_metadata(tmp_path):
     job = {"id": "job-1", "role": "implementation", "adapter": "codex"}
     status = {
         "status": "failed",
@@ -388,6 +389,8 @@ def test_job_report_surfaces_failure_metadata(tmp_path, monkeypatch):
     assert report["failure_class"] == "timeout"
     assert report["attempts"] == 2
     assert report["disposition"] == "escalated"
+    assert report["changed_files"] is None
+    assert report["attribution_status"] == "unknown"
 
 
 def test_isolation_guard_accepts_temp_worktree(tmp_path):
@@ -402,9 +405,29 @@ def test_isolation_guard_accepts_temp_worktree(tmp_path):
     assert result == {"safe": True, "reason": ""}
 
 
+def _dispatch_git(root, *arguments):
+    return subprocess.run(["git", "-C", str(root), *arguments], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _dispatch_repo(root):
+    root.mkdir()
+    _dispatch_git(root, "init", "-q")
+    _dispatch_git(root, "config", "user.name", "Dispatch fixture")
+    _dispatch_git(root, "config", "user.email", "dispatch@example.invalid")
+    _dispatch_git(root, "config", "commit.gpgSign", "false")
+    (root / ".gitignore").write_text(".goodteam/\n")
+    (root / "app.py").write_text("original\n")
+    _dispatch_git(root, "add", ".")
+    _dispatch_git(root, "commit", "-qm", "Initial fixture")
+    return root
+
+
+def _dispatch_script(source):
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(source)}"
+
+
 def test_dispatch_tracks_groups_ok_and_verify_failure(tmp_path):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
 
     payload = dispatch_tracks(
         project_root=project_root,
@@ -435,8 +458,7 @@ def test_dispatch_tracks_persists_task_and_constraints_sources(tmp_path):
     task_file.write_text("Implement backend from contract.\n", encoding="utf-8")
     constraints_file = tmp_path / "constraints.md"
     constraints_file.write_text("- Stay in backend.\n", encoding="utf-8")
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
     track = parse_dispatch_track_spec(f"implementation:fake:{task_file}", base_dir=tmp_path)
 
     payload = dispatch_tracks(
@@ -456,8 +478,7 @@ def test_dispatch_tracks_archives_research_report_source(tmp_path):
     task_file.write_text("Implement backend from researched contract.\n", encoding="utf-8")
     research_report = tmp_path / "research-report.md"
     research_report.write_text("# Research\n\n- Existing helper already writes manifests.\n", encoding="utf-8")
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
     track = parse_dispatch_track_spec(f"implementation:fake:{task_file}", base_dir=tmp_path)
 
     payload = dispatch_tracks(
@@ -476,15 +497,14 @@ def test_dispatch_tracks_archives_research_report_source(tmp_path):
 def test_dispatch_tracks_captures_one_track_exception_without_blocking_other(tmp_path, monkeypatch):
     original_run_job = WorkerJobStore.run_job
 
-    def flaky_run_job(self, job_id):
+    def flaky_run_job(self, job_id, **kwargs):
         job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
         if job["role"] == "qa":
             raise RuntimeError("qa exploded")
-        return original_run_job(self, job_id)
+        return original_run_job(self, job_id, **kwargs)
 
     monkeypatch.setattr(WorkerJobStore, "run_job", flaky_run_job)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
 
     payload = dispatch_tracks(
         project_root=project_root,
@@ -503,52 +523,48 @@ def test_dispatch_tracks_captures_one_track_exception_without_blocking_other(tmp
     assert "qa exploded" in payload["jobs"][1]["summary"]
 
 
-def test_dispatch_tracks_reports_changed_files_from_git_diff(tmp_path, monkeypatch):
-    calls = []
-
-    def fake_run(command, *, cwd=None, capture_output=True, text=True, check=False):
-        calls.append({"command": command, "cwd": cwd})
-        if command[:3] == ["git", "-C", str(tmp_path / "target")]:
-            return FakeCompleted(returncode=0, stdout="src/app.py\ntests/test_app.py\n", stderr="")
-        return FakeCompleted(returncode=0, stdout="ok", stderr="")
-
-    monkeypatch.setattr("goodteam_os.dispatch.subprocess.run", fake_run)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+def test_dispatch_tracks_attributes_task_delta_without_human_baseline_changes(tmp_path):
+    project_root = _dispatch_repo(tmp_path / "target")
+    (project_root / "app.py").write_text("human staged\n")
+    _dispatch_git(project_root, "add", "app.py")
+    (project_root / "app.py").write_text("human unstaged\n")
+    (project_root / "human.txt").write_text("human untracked\n")
+    original_head = _dispatch_git(project_root, "rev-parse", "HEAD")
+    original_index = (project_root / ".git/index").read_bytes()
+    script = """from pathlib import Path
+import subprocess
+assert Path('app.py').read_text() == 'human unstaged\\n'
+assert Path('human.txt').read_text() == 'human untracked\\n'
+assert subprocess.check_output(['git', 'show', ':app.py'], text=True) == 'human staged\\n'
+Path('app.py').write_text('worker changed\\n')
+Path('new.py').write_text('worker new\\n')
+subprocess.run(['git', 'add', 'app.py'], check=True)
+"""
 
     payload = dispatch_tracks(
         project_root=project_root,
         tracks=[
             {"role": "implementation", "adapter": "fake", "task": "Implement backend."},
         ],
-        verify_commands={"implementation": "echo ok"},
+        verify_commands={"implementation": _dispatch_script(script)},
     )
 
-    assert payload["jobs"][0]["changed_files"] == ["src/app.py", "tests/test_app.py"]
-    assert any(call["command"][:3] == ["git", "-C", str(project_root)] for call in calls)
+    assert payload["all_ok"] is True, payload
+    report = payload["jobs"][0]
+    assert report["changed_files"] == ["app.py", "new.py"]
+    assert Path(report["verify"]["cwd"]) == Path(report["workspace_path"])
+    assert Path(report["workspace_path"]) != project_root
+    assert payload["integration"]["changed_files"] == ["app.py", "new.py"]
+    assert (Path(payload["integration"]["candidate_path"]) / "human.txt").read_text() == "human untracked\n"
+    assert (project_root / "app.py").read_text() == "human unstaged\n"
+    assert (project_root / "human.txt").read_text() == "human untracked\n"
+    assert not (project_root / "new.py").exists()
+    assert _dispatch_git(project_root, "rev-parse", "HEAD") == original_head
+    assert (project_root / ".git/index").read_bytes() == original_index
 
 
-def test_dispatch_tracks_reports_file_collisions_when_tracks_touch_same_file(tmp_path, monkeypatch):
-    def fake_run_dispatched_job(project_root, job, verify_commands):
-        if job["role"] == "ui":
-            changed = ["src/App.jsx", "src/theme.css"]
-        else:
-            changed = ["src/App.jsx", "src/api.py"]
-        return {
-            "job_id": job["id"],
-            "role": job["role"],
-            "adapter": job["adapter"],
-            "status": "completed",
-            "outcome": "ok",
-            "summary": "done",
-            "memory_writeback": {"status": "skipped"},
-            "verify": {"passed": True, "skipped": True, "reason": "none"},
-            "changed_files": changed,
-        }
-
-    monkeypatch.setattr("goodteam_os.dispatch._run_dispatched_job", fake_run_dispatched_job)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+def test_dispatch_tracks_reports_real_integration_conflict(tmp_path):
+    project_root = _dispatch_repo(tmp_path / "target")
 
     payload = dispatch_tracks(
         project_root=project_root,
@@ -556,34 +572,25 @@ def test_dispatch_tracks_reports_file_collisions_when_tracks_touch_same_file(tmp
             {"role": "ui", "adapter": "fake", "task": "UI edits."},
             {"role": "implementation", "adapter": "fake", "task": "Backend edits."},
         ],
+        verify_commands={role: _dispatch_script(
+            f"from pathlib import Path; Path('app.py').write_text({role!r} + '\\n')"
+        ) for role in ("ui", "implementation")},
     )
 
     assert payload["has_collisions"] is True
     assert payload["all_ok"] is False
-    assert payload["file_collisions"] == [{"path": "src/App.jsx", "roles": ["implementation", "ui"]}]
+    assert payload["execution_ok"] is True
+    assert payload["file_collisions"] == [{"path": "app.py", "roles": ["implementation", "ui"]}]
+    assert payload["integration"]["status"] == "conflicted"
+    assert payload["integration"]["conflicts"] == ["app.py"]
+    assert (project_root / "app.py").read_text() == "original\n"
+    assert len({job["workspace_path"] for job in payload["jobs"]}) == 2
+    assert all(Path(job["workspace_path"]).is_dir() for job in payload["jobs"])
+    assert Path(payload["integration"]["candidate_path"]).is_dir()
 
 
-def test_dispatch_tracks_reports_no_file_collisions_for_disjoint_changes(tmp_path, monkeypatch):
-    def fake_run_dispatched_job(project_root, job, verify_commands):
-        if job["role"] == "ui":
-            changed = ["src/App.jsx"]
-        else:
-            changed = ["src/api.py"]
-        return {
-            "job_id": job["id"],
-            "role": job["role"],
-            "adapter": job["adapter"],
-            "status": "completed",
-            "outcome": "ok",
-            "summary": "done",
-            "memory_writeback": {"status": "skipped"},
-            "verify": {"passed": True, "skipped": True, "reason": "none"},
-            "changed_files": changed,
-        }
-
-    monkeypatch.setattr("goodteam_os.dispatch._run_dispatched_job", fake_run_dispatched_job)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+def test_dispatch_tracks_integrates_disjoint_changes_from_independent_repositories(tmp_path):
+    project_root = _dispatch_repo(tmp_path / "target")
 
     payload = dispatch_tracks(
         project_root=project_root,
@@ -591,10 +598,31 @@ def test_dispatch_tracks_reports_no_file_collisions_for_disjoint_changes(tmp_pat
             {"role": "ui", "adapter": "fake", "task": "UI edits."},
             {"role": "implementation", "adapter": "fake", "task": "Backend edits."},
         ],
+        verify_commands={role: _dispatch_script(
+            "from pathlib import Path; import subprocess; "
+            f"Path('{role}.txt').write_text({role!r}); "
+            f"subprocess.run(['git', 'add', '{role}.txt'], check=True); "
+            "subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', "
+            "'commit', '-qm', 'Worker fixture'], check=True)"
+        ) for role in ("ui", "implementation")},
     )
 
+    assert payload["all_ok"] is True, payload
     assert payload["has_collisions"] is False
     assert payload["file_collisions"] == []
+    assert payload["integration"]["status"] == "succeeded"
+    candidate = Path(payload["integration"]["candidate_path"])
+    assert (candidate / "ui.txt").read_text() == "ui"
+    assert (candidate / "implementation.txt").read_text() == "implementation"
+    assert not (project_root / "ui.txt").exists()
+    assert not (project_root / "implementation.txt").exists()
+    workspaces = [Path(job["workspace_path"]) for job in payload["jobs"]]
+    assert len(set(workspaces)) == 2
+    for job, workspace in zip(payload["jobs"], workspaces):
+        assert job["changed_files"] == [f"{job['role']}.txt"]
+        assert Path(job["verify"]["cwd"]) == workspace
+        assert Path(_dispatch_git(workspace, "rev-parse", "--absolute-git-dir")) == workspace / ".git"
+        assert not (workspace / ".git/objects/info/alternates").exists()
 
 
 def test_dispatch_tracks_passes_projects_dir_to_safety_check(tmp_path, monkeypatch):
@@ -606,23 +634,8 @@ def test_dispatch_tracks_passes_projects_dir_to_safety_check(tmp_path, monkeypat
         seen["allow_unsafe"] = allow_unsafe
         return {"safe": True, "reason": ""}
 
-    def fake_run_dispatched_job(project_root, job, verify_commands):
-        return {
-            "job_id": job["id"],
-            "role": job["role"],
-            "adapter": job["adapter"],
-            "status": "completed",
-            "outcome": "ok",
-            "summary": "done",
-            "memory_writeback": {"status": "skipped"},
-            "verify": {"passed": True, "skipped": True, "reason": "none"},
-            "changed_files": [],
-        }
-
     monkeypatch.setattr("goodteam_os.dispatch.ensure_dispatch_project_root_is_safe", fake_safety_check)
-    monkeypatch.setattr("goodteam_os.dispatch._run_dispatched_job", fake_run_dispatched_job)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
     projects_dir = tmp_path / "served-workspace" / "projects"
 
     dispatch_tracks(

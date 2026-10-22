@@ -1367,6 +1367,26 @@ def test_api_approve_returns_409_when_artifact_version_is_stale(tmp_path, monkey
     assert payload["recovery"] == ["refresh_approval_brief"]
 
 
+def test_background_dispatch_retains_failed_integration_report(tmp_path, monkeypatch):
+    finished = threading.Event()
+    report = {"all_ok": False, "integration": {"status": "conflicted", "candidate_path": "/retained/candidate"}}
+    monkeypatch.setattr(web, "dispatch_tracks", lambda **_: report)
+    original = web._write_dispatch_track_status
+
+    def record(*args, **kwargs):
+        original(*args, **kwargs)
+        if kwargs["status"] == "failed":
+            finished.set()
+
+    monkeypatch.setattr(web, "_write_dispatch_track_status", record)
+    web._start_dispatch_track_background(workspace=tmp_path, run_id="dispatch-conflict", name="conflict",
+        worktree=tmp_path / "source", tracks=[], verify_commands={}, constraints_file=None)
+    assert finished.wait(timeout=5)
+    status = json.loads(web._dispatch_track_status_path(tmp_path, "dispatch-conflict").read_text())
+    assert status["status"] == "failed"
+    assert status["report"] == report
+
+
 def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

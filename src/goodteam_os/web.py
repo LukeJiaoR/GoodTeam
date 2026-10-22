@@ -1499,6 +1499,7 @@ def _write_dispatch_track_status(
     worktree: Path,
     status: str,
     error: str = "",
+    report: dict[str, object] | None = None,
 ) -> None:
     status_path = _dispatch_track_status_path(workspace, run_id)
     status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1508,6 +1509,7 @@ def _write_dispatch_track_status(
         "worktree": str(worktree),
         "status": status,
         "error": error,
+        **({"report": report} if report is not None else {}),
         "updated_at": datetime.now(UTC).isoformat(),
     }
     status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1565,12 +1567,13 @@ def _start_dispatch_track_background(
             status="started",
         )
         try:
-            dispatch_tracks(
+            report = dispatch_tracks(
                 project_root=worktree,
                 tracks=tracks,
                 verify_commands=verify_commands,
                 constraints_file=constraints_file,
                 projects_dir=projects_dir,
+                logical_task_id=run_id,
             )
         except Exception as exc:
             _write_dispatch_track_status(
@@ -1587,7 +1590,9 @@ def _start_dispatch_track_background(
             run_id=run_id,
             name=name,
             worktree=worktree,
-            status="completed",
+            status="completed" if report.get("all_ok") else "failed",
+            report=report,
+            error="" if report.get("all_ok") else "Dispatch requires attention; inspect the retained report and candidate.",
         )
 
     thread = threading.Thread(
