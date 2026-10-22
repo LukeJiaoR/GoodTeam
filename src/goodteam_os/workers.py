@@ -1387,6 +1387,8 @@ class WorkerJobStore:
                     "external_invocation": False, "reason": "local_codex_task_capture_required"}})
         if sandbox_context is not None:
             job = self._attach_sandbox_context(job_root, job, sandbox_context)
+        if isinstance(job.get("sandbox_context"), dict) and job["sandbox_context"].get("mode") == "dispatch_isolated":
+            self._worker_runtime_cwd(job)
         handoff = self._ordinary_memory_handoff(job_root, job)
         if handoff is not None:
             handoff.load(job)  # Retained partial enrollment cannot become legacy.
@@ -2463,6 +2465,14 @@ class WorkerJobStore:
         workspace_path = Path(str(context.get("workspace_path", "")))
         workspace_mode = str(context.get("mode") or "workspace")
         workspace_status = str(context.get("status") or "unknown")
+        if workspace_mode == "dispatch_isolated":
+            from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
+
+            workspace = prepare_dispatch_workspace(self.project_root, str(context.get("execution_id", "")),
+                                                   None)
+            if (str(context.get("sandbox_id", "")) != str(job["id"])
+                    or workspace.workspace(str(job["id"])) != workspace_path):
+                raise ValueError("dispatch_workspace_mismatch")
         if _is_repo_workspace(workspace_path):
             return WorkerRuntimeContext(
                 runtime_cwd=workspace_path,
@@ -2472,6 +2482,8 @@ class WorkerJobStore:
                 runtime_workspace_mode=workspace_mode,
                 runtime_workspace_status=workspace_status,
             )
+        if workspace_mode == "dispatch_isolated":
+            raise ValueError("dispatch_workspace_unavailable")
         return WorkerRuntimeContext(
             runtime_cwd=self.project_root,
             workspace_context_available=True,

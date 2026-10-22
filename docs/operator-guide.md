@@ -195,6 +195,32 @@ A good dispatch has:
 - verification commands,
 - expected artifact or PR output.
 
+Standalone `dispatch` tracks require a valid Git worktree root and commit.
+Before starting a Worker, GoodTeam retains the original HEAD and index plus the
+raw tracked and nonignored untracked files. Each track and its verification
+command run in a separate copy. The source checkout is not changed. Unsupported
+symlinks, submodules, sparse or unmerged indexes stop preparation with an error.
+
+`changed_files` compares each result with that retained working-tree baseline,
+including committed, staged, untracked, deleted and renamed files. Missing
+evidence is reported as unknown. Overlapping paths are informational; the
+independent integration candidate must merge successfully for `all_ok` to pass.
+Inspect `integration.candidate_path` and the report before applying the candidate
+to a project. A conflict or failed Worker retains its inputs and outputs.
+
+Pass `--task-id` to resume the same standalone dispatch after a process restart.
+An identical completed request returns its original report; changed input needs
+a new task ID. Recovery reuses the same job directories and saved Worker and
+verification outcomes. An interrupted verification or still-running Worker
+requires inspection instead of automatic reexecution. Retained baselines,
+reports and candidates live under the Operator state directory's
+`dispatch-workspaces/` subtree (`GOODTEAM_STATE_DIR` overrides that directory).
+They are not automatically deleted.
+
+Registered Skill-backed tasks and exact-source reviews retain their existing
+captured protocols and admission rules. This standalone dispatch isolation does
+not establish a repository baseline for the ordinary sequential workflow.
+
 ```mermaid
 sequenceDiagram
     autonumber

@@ -311,11 +311,15 @@ class DispatchWorkspace:
                     {**result, "files": _file_manifest(second)})
         return result
 
-    def integrate(self, job_ids: list[str]) -> dict:
+    def integrate(self, job_ids: list[str], *, expected_results: dict[str, str] | None = None) -> dict:
         if len(set(job_ids)) != len(job_ids):
             raise DispatchWorkspaceError("Integration job identities must be unique.")
         baseline_capture = self._baseline_capture()
         results = [self.collect(job_id) for job_id in job_ids]
+        if expected_results is not None and any(
+            expected_results.get(result["job_id"]) != result["result_commit"] for result in results
+        ):
+            raise DispatchWorkspaceError("Dispatch result changed after verification; integration is blocked.")
         candidate = Path(tempfile.mkdtemp(prefix="integration-", dir=self.artifact_root)) / "candidate"
         _clone(self.artifact_root / "baseline", candidate)
         baseline = self.metadata["baseline_commit"]
