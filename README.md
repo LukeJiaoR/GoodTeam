@@ -93,7 +93,7 @@ See the [architecture guide](docs/architecture.md) for detailed component bounda
 ### Prerequisites
 
 - **Python 3.11+** with `venv` and `pip`
-- **Node.js 22.13+ within the 22.x line, or Node.js 24+**, plus npm, for the current frontend toolchain
+- **Node.js 24.22.1** (the development/CI default in `.nvmrc`), or **22.23.4+ within the 22.x line**, plus npm, for the current frontend toolchain. These minimums include the [October 2026 security fixes](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases); Node.js 20 is end-of-life. Run `nvm install && nvm use` from the repository root before installing frontend dependencies
 - **Git** and a local repository you intend to work on
 - For real Workers: a supported agent CLI and explicitly verified provider/model configuration; installation alone does not prove readiness
 
