@@ -2,6 +2,7 @@
 import json
 
 import pytest
+import yaml
 
 from goodteam_os import cli
 from goodteam_os.artifacts import ArtifactStore
@@ -13,6 +14,13 @@ from test_task_input_snapshot import ctx as ctx_fixture, start  # noqa: F401
 
 
 def approved_workflow(c, *, profile="greenfield", run_id="approved-workflow"):
+    config = c.workspace / "projects" / "DEMO.yaml"
+    target = yaml.safe_load(config.read_text())
+    target["worker_backend"] = {"mode": "fake"}
+    # The approved workflow is model-free. The separate exact-source reviewer
+    # keeps its configured runtime when this fixture follows team migration.
+    target.setdefault("workers", {}).update({role: "fake" for role in ("ui", "implementation", "qa")})
+    config.write_text(yaml.safe_dump(target, sort_keys=False))
     artifacts = ArtifactStore(c.workspace)
     key = "fix_plan" if profile == "fix" else "rfc"
     state = AgileDevState(run_id=run_id, project_key="DEMO", idea="Preserve the original goal",
