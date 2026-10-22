@@ -10,6 +10,8 @@ import sys
 import pytest
 
 from goodteam_os.dispatch import dispatch_tracks
+from goodteam_os.project_registry import ProjectRegistry
+from goodteam_os.skills.models import SkillConflict
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -130,6 +132,58 @@ def test_public_dispatch_same_identity_rejects_changed_request(tmp_path, cli_fix
     assert cli_fixture.read_bytes() == original_calls
     assert len(WorkerJobStore(source).list_jobs()) == 1
     assert Path(result["jobs"][0]["workspace_path"]).is_dir()
+
+
+@pytest.mark.parametrize("change", ["task", "verify"])
+def test_registered_legacy_dispatch_rejects_changed_request_instead_of_old_success(tmp_path, cli_fixture, change):
+    source = repository(tmp_path / "source")
+    config = tmp_path / "workspace/projects/demo.local.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("project_key: DEMO\n")
+    ProjectRegistry().register_project(config, root=source, key="DEMO")
+    request = dict(project_root=source, tracks=[track()], logical_task_id="registered-fixed-input",
+                   verify_commands={"implementation": "echo original-check"})
+    first = dispatch_tracks(**request)
+    assert first["all_ok"] is True, first
+    assert not first["jobs"][0].get("skill_execution_snapshot_ref")
+    original_calls = cli_fixture.read_bytes()
+    if change == "task":
+        request["tracks"] = [{**track(), "task": "Different registered task"}]
+    else:
+        request["verify_commands"] = {"implementation": "exit 1"}
+
+    with pytest.raises(SkillConflict, match="dispatch_request_changed"):
+        dispatch_tracks(**request)
+
+    assert cli_fixture.read_bytes() == original_calls
+    assert len(WorkerJobStore(source).list_jobs()) == 1
+
+
+def test_recovery_rejects_workspace_drift_after_successful_verification(tmp_path, cli_fixture):
+    source = repository(tmp_path / "source")
+    verify_calls = tmp_path / "verification-count"
+    script = ("from pathlib import Path; "
+              "assert Path('original.txt').read_text() == 'human source\\n'; "
+              f"Path({str(verify_calls)!r}).open('a').write('verified\\n')")
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+    request = dict(project_root=source, tracks=[track()], logical_task_id="drift-after-verification",
+                   verify_commands={"implementation": command})
+    first = dispatch_tracks(**request)
+    assert first["all_ok"] is True, first
+    workspace = Path(first["jobs"][0]["workspace_path"])
+    (workspace.parent.parent / "report.json").unlink()
+    (workspace / "original.txt").write_text("unchecked drift\n")
+
+    recovered = dispatch_tracks(**request)
+
+    assert recovered["all_ok"] is False
+    assert recovered["execution_ok"] is False
+    assert recovered["integration"]["status"] == "blocked"
+    assert recovered["needs_human"][0]["verify"]["reason"] == "verification_evidence_changed"
+    assert len(cli_fixture.read_text().splitlines()) == 1
+    assert verify_calls.read_text() == "verified\n"
+    assert (source / "original.txt").read_text() == "human source\n"
+    assert (workspace / "original.txt").read_text() == "unchecked drift\n"
 
 
 @pytest.mark.parametrize("git_initialized", [False, True])
