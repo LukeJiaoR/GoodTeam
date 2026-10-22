@@ -91,6 +91,13 @@ from goodteam_os.project_readiness_executor import (
     ReadinessExecutionError,
 )
 from goodteam_os.reviewer_evidence_snapshot import build_reviewer_evidence_snapshot
+from goodteam_os.repository_access import AnchoredRepository, canonical_relative_path
+from goodteam_os.repository_snapshot import RepositorySnapshotError, inspect_repository_git
+from goodteam_os._trusted_system_executable import (
+    TrustedExecutableError,
+    open_verified_executable,
+    resolve_trusted_system_git,
+)
 from goodteam_os.artifact_revisions import invalidate_artifact
 from goodteam_os.reviewer_dispatch import (
     artifact_version_for_path,
@@ -2890,29 +2897,75 @@ def _run_git_project_command(
     warnings: list[str],
     *,
     env: dict[str, str] | None = None,
+    expected_identity: dict[str, int] | None = None,
 ) -> subprocess.CompletedProcess[str] | None:
+    executable_fd = None
     try:
-        return subprocess.run(
-            command,
-            cwd=root_path,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS,
-            check=False,
-        )
+        if command[0] == "git":
+            executable, _, identity = resolve_trusted_system_git(root_path)
+            executable_fd = open_verified_executable(executable, identity)
+            command = [executable, "-c", "core.fsmonitor=false", *command[1:]]
+            env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+            env["GIT_TERMINAL_PROMPT"] = "0"
+        with AnchoredRepository(root_path, expected_identity=expected_identity) as repository:
+            result = subprocess.run(
+                command,
+                cwd=root_path,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS,
+                check=False,
+            )
+            repository.verify_root()
+            return result
     except FileNotFoundError:
         warnings.append(f"{command[0]} not available")
     except subprocess.TimeoutExpired:
         warnings.append(f"{command[0]} timed out")
     except OSError as exc:
         warnings.append(f"{command[0]} failed: {exc.__class__.__name__}")
+    except TrustedExecutableError:
+        warnings.append("Trusted Git executable is unavailable or changed; repair Git installation and retry.")
+    finally:
+        if executable_fd is not None:
+            os.close(executable_fd)
     return None
 
 
-def _git_configured_identity(root_path: Path, warnings: list[str]) -> bool:
-    name = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.name"], root_path, warnings)
-    email = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.email"], root_path, warnings)
+def _project_git_baseline(root_path: Path) -> dict[str, object]:
+    try:
+        state = inspect_repository_git(root_path)
+    except (RepositorySnapshotError, OSError) as exc:
+        return {
+            "state": "invalid",
+            "head_sha": None,
+            "baseline_required": True,
+            "error": f"Git baseline inspection failed: {exc} Repair the repository root or Git metadata and retry.",
+        }
+    state["baseline_required"] = state["state"] != "valid_head"
+    if state["baseline_required"]:
+        state["error"] = (
+            "Git baseline required. Select the exact initial_files for /git-init, "
+            "or create the initial commit manually, then retry."
+        )
+    return state
+
+
+def _initial_git_files(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value or any(not isinstance(item, str) for item in value):
+        raise ValueError("initial_files must be a non-empty list of relative file paths.")
+    paths = [canonical_relative_path(item) for item in value]
+    if any(path.split("/")[0] in {".git", ".goodteam"} for path in paths):
+        raise ValueError("initial_files cannot include Git metadata or GoodTeam state.")
+    return list(dict.fromkeys(paths))
+
+
+def _git_configured_identity(root_path: Path, warnings: list[str], expected_identity: dict[str, int]) -> bool:
+    name = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.name"], root_path, warnings, expected_identity=expected_identity)
+    email = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.email"], root_path, warnings, expected_identity=expected_identity)
     return bool(
         name is not None
         and name.returncode == 0
@@ -2931,52 +2984,75 @@ def _initialize_project_git(
     init_git: bool,
     create_remote: bool,
     remote_private: bool,
+    initial_files: list[str] | None = None,
+    scaffold_new_project: bool = False,
 ) -> dict[str, object]:
     result: dict[str, object] = {"initialized": False, "remote_created": False, "warnings": []}
     warnings = result["warnings"]
     assert isinstance(warnings, list)
-    existing_git = (root_path / ".git").exists()
+    selected_files = _initial_git_files(initial_files)
+    baseline = _project_git_baseline(root_path)
+    existing_git = baseline["state"] != "non_git"
+    if baseline["state"] == "invalid":
+        return {**result, **baseline, "warnings": [baseline["error"]]}
+    root_identity = baseline["root_identity"]
 
-    if existing_git:
-        warnings.append("git init skipped: project root already contains .git")
-    elif init_git:
+    def run(command: list[str], *, env: dict[str, str] | None = None):
+        return _run_git_project_command(command, root_path, warnings, env=env, expected_identity=root_identity)
+
+    if init_git and baseline["state"] != "valid_head" and (selected_files or scaffold_new_project):
+        if selected_files is not None:
+            # Only regular files below the pinned root are accepted; directory
+            # pathspecs would silently include files the caller did not select.
+            with AnchoredRepository(root_path, expected_identity=root_identity) as repository:
+                for path in selected_files:
+                    repository.read_bytes(path, max_bytes=0)
         readme = root_path / "README.md"
         gitignore = root_path / ".gitignore"
-        try:
-            if not readme.exists():
-                readme.write_text(f"# {project_name}\n", encoding="utf-8")
-            if not gitignore.exists():
-                gitignore.write_text(".DS_Store\n.env\n.venv/\n__pycache__/\n", encoding="utf-8")
-        except OSError as exc:
-            warnings.append(f"git scaffold files skipped: {exc.__class__.__name__}")
+        if scaffold_new_project:
+            selected_files = []
+            for path, content in (
+                (readme, f"# {project_name}\n"),
+                (gitignore, ".DS_Store\n.env\n.venv/\n__pycache__/\n.goodteam/\n"),
+            ):
+                try:
+                    with path.open("x", encoding="utf-8") as handle:
+                        handle.write(content)
+                    selected_files.append(path.name)
+                except OSError as exc:
+                    warnings.append(f"git scaffold file {path.name} skipped: {exc.__class__.__name__}")
 
-        init = _run_git_project_command(["git", "-C", str(root_path), "init", "-b", "main"], root_path, warnings)
-        if init is not None and init.returncode != 0:
-            fallback = _run_git_project_command(["git", "-C", str(root_path), "init"], root_path, warnings)
-            if fallback is not None and fallback.returncode == 0:
-                _run_git_project_command(["git", "-C", str(root_path), "branch", "-M", "main"], root_path, warnings)
-                init = fallback
-        if init is None or init.returncode != 0:
+        init = None
+        if baseline["state"] == "non_git":
+            init = run(["git", "-C", str(root_path), "init", "-b", "main"])
+        if baseline["state"] == "non_git" and (init is None or init.returncode != 0):
             stderr = "" if init is None else init.stderr.strip()
             warnings.append(f"git init failed{f': {stderr}' if stderr else ''}")
-        else:
-            add = _run_git_project_command(["git", "-C", str(root_path), "add", "-A"], root_path, warnings)
+        elif selected_files:
+            add = run(["git", "--literal-pathspecs", "-C", str(root_path), "add", "--", *selected_files])
             if add is None or add.returncode != 0:
                 stderr = "" if add is None else add.stderr.strip()
                 warnings.append(f"git add failed{f': {stderr}' if stderr else ''}")
             else:
-                commit_command = ["git", "-C", str(root_path), "commit", "-m", "Initial commit (GoodTeam scaffold)"]
-                if not _git_configured_identity(root_path, warnings):
+                commit_command = ["git", "-C", str(root_path), "--literal-pathspecs", "commit", "--only", "-m", "Initial commit (GoodTeam scaffold)", "--", *selected_files]
+                if not _git_configured_identity(root_path, warnings, root_identity):
                     commit_command[3:3] = ["-c", "user.name=GoodTeam", "-c", "user.email=noreply@goodteam.local"]
-                commit = _run_git_project_command(commit_command, root_path, warnings)
+                commit = run(commit_command)
                 if commit is None or commit.returncode != 0:
                     stderr = "" if commit is None else commit.stderr.strip()
                     warnings.append(f"git commit failed{f': {stderr}' if stderr else ''}")
                 else:
-                    result["initialized"] = True
+                    result["initialized"] = _project_git_baseline(root_path)["state"] == "valid_head"
+
+    baseline = _project_git_baseline(root_path)
+    result.update(baseline)
+    if baseline.get("error"):
+        warnings.append(baseline["error"])
 
     if create_remote:
-        if existing_git:
+        if baseline["baseline_required"]:
+            warnings.append("create-remote skipped: establish a valid Git baseline first")
+        elif existing_git:
             warnings.append("create-remote skipped: project root already contains .git")
         else:
             token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -2984,7 +3060,7 @@ def _initialize_project_git(
                 warnings.append("create-remote requested but no GITHUB_TOKEN/GH_TOKEN set")
             else:
                 visibility = "--private" if remote_private else "--public"
-                gh = _run_git_project_command(
+                gh = run(
                     [
                         "gh",
                         "repo",
@@ -2997,8 +3073,6 @@ def _initialize_project_git(
                         "origin",
                         "--push",
                     ],
-                    root_path,
-                    warnings,
                     env={**os.environ, "GH_TOKEN": token},
                 )
                 if gh is not None and gh.returncode == 0:
@@ -3026,6 +3100,7 @@ def initialize_project_git_for_request(workspace: Path, request: dict[str, objec
         init_git=True,
         create_remote=_request_bool(request.get("create_remote"), False),
         remote_private=_request_bool(request.get("remote_private"), True),
+        initial_files=_initial_git_files(request.get("initial_files")),
     )
 
 
@@ -3066,9 +3141,11 @@ def create_local_project_config(
     init_git: bool = True,
     create_remote: bool = False,
     remote_private: bool = True,
+    initial_files: list[str] | None = None,
 ) -> dict[str, object]:
     name = _single_line_config_value("Project name", project_name)
     key = _single_line_config_value("Project key", project_key).upper()
+    initial_files = _initial_git_files(initial_files)
     if not name:
         raise ValueError("Project name is required.")
     if not key:
@@ -3077,6 +3154,7 @@ def create_local_project_config(
     repos = []
     if project_root.strip():
         root_path = _validate_directory_path("Project root", project_root)
+        scaffold_new_project = not any(root_path.iterdir())
         repos.append(("root", root_path))
         try:
             if not (root_path / "docs").exists():
@@ -3099,17 +3177,16 @@ def create_local_project_config(
 
     git_result: dict[str, object] = {"initialized": False, "remote_created": False, "warnings": []}
     if project_root.strip():
-        try:
-            git_result = _initialize_project_git(
-                root_path=root_path,
-                project_name=name,
-                project_key=key,
-                init_git=init_git,
-                create_remote=create_remote,
-                remote_private=remote_private,
-            )
-        except Exception as exc:
-            git_result["warnings"].append(f"git setup skipped: {exc.__class__.__name__}")
+        git_result = _initialize_project_git(
+            root_path=root_path,
+            project_name=name,
+            project_key=key,
+            init_git=init_git,
+            create_remote=create_remote,
+            remote_private=remote_private,
+            initial_files=initial_files,
+            scaffold_new_project=scaffold_new_project,
+        )
 
     path = workspace / "projects" / f"{_slug(key)}.local.yaml"
     profile = _single_line_config_value("Model profile", model_profile, default="balanced")
@@ -5883,6 +5960,7 @@ def build_project_home(
             "worker_hint": str(worker_preflight.get("hint", "")),
         },
         "readiness": readiness,
+        "git_baseline": _project_git_baseline(root),
         "capabilities": {
             **build_capabilities(readiness),
             "workflow_entry_url": (
@@ -7040,6 +7118,7 @@ def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexRe
                         role_model_overrides=dict(request.get("role_model_overrides", {})),
                         worker_type_settings=dict(request.get("worker_type_settings", {})),
                         init_git=_request_bool(request.get("init_git"), True),
+                        initial_files=_initial_git_files(request.get("initial_files")),
                         create_remote=_request_bool(request.get("create_remote"), False),
                         remote_private=_request_bool(request.get("remote_private"), True),
                     )
@@ -8504,6 +8583,7 @@ def serve(
                         role_model_overrides=dict(request.get("role_model_overrides", {})),
                         worker_type_settings=dict(request.get("worker_type_settings", {})),
                         init_git=_request_bool(request.get("init_git"), True),
+                        initial_files=_initial_git_files(request.get("initial_files")),
                         create_remote=_request_bool(request.get("create_remote"), False),
                         remote_private=_request_bool(request.get("remote_private"), True),
                     )
