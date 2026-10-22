@@ -50,6 +50,8 @@ class AgileDevState:
     # A versioned reference to the task-start method lock, never live settings.
     # Empty is the explicit legacy representation; reads do not manufacture locks.
     task_skill_context: dict[str, object] = field(default_factory=dict)
+    # Full raw repository input retained for this run; old runs stay unbound.
+    repository_baseline: dict[str, object] = field(default_factory=dict)
 
     artifact_proposals: dict[str, dict[str, str]] = field(default_factory=dict)
     artifact_generations: dict[str, str] = field(default_factory=dict)
@@ -236,6 +238,7 @@ class StateStore:
         data.setdefault("role_models", {})
         data.setdefault("team_snapshot", {})
         data.setdefault("task_skill_context", {})
+        data.setdefault("repository_baseline", {})
         data.setdefault("load_profile", "greenfield")
         data.setdefault("pending_transition", {})
         return AgileDevState(**data)

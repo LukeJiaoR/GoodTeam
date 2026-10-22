@@ -3556,6 +3556,7 @@ def test_start_workflow_uses_project_model_profile_and_overrides(tmp_path):
         model_config=Path("models.yaml"),
         model_profile="",
         project_config=project_config,
+        dry_run=True,
     )
 
     assert payload["model_profile"] == "cheap"
@@ -3680,7 +3681,7 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
                 "deployment_backend:",
                 "  mode: ssh_compose",
                 "  staging_ssh_target: contentops-staging",
@@ -3722,7 +3723,7 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
     monkeypatch.setattr(
         "goodteam_os.graph.run_staging_backend",
-        lambda project_config, command_runner=None: {
+        lambda project_config, command_runner=None, **_context: {
             "status": "passed",
             "failed_step": "",
             "steps": [
@@ -3783,7 +3784,7 @@ def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch)
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
                 "deployment_backend:",
                 "  mode: ssh_compose",
                 "  staging_ssh_target: contentops-staging",
@@ -3822,7 +3823,7 @@ def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch)
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
     monkeypatch.setattr(
         "goodteam_os.graph.run_staging_backend",
-        lambda project_config, command_runner=None: {
+        lambda project_config, command_runner=None, **_context: {
             "status": "failed",
             "failed_step": "deploy",
             "steps": [{"label": "deploy", "exit_code": 1, "stdout": "", "stderr": "git pull failed", "timeout": 1800}],
@@ -3874,7 +3875,7 @@ def test_decide_approval_approves_security_and_runs_planner(tmp_path, monkeypatc
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
             ]
         ),
         encoding="utf-8",
@@ -3938,7 +3939,7 @@ def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
                 "deployment_backend:",
                 "  mode: ssh_compose",
                 "  staging_ssh_target: contentops-staging",
@@ -3980,7 +3981,7 @@ def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
     monkeypatch.setattr(
         "goodteam_os.graph.run_staging_backend",
-        lambda project_config, command_runner=None: {
+        lambda project_config, command_runner=None, **_context: {
             "status": "failed",
             "failed_step": "acceptance",
             "evidence_level": "infrastructure",
@@ -4103,7 +4104,7 @@ def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_pa
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
     monkeypatch.setattr(
         "goodteam_os.web.run_staging_backend",
-        lambda project_config, command_runner=None: {
+        lambda project_config, command_runner=None, **_context: {
             "status": "passed",
             "failed_step": "",
             "steps": [
@@ -4167,7 +4168,7 @@ def test_retry_blocked_workflow_reruns_workers_to_release_gate(tmp_path, monkeyp
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
             ]
         ),
         encoding="utf-8",

@@ -1,5 +1,6 @@
 """Revision regressions using persisted state and the built-in model-free backend."""
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -218,6 +219,7 @@ def test_real_adapter_prompt_requests_owned_markdown_not_generic_summary(tmp_pat
 @pytest.mark.parametrize('adapter', ['anthropic', 'gemini'])
 def test_stdout_adapter_output_adopted_without_shared_file_fallback(tmp_path, monkeypatch, adapter):
     from goodteam_os.graph import generate_artifact_via_worker
+    from test_graph_sample import prepare_workflow_fixture
     from test_workers import install_fake_popen
 
     state, _, repo = seed(tmp_path, monkeypatch)
@@ -225,11 +227,18 @@ def test_stdout_adapter_output_adopted_without_shared_file_fallback(tmp_path, mo
     # provenance selection and workflow artifact generation all execute.
     config = Path(state.source_ref)
     config.write_text(config.read_text().replace('mode: fake', f'mode: {adapter}'))
-    monkeypatch.setattr('goodteam_os.workers.which', lambda name: f'/fake/bin/{name}')
-    calls = []
-    install_fake_popen(monkeypatch, stdout_text='# Current PRD\n\nAcceptance criteria\n', stderr_text='', calls=calls)
     (repo / 'docs').mkdir()
     (repo / 'docs' / 'prd.md').write_text('# Stale PRD\n')
+    prepare_workflow_fixture(state, config)
+    monkeypatch.setattr('goodteam_os.workers.which', lambda name: f'/fake/bin/{name}')
+    calls = []
+    real_popen = subprocess.Popen
+    install_fake_popen(monkeypatch, stdout_text='# Current PRD\n\nAcceptance criteria\n', stderr_text='', calls=calls)
+    worker_popen = subprocess.Popen
+    monkeypatch.setattr(subprocess, 'Popen', lambda command, *args, **kwargs: (
+        worker_popen(command, *args, **kwargs) if str(command[0]).startswith('/fake/bin/')
+        else real_popen(command, *args, **kwargs)
+    ))
     content = generate_artifact_via_worker(state=state, workspace=tmp_path, project_config=config,
                                           role='product_requirement', artifact_key='prd', task_text='Write PRD')
     assert content == '# Current PRD\n\nAcceptance criteria\n'

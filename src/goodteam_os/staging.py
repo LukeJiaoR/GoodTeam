@@ -116,6 +116,8 @@ def run_staging_backend(
     *,
     project_config: Path,
     command_runner: Callable[..., dict[str, object]] | None = None,
+    execution_root: Path | None = None,
+    repository_candidate: dict[str, object] | None = None,
 ) -> dict[str, object]:
     config = deployment_backend_config(project_config)
     if config.get("mode") != "ssh_compose":
@@ -125,7 +127,22 @@ def run_staging_backend(
     if missing_fields:
         raise ValueError(f"Staging backend is missing required fields: {', '.join(missing_fields)}")
 
+    if repository_candidate is not None:
+        # SSH commands currently target a separately configured remote ref.
+        # Merely running the local launcher in the retained task directory
+        # cannot prove which source bytes that remote deployment executed.
+        result = _staging_result(
+            status="blocked", failed_step="candidate", config=config, steps=[],
+            evidence_level="none", evidence_sufficient=False,
+            evidence_gap=("SSH staging cannot attest the retained task candidate; deployment was not invoked."
+                          if repository_candidate else
+                          "The workflow has no retained task baseline; staging deployment was not invoked."),
+        )
+        result["repository_result"] = repository_candidate
+        return result
+
     runner = command_runner or _run_ssh_command
+    local_root = execution_root if execution_root is not None else project_config.parent
     contract = dict(config.get("delivery_contract", {}))
     fatal_patterns = [str(pattern) for pattern in contract.get("fatal_output_patterns", [])]
     steps: list[dict[str, object]] = []
@@ -147,7 +164,7 @@ def run_staging_backend(
         step = _run_stage_step(
             runner=runner,
             command=command,
-            cwd=project_config.parent,
+            cwd=local_root,
             timeout=STEP_TIMEOUTS[label],
             label=label,
             fatal_patterns=fatal_patterns,
@@ -172,7 +189,7 @@ def run_staging_backend(
             continue
         if check_type == "local_command":
             command = ["/bin/sh", "-lc", shell_command]
-            cwd = project_config.parent
+            cwd = local_root
         else:
             command = [
                 "ssh",
@@ -181,7 +198,7 @@ def run_staging_backend(
                 config["staging_ssh_target"],
                 f"cd {config['staging_remote_dir']} && {shell_command}",
             ]
-            cwd = project_config.parent
+            cwd = local_root
         step = _run_stage_step(
             runner=runner,
             command=command,

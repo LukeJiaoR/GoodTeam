@@ -249,6 +249,12 @@ def dispatch_prepared_reviewer_jobs(
                 # methods and templates do not override user-bound Skills.
                 spec["task"] = review_artifact_task(approval=spec["approval"], artifact_key=spec["artifact_key"],
                                                      artifact_path=spec["artifact_path"], artifact_version=spec["artifact_version"])
+        if not spec.get("task_skill_context"):
+            from goodteam_os.workflow_workspace import adapter_requires_workflow_workspace
+
+            if adapter_requires_workflow_workspace(str(spec["adapter"])):
+                spec.update(workflow_workspace=getattr(state, "repository_baseline", {}),
+                            project_key=getattr(state, "project_key", ""))
         job, _created = store.create_or_reuse_job(**spec)
         result = dict(job)
         result.setdefault("job_id", str(job.get("id", "")))

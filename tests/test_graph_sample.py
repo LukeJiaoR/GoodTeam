@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 from types import MappingProxyType
 
@@ -33,6 +34,27 @@ from goodteam_os.messages import append_message
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.web import decide_approval
 from goodteam_os.workflow_table import WorkflowNode
+
+
+def prepare_workflow_fixture(state, project_config):
+    """Represent the new-task capture required by a real adapter fixture."""
+    from goodteam_os.projects import load_project_target
+
+    root = resolve_project_runtime_root(dict(load_project_target(project_config)["repos"]))
+    prepare_repository_fixture(state, root)
+
+
+def prepare_repository_fixture(state, root):
+    from goodteam_os.workflow_workspace import prepare_workflow_workspace
+
+    (root / ".gitignore").write_text(".goodteam/\n", encoding="utf-8")
+    for arguments in [("init", "-q"), ("add", "."), ("commit", "-qm", "Fixture baseline")]:
+        subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false",
+                        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *arguments],
+                       cwd=root, check=True, capture_output=True)
+    state.repository_baseline = prepare_workflow_workspace(
+        root, project_key=state.project_key, run_id=state.run_id,
+    )
 
 
 def proposal_expectations(binding):
@@ -424,6 +446,7 @@ def test_prd_changes_requested_preserves_feedback_when_worker_fails(tmp_path, mo
 def test_normal_prd_falls_back_to_template_when_worker_fails(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    prepare_workflow_fixture(state, project_config)
 
     monkeypatch.setattr(
         "goodteam_os.graph.WorkerJobStore.run_job",
@@ -594,6 +617,7 @@ def test_rfc_changes_requested_note_dispatches_worker(tmp_path, monkeypatch):
 def test_normal_rfc_falls_back_to_template_when_worker_fails(tmp_path, monkeypatch):
     project_config = write_contentops_project_fixture(tmp_path)
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    prepare_workflow_fixture(state, project_config)
 
     monkeypatch.setattr(
         "goodteam_os.graph.WorkerJobStore.run_job",
@@ -748,6 +772,7 @@ def test_generate_prd_keeps_existing_prd_on_worker_failure(tmp_path, monkeypatch
         encoding="utf-8",
     )
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    prepare_workflow_fixture(state, project_config)
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
     prd = tmp_path / "artifacts" / "runs" / "run-1" / "prd" / "prd.md"
@@ -1076,6 +1101,7 @@ def test_generate_rfc_keeps_existing_rfc_on_worker_failure(tmp_path, monkeypatch
         encoding="utf-8",
     )
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow")
+    prepare_workflow_fixture(state, project_config)
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
     rfc = tmp_path / "artifacts" / "runs" / "run-1" / "rfc" / "rfc.md"
@@ -1652,6 +1678,7 @@ def test_release_gate_artifacts_include_worker_evidence_not_placeholders(tmp_pat
         "Build ContentOps Studio for reusable brand briefs, source capture, topic organization, "
         "multi-platform drafts, review/publish board, and verification evidence.",
     )
+    prepare_workflow_fixture(state, project_config)
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
     state.role_models = {
@@ -1731,8 +1758,8 @@ def test_release_gate_artifacts_include_worker_evidence_not_placeholders(tmp_pat
     assert "resetting the generated SQLite database" not in release_notes
 
 
-def test_delivery_workflow_stops_when_codex_worker_fails(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+def test_delivery_workflow_stops_when_implementation_worker_fails(tmp_path, monkeypatch):
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     state = create_initial_state(
         "run-1",
         "CONTENTOPS",
@@ -1768,7 +1795,7 @@ def test_delivery_workflow_stops_when_codex_worker_fails(tmp_path, monkeypatch):
 
 
 def test_delivery_workflow_blocks_when_qa_result_reports_failure(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     state = create_initial_state(
         "run-1",
         "CONTENTOPS",
@@ -1811,7 +1838,7 @@ def test_delivery_workflow_blocks_when_qa_result_reports_failure(tmp_path, monke
 
 
 def test_delivery_failure_uses_declared_on_error_target(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
@@ -1854,7 +1881,7 @@ def test_delivery_failure_uses_declared_on_error_target(tmp_path, monkeypatch):
 
 
 def test_retryable_worker_failure_reruns_then_succeeds_without_blocking(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
@@ -1911,7 +1938,7 @@ def test_retryable_worker_failure_reruns_then_succeeds_without_blocking(tmp_path
 
 
 def test_retry_exhausted_routes_to_on_error_and_records_blocker(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
@@ -1977,7 +2004,7 @@ def test_retry_exhausted_routes_to_on_error_and_records_blocker(tmp_path, monkey
 
 
 def test_escalated_worker_failure_writes_scoped_failure_memory_event(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
@@ -2050,7 +2077,7 @@ def test_escalated_worker_failure_writes_scoped_failure_memory_event(tmp_path, m
 
 
 def test_worker_failure_triage_records_failure_pattern_match_without_overriding_disposition(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     FailurePatternLibrary(tmp_path).record_failure(
         failure_class="scaffold",
         summary="Cannot find module better-sqlite3 after npm install",
@@ -2110,7 +2137,7 @@ def test_worker_failure_triage_records_failure_pattern_match_without_overriding_
 
 
 def test_worker_failure_triage_applies_canary_route_for_high_confidence_network_pattern(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     library = FailurePatternLibrary(tmp_path)
     for index in range(3):
         library.record_failure(
@@ -2167,7 +2194,7 @@ def test_worker_failure_triage_applies_canary_route_for_high_confidence_network_
 
 
 def test_worker_failure_triage_can_disable_canary_route_with_env_gate(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     library = FailurePatternLibrary(tmp_path)
     for index in range(3):
         library.record_failure(
@@ -2213,7 +2240,7 @@ def test_worker_failure_triage_can_disable_canary_route_with_env_gate(tmp_path, 
 
 
 def test_non_retryable_worker_failure_does_not_retry(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     state = create_initial_state("run-1", "CONTENTOPS", "Build a focused content workflow.")
     state.source_type = "existing_project"
     state.source_ref = str(project_config)
@@ -2300,7 +2327,7 @@ def test_implementation_workers_use_run_role_models(tmp_path, monkeypatch):
 
 
 def test_delivery_workflow_stops_when_ui_worker_fails(tmp_path, monkeypatch):
-    project_config = write_contentops_project_fixture(tmp_path)
+    project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     state = create_initial_state(
         "run-1",
         "CONTENTOPS",
@@ -2336,7 +2363,7 @@ def test_delivery_workflow_stops_when_ui_worker_fails(tmp_path, monkeypatch):
     assert "release_notes" not in result.artifacts
 
 
-def write_contentops_project_fixture(tmp_path: Path) -> Path:
+def write_contentops_project_fixture(tmp_path: Path, *, adapter: str = "codex") -> Path:
     project = tmp_path / "contentops"
     docs = project / "docs"
     backend = project / "backend"
@@ -2365,7 +2392,7 @@ def write_contentops_project_fixture(tmp_path: Path) -> Path:
                 f"  backend: {backend}",
                 f"  frontend: {frontend}",
                 "worker_backend:",
-                "  mode: codex",
+                f"  mode: {adapter}",
             ]
         ),
         encoding="utf-8",
