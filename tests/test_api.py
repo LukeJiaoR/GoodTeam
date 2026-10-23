@@ -1,5 +1,8 @@
+from http_transport_helpers import prepare_body_reader
+
 import hashlib
 import json
+import subprocess
 import threading
 from io import BytesIO
 from pathlib import Path
@@ -113,6 +116,7 @@ def capture_post_handler(tmp_path, monkeypatch, *, host: str = "127.0.0.1", port
                 self.path = path
                 self.wfile = wfile if wfile is not None else BytesIO()
                 self.rfile = BytesIO(body_bytes)
+                prepare_body_reader(self)
                 self.responses = []
                 self.response_headers = {}
 
@@ -150,26 +154,41 @@ def write_project_config(workspace: Path, *, key: str = "REAL", repos: dict[str,
 def test_api_git_init_initializes_non_git_project_root(tmp_path, monkeypatch):
     project_root = tmp_path / "product"
     project_root.mkdir()
+    (project_root / "app.py").write_text("pass\n", encoding="utf-8")
+    (project_root / "private.txt").write_text("user data\n", encoding="utf-8")
     write_project_config(tmp_path, repos={"root": project_root})
     simulate_post = capture_post_handler(tmp_path, monkeypatch)
 
     response = simulate_post(
         "/api/git-init",
-        {"project_key": "REAL", "create_remote": False},
+        {"project_key": "REAL", "create_remote": False, "initial_files": ["app.py"]},
         headers={"Host": "127.0.0.1:8788"},
     )
 
     assert 200 in response.responses
     payload = json.loads(response.wfile.getvalue().decode("utf-8"))
     assert payload["initialized"] is True
+    assert payload["baseline_required"] is False
     assert payload["remote_created"] is False
     assert (project_root / ".git").exists()
+    assert subprocess.run(
+        ["git", "-C", str(project_root), "ls-tree", "--name-only", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip() == "app.py"
 
 
-def test_api_git_init_existing_git_project_skips_without_error(tmp_path, monkeypatch):
+def test_api_git_init_reuses_existing_valid_head_without_error(tmp_path, monkeypatch):
     project_root = tmp_path / "product"
     project_root.mkdir()
-    (project_root / ".git").mkdir()
+    subprocess.run(["git", "-C", str(project_root), "init", "-q"], check=True)
+    subprocess.run(
+        ["git", "-C", str(project_root), "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid",
+         "commit", "--allow-empty", "-qm", "Existing user history"], check=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
     write_project_config(tmp_path, repos={"root": project_root})
     simulate_post = capture_post_handler(tmp_path, monkeypatch)
 
@@ -183,7 +202,26 @@ def test_api_git_init_existing_git_project_skips_without_error(tmp_path, monkeyp
     payload = json.loads(response.wfile.getvalue().decode("utf-8"))
     assert payload["initialized"] is False
     assert payload["remote_created"] is False
-    assert "git init skipped: project root already contains .git" in payload["warnings"]
+    assert payload["warnings"] == []
+    assert payload["baseline_required"] is False
+    assert payload["head_sha"] == head
+
+
+def test_api_git_init_requires_explicit_files_for_imported_directory(tmp_path, monkeypatch):
+    project_root = tmp_path / "product"
+    project_root.mkdir()
+    (project_root / "user.txt").write_text("existing user file\n", encoding="utf-8")
+    write_project_config(tmp_path, repos={"root": project_root})
+    response = capture_post_handler(tmp_path, monkeypatch)(
+        "/api/git-init", {"project_key": "REAL"},
+        headers={"Host": "127.0.0.1:8788"},
+    )
+    assert 200 in response.responses
+    payload = json.loads(response.wfile.getvalue().decode("utf-8"))
+    assert payload["initialized"] is False
+    assert payload["baseline_required"] is True
+    assert "initial_files" in payload["error"]
+    assert not (project_root / ".git").exists()
 
 
 def event_handle(event: dict[str, object]) -> str:
@@ -1329,6 +1367,26 @@ def test_api_approve_returns_409_when_artifact_version_is_stale(tmp_path, monkey
     assert payload["recovery"] == ["refresh_approval_brief"]
 
 
+def test_background_dispatch_retains_failed_integration_report(tmp_path, monkeypatch):
+    finished = threading.Event()
+    report = {"all_ok": False, "integration": {"status": "conflicted", "candidate_path": "/retained/candidate"}}
+    monkeypatch.setattr(web, "dispatch_tracks", lambda **_: report)
+    original = web._write_dispatch_track_status
+
+    def record(*args, **kwargs):
+        original(*args, **kwargs)
+        if kwargs["status"] == "failed":
+            finished.set()
+
+    monkeypatch.setattr(web, "_write_dispatch_track_status", record)
+    web._start_dispatch_track_background(workspace=tmp_path, run_id="dispatch-conflict", name="conflict",
+        worktree=tmp_path / "source", tracks=[], verify_commands={}, constraints_file=None)
+    assert finished.wait(timeout=5)
+    status = json.loads(web._dispatch_track_status_path(tmp_path, "dispatch-conflict").read_text())
+    assert status["status"] == "failed"
+    assert status["report"] == report
+
+
 def test_api_dispatch_track_starts_background_dispatch_without_blocking(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -1818,6 +1876,7 @@ workers:
                 self.path = "/api/project-config"
                 self.wfile = BytesIO()
                 self.rfile = BytesIO(body_bytes)
+                prepare_body_reader(self)
                 self.responses = []
                 self.response_headers = {}
 

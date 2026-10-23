@@ -23,6 +23,7 @@ function lastVisibleId(node) {
 // Mounted per project/run/read-only scope. Layout synchronization is necessary:
 // applying a durable DOM anchor after paint would flash/jump to the latest item.
 export default function useConversationReading({ scope, conversationRef, timeline, attentionKey, deliveryKey, assistantFocusKey, visible = true }) {
+  const [documentVisible, setDocumentVisible] = useState(() => !hidden());
   const [initial] = useState(() => loadReadingPosition(scope));
   const [reading, setReading] = useState(() => ({ paused: initial ? !initial.following : false,
     seenId: initial?.seenId || '', attentionKey: initial?.attentionKey || attentionKey, stale: false }));
@@ -57,9 +58,9 @@ export default function useConversationReading({ scope, conversationRef, timelin
     const node = conversationRef.current;
     if (!node) return;
     const state = current.current;
-    if (!visible) {
-      // Responsive tabs keep this component mounted. Their hidden layout is
-      // neither a readable viewport nor a place to restore a saved anchor.
+    if (!visible || hidden()) {
+      // Background documents and responsive tabs are not readable viewports
+      // or places to restore a saved anchor, including on the first mount.
       state.away = true;
       if (!state.initialized) return;
     }
@@ -107,12 +108,13 @@ export default function useConversationReading({ scope, conversationRef, timelin
   // A fresh poll after visibility return must compare the away frontier even
   // when it arrives after the tab becomes visible. Unchanged polls never scroll.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, timeline, timelineKey, attentionKey, deliveryKey, assistantFocusKey, visible]);
+  }, [scope, timeline, timelineKey, attentionKey, deliveryKey, assistantFocusKey, visible, documentVisible]);
 
   useEffect(() => {
     const onVisibility = () => {
       const node = conversationRef.current;
       if (!node) return;
+      setDocumentVisible(!hidden());
       if (hidden()) {
         current.current.away = true;
         // Scroll/return actions already checkpoint the logical reading anchor.

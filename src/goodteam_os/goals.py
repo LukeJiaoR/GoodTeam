@@ -6,6 +6,7 @@ assessments; it cannot author the next executable task or edit this ledger.
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import UTC, datetime
 import hashlib
@@ -206,6 +207,94 @@ class GoalStore:
                               (self.project_key, self.project_key)).fetchall()
             goals = [self._snapshot(db, row["id"]) for row in rows]
             return [goal for goal in goals if not active_only or goal["status"] not in TERMINAL_STATUSES]
+
+    def list_continuation_goals(self, *, validated_idle: dict) -> list[dict[str, Any]]:
+        """Scan atomically, reusing only byte-identical validated idle records.
+
+        Historical bytes are still read every time: filtering by status or
+        revision alone would hide corruption. The service owns this bounded,
+        disposable cache; it is never durable authority or a dispatch receipt.
+        """
+        try:
+            file_identity = self.path.stat()
+            identity = (str(self.path.resolve()), self.project_key, file_identity.st_dev, file_identity.st_ino)
+            previous = validated_idle.get("records", {}) if validated_idle.get("identity") == identity else {}
+            idle, goals = {}, []
+            with self._transaction() as db:
+                rows = db.execute("SELECT * FROM goals WHERE (?='' OR project_key=?) ORDER BY rowid",
+                                  (self.project_key, self.project_key)).fetchall()
+                work_rows, event_rows = defaultdict(list), defaultdict(list)
+                for row in db.execute(
+                    "SELECT w.* FROM work w JOIN goals g ON g.id=w.goal_id "
+                    "WHERE (?='' OR g.project_key=?) ORDER BY w.goal_id,w.position",
+                    (self.project_key, self.project_key)):
+                    work_rows[row["goal_id"]].append(row)
+                for row in db.execute(
+                    "SELECT e.*,o.delivered FROM events e JOIN goals g ON g.id=e.goal_id "
+                    "LEFT JOIN outbox o ON o.event_id=e.id AND o.goal_id=e.goal_id AND o.revision=e.revision "
+                    "WHERE (?='' OR g.project_key=?) ORDER BY e.goal_id,e.revision",
+                    (self.project_key, self.project_key)):
+                    event_rows[row["goal_id"]].append(row)
+                pending = {row[0] for row in db.execute(
+                    "SELECT o.goal_id FROM outbox o JOIN goals g ON g.id=o.goal_id "
+                    "WHERE o.delivered=0 AND (?='' OR g.project_key=?)",
+                    (self.project_key, self.project_key))}
+                for row in rows:
+                    goal_id = row["id"]
+                    works, events = work_rows[goal_id], event_rows[goal_id]
+                    records = (tuple(row), tuple(map(tuple, works)), tuple(map(tuple, events)), goal_id in pending)
+                    if previous.get(goal_id) != records:
+                        goal = self._snapshot_rows(row, works, events)
+                        if goal["status"] == "active" or goal["active_work"] or goal_id in pending:
+                            goals.append(goal)
+                            continue
+                    # Exact raw-value equality, not a revision or hash shortcut.
+                    # Bound retained history; overflow simply gets revalidated.
+                    if len(idle) < 128 and len(repr(records).encode()) <= 65536:
+                        idle[goal_id] = records
+            validated_idle.clear()
+            validated_idle.update(identity=identity, records=idle)
+            return goals
+        except BaseException:
+            validated_idle.clear()
+            raise
+
+    def page_goals(self, *, limit: int = 20, before: str = "") -> dict[str, Any]:
+        """Newest page, returned in chronological order; never trim a snapshot.
+
+        The boundary is a persisted Goal identity scoped to this project. New
+        Goals cannot shift older pages, unlike an offset. Each call reads fresh
+        revisions; this is not a frozen multi-request ledger snapshot.
+        """
+        if not self.project_key:
+            raise GoalError("A project key is required for Goal history.")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise GoalError("Goal page limit must be between 1 and 50.")
+        if not isinstance(before, str) or len(before) > 128:
+            raise GoalError("Invalid Goal history cursor.")
+        with self._transaction() as db:
+            boundary = None
+            if before:
+                row = db.execute("SELECT rowid FROM goals WHERE id=? AND project_key=?",
+                                 (before, self.project_key)).fetchone()
+                if row is None:
+                    raise GoalError("Unknown Goal history cursor for this project.")
+                boundary = row["rowid"]
+            if boundary is None:
+                rows = db.execute(
+                    "SELECT id FROM goals WHERE project_key=? ORDER BY rowid DESC LIMIT ?",
+                    (self.project_key, limit + 1),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT id FROM goals WHERE project_key=? AND rowid<? ORDER BY rowid DESC LIMIT ?",
+                    (self.project_key, boundary, limit + 1),
+                ).fetchall()
+            selected = rows[:limit]
+            return {
+                "goals": [self._snapshot(db, row["id"]) for row in reversed(selected)],
+                "next_before": selected[-1]["id"] if len(rows) > limit else "",
+            }
 
     def list_work(self, goal_id: str) -> list[dict[str, Any]]:
         return self.get_goal(goal_id)["work_units"]
@@ -587,8 +676,13 @@ class GoalStore:
                          (goal_id, self.project_key, self.project_key)).fetchone()
         if row is None:
             raise GoalError("Unknown goal id.")
-        goal = self._decode(row["data"])
         work_rows = db.execute("SELECT * FROM work WHERE goal_id=? ORDER BY position", (goal_id,)).fetchall()
+        events = db.execute("SELECT e.*,o.delivered FROM events e LEFT JOIN outbox o ON o.event_id=e.id AND o.goal_id=e.goal_id AND o.revision=e.revision WHERE e.goal_id=? ORDER BY e.revision", (goal_id,)).fetchall()
+        return self._snapshot_rows(row, work_rows, events)
+
+    def _snapshot_rows(self, row, work_rows, events):
+        goal_id = row["id"]
+        goal = self._decode(row["data"])
         works = [self._decode(work["data"]) for work in work_rows]
         try:
             self._assessment_limit(goal.get("max_assessment_attempts", 1))
@@ -677,7 +771,6 @@ class GoalStore:
                 _require(gate["dependencies"] == [works[-1]["id"]])
                 _require(gate["evidence_refs"] == works[-1]["evidence_refs"])
                 _strings(gate["evidence_refs"], "gate evidence", required=True)
-            events = db.execute("SELECT e.*,o.delivered FROM events e LEFT JOIN outbox o ON o.event_id=e.id AND o.goal_id=e.goal_id AND o.revision=e.revision WHERE e.goal_id=? ORDER BY e.revision", (goal_id,)).fetchall()
             _require(len(events) == goal["revision"])
             for revision, event_row in enumerate(events, start=1):
                 event = self._decode(event_row["data"])

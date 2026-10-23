@@ -1,5 +1,6 @@
 """Real local Git correction/check rounds; no worker/provider is invoked."""
 import sys
+from http_transport_helpers import prepare_body_reader
 
 import pytest
 
@@ -405,6 +406,7 @@ def _dashboard_post_headers(workspace, monkeypatch, path, payload, headers):
             self.headers = {"Content-Length": str(len(raw)), "Host": "127.0.0.1:8788",
                             "Content-Type": "application/json", **headers}
             self.path, self.rfile, self.wfile = path, BytesIO(raw), BytesIO()
+            prepare_body_reader(self)
             self.status = None
         def send_response(self, code, message=None):
             self.status = code

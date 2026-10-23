@@ -60,7 +60,7 @@ def _event(item, *, index, query_tokens=()):
     }
 
 
-def _timeline(session, run_id=""):
+def _scoped_timeline(session):
     timeline = session.get("timeline") or []
     requests = session.get("assistant_requests") or {}
     # User events keep their original blank run_id. Explicit reference scope is
@@ -78,8 +78,13 @@ def _timeline(session, run_id=""):
         return (item.get("run_id") or request.get("context_run_id") or request.get("conversation_run_id") or scoped_run.get("run_id")
                 or replies.get(item.get("message_id")) or "")
 
-    return [(index, item) for index, item in enumerate(timeline)
-            if isinstance(item, dict) and (not run_id or not scope(item) or scope(item) == run_id)]
+    return [(index, item, scope(item)) for index, item in enumerate(timeline)
+            if isinstance(item, dict)]
+
+
+def _timeline(session, run_id=""):
+    return [(index, item) for index, item, scope in _scoped_timeline(session)
+            if not run_id or not scope or scope == run_id]
 
 
 def compact_conversation(session, *, run_id=""):
@@ -92,7 +97,8 @@ def compact_conversation(session, *, run_id=""):
     events = _timeline(session, run_id)
     older = events[:-RECENT_EVENTS]
     candidates = [(index, item) for index, item in older if item.get("actor") == "user" or item.get("event")]
-    preferred = [(index, item) for index, item in candidates if run_id and item.get("run_id") == run_id]
+    selected = {index for index, _, scope in _scoped_timeline(session) if run_id and scope == run_id}
+    preferred = [(index, item) for index, item in candidates if index in selected]
     # A selected task's messages outrank unrelated project discussion while
     # retaining opening project context. Never pull a different run into recall.
     choices = candidates[:4] + preferred[-(SUMMARY_EVENTS - 4):] + list(reversed(candidates))

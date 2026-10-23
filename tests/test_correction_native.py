@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
@@ -16,6 +17,7 @@ from goodteam_os.execution.correction_store import CorrectionAttemptStore
 from goodteam_os.execution.correction_worker import CorrectionWorkerService
 from goodteam_os.execution.task_snapshot import TaskInputError, canonical_bytes, digest
 from goodteam_os.skills.codex_local import _binary_digest
+from goodteam_os.skills.models import SkillError
 from goodteam_os.workers import WorkerJobStore
 from test_automatic_candidate_review import automatic as automatic_fixture  # noqa: F401
 from test_correction_codex_seal import channel
@@ -25,6 +27,93 @@ from test_task_input_snapshot import ctx  # noqa: F401
 
 NEW_CASE_SOURCE = b"assert VALUE == 'fixed'\r\nprint('new case checked')\r\n"
 NEW_CASE_OUTPUT = b"new case checked\n"
+
+
+def _offline_interpreter(workspace):
+    # Relocating safe macOS Python can break signing or stdlib discovery;
+    # hosted/container interpreters may instead need an owned, private copy.
+    binary = Path(sys.executable).resolve()
+    info = binary.stat()
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        # A bare copied executable can lose its stdlib and fail before the
+        # fixture starts (for example, standalone Python falls back to /install).
+        # Use the same base-interpreter home as venv, including when this test
+        # itself runs from a venv whose executable is a copy rather than a link.
+        root = workspace / "offline-python"
+        bindir = root / "bin"
+        root.mkdir(mode=0o700)
+        bindir.mkdir(mode=0o700)
+        config = root / "pyvenv.cfg"
+        config.write_text(f"home = {Path(sys._base_executable).resolve().parent}\n"
+                          "include-system-site-packages = false\n", encoding="utf-8")
+        config.chmod(0o600)
+        copied = bindir / "python"
+        shutil.copyfile(binary, copied)
+        copied.chmod(0o700)
+        binary = copied
+    return binary
+
+
+def test_offline_interpreter_copies_writable_host_binary_without_changing_it(tmp_path, monkeypatch):
+    workspace = tmp_path.resolve()
+    host = workspace / "host-python"
+    host.write_bytes(b"offline fixture executable")
+    host.chmod(0o775)
+    monkeypatch.setattr(sys, "executable", str(host))
+    with pytest.raises(SkillError, match="unsafe"):
+        _binary_digest(host)
+
+    selected = _offline_interpreter(workspace)
+
+    assert selected != host
+    assert selected.read_bytes() == host.read_bytes()
+    assert selected.stat().st_mode & 0o777 == 0o700
+    assert host.stat().st_mode & 0o777 == 0o775
+    assert _binary_digest(selected)
+
+
+def test_offline_interpreter_preserves_safe_host_binary(tmp_path, monkeypatch):
+    host = tmp_path / "host-python"
+    host.write_bytes(b"offline fixture executable")
+    host.chmod(0o700)
+    monkeypatch.setattr(sys, "executable", str(host))
+    monkeypatch.setattr(shutil, "copyfile", lambda *a: pytest.fail("Safe interpreter was relocated"))
+
+    assert _offline_interpreter(tmp_path) == host
+    assert _binary_digest(host)
+    assert not (tmp_path / "offline-python").exists()
+
+
+@pytest.mark.parametrize("poisoned_environment", [False, True], ids=["scrubbed", "ignored-python-env"])
+def test_offline_interpreter_copy_starts_isolated_with_stdlib(tmp_path, monkeypatch, poisoned_environment):
+    # Force the copy path on every host without changing the real interpreter.
+    # This source also represents a copied-venv executable, whose own directory
+    # is not the stdlib home.
+    host = tmp_path / "host-python"
+    shutil.copyfile(Path(sys.executable).resolve(), host)
+    host.chmod(0o775)
+    monkeypatch.setattr(sys, "executable", str(host))
+    selected = _offline_interpreter(tmp_path)
+    assert selected != host and _binary_digest(selected)
+    assert selected.stat().st_mode & 0o777 == 0o700
+    assert host.stat().st_mode & 0o777 == 0o775
+    assert (selected.parent.parent / "pyvenv.cfg").stat().st_mode & 0o777 == 0o600
+
+    (tmp_path / "json.py").write_text("raise AssertionError('Imported fixture workspace')\n")
+    script = tmp_path / "check-python.py"
+    script.write_text("import encodings, json, pathlib, sys\n"
+                      "assert sys.flags.isolated and sys.flags.ignore_environment and sys.flags.no_user_site\n"
+                      "assert not any('site-packages' in path for path in sys.path)\n"
+                      "print('offline stdlib ready')\n")
+    env = {"PATH": os.defpath}
+    if poisoned_environment:
+        env.update(PYTHONHOME=str(tmp_path / "not-a-python-home"), PYTHONPATH=str(tmp_path))
+    result = subprocess.run([str(selected), "-I", str(script)], cwd=tmp_path, env=env,
+                            capture_output=True, text=True, timeout=5)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "offline stdlib ready\n"
+    assert result.stderr == ""
 
 
 class OfflineNative(TrustedCodexCorrectionAdmission):
@@ -79,11 +168,7 @@ def native(request, monkeypatch):
         f"Path({str(c.effects)!r}).open('a').write('call\\n')\n"
         f"Path('feature.py').write_text({source!r})\n"
         f"{new_file_script}sys.stdout.buffer.write({channel(c.value)!r})\n")
-    # The VM's installed interpreter is owned by a container image UID; use
-    # an owned copy solely for this authority fixture, never relax production.
-    binary = c.workspace / "offline-python"
-    shutil.copyfile(Path("/usr/bin/python3").resolve(), binary)
-    binary.chmod(0o700)
+    binary = _offline_interpreter(c.workspace)
     c.policy = {"schema_version": POLICY_SCHEMA, "project_root": str(c.project), "input": c.value.reference,
         "workspace": str(c.worktree), "codex": str(binary), "codex_home": str(c.home), "version": "0.159.2",
         "binary_digest": _binary_digest(binary), "model": "offline-native-model", "expires_at": int(time.time()) + 300,

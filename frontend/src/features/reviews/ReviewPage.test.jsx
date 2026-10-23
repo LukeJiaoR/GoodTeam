@@ -1,5 +1,5 @@
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router-dom';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { translate } from '../../i18n';
@@ -228,7 +228,7 @@ describe('ReviewPage workflow and navigation', () => {
     expect(await screen.findByText('Submitted 1 answer')).toBeVisible();
     expect(mocks.answerOpenQuestions).toHaveBeenCalledWith('DEMO', 'prd', [
       { question: 'Should the CLI be the only surface?', answer: 'yes' },
-    ]);
+    ], { expectedArtifact: { runId: 'run-1', artifactVersion: 'sha256:prd-v1' } });
     expect(screen.getByRole('textbox', { name: 'Should the CLI be the only surface?' })).toHaveValue('');
   });
 
@@ -239,7 +239,7 @@ test('embedded review refuses to substitute a different run or missing approval'
   const view = renderReview('/projects/DEMO/work/runs/run-old', {
     embedded: true, selectedReviewId: 'prd', expectedRunId: 'run-old', onClose: vi.fn(),
   });
-  expect(await screen.findByRole('dialog', { name: 'Review', exact: true })).toBeVisible();
+  await waitFor(() => expect(screen.getByRole('dialog', { name: 'Review', exact: true })).toBeVisible());
   expect(await screen.findByText(t('work.panel.taskChanged'))).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Approve', exact: true })).not.toBeInTheDocument();
   expect(view.state.location.pathname).toBe('/projects/DEMO/work/runs/run-old');

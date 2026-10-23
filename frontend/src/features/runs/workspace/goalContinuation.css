@@ -24,3 +24,9 @@
 .goal-continuation-assessment { display: grid; gap: 8px; padding-top: 12px; }
 .goal-continuation-assessment ol { display: grid; gap: 12px; padding-left: 20px; }
 .goal-continuation-assessment blockquote { margin: 6px 0; padding-left: 12px; border-left: 2px solid var(--product-border); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.goal-history-record {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}

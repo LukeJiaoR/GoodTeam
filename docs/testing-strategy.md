@@ -253,8 +253,13 @@ classifier or workflow also run both full stacks.
 `CI / gate` is the stable required status check. It succeeds only when
 classification passes, the backend job matches its planned mode, and the browser
 job (including planned frontend checks) succeeds. Browser acceptance may be skipped only
-when both stacks are unaffected. A manual `workflow_dispatch` bypasses
-changed-file selection and always runs full backend, frontend, and browser verification.
+when both stacks are unaffected. Publishing a final `codex/candidate-*` branch
+automatically dispatches the reviewed `main` workflow for its exact SHA. That
+dispatch classifies the candidate diff against pinned current `main` and runs
+the resulting verification plan. An exact-head PR metadata gate that started
+before the successful candidate result is refreshed automatically. See
+[`candidate-validation.md`](candidate-validation.md) for dispatch identity,
+deduplication, credential boundaries and recovery.
 
 New commits cancel obsolete runs for the same pull request. The workflow also
 covers stacked pull requests targeting another feature branch.
@@ -312,6 +317,13 @@ so business acceptance uses fallback fonts without relying on the public CDN;
 browser console and unhandled-error checks remain enabled.
 Each CI invocation uses a unique temporary directory and loopback
 port; the server refuses reuse and cleans only its owned directory on shutdown.
+After the server exits, cleanup revalidates that directory's identity and owner
+token, then restores owner-write permission only on directories within that
+temporary tree. This allows removal of sealed reviewer inputs without changing
+production input sealing or file modes. Symlinks are removed without traversing
+their targets. `npm run test:node --prefix frontend` covers real subprocess
+shutdown with 0555 input directories and 0444 files, ownership rejection,
+outside links, repeated cleanup, and surfaced filesystem errors.
 
 CI installs Chromium and its system dependencies on the ephemeral GitHub-hosted
 runner with `npx playwright install --with-deps chromium`.

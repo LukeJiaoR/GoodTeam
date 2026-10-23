@@ -1,6 +1,8 @@
 import json
 import os
+import shlex
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -371,8 +373,7 @@ def test_isolation_guard_rejects_project_root_inside_configured_repo(tmp_path):
     assert str(repo.resolve()) in result["reason"]
 
 
-def test_job_report_surfaces_failure_metadata(tmp_path, monkeypatch):
-    monkeypatch.setattr("goodteam_os.dispatch.changed_files", lambda _: [])
+def test_job_report_surfaces_failure_metadata(tmp_path):
     job = {"id": "job-1", "role": "implementation", "adapter": "codex"}
     status = {
         "status": "failed",
@@ -388,6 +389,8 @@ def test_job_report_surfaces_failure_metadata(tmp_path, monkeypatch):
     assert report["failure_class"] == "timeout"
     assert report["attempts"] == 2
     assert report["disposition"] == "escalated"
+    assert report["changed_files"] is None
+    assert report["attribution_status"] == "unknown"
 
 
 def test_isolation_guard_accepts_temp_worktree(tmp_path):
@@ -402,9 +405,29 @@ def test_isolation_guard_accepts_temp_worktree(tmp_path):
     assert result == {"safe": True, "reason": ""}
 
 
+def _dispatch_git(root, *arguments):
+    return subprocess.run(["git", "-C", str(root), *arguments], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _dispatch_repo(root):
+    root.mkdir()
+    _dispatch_git(root, "init", "-q")
+    _dispatch_git(root, "config", "user.name", "Dispatch fixture")
+    _dispatch_git(root, "config", "user.email", "dispatch@example.invalid")
+    _dispatch_git(root, "config", "commit.gpgSign", "false")
+    (root / ".gitignore").write_text(".goodteam/\n")
+    (root / "app.py").write_text("original\n")
+    _dispatch_git(root, "add", ".")
+    _dispatch_git(root, "commit", "-qm", "Initial fixture")
+    return root
+
+
+def _dispatch_script(source):
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(source)}"
+
+
 def test_dispatch_tracks_groups_ok_and_verify_failure(tmp_path):
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
 
     payload = dispatch_tracks(
         project_root=project_root,
@@ -435,8 +458,7 @@ def test_dispatch_tracks_persists_task_and_constraints_sources(tmp_path):
     task_file.write_text("Implement backend from contract.\n", encoding="utf-8")
     constraints_file = tmp_path / "constraints.md"
     constraints_file.write_text("- Stay in backend.\n", encoding="utf-8")
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
     track = parse_dispatch_track_spec(f"implementation:fake:{task_file}", base_dir=tmp_path)
 
     payload = dispatch_tracks(
@@ -456,8 +478,7 @@ def test_dispatch_tracks_archives_research_report_source(tmp_path):
     task_file.write_text("Implement backend from researched contract.\n", encoding="utf-8")
     research_report = tmp_path / "research-report.md"
     research_report.write_text("# Research\n\n- Existing helper already writes manifests.\n", encoding="utf-8")
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
     track = parse_dispatch_track_spec(f"implementation:fake:{task_file}", base_dir=tmp_path)
 
     payload = dispatch_tracks(
@@ -476,15 +497,14 @@ def test_dispatch_tracks_archives_research_report_source(tmp_path):
 def test_dispatch_tracks_captures_one_track_exception_without_blocking_other(tmp_path, monkeypatch):
     original_run_job = WorkerJobStore.run_job
 
-    def flaky_run_job(self, job_id):
+    def flaky_run_job(self, job_id, **kwargs):
         job = json.loads((self.root / job_id / "job.json").read_text(encoding="utf-8"))
         if job["role"] == "qa":
             raise RuntimeError("qa exploded")
-        return original_run_job(self, job_id)
+        return original_run_job(self, job_id, **kwargs)
 
     monkeypatch.setattr(WorkerJobStore, "run_job", flaky_run_job)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
 
     payload = dispatch_tracks(
         project_root=project_root,
@@ -503,52 +523,48 @@ def test_dispatch_tracks_captures_one_track_exception_without_blocking_other(tmp
     assert "qa exploded" in payload["jobs"][1]["summary"]
 
 
-def test_dispatch_tracks_reports_changed_files_from_git_diff(tmp_path, monkeypatch):
-    calls = []
-
-    def fake_run(command, *, cwd=None, capture_output=True, text=True, check=False):
-        calls.append({"command": command, "cwd": cwd})
-        if command[:3] == ["git", "-C", str(tmp_path / "target")]:
-            return FakeCompleted(returncode=0, stdout="src/app.py\ntests/test_app.py\n", stderr="")
-        return FakeCompleted(returncode=0, stdout="ok", stderr="")
-
-    monkeypatch.setattr("goodteam_os.dispatch.subprocess.run", fake_run)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+def test_dispatch_tracks_attributes_task_delta_without_human_baseline_changes(tmp_path):
+    project_root = _dispatch_repo(tmp_path / "target")
+    (project_root / "app.py").write_text("human staged\n")
+    _dispatch_git(project_root, "add", "app.py")
+    (project_root / "app.py").write_text("human unstaged\n")
+    (project_root / "human.txt").write_text("human untracked\n")
+    original_head = _dispatch_git(project_root, "rev-parse", "HEAD")
+    original_index = (project_root / ".git/index").read_bytes()
+    script = """from pathlib import Path
+import subprocess
+assert Path('app.py').read_text() == 'human unstaged\\n'
+assert Path('human.txt').read_text() == 'human untracked\\n'
+assert subprocess.check_output(['git', 'show', ':app.py'], text=True) == 'human staged\\n'
+Path('app.py').write_text('worker changed\\n')
+Path('new.py').write_text('worker new\\n')
+subprocess.run(['git', 'add', 'app.py'], check=True)
+"""
 
     payload = dispatch_tracks(
         project_root=project_root,
         tracks=[
             {"role": "implementation", "adapter": "fake", "task": "Implement backend."},
         ],
-        verify_commands={"implementation": "echo ok"},
+        verify_commands={"implementation": _dispatch_script(script)},
     )
 
-    assert payload["jobs"][0]["changed_files"] == ["src/app.py", "tests/test_app.py"]
-    assert any(call["command"][:3] == ["git", "-C", str(project_root)] for call in calls)
+    assert payload["all_ok"] is True, payload
+    report = payload["jobs"][0]
+    assert report["changed_files"] == ["app.py", "new.py"]
+    assert Path(report["verify"]["cwd"]) == Path(report["workspace_path"])
+    assert Path(report["workspace_path"]) != project_root
+    assert payload["integration"]["changed_files"] == ["app.py", "new.py"]
+    assert (Path(payload["integration"]["candidate_path"]) / "human.txt").read_text() == "human untracked\n"
+    assert (project_root / "app.py").read_text() == "human unstaged\n"
+    assert (project_root / "human.txt").read_text() == "human untracked\n"
+    assert not (project_root / "new.py").exists()
+    assert _dispatch_git(project_root, "rev-parse", "HEAD") == original_head
+    assert (project_root / ".git/index").read_bytes() == original_index
 
 
-def test_dispatch_tracks_reports_file_collisions_when_tracks_touch_same_file(tmp_path, monkeypatch):
-    def fake_run_dispatched_job(project_root, job, verify_commands):
-        if job["role"] == "ui":
-            changed = ["src/App.jsx", "src/theme.css"]
-        else:
-            changed = ["src/App.jsx", "src/api.py"]
-        return {
-            "job_id": job["id"],
-            "role": job["role"],
-            "adapter": job["adapter"],
-            "status": "completed",
-            "outcome": "ok",
-            "summary": "done",
-            "memory_writeback": {"status": "skipped"},
-            "verify": {"passed": True, "skipped": True, "reason": "none"},
-            "changed_files": changed,
-        }
-
-    monkeypatch.setattr("goodteam_os.dispatch._run_dispatched_job", fake_run_dispatched_job)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+def test_dispatch_tracks_reports_real_integration_conflict(tmp_path):
+    project_root = _dispatch_repo(tmp_path / "target")
 
     payload = dispatch_tracks(
         project_root=project_root,
@@ -556,34 +572,25 @@ def test_dispatch_tracks_reports_file_collisions_when_tracks_touch_same_file(tmp
             {"role": "ui", "adapter": "fake", "task": "UI edits."},
             {"role": "implementation", "adapter": "fake", "task": "Backend edits."},
         ],
+        verify_commands={role: _dispatch_script(
+            f"from pathlib import Path; Path('app.py').write_text({role!r} + '\\n')"
+        ) for role in ("ui", "implementation")},
     )
 
     assert payload["has_collisions"] is True
     assert payload["all_ok"] is False
-    assert payload["file_collisions"] == [{"path": "src/App.jsx", "roles": ["implementation", "ui"]}]
+    assert payload["execution_ok"] is True
+    assert payload["file_collisions"] == [{"path": "app.py", "roles": ["implementation", "ui"]}]
+    assert payload["integration"]["status"] == "conflicted"
+    assert payload["integration"]["conflicts"] == ["app.py"]
+    assert (project_root / "app.py").read_text() == "original\n"
+    assert len({job["workspace_path"] for job in payload["jobs"]}) == 2
+    assert all(Path(job["workspace_path"]).is_dir() for job in payload["jobs"])
+    assert Path(payload["integration"]["candidate_path"]).is_dir()
 
 
-def test_dispatch_tracks_reports_no_file_collisions_for_disjoint_changes(tmp_path, monkeypatch):
-    def fake_run_dispatched_job(project_root, job, verify_commands):
-        if job["role"] == "ui":
-            changed = ["src/App.jsx"]
-        else:
-            changed = ["src/api.py"]
-        return {
-            "job_id": job["id"],
-            "role": job["role"],
-            "adapter": job["adapter"],
-            "status": "completed",
-            "outcome": "ok",
-            "summary": "done",
-            "memory_writeback": {"status": "skipped"},
-            "verify": {"passed": True, "skipped": True, "reason": "none"},
-            "changed_files": changed,
-        }
-
-    monkeypatch.setattr("goodteam_os.dispatch._run_dispatched_job", fake_run_dispatched_job)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+def test_dispatch_tracks_integrates_disjoint_changes_from_independent_repositories(tmp_path):
+    project_root = _dispatch_repo(tmp_path / "target")
 
     payload = dispatch_tracks(
         project_root=project_root,
@@ -591,10 +598,31 @@ def test_dispatch_tracks_reports_no_file_collisions_for_disjoint_changes(tmp_pat
             {"role": "ui", "adapter": "fake", "task": "UI edits."},
             {"role": "implementation", "adapter": "fake", "task": "Backend edits."},
         ],
+        verify_commands={role: _dispatch_script(
+            "from pathlib import Path; import subprocess; "
+            f"Path('{role}.txt').write_text({role!r}); "
+            f"subprocess.run(['git', 'add', '{role}.txt'], check=True); "
+            "subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', "
+            "'commit', '-qm', 'Worker fixture'], check=True)"
+        ) for role in ("ui", "implementation")},
     )
 
+    assert payload["all_ok"] is True, payload
     assert payload["has_collisions"] is False
     assert payload["file_collisions"] == []
+    assert payload["integration"]["status"] == "succeeded"
+    candidate = Path(payload["integration"]["candidate_path"])
+    assert (candidate / "ui.txt").read_text() == "ui"
+    assert (candidate / "implementation.txt").read_text() == "implementation"
+    assert not (project_root / "ui.txt").exists()
+    assert not (project_root / "implementation.txt").exists()
+    workspaces = [Path(job["workspace_path"]) for job in payload["jobs"]]
+    assert len(set(workspaces)) == 2
+    for job, workspace in zip(payload["jobs"], workspaces):
+        assert job["changed_files"] == [f"{job['role']}.txt"]
+        assert Path(job["verify"]["cwd"]) == workspace
+        assert Path(_dispatch_git(workspace, "rev-parse", "--absolute-git-dir")) == workspace / ".git"
+        assert not (workspace / ".git/objects/info/alternates").exists()
 
 
 def test_dispatch_tracks_passes_projects_dir_to_safety_check(tmp_path, monkeypatch):
@@ -606,23 +634,8 @@ def test_dispatch_tracks_passes_projects_dir_to_safety_check(tmp_path, monkeypat
         seen["allow_unsafe"] = allow_unsafe
         return {"safe": True, "reason": ""}
 
-    def fake_run_dispatched_job(project_root, job, verify_commands):
-        return {
-            "job_id": job["id"],
-            "role": job["role"],
-            "adapter": job["adapter"],
-            "status": "completed",
-            "outcome": "ok",
-            "summary": "done",
-            "memory_writeback": {"status": "skipped"},
-            "verify": {"passed": True, "skipped": True, "reason": "none"},
-            "changed_files": [],
-        }
-
     monkeypatch.setattr("goodteam_os.dispatch.ensure_dispatch_project_root_is_safe", fake_safety_check)
-    monkeypatch.setattr("goodteam_os.dispatch._run_dispatched_job", fake_run_dispatched_job)
-    project_root = tmp_path / "target"
-    project_root.mkdir()
+    project_root = _dispatch_repo(tmp_path / "target")
     projects_dir = tmp_path / "served-workspace" / "projects"
 
     dispatch_tracks(
@@ -2495,11 +2508,13 @@ def test_codex_adapter_summarizes_stream_disconnect_failure(tmp_path, monkeypatc
 
 
 def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
+    calls = []
     install_fake_popen(
         monkeypatch,
         stdout_text="partial stdout",
-        stderr_text="partial stderr",
+        stderr_text="MCP tool authentication failed; test covers 401 Unauthorized",
         raise_timeout=True,
+        calls=calls,
     )
     store = WorkerJobStore(tmp_path)
     job = store.create_job(
@@ -2517,7 +2532,7 @@ def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
     assert "timed out after 1800 seconds" in result["summary"]
     job_root = tmp_path / ".goodteam" / "workers" / "jobs" / job["id"]
     assert (job_root / "stdout.txt").read_text(encoding="utf-8") == "partial stdout"
-    assert (job_root / "stderr.txt").read_text(encoding="utf-8") == "partial stderr"
+    assert (job_root / "stderr.txt").read_text(encoding="utf-8") == "MCP tool authentication failed; test covers 401 Unauthorized"
     assert "timed out" in (job_root / "result.md").read_text(encoding="utf-8")
     status = json.loads((job_root / "status.json").read_text(encoding="utf-8"))
     assert status["status"] == "failed"
@@ -2525,6 +2540,13 @@ def test_codex_adapter_records_timeout_as_failed_status(tmp_path, monkeypatch):
     assert status["invocation_evidence"]["external_invocation"] is True
     assert status["invocation_evidence"]["kind"] == "provider"
     assert status["invocation_evidence"]["command_available"] is True
+    assert len(calls) == 1
+    assert status["failure_class"] == "timeout"
+    assert status["disposition"] == "human_handoff"
+    retained = json.loads(Path(status["attempt_history"][0]["status_path"]).read_text())
+    assert retained["attempts"] == 1
+    assert retained["failure_class"] == "timeout"
+    assert retained["disposition"] == "human_handoff"
 
 
 def test_classify_worker_failure_maps_known_summary_patterns():
@@ -2544,6 +2566,7 @@ def test_classify_worker_failure_maps_known_summary_patterns():
     assert classify_worker_failure(claude_auth, 1) == "auth"
     assert classify_worker_failure(claude_rate, 1) == "rate_limit"
     assert classify_worker_failure("Codex CLI timed out after 1800 seconds.", None) == "timeout"
+    assert classify_worker_failure("Synthetic CLI timed out after 0.05 seconds.", None, "401 Unauthorized") == "timeout"
     assert classify_worker_failure("Codex CLI exited with code 1: 503 Service Unavailable.", 1) == "network"
     assert classify_worker_failure("Codex CLI exited with code 1.", 1, "Cannot find module 'x'") == "scaffold"
     assert classify_worker_failure("Codex CLI exited with code 1.", 1, "random failure") == "unknown"
@@ -2595,6 +2618,216 @@ def test_cli_retry_recovers_after_transient_failure(tmp_path, monkeypatch):
     assert result["disposition"] == "recovered"
     assert result["failure_class"] == "network"
     assert sleeps == [2]
+    assert [item["status"] for item in result["attempt_history"]] == ["failed", "completed"]
+    first = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    assert first["summary"] == "Codex CLI exited with code 1: 503 Service Unavailable."
+    assert Path(first["stderr_path"]).read_text() == "ERROR: unexpected status 503 Service Unavailable"
+    assert Path(first["result_path"]).read_text() != "# Worker Result\n\nRecovered on retry.\n"
+    assert first["attempts"] == 1
+    assert first["failure_class"] == "network"
+    assert first["disposition"] == "retrying"
+    second = json.loads(Path(result["attempt_history"][1]["status_path"]).read_text())
+    assert second["attempts"] == 2
+    assert second["disposition"] == "completed"
+    assert "failure_class" not in second
+
+
+@pytest.mark.parametrize("transcript_alias", ["stdout_path", "stderr_path", "result_path"])
+def test_cli_attempt_archive_rebases_output_aliases_without_mutating_outcome(tmp_path, monkeypatch, transcript_alias):
+    install_fake_worker_version(monkeypatch)
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stdout_text": "first output", "stderr_text": "503 Service Unavailable",
+         "result_text": "First failed result"},
+        {"returncode": 0, "stdout_text": "second output", "result_text": "Second successful result"},
+    ])
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="retained", role="implementation", adapter="codex", task="Fix a bug", context="")
+    original_run = store._run_cli_backend
+    outcomes = []
+    at_retry = []
+
+    def run_with_transcript_alias(job_root, job, spec):
+        outcome = original_run(job_root, job, spec)
+        outcome["runtime_transcript_path"] = outcome[transcript_alias]
+        outcome["invocation_evidence"]["runtime_transcript_path"] = outcome[transcript_alias]
+        outcomes.append((outcome, outcome.prepared_prompt, outcome.transport_ref))
+        return outcome
+
+    def before_retry(_seconds):
+        retained_path, = (store.root / job["id"]).glob("attempt-*/status.json")
+        at_retry.append(json.loads(retained_path.read_text()))
+
+    monkeypatch.setattr(store, "_run_cli_backend", run_with_transcript_alias)
+    monkeypatch.setattr("goodteam_os.workers._sleep", before_retry)
+    result = store.run_job(job["id"])
+
+    assert result is outcomes[-1][0]
+    assert result.prepared_prompt is outcomes[-1][1]
+    assert result.transport_ref == outcomes[-1][2]
+    assert result.prepared_prompt is not None and result.transport_ref
+    first = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    first_root = Path(result["attempt_history"][0]["status_path"]).parent
+    for key, expected in (("stdout_path", "first output"), ("stderr_path", "503 Service Unavailable"),
+                          ("result_path", "First failed result")):
+        assert Path(first[key]).parent == first_root
+        assert first["invocation_evidence"][key] == first[key]
+        assert Path(first["invocation_evidence"][key]).read_text() == expected
+        assert result["invocation_evidence"][key] == result[key]
+        assert Path(result[key]).parent == store.root / job["id"]
+    assert first["runtime_transcript_path"] == first[transcript_alias]
+    assert first["invocation_evidence"]["runtime_transcript_path"] == first[transcript_alias]
+    assert result["invocation_evidence"]["runtime_transcript_path"] == result[transcript_alias]
+    assert not {"prepared_prompt", "transport_ref"} & set(first)
+    assert at_retry[0]["attempts"] == 1
+    assert at_retry[0]["failure_class"] == "network"
+    assert at_retry[0]["disposition"] == "retrying"
+
+
+def test_cli_first_success_archive_has_complete_attempt_outcome(tmp_path, monkeypatch):
+    install_fake_worker_version(monkeypatch)
+    install_fake_popen(monkeypatch)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="retained", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    result = store.run_job(job["id"])
+
+    retained = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    assert retained["status"] == "completed"
+    assert retained["attempts"] == 1
+    assert retained["disposition"] == "completed"
+    assert "failure_class" not in retained
+    assert "disposition" not in result
+    assert "failure_class" not in result
+
+
+def test_cli_archives_keep_each_distinct_failure_cause_before_recovery(tmp_path, monkeypatch):
+    install_fake_worker_version(monkeypatch)
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stderr_text": "503 Service Unavailable"},
+        {"returncode": 1, "stderr_text": "401 Unauthorized"},
+        {"returncode": 0},
+    ])
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "3")
+    monkeypatch.setattr("goodteam_os.workers._sleep", lambda _seconds: None)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="distinct", role="implementation", adapter="codex", task="Synthetic test", context="")
+
+    result = store.run_job(job["id"])
+
+    archived = [json.loads(Path(item["status_path"]).read_text()) for item in result["attempt_history"]]
+    assert [item.get("failure_class") for item in archived] == ["network", "auth", None]
+    assert [item["attempts"] for item in archived] == [1, 2, 3]
+    assert [item["disposition"] for item in archived] == ["retrying", "retrying", "completed"]
+    assert result["disposition"] == "recovered" and result["failure_class"] == "auth"
+
+
+@pytest.mark.parametrize("stderr", ["Provider request timed out", "Upstream tool timeout"])
+@pytest.mark.parametrize("recovers", [True, False])
+def test_cli_nonzero_provider_timeout_keeps_bounded_transient_retry(tmp_path, monkeypatch, stderr, recovers):
+    calls = []
+    sleeps = []
+    install_fake_worker_version(monkeypatch)
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stderr_text": stderr},
+        {"returncode": 0 if recovers else 1, "stderr_text": "" if recovers else stderr},
+    ], calls=calls)
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "2")
+    monkeypatch.setattr("goodteam_os.workers._sleep", sleeps.append)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="timeout", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    result = store.run_job(job["id"])
+
+    assert len(calls) == 2
+    assert sleeps == [2]
+    assert result["status"] == ("completed" if recovers else "failed")
+    assert result["attempts"] == result["max_attempts"] == 2
+    assert result["failure_class"] == "timeout"
+    assert result["disposition"] == ("recovered" if recovers else "escalated")
+    retained = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    assert retained["failure_class"] == "timeout"
+    assert retained["disposition"] == "retrying"
+    final = json.loads(Path(result["attempt_history"][1]["status_path"]).read_text())
+    assert final["disposition"] == ("completed" if recovers else "escalated")
+    assert final.get("failure_class") == (None if recovers else "timeout")
+
+
+def test_cli_attempt_cap_survives_service_restart(tmp_path, monkeypatch):
+    calls = []
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stderr_text": "ERROR: unexpected status 503 Service Unavailable"},
+        {"returncode": 0},
+    ], calls=calls)
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "1")
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="bounded", role="implementation", adapter="codex", task="Fix a bug", context="")
+    monkeypatch.delenv("GOODTEAM_WORKER_MAX_ATTEMPTS")
+
+    result = WorkerJobStore(tmp_path).run_job(job["id"])
+
+    assert job["max_attempts"] == result["max_attempts"] == result["attempts"] == 1
+    assert len(calls) == 1
+    assert result["status"] == "failed"
+    assert result["disposition"] == "escalated"
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "4", "unlimited", "", "1.0"])
+def test_cli_invalid_attempt_cap_never_creates_a_job(tmp_path, monkeypatch, limit):
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", limit)
+    store = WorkerJobStore(tmp_path)
+
+    with pytest.raises(ValueError, match="GOODTEAM_WORKER_MAX_ATTEMPTS"):
+        store.create_job(run_id="bounded", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    assert not store.root.exists()
+
+
+def test_cli_current_attempt_cap_can_reduce_an_existing_job(tmp_path, monkeypatch):
+    calls = []
+    install_fake_popen_sequence(monkeypatch, responses=[
+        {"returncode": 1, "stderr_text": "ERROR: stream disconnected before response.completed"},
+        {"returncode": 0},
+    ], calls=calls)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="bounded", role="code_review", adapter="codex", task="Review a fix", context="")
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "1")
+
+    result = store.run_job(job["id"])
+
+    assert len(calls) == 1
+    assert result["max_attempts"] == 1
+    assert result["status"] == "failed"
+
+
+@pytest.mark.parametrize("mode", ["workspace-write", "read-only"])
+def test_codex_opt_in_sandbox_preserves_confinement_flags(tmp_path, monkeypatch, mode):
+    calls = []
+    install_fake_popen(monkeypatch, calls=calls)
+    monkeypatch.setenv("GOODTEAM_CODEX_SANDBOX_MODE", mode)
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="bounded", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    result = store.run_job(job["id"])
+
+    command = calls[0]["command"]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert command[command.index("--sandbox") + 1] == mode
+    assert 'approval_policy="never"' in command
+    assert result["runtime_sandbox_mode"] == mode
+    assert result["runtime_unsafe_mode"] is False
+
+
+def test_codex_invalid_sandbox_mode_never_invokes_cli(tmp_path, monkeypatch):
+    calls = []
+    install_fake_popen(monkeypatch, calls=calls)
+    monkeypatch.setenv("GOODTEAM_CODEX_SANDBOX_MODE", "danger-full-access")
+    store = WorkerJobStore(tmp_path)
+    job = store.create_job(run_id="bounded", role="implementation", adapter="codex", task="Fix a bug", context="")
+
+    with pytest.raises(ValueError, match="GOODTEAM_CODEX_SANDBOX_MODE"):
+        store.run_job(job["id"])
+
+    assert calls == []
 
 
 def test_cli_retry_escalates_after_max_transient_failures(tmp_path, monkeypatch):
@@ -2622,6 +2855,10 @@ def test_cli_retry_escalates_after_max_transient_failures(tmp_path, monkeypatch)
     assert result["failure_class"] == "stream_disconnect"
     assert result["disposition"] == "escalated"
     assert len(sleeps) == WORKER_MAX_ATTEMPTS - 1
+    retained = [json.loads(Path(item["status_path"]).read_text()) for item in result["attempt_history"]]
+    assert [item["attempts"] for item in retained] == list(range(1, WORKER_MAX_ATTEMPTS + 1))
+    assert all(item["failure_class"] == "stream_disconnect" for item in retained)
+    assert [item["disposition"] for item in retained] == ["retrying", "retrying", "escalated"]
 
 
 def test_cli_non_transient_failure_is_not_retried(tmp_path, monkeypatch):
@@ -2650,6 +2887,10 @@ def test_cli_non_transient_failure_is_not_retried(tmp_path, monkeypatch):
     assert result["disposition"] == "escalated"
     assert len(calls) == 1
     assert sleeps == []
+    retained = json.loads(Path(result["attempt_history"][0]["status_path"]).read_text())
+    assert retained["attempts"] == 1
+    assert retained["failure_class"] == "scaffold"
+    assert retained["disposition"] == "escalated"
 
 
 def test_codex_worker_prompt_requires_bounded_smoke_cleanup(tmp_path, monkeypatch):

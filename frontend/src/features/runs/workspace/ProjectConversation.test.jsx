@@ -524,3 +524,27 @@ test.each([false, true])('an initially hidden conversation defers checkpoint res
     expect(screen.getByRole('button', { name: 'Read new updates' })).toBeInTheDocument();
   } finally { rect.mockRestore(); }
 });
+
+test.each([null, false, true])('a conversation first mounted in a background document initializes when visible, following=%s', following => {
+  const anchor = following ? { id: 'history-6', offset: 0 } : { id: 'history-2', offset: -30 };
+  if (following !== null) saveReadingPosition({ scope: readingScope('DEMO', props.mission), following,
+    seenId: 'history-7', anchor, attentionKey: '[[],[],[],[]]' });
+  const saved = readingStorage();
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+  try {
+    const { container, rerender } = render(view({ timeline: history }));
+    const node = measuredHistory(container);
+    expect(readingStorage()).toEqual(saved);
+    rerender(view({ timeline: history.map(item => ({ ...item })) }));
+    expect(readingStorage()).toEqual(saved);
+    visibility.mockReturnValue('visible');
+    fireEvent(document, new Event('visibilitychange'));
+    const position = following === null ? 1600 : following ? 1200 : 430;
+    expect(node.scrollTop).toBe(position);
+    expect(readingStorage()).toMatchObject({ following: following ?? true, seenId: 'history-7' });
+    if (saved) expect(readingStorage().anchor).toEqual(anchor);
+    rerender(view({ timeline: history.map(item => ({ ...item })) }));
+    expect(node.scrollTop).toBe(position);
+    expect(readingStorage().seenId).toBe('history-7');
+  } finally { visibility.mockRestore(); }
+});

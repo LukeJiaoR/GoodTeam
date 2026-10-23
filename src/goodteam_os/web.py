@@ -14,7 +14,12 @@ from contextvars import ContextVar
 from dataclasses import asdict, replace
 from datetime import datetime, UTC
 from html import escape
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from goodteam_os.http_transport import (
+    BoundedHTTPRequestHandler as BaseHTTPRequestHandler,
+    BoundedThreadingHTTPServer as ThreadingHTTPServer,
+    RequestBodyError,
+    read_request_body,
+)
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, quote, unquote_to_bytes, urlparse
@@ -86,6 +91,14 @@ from goodteam_os.project_readiness_executor import (
     ReadinessExecutionError,
 )
 from goodteam_os.reviewer_evidence_snapshot import build_reviewer_evidence_snapshot
+from goodteam_os.repository_access import AnchoredRepository, canonical_relative_path
+from goodteam_os.repository_snapshot import RepositorySnapshotError, inspect_repository_git
+from goodteam_os._trusted_system_executable import (
+    TrustedExecutableError,
+    open_verified_executable,
+    resolve_trusted_system_git,
+)
+from goodteam_os.artifact_revisions import invalidate_artifact
 from goodteam_os.reviewer_dispatch import (
     artifact_version_for_path,
     retry_failed_reviewer_jobs_for_gate,
@@ -278,7 +291,7 @@ def append_action(
     action_log.parent.mkdir(parents=True, exist_ok=True)
     event = {
         "timestamp": datetime.now(UTC).isoformat(),
-        "project_key": normalize_project_key(project_key),
+        "project_key": normalize_project_key(project_key) if project_key else "",
         "run_id": run_id,
         "actor": actor,
         "action": action,
@@ -1486,6 +1499,7 @@ def _write_dispatch_track_status(
     worktree: Path,
     status: str,
     error: str = "",
+    report: dict[str, object] | None = None,
 ) -> None:
     status_path = _dispatch_track_status_path(workspace, run_id)
     status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1495,6 +1509,7 @@ def _write_dispatch_track_status(
         "worktree": str(worktree),
         "status": status,
         "error": error,
+        **({"report": report} if report is not None else {}),
         "updated_at": datetime.now(UTC).isoformat(),
     }
     status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1552,12 +1567,13 @@ def _start_dispatch_track_background(
             status="started",
         )
         try:
-            dispatch_tracks(
+            report = dispatch_tracks(
                 project_root=worktree,
                 tracks=tracks,
                 verify_commands=verify_commands,
                 constraints_file=constraints_file,
                 projects_dir=projects_dir,
+                logical_task_id=run_id,
             )
         except Exception as exc:
             _write_dispatch_track_status(
@@ -1574,7 +1590,9 @@ def _start_dispatch_track_background(
             run_id=run_id,
             name=name,
             worktree=worktree,
-            status="completed",
+            status="completed" if report.get("all_ok") else "failed",
+            report=report,
+            error="" if report.get("all_ok") else "Dispatch requires attention; inspect the retained report and candidate.",
         )
 
     thread = threading.Thread(
@@ -2529,17 +2547,41 @@ _project_config_paths_in_work_state: ContextVar[dict[tuple[Path, str], Path] | N
 )
 
 
-def build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
+def _goal_page_limit(query, *, default=1):
+    raw = query.get("goal_limit", [str(default)])[0]
+    if not isinstance(raw, str) or len(raw) > 2 or not raw.isascii() or not raw.isdecimal() or not 1 <= int(raw) <= 50:
+        raise ProjectApiError("invalid_goal_page", "Goal page limit must be between 1 and 50.", 400)
+    return int(raw)
+
+
+def build_goal_history(workspace: Path, project_key: str, *, limit: int = 20, before: str = ""):
+    from goodteam_os.goal_continuation import goal_views
+    from goodteam_os.goals import GoalError, GoalStore
+
+    key = normalize_project_key(project_key)
+    _project_config_for_key(workspace, key)
+    if not (workspace / "state" / "goals.sqlite3").is_file():
+        if before:
+            raise ProjectApiError("invalid_goal_page", "Unknown Goal history cursor.", 400)
+        return {"goals": [], "next_before": "", "project_key": key}
+    try:
+        page = GoalStore(workspace, key).page_goals(limit=limit, before=before)
+    except GoalError as exc:
+        raise ProjectApiError("invalid_goal_page", str(exc), 400) from exc
+    return {**page, "goals": goal_views(workspace, page["goals"]), "project_key": key}
+
+
+def build_project_work_state(workspace: Path, project_key: str, *, goal_limit: int | None = None) -> dict[str, object]:
     # Reuse only path resolution within this projection. Config contents stay
     # live, and subsequent requests/mutations perform their own lookup.
     token = _project_config_paths_in_work_state.set({})
     try:
-        return _build_project_work_state(workspace, project_key)
+        return _build_project_work_state(workspace, project_key, goal_limit=goal_limit)
     finally:
         _project_config_paths_in_work_state.reset(token)
 
 
-def _build_project_work_state(workspace: Path, project_key: str) -> dict[str, object]:
+def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: int | None = None) -> dict[str, object]:
     from goodteam_os.delivery_outcomes import build_delivery_summary
 
     project_config = _project_config_for_key(workspace, project_key)
@@ -2548,7 +2590,7 @@ def _build_project_work_state(workspace: Path, project_key: str) -> dict[str, ob
     state = _dashboard_state_view(retry_state)
     project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
     task_assistant_session = (
-        TaskAssistantService(workspace, project_config=project_config).session(project_key, project_root)
+        TaskAssistantService(workspace, project_config=project_config).session(project_key, project_root, **({"goal_limit": goal_limit} if goal_limit is not None else {}))
         if project_root is not None
         else None
     )
@@ -2651,7 +2693,8 @@ def _allowed_cors_origin(origin: str, *, host: str, port: int) -> str:
     if hostname not in allowed_hosts:
         return ""
     expected_port = port if parsed.scheme == "http" else 443
-    if parsed.port not in {None, expected_port}:
+    origin_port = parsed.port if parsed.port is not None else (80 if parsed.scheme == "http" else 443)
+    if origin_port != expected_port:
         return ""
     return origin
 
@@ -2859,29 +2902,75 @@ def _run_git_project_command(
     warnings: list[str],
     *,
     env: dict[str, str] | None = None,
+    expected_identity: dict[str, int] | None = None,
 ) -> subprocess.CompletedProcess[str] | None:
+    executable_fd = None
     try:
-        return subprocess.run(
-            command,
-            cwd=root_path,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS,
-            check=False,
-        )
+        if command[0] == "git":
+            executable, _, identity = resolve_trusted_system_git(root_path)
+            executable_fd = open_verified_executable(executable, identity)
+            command = [executable, "-c", "core.fsmonitor=false", *command[1:]]
+            env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+            env["GIT_TERMINAL_PROMPT"] = "0"
+        with AnchoredRepository(root_path, expected_identity=expected_identity) as repository:
+            result = subprocess.run(
+                command,
+                cwd=root_path,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS,
+                check=False,
+            )
+            repository.verify_root()
+            return result
     except FileNotFoundError:
         warnings.append(f"{command[0]} not available")
     except subprocess.TimeoutExpired:
         warnings.append(f"{command[0]} timed out")
     except OSError as exc:
         warnings.append(f"{command[0]} failed: {exc.__class__.__name__}")
+    except TrustedExecutableError:
+        warnings.append("Trusted Git executable is unavailable or changed; repair Git installation and retry.")
+    finally:
+        if executable_fd is not None:
+            os.close(executable_fd)
     return None
 
 
-def _git_configured_identity(root_path: Path, warnings: list[str]) -> bool:
-    name = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.name"], root_path, warnings)
-    email = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.email"], root_path, warnings)
+def _project_git_baseline(root_path: Path) -> dict[str, object]:
+    try:
+        state = inspect_repository_git(root_path)
+    except (RepositorySnapshotError, OSError) as exc:
+        return {
+            "state": "invalid",
+            "head_sha": None,
+            "baseline_required": True,
+            "error": f"Git baseline inspection failed: {exc} Repair the repository root or Git metadata and retry.",
+        }
+    state["baseline_required"] = state["state"] != "valid_head"
+    if state["baseline_required"]:
+        state["error"] = (
+            "Git baseline required. Select the exact initial_files for /git-init, "
+            "or create the initial commit manually, then retry."
+        )
+    return state
+
+
+def _initial_git_files(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value or any(not isinstance(item, str) for item in value):
+        raise ValueError("initial_files must be a non-empty list of relative file paths.")
+    paths = [canonical_relative_path(item) for item in value]
+    if any(path.split("/")[0] in {".git", ".goodteam"} for path in paths):
+        raise ValueError("initial_files cannot include Git metadata or GoodTeam state.")
+    return list(dict.fromkeys(paths))
+
+
+def _git_configured_identity(root_path: Path, warnings: list[str], expected_identity: dict[str, int]) -> bool:
+    name = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.name"], root_path, warnings, expected_identity=expected_identity)
+    email = _run_git_project_command(["git", "-C", str(root_path), "config", "--get", "user.email"], root_path, warnings, expected_identity=expected_identity)
     return bool(
         name is not None
         and name.returncode == 0
@@ -2900,52 +2989,75 @@ def _initialize_project_git(
     init_git: bool,
     create_remote: bool,
     remote_private: bool,
+    initial_files: list[str] | None = None,
+    scaffold_new_project: bool = False,
 ) -> dict[str, object]:
     result: dict[str, object] = {"initialized": False, "remote_created": False, "warnings": []}
     warnings = result["warnings"]
     assert isinstance(warnings, list)
-    existing_git = (root_path / ".git").exists()
+    selected_files = _initial_git_files(initial_files)
+    baseline = _project_git_baseline(root_path)
+    existing_git = baseline["state"] != "non_git"
+    if baseline["state"] == "invalid":
+        return {**result, **baseline, "warnings": [baseline["error"]]}
+    root_identity = baseline["root_identity"]
 
-    if existing_git:
-        warnings.append("git init skipped: project root already contains .git")
-    elif init_git:
+    def run(command: list[str], *, env: dict[str, str] | None = None):
+        return _run_git_project_command(command, root_path, warnings, env=env, expected_identity=root_identity)
+
+    if init_git and baseline["state"] != "valid_head" and (selected_files or scaffold_new_project):
+        if selected_files is not None:
+            # Only regular files below the pinned root are accepted; directory
+            # pathspecs would silently include files the caller did not select.
+            with AnchoredRepository(root_path, expected_identity=root_identity) as repository:
+                for path in selected_files:
+                    repository.read_bytes(path, max_bytes=0)
         readme = root_path / "README.md"
         gitignore = root_path / ".gitignore"
-        try:
-            if not readme.exists():
-                readme.write_text(f"# {project_name}\n", encoding="utf-8")
-            if not gitignore.exists():
-                gitignore.write_text(".DS_Store\n.env\n.venv/\n__pycache__/\n", encoding="utf-8")
-        except OSError as exc:
-            warnings.append(f"git scaffold files skipped: {exc.__class__.__name__}")
+        if scaffold_new_project:
+            selected_files = []
+            for path, content in (
+                (readme, f"# {project_name}\n"),
+                (gitignore, ".DS_Store\n.env\n.venv/\n__pycache__/\n.goodteam/\n"),
+            ):
+                try:
+                    with path.open("x", encoding="utf-8") as handle:
+                        handle.write(content)
+                    selected_files.append(path.name)
+                except OSError as exc:
+                    warnings.append(f"git scaffold file {path.name} skipped: {exc.__class__.__name__}")
 
-        init = _run_git_project_command(["git", "-C", str(root_path), "init", "-b", "main"], root_path, warnings)
-        if init is not None and init.returncode != 0:
-            fallback = _run_git_project_command(["git", "-C", str(root_path), "init"], root_path, warnings)
-            if fallback is not None and fallback.returncode == 0:
-                _run_git_project_command(["git", "-C", str(root_path), "branch", "-M", "main"], root_path, warnings)
-                init = fallback
-        if init is None or init.returncode != 0:
+        init = None
+        if baseline["state"] == "non_git":
+            init = run(["git", "-C", str(root_path), "init", "-b", "main"])
+        if baseline["state"] == "non_git" and (init is None or init.returncode != 0):
             stderr = "" if init is None else init.stderr.strip()
             warnings.append(f"git init failed{f': {stderr}' if stderr else ''}")
-        else:
-            add = _run_git_project_command(["git", "-C", str(root_path), "add", "-A"], root_path, warnings)
+        elif selected_files:
+            add = run(["git", "--literal-pathspecs", "-C", str(root_path), "add", "--", *selected_files])
             if add is None or add.returncode != 0:
                 stderr = "" if add is None else add.stderr.strip()
                 warnings.append(f"git add failed{f': {stderr}' if stderr else ''}")
             else:
-                commit_command = ["git", "-C", str(root_path), "commit", "-m", "Initial commit (GoodTeam scaffold)"]
-                if not _git_configured_identity(root_path, warnings):
+                commit_command = ["git", "-C", str(root_path), "--literal-pathspecs", "commit", "--only", "-m", "Initial commit (GoodTeam scaffold)", "--", *selected_files]
+                if not _git_configured_identity(root_path, warnings, root_identity):
                     commit_command[3:3] = ["-c", "user.name=GoodTeam", "-c", "user.email=noreply@goodteam.local"]
-                commit = _run_git_project_command(commit_command, root_path, warnings)
+                commit = run(commit_command)
                 if commit is None or commit.returncode != 0:
                     stderr = "" if commit is None else commit.stderr.strip()
                     warnings.append(f"git commit failed{f': {stderr}' if stderr else ''}")
                 else:
-                    result["initialized"] = True
+                    result["initialized"] = _project_git_baseline(root_path)["state"] == "valid_head"
+
+    baseline = _project_git_baseline(root_path)
+    result.update(baseline)
+    if baseline.get("error"):
+        warnings.append(baseline["error"])
 
     if create_remote:
-        if existing_git:
+        if baseline["baseline_required"]:
+            warnings.append("create-remote skipped: establish a valid Git baseline first")
+        elif existing_git:
             warnings.append("create-remote skipped: project root already contains .git")
         else:
             token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -2953,7 +3065,7 @@ def _initialize_project_git(
                 warnings.append("create-remote requested but no GITHUB_TOKEN/GH_TOKEN set")
             else:
                 visibility = "--private" if remote_private else "--public"
-                gh = _run_git_project_command(
+                gh = run(
                     [
                         "gh",
                         "repo",
@@ -2966,8 +3078,6 @@ def _initialize_project_git(
                         "origin",
                         "--push",
                     ],
-                    root_path,
-                    warnings,
                     env={**os.environ, "GH_TOKEN": token},
                 )
                 if gh is not None and gh.returncode == 0:
@@ -2995,6 +3105,7 @@ def initialize_project_git_for_request(workspace: Path, request: dict[str, objec
         init_git=True,
         create_remote=_request_bool(request.get("create_remote"), False),
         remote_private=_request_bool(request.get("remote_private"), True),
+        initial_files=_initial_git_files(request.get("initial_files")),
     )
 
 
@@ -3035,9 +3146,11 @@ def create_local_project_config(
     init_git: bool = True,
     create_remote: bool = False,
     remote_private: bool = True,
+    initial_files: list[str] | None = None,
 ) -> dict[str, object]:
     name = _single_line_config_value("Project name", project_name)
     key = _single_line_config_value("Project key", project_key).upper()
+    initial_files = _initial_git_files(initial_files)
     if not name:
         raise ValueError("Project name is required.")
     if not key:
@@ -3046,6 +3159,7 @@ def create_local_project_config(
     repos = []
     if project_root.strip():
         root_path = _validate_directory_path("Project root", project_root)
+        scaffold_new_project = not any(root_path.iterdir())
         repos.append(("root", root_path))
         try:
             if not (root_path / "docs").exists():
@@ -3068,17 +3182,16 @@ def create_local_project_config(
 
     git_result: dict[str, object] = {"initialized": False, "remote_created": False, "warnings": []}
     if project_root.strip():
-        try:
-            git_result = _initialize_project_git(
-                root_path=root_path,
-                project_name=name,
-                project_key=key,
-                init_git=init_git,
-                create_remote=create_remote,
-                remote_private=remote_private,
-            )
-        except Exception as exc:
-            git_result["warnings"].append(f"git setup skipped: {exc.__class__.__name__}")
+        git_result = _initialize_project_git(
+            root_path=root_path,
+            project_name=name,
+            project_key=key,
+            init_git=init_git,
+            create_remote=create_remote,
+            remote_private=remote_private,
+            initial_files=initial_files,
+            scaffold_new_project=scaffold_new_project,
+        )
 
     path = workspace / "projects" / f"{_slug(key)}.local.yaml"
     profile = _single_line_config_value("Model profile", model_profile, default="balanced")
@@ -3660,6 +3773,25 @@ def start_workflow(
         team_state = ensure_team_state(workspace, key, project_config)
         if team_state is not None:
             state.team_snapshot = build_team_execution_snapshot(team_state)
+    if not dry_run and target:
+        from goodteam_os.workflow_workspace import adapter_requires_workflow_workspace, prepare_workflow_workspace
+
+        runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+        from goodteam_os.reviewer_profiles import get_reviewer_profile
+
+        roles = ("project_intake", "product_requirement", "architect", "ui", "implementation", "qa", "release")
+        needs_repository = any(adapter_requires_workflow_workspace(resolve_role_adapter(target, role)) for role in roles)
+        needs_repository = needs_repository or any(
+            adapter_requires_workflow_workspace(get_reviewer_profile(profile_id).adapter)
+            for profiles in normalize_reviewer_profile_config(target).values() for profile_id in profiles
+        )
+        from goodteam_os.staging import staging_backend_enabled
+
+        needs_repository = needs_repository or staging_backend_enabled(source_type=source_type, project_config=project_config)
+        if needs_repository:
+            if runtime_root is None:
+                raise ValueError("A real workflow requires its configured Git repository baseline.")
+            state.repository_baseline = prepare_workflow_workspace(runtime_root, project_key=key, run_id=state.run_id)
     if not dry_run:
         from goodteam_os.skills.task_context import workflow_skill_context
         from goodteam_os.skills.task_locks import TaskSkillIdentity
@@ -3721,7 +3853,7 @@ def start_workflow(
     previous = StateStore(workspace).read_project_current(key)
     if previous is not None and not is_active_run(previous):
         StateStore(workspace).archive_project_current(key, reason="rejected" if previous.next_node == "rejected" else "complete")
-    if state.task_skill_context:
+    if state.task_skill_context or state.repository_baseline:
         # Lock ownership and the portable reference are durable BEFORE any graph
         # node may dispatch. Failure leaves an inspectable blocked task, not a
         # template-generated success or a recapture from current methods.
@@ -4749,7 +4881,9 @@ def regenerate_rfc_review_gate(
 ) -> AgileDevState:
     if should_generate_artifact_with_worker(project_config, "architect"):
         return run_architecture_until_gate(state=state, workspace=workspace, project_config=project_config)
-    rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config)).write_markdown(
+    invalidate_artifact(state, "rfc")
+    rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                             revision_tokens=state.artifact_generations).write_markdown(
         state.run_id,
         "rfc",
         "rfc.md",
@@ -4850,11 +4984,24 @@ def _retry_bound_workflow(*, workspace, key, state, project_config):
     staging_retry = any(blocker.startswith("staging ") for blocker in state.blockers)
     state.blockers = []
     if staging_retry:
-        staging_result = run_staging_backend(project_config=project_config)
+        from goodteam_os.workflow_workspace import collect_workflow_workspace, workspace_for_workflow
+
+        execution_root = None
+        repository_candidate = {}
+        if state.repository_baseline:
+            source = Path(str(state.repository_baseline.get("source_root", "")))
+            execution_root = workspace_for_workflow(source, state.repository_baseline,
+                                                     project_key=state.project_key, run_id=state.run_id)
+            repository_candidate = collect_workflow_workspace(source, state.repository_baseline,
+                                                               project_key=state.project_key, run_id=state.run_id)
+        staging_result = run_staging_backend(project_config=project_config, execution_root=execution_root,
+                                             repository_candidate=repository_candidate)
         from goodteam_os.graph import render_staging_report_markdown
         from goodteam_os.artifacts import ArtifactStore
 
-        store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+        invalidate_artifact(state, "staging_report")
+        store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                              revision_tokens=state.artifact_generations)
         staging_path = store.write_markdown(
             state.run_id,
             "staging_report",
@@ -5179,9 +5326,16 @@ def build_resource_items(state: AgileDevState | None) -> list[dict[str, object]]
 
 def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
     state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
-    raw_content = path.read_bytes()
+    if artifact_key == "source_preview":
+        from goodteam_os.delivery_outcomes import _artifact_bytes
+
+        raw_content = _artifact_bytes(workspace, state, artifact_key)
+    else:
+        raw_content = path.read_bytes()
     content = raw_content.decode("utf-8")
     return {
+        **({"proposal_binding": dict(state.artifact_proposals[artifact_key.removesuffix("_proposed")])}
+           if artifact_key.endswith("_proposed") and artifact_key.removesuffix("_proposed") in state.artifact_proposals else {}),
         "artifact": artifact_key,
         "path": str(path),
         "content": content,
@@ -5192,10 +5346,10 @@ def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") 
 
 
 def read_open_questions(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    artifact = read_artifact(workspace=workspace, artifact_key=artifact_key, project_key=project_key)
     return {
         "artifact": artifact_key,
-        "questions": extract_open_questions(path.read_text(encoding="utf-8")),
+        "questions": extract_open_questions(artifact["content"]),
     }
 
 
@@ -5205,8 +5359,12 @@ def answer_open_questions(
     project_key: str,
     artifact_key: str,
     answers: list[object],
+    expected_run_id: str = "", expected_artifact_version: str = "",
 ) -> dict[str, object]:
     artifact = read_artifact(workspace=workspace, artifact_key=artifact_key, project_key=project_key)
+    if (not expected_run_id or not expected_artifact_version or expected_run_id != artifact["run_id"]
+            or expected_artifact_version != artifact["artifact_version"]):
+        raise ProjectApiError("stale_artifact", "Reload the artifact before answering its questions.", 409)
     guidance_parts: list[str] = []
     for raw_answer in answers:
         if not isinstance(raw_answer, dict):
@@ -5230,12 +5388,29 @@ def answer_open_questions(
 @serialized_workflow
 def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_key: str = "",
                   expected_run_id: str = "", expected_artifact_version: str = "") -> dict[str, object]:
+    # Enforce this for older persisted registries that still advertise EDIT too.
+    if artifact_key == "source_preview":
+        raise ProjectApiError("read_only_artifact", "Retained source evidence is read-only.", 403)
     state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
     if (expected_run_id and expected_run_id != state.run_id) or (
         expected_artifact_version and expected_artifact_version != artifact_version_for_path(str(path))
     ):
         raise ProjectApiError("stale_artifact", "This artifact changed. Reload it before saving your edits.", 409)
-    path.write_text(content, encoding="utf-8")
+    if path.read_text(encoding="utf-8") != content:
+        from goodteam_os.artifacts import ArtifactStore
+        from goodteam_os.graph import _register_written_markdown
+
+        invalidate_artifact(state, artifact_key, rewind=True)
+        path = ArtifactStore(workspace, revision_tokens=state.artifact_generations).write_markdown(
+            state.run_id, artifact_key, path.name, content)
+        _register_written_markdown(state, artifact_key, path)
+        store = StateStore(workspace)
+        if project_key:
+            store.write_project_current(state)
+            store.write_project_checkpoint(state)
+        else:
+            store.write_current(state)
+            store.write_checkpoint(state)
 
     key = normalize_project_key(project_key or state.project_key)
     project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
@@ -5370,6 +5545,14 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             artifact_path=artifact_path,
             artifact_version=artifact_version,
         )
+        from goodteam_os.gate_report_projection import project_gate_reports
+
+        review["reviewer_reports"] = project_gate_reports(
+            [entry["status"] for entry in review["multi_reviewer_projection"]["reviewers"]
+             if isinstance(entry.get("status"), dict)],
+            roots=_project_runtime_roots_for_state(state=state, workspace=workspace, project_key=state.project_key),
+            run_id=state.run_id, project_key=state.project_key,
+        )
         review["queued_reviewer_jobs"] = select_queued_reviewer_jobs_for_gate(
             reviewer_statuses,
             run_id=state.run_id,
@@ -5413,6 +5596,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
                 workspace=workspace,
                 project_key=state.project_key,
             )
+            evidence_snapshot["reviewer_reports"] = review["reviewer_reports"]
             review["evidence_snapshot"] = evidence_snapshot
             review["recommendation"] = build_approval_recommendation(
                 state=state,
@@ -5828,6 +6012,7 @@ def build_project_home(
             "worker_hint": str(worker_preflight.get("hint", "")),
         },
         "readiness": readiness,
+        "git_baseline": _project_git_baseline(root),
         "capabilities": {
             **build_capabilities(readiness),
             "workflow_entry_url": (
@@ -6597,7 +6782,7 @@ def _project_api_error_response(
     error: Exception,
 ) -> tuple[int, dict[str, object]]:
     request_id = uuid4().hex
-    if isinstance(error, ProjectApiError):
+    if isinstance(error, (ProjectApiError, RequestBodyError)):
         status = error.status
         code = error.code
         message = error.message
@@ -6933,8 +7118,7 @@ def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexRe
                     )
                     return
             try:
-                content_length = int(self.headers.get("Content-Length", "0"))
-                raw_body = self.rfile.read(content_length)
+                raw_body = read_request_body(self)
                 if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
                     response = (
@@ -6986,6 +7170,7 @@ def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexRe
                         role_model_overrides=dict(request.get("role_model_overrides", {})),
                         worker_type_settings=dict(request.get("worker_type_settings", {})),
                         init_git=_request_bool(request.get("init_git"), True),
+                        initial_files=_initial_git_files(request.get("initial_files")),
                         create_remote=_request_bool(request.get("create_remote"), False),
                         remote_private=_request_bool(request.get("remote_private"), True),
                     )
@@ -7759,6 +7944,15 @@ def serve(
                 except Exception as exc:
                     self._send_api_error(exc)
                 return
+            if parsed.path == "/api/goal-history":
+                try:
+                    self._send_json(200, build_goal_history(
+                        workspace, project_key, limit=_goal_page_limit(query, default=20),
+                        before=query.get("before", [""])[0],
+                    ))
+                except Exception as exc:
+                    self._send_api_error(exc)
+                return
             if parsed.path == "/api/state":
                 try:
                     if not project_key:
@@ -7770,7 +7964,7 @@ def serve(
                             "resources": build_resource_items(legacy_state),
                         }
                     else:
-                        res_data = build_project_work_state(workspace, project_key)
+                        res_data = build_project_work_state(workspace, project_key, **({"goal_limit": _goal_page_limit(query)} if "goal_limit" in query else {}))
                     self._send_json(200, res_data)
                 except Exception as exc:
                     self._send_api_error(exc)
@@ -8101,8 +8295,7 @@ def serve(
                 )
                 return
             try:
-                content_length = int(self.headers.get("Content-Length", "0"))
-                raw_body = self.rfile.read(content_length)
+                raw_body = read_request_body(self)
                 if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
                     project_response = (
@@ -8115,6 +8308,11 @@ def serve(
                     self._send_json(status, result)
                     return
                 request = json.loads(raw_body.decode("utf-8") or "{}")
+                if normalized_path in {"/artifact", "/refine-artifact", "/answer-open-questions"}:
+                    if not all(isinstance(request.get(field), str) and request[field].strip()
+                               for field in ("expected_run_id", "expected_artifact_version")):
+                        raise ProjectApiError("artifact_binding_required",
+                            "Reload the current artifact before editing or refining it.", 400)
                 if is_execution_path:
                     execution_response = handle_execution_post(normalized_path, request)
                     if execution_response is None:
@@ -8333,18 +8531,30 @@ def serve(
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
                         answers=raw_answers if isinstance(raw_answers, list) else [],
+                        expected_run_id=request.get("expected_run_id", ""),
+                        expected_artifact_version=request.get("expected_artifact_version", ""),
                     )
                 elif normalized_path == "/accept-refinement":
                     result = accept_refinement(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
+                        expected_run_id=request.get("expected_run_id", ""),
+                        expected_artifact_key=request.get("expected_artifact_key", ""),
+                        expected_artifact_version=request.get("expected_artifact_version", ""),
+                        expected_proposal_id=request.get("expected_proposal_id", ""),
+                        expected_proposal_version=request.get("expected_proposal_version", ""),
                     )
                 elif normalized_path == "/discard-refinement":
                     result = discard_refinement(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
                         artifact_key=str(request.get("artifact", "")),
+                        expected_run_id=request.get("expected_run_id", ""),
+                        expected_artifact_key=request.get("expected_artifact_key", ""),
+                        expected_artifact_version=request.get("expected_artifact_version", ""),
+                        expected_proposal_id=request.get("expected_proposal_id", ""),
+                        expected_proposal_version=request.get("expected_proposal_version", ""),
                     )
                 elif normalized_path == "/open-path":
                     result = open_path_in_file_manager(
@@ -8425,6 +8635,7 @@ def serve(
                         role_model_overrides=dict(request.get("role_model_overrides", {})),
                         worker_type_settings=dict(request.get("worker_type_settings", {})),
                         init_git=_request_bool(request.get("init_git"), True),
+                        initial_files=_initial_git_files(request.get("initial_files")),
                         create_remote=_request_bool(request.get("create_remote"), False),
                         remote_private=_request_bool(request.get("remote_private"), True),
                     )

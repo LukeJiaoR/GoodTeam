@@ -18,6 +18,7 @@ from goodteam_os.repository_snapshot import (
     capture_repository_snapshot,
     compile_snapshot_path_manifest,
     compute_repository_snapshot_id,
+    inspect_repository_git,
     snapshot_identity_payload,
     validate_snapshot_path_entry,
     validate_snapshot_text_content,
@@ -85,6 +86,57 @@ def test_clean_git_snapshot_is_deterministic(tmp_path: Path) -> None:
     assert first.source_control["head_sha"] == git(root, "rev-parse", "HEAD")
     assert first.source_control["dirty"] is False
     assert first.content_scope["complete"] is True
+
+
+def test_git_inspection_distinguishes_non_git_unborn_and_valid_head(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    assert inspect_repository_git(root)["state"] == "non_git"
+    git(root, "init", "-qb", "main")
+    assert inspect_repository_git(root)["state"] == "unborn"
+    (root / "initial.txt").write_text("initial\n", encoding="utf-8")
+    git(root, "add", "initial.txt")
+    git(root, "commit", "-qm", "initial")
+    result = inspect_repository_git(root)
+    assert result["state"] == "valid_head"
+    assert result["head_sha"] == git(root, "rev-parse", "HEAD")
+    assert result["branch"] == "main"
+    git(root, "checkout", "--detach", "-q")
+    assert inspect_repository_git(root)["state"] == "valid_head"
+    assert inspect_repository_git(root)["branch"] is None
+
+
+@pytest.mark.parametrize("metadata", ["directory", "gitfile", "broken_head", "noncommit_head"])
+def test_git_inspection_rejects_invalid_metadata(tmp_path: Path, metadata: str) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    if metadata == "directory":
+        (root / ".git").mkdir()
+    elif metadata == "gitfile":
+        (root / ".git").write_text("gitdir: missing\n", encoding="utf-8")
+    else:
+        git(root, "init", "-qb", "main")
+        if metadata == "broken_head":
+            (root / ".git" / "refs" / "heads" / "main").write_text("a" * 40 + "\n", encoding="utf-8")
+        else:
+            (root / "blob.txt").write_text("not a commit\n", encoding="utf-8")
+            blob = git(root, "hash-object", "-w", "blob.txt")
+            (root / ".git" / "HEAD").write_text(blob + "\n", encoding="utf-8")
+    for inspect in (inspect_repository_git, lambda path: capture_repository_snapshot(path, "DEMO")):
+        with pytest.raises(RepositorySnapshotError):
+            inspect(root)
+
+
+def test_git_inspection_accepts_linked_worktree_and_rejects_subdirectory(tmp_path: Path) -> None:
+    root = init_git_repo(tmp_path / "repo")
+    worktree = tmp_path / "worktree"
+    git(root, "worktree", "add", "-qb", "topic", str(worktree))
+    assert (worktree / ".git").is_file()
+    assert inspect_repository_git(worktree)["head_sha"] == git(root, "rev-parse", "HEAD")
+    child = root / "src"
+    child.mkdir()
+    with pytest.raises(RepositorySnapshotError, match="must match the Git worktree root"):
+        inspect_repository_git(child)
 
 
 def test_git_snapshot_disables_repository_fsmonitor_hook(tmp_path: Path) -> None:

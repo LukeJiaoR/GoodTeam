@@ -73,6 +73,7 @@ def default_page(ctx, monkeypatch, *, task="default-native-review"):
     """Use the actual default workflow/gate producer, without a seeded lock."""
     from goodteam_os import team_control_plane
     from goodteam_os.graph import dispatch_gate_reviewer_jobs
+    from test_graph_sample import prepare_repository_fixture
 
     assert capture(ctx, task) == {}
     current = ctx.service.team.read()
@@ -87,6 +88,7 @@ def default_page(ctx, monkeypatch, *, task="default-native-review"):
     candidate = ctx.root / "default-candidate.py"
     candidate.write_bytes(SOURCE)
     state = create_initial_state(task, "DEMO", "Read the exact supplied candidate and report findings.")
+    prepare_repository_fixture(state, ctx.repo)
     state.current_node, state.next_node = "security_review_gate", "await_security_approval"
     state.artifacts["rfc"] = str(candidate)
     StateStore(ctx.workspace).write_project_current(state)

@@ -13,7 +13,7 @@ from goodteam_os.resources import ResourceCapability, ResourceKind, ResourceScop
 from goodteam_os.state import StateStore, normalize_project_key
 
 MAX_ARTIFACT_BYTES = 1_048_576
-DELIVERY_KEYS = ("implementation_handoff", "qa_report", "code_review", "release_notes")
+DELIVERY_KEYS = ("implementation_handoff", "qa_report", "code_review", "release_notes", "source_preview")
 SIMULATED_ADAPTERS = {"fake", "noop", "builtin"}
 FAILED_STATUSES = {"failed", "error", "blocked", "interrupted", "timeout", "timed_out"}
 ACTIVE_STATUSES = {"running", "queued", "in_progress", "pending"}
@@ -66,6 +66,13 @@ def _artifact_bytes(workspace, state, key):
         if result.truncated or not result.data.strip():
             raise DeliveryArtifactError("Delivery artifact is empty or exceeds the preview limit.")
         result.data.decode("utf-8")
+        if key == "source_preview":
+            version = "sha256:" + sha256(result.data).hexdigest()
+            from goodteam_os.source_preview import source_preview_matches
+
+            if (not source_preview_matches(result.data, state)
+                    or path.name != version[7:] + ".md"):
+                raise DeliveryArtifactError("Source preview version is unavailable.")
         return result.data
     except (ValueError, OSError, RepositoryAccessError) as exc:
         # Do not expose local paths, directory contents or partial file bytes.

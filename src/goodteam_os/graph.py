@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import re
 from collections.abc import Callable
@@ -9,6 +10,9 @@ from pathlib import Path
 
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.artifacts import ArtifactStore
+from goodteam_os.artifact_revisions import (
+    capture_proposal, current_job_artifact, invalidate_artifact, require_proposal,
+)
 from goodteam_os.failure_patterns import FailurePatternLibrary, canary_routing_decision
 from goodteam_os.memory import ProjectMemoryStore, RoleMemoryStore, summarize_markdown
 from goodteam_os.messages import read_role_messages
@@ -176,7 +180,9 @@ def delivery_standards_for_state(
     return delivery_standards_for_mode(mode, target)
 
 
-def collect_project_context(project_config: Path | None = None) -> list[dict[str, str]]:
+def collect_project_context(
+    project_config: Path | None = None, state: AgileDevState | None = None,
+) -> list[dict[str, str]]:
     if project_config is None:
         return []
     if not project_config.is_file():
@@ -184,6 +190,25 @@ def collect_project_context(project_config: Path | None = None) -> list[dict[str
 
     target = load_project_target(project_config)
     repos = dict(target.get("repos", {}))
+    if state is not None and state.repository_baseline:
+        from goodteam_os.workflow_workspace import WorkflowWorkspaceError, workspace_for_workflow
+
+        source = Path(str(state.repository_baseline.get("source_root", "")))
+        retained = workspace_for_workflow(source, state.repository_baseline,
+                                           project_key=state.project_key, run_id=state.run_id)
+        source_path = Path(os.path.abspath(source))
+        mapped = {}
+        for name, value in repos.items():
+            if not value:
+                mapped[name] = value
+                continue
+            configured = Path(os.path.abspath(Path(str(value)).expanduser()))
+            try:
+                relative = configured.relative_to(source_path)
+            except ValueError as exc:
+                raise WorkflowWorkspaceError("Workflow context repository is outside its retained task baseline.") from exc
+            mapped[name] = retained / relative
+        repos = mapped
     packets = []
     memory_root = select_project_memory_root(repos)
     if memory_root is not None:
@@ -463,7 +488,9 @@ def ensure_project_role_memories(project_config: Path) -> dict[str, dict[str, Pa
     )
 
 
-def artifact_mirror_root(project_config: Path | None) -> Path | None:
+def artifact_mirror_root(project_config: Path | None, state: AgileDevState | None = None) -> Path | None:
+    if state is not None and state.repository_baseline:
+        return None
     if project_config is None or not project_config.is_file():
         return None
     target = load_project_target(project_config)
@@ -571,7 +598,7 @@ def render_prd_markdown(
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
     delivery_standards = delivery_standards_for_state(state, delivery_mode, target)
-    context = collect_project_context(project_config)
+    context = collect_project_context(project_config, state)
     context_sources = format_context_sources(context)
     decision = (
         f"Define the next v1 product slice for {project_name} from the loaded project evidence, "
@@ -689,7 +716,7 @@ def render_takeover_brief_markdown(
 
     target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
     project_name = str(target.get("name", "") or state.project_key or "Configured Project")
-    context_count = len(collect_project_context(project_config))
+    context_count = len(collect_project_context(project_config, state))
     requested_changes = state.change_requests.get("takeover", "").strip()
     status = (
         "The intake worker could not produce the requested revision. "
@@ -752,7 +779,7 @@ def render_artifact_markdown(
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
     delivery_standards = delivery_standards_for_state(state, delivery_mode, target)
-    context = collect_project_context(project_config)
+    context = collect_project_context(project_config, state)
     context_sources = format_context_sources(context)
 
     lines = [
@@ -816,6 +843,11 @@ def render_artifact_markdown(
         )
     if artifact_key not in {"qa_report", "code_review", "release_notes"}:
         for section in contract.get("sections", []):
+            if artifact_key == "implementation_handoff" and section.get("title") == "Execution Evidence":
+                # The downstream renderer appends observed status and the
+                # worker's sanitized report below. Do not leave a template
+                # instruction that can be mistaken for the evidence itself.
+                continue
             lines.extend(["", f"## {section['title']}", ""])
             for item in section.get("items", []):
                 lines.append(f"- {item}")
@@ -834,7 +866,7 @@ def render_rfc_markdown(
     project_key = str(target.get("key", "") or state.project_key)
     delivery_mode = normalize_delivery_mode(getattr(state, "delivery_mode", "") or str(target.get("delivery_mode", "") or "init_project"))
     delivery_standards = delivery_standards_for_state(state, delivery_mode, target)
-    context = collect_project_context(project_config)
+    context = collect_project_context(project_config, state)
     architecture = (
         f"Build the approved {project_name} v1 slice inside the configured `{delivery_mode}` delivery mode, "
         "keeping ownership boundaries and project context as the source of truth."
@@ -983,9 +1015,16 @@ def render_downstream_artifact_markdown(
         if results:
             lines.extend(["", "## Worker Job Results", ""])
             for result in results:
-                lines.append(f"- {result.get('role', 'unknown')} / {result.get('adapter', 'unknown')}: {result.get('status', 'unknown')} - {result.get('summary', '')}")
+                lines.append(
+                    f"- {_worker_artifact_text(result.get('role', 'unknown'))} / "
+                    f"{_worker_artifact_text(result.get('adapter', 'unknown'))}: "
+                    f"{_worker_artifact_text(result.get('status', 'unknown'))} - "
+                    f"{_worker_artifact_text(result.get('summary', ''))}"
+                )
         else:
             lines.extend(["", "## Worker Job Results", "", "- No worker jobs were executed."])
+        lines.extend(["", "## Execution Evidence", ""])
+        lines.extend(format_worker_execution_evidence_lines(results))
     if artifact_key == "qa_report":
         lines.extend(
             [
@@ -995,6 +1034,8 @@ def render_downstream_artifact_markdown(
                 *format_worker_evidence_lines(results),
             ]
         )
+        lines.extend(["", "## Worker Reports", ""])
+        lines.extend(format_worker_execution_evidence_lines(results))
         lines.extend(format_contentops_acceptance_evidence(results))
         lines.extend(format_ui_delivery_acceptance_evidence(results))
     if artifact_key == "code_review":
@@ -1013,7 +1054,7 @@ def render_downstream_artifact_markdown(
                 "",
                 "## Release Decision",
                 "",
-                "- Release recommendation: approve for local starter release with documented caveats.",
+                "- Release recommendation: pending human review of the exact artifacts and verification evidence.",
                 "- Human approval is required at the release gate before retro memory closes the run.",
                 "",
                 "## Verification Evidence",
@@ -1026,7 +1067,7 @@ def render_downstream_artifact_markdown(
                 "",
                 "## Rollback",
                 "",
-                "- For the local starter, rollback by restoring the previous project directory or resetting the generated SQLite database from documented local setup steps.",
+                "- Rollback is unverified unless the project-specific delivery evidence documents and validates it. Do not reset databases or replace project directories based on this summary.",
                 "- Do not roll forward with release approval if a QA result contains `release-blocking`, `fail`, or `blocked` status.",
             ]
         )
@@ -1049,14 +1090,67 @@ def format_worker_evidence_lines(worker_results: list[dict[str, object]]) -> lis
         return ["- No worker verification evidence was attached to this artifact."]
     lines: list[str] = []
     for result in worker_results:
-        role = str(result.get("role", "unknown"))
-        status = str(result.get("status", "unknown"))
-        summary = str(result.get("summary", ""))
-        model = str(result.get("model", "") or "")
+        role = _worker_artifact_text(result.get("role", "unknown"))
+        status = _worker_artifact_text(result.get("status", "unknown"))
+        summary = _worker_artifact_text(result.get("summary", ""))
+        model = _worker_artifact_text(result.get("model", "") or "")
         result_text = read_worker_result_excerpt(result)
         lines.append(f"- {role}: `{status}` via `{model or 'unspecified model'}` - {summary}")
         for signal in extract_worker_signals(result_text):
             lines.append(f"  - Evidence: {signal}")
+    return lines
+
+
+def format_worker_execution_evidence_lines(worker_results: list[dict[str, object]]) -> list[str]:
+    """Render bounded, attributable worker reports into handoff artifacts.
+
+    The worker status summary is deliberately small and does not contain the
+    implementation's changed-file or command evidence. Keep the report
+    excerpt separate from the status fields so reviewers can distinguish what
+    GoodTeam observed from what the worker claimed.
+    """
+    if not worker_results:
+        return ["- No worker execution evidence was attached to this artifact."]
+
+    lines: list[str] = []
+    for result in worker_results:
+        role = _worker_artifact_text(result.get("role", "unknown"))
+        adapter = _worker_artifact_text(result.get("adapter", "unknown"))
+        status = _worker_artifact_text(result.get("status", "unknown"))
+        lines.extend([
+            f"### {role} / {adapter}",
+            "",
+            f"- Observed status: `{status}`.",
+            f"- Observed summary: {_worker_artifact_text(result.get('summary', '')).strip() or 'none reported'}",
+        ])
+        result_path = _worker_artifact_text(result.get("result_path", "")).strip()
+        if result_path:
+            lines.append(f"- Worker report path: `{result_path}`.")
+        repository_result = result.get("repository_result")
+        if isinstance(repository_result, dict):
+            lines.extend([
+                f"- Retained task cwd: `{_worker_artifact_text(repository_result.get('workspace_path', ''))}`.",
+                f"- Task baseline commit: `{_worker_artifact_text(repository_result.get('baseline_commit', ''))}`.",
+                f"- Cumulative task result commit: `{_worker_artifact_text(repository_result.get('result_commit', ''))}`.",
+                "- Repository changes are cumulative for this task; individual Worker authorship is not inferred.",
+            ])
+        for field, label in (("changed_files", "Changed files reported"), ("artifacts", "Artifacts reported")):
+            values = result.get(field)
+            if isinstance(values, list) and values:
+                lines.append(f"- {label}:")
+                lines.extend(f"  - `{_worker_artifact_text(item)}`" for item in values)
+            else:
+                lines.append(f"- {label}: none in the worker status record.")
+
+        excerpt = read_worker_result_excerpt(result, max_chars=6000).strip()
+        if excerpt:
+            lines.extend(["", "#### Worker report (sanitized excerpt)", ""])
+            # Quote every line so worker-authored headings cannot be mistaken
+            # for GoodTeam-owned evidence sections.
+            lines.extend(f"> {line}" if line else ">" for line in excerpt.splitlines())
+        else:
+            lines.extend(["", "- Worker report content is unavailable."])
+        lines.append("")
     return lines
 
 
@@ -1144,7 +1238,7 @@ def format_release_caveats_lines(state: AgileDevState, worker_results: list[dict
     if state.blockers:
         caveats.append(f"- Blockers remain: {'; '.join(state.blockers)}")
     if not caveats:
-        caveats.append("- No unresolved caveats were reported in attached worker summaries.")
+        caveats.append("- Caveats are not exhaustively assessed by this summary. Inspect the attached Worker reports and verification gaps before approval.")
     return caveats
 
 
@@ -1158,12 +1252,31 @@ def read_worker_result_excerpt(result: dict[str, object], *, max_chars: int = 30
     return sanitize_artifact_excerpt(path.read_text(encoding="utf-8", errors="replace"), max_chars=max_chars)
 
 
-def sanitize_artifact_excerpt(text: str, *, max_chars: int = 3000) -> str:
+def _worker_artifact_text(value: object) -> str:
+    # Sanitize each metadata value before adding Markdown, so an authorization
+    # record cannot swallow a later, independently supplied file/evidence item.
+    return sanitize_artifact_excerpt(str(value), max_chars=None)
+
+
+def sanitize_artifact_excerpt(text: str, *, max_chars: int | None = 3000) -> str:
+    # Reports are free-form text, not a parsed header map. Redact the complete
+    # authorization record, including quoted/escaped keys, multi-part schemes
+    # and HTTP folded continuation lines. Guessing the end from a space/comma
+    # would retain Bearer credentials or Digest parameters. Adjacent indented
+    # lines are deliberately treated as part of that sensitive record.
+    authorization = re.compile(
+        r"(?im)(?<![\w-])((?:__)?(?:proxy[-_]|http_)?authorization(?:__)?(?![\w-])"
+        r"(?:[\\\"'`*\]\)]|[^\S\r\n])*[:=,|>])"
+        r"(?:[^\S\r\n]*(?:(?:bearer|basic|digest|negotiate)[^\S\r\n]*)?"
+        r"(?:\r\n|\n|\r)[^\r\n]*|[^\r\n]*)"
+        r"(?:(?:\r\n|\n|\r)[ \t]+[^\r\n]*)*"
+    )
+    redacted = authorization.sub(r"\1 [redacted]", text)
     secretish = re.compile(
         r"(?i)(api[_-]?key|access[_-]?token|bot[_-]?token|authorization|secret|password)\s*[:=]\s*\S+"
     )
-    redacted = secretish.sub(r"\1: [redacted]", text)
-    return redacted[:max_chars]
+    redacted = secretish.sub(r"\1: [redacted]", redacted)
+    return redacted if max_chars is None else redacted[:max_chars]
 
 
 def extract_worker_signals(text: str) -> list[str]:
@@ -1430,7 +1543,10 @@ def run_architecture_until_gate(
     from goodteam_os.skills.task_start import workflow_job_fields
 
     workflow_job_fields(state, role="product_requirement", command_key="validate-workflow-reference")
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    if "rfc" in state.artifacts:
+        invalidate_artifact(state, "rfc")
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     content = render_downstream_artifact_markdown("rfc", state, project_config)
     if state.task_skill_context or should_generate_artifact_with_worker(project_config, "architect"):
         worker_content = generate_artifact_via_worker(
@@ -1463,7 +1579,14 @@ def run_delivery_until_release_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    # A new delivery attempt can never reuse a previous implementation's correction.
+    state.release_candidate = {}
+    if "review_report" in state.artifacts:
+        invalidate_artifact(state, "review_report")
+    if "task_breakdown" in state.artifacts:
+        invalidate_artifact(state, "task_breakdown")
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     for artifact_key in ["review_report", "task_breakdown", "ui_spec"]:
         path = store.write_markdown(
             state.run_id,
@@ -1522,6 +1645,16 @@ def run_delivery_until_release_gate(
         )
         _register_written_markdown(state, artifact_key, path)
 
+    if state.change_requests.get("release", "").strip():
+        from goodteam_os.release_artifacts import (
+            ReleaseCandidateError, bind_release_candidate, block_release_candidate,
+        )
+
+        try:
+            bind_release_candidate(state)
+        except ReleaseCandidateError as exc:
+            return block_release_candidate(state, exc)
+
     if staging_backend_enabled(source_type=state.source_type, project_config=project_config):
         return run_staging_until_gate(state, workspace, project_config)
 
@@ -1534,11 +1667,25 @@ def run_staging_until_gate(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    if "staging_report" in state.artifacts:
+        invalidate_artifact(state, "staging_report")
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     if project_config is None or not project_config.is_file():
         raise ValueError("Project config is required for staging deployment.")
 
-    staging_result = run_staging_backend(project_config=project_config)
+    execution_root = None
+    repository_candidate = {}
+    if state.repository_baseline:
+        from goodteam_os.workflow_workspace import collect_workflow_workspace, workspace_for_workflow
+
+        source = Path(str(state.repository_baseline.get("source_root", "")))
+        execution_root = workspace_for_workflow(source, state.repository_baseline,
+                                                 project_key=state.project_key, run_id=state.run_id)
+        repository_candidate = collect_workflow_workspace(source, state.repository_baseline,
+                                                           project_key=state.project_key, run_id=state.run_id)
+    staging_result = run_staging_backend(project_config=project_config, execution_root=execution_root,
+                                         repository_candidate=repository_candidate)
     staging_path = store.write_markdown(
         state.run_id,
         "staging_report",
@@ -1551,8 +1698,8 @@ def run_staging_until_gate(
         state.current_node = "implementation"
         state.next_node = blocked_next_for_node("planner")
         evidence_gap = str(staging_result.get("evidence_gap", "") or "")
-        if failed_step == "acceptance" and evidence_gap:
-            state.blockers.append(f"staging acceptance failed: {evidence_gap}")
+        if evidence_gap:
+            state.blockers.append(f"staging {failed_step} failed: {evidence_gap}")
         else:
             state.blockers.append(f"staging {failed_step} failed")
         return state
@@ -1577,12 +1724,33 @@ def run_release_until_gate(
     *,
     worker_results: list[dict[str, object]] | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    content = render_downstream_artifact_markdown(
+        "release_notes", state, project_config, worker_results=worker_results,
+    )
+    if state.change_requests.get("release", "").strip():
+        from goodteam_os.release_artifacts import (
+            ReleaseCandidateError, block_release_candidate, validated_release_candidate,
+        )
+
+        try:
+            content = validated_release_candidate(state, workspace)
+        except ReleaseCandidateError as exc:
+            return block_release_candidate(state, exc)
+    from goodteam_os.release_artifacts import ReleaseCandidateError, block_release_candidate, retain_repository_candidate
+
+    try:
+        retain_repository_candidate(state)
+    except ReleaseCandidateError as exc:
+        return block_release_candidate(state, exc)
+    if "release_notes" in state.artifacts:
+        invalidate_artifact(state, "release_notes")
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     release_path = store.write_markdown(
         state.run_id,
         "release_notes",
         _artifact_filename("release_notes"),
-        render_downstream_artifact_markdown("release_notes", state, project_config, worker_results=worker_results),
+        content,
     )
     _register_written_markdown(state, "release_notes", release_path)
     state.current_node = "release_review_gate"
@@ -1603,7 +1771,8 @@ def run_retro_until_complete(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     retro_path = store.write_markdown(
         state.run_id,
         "retro_memory",
@@ -1712,24 +1881,57 @@ def run_implementation_workers(
     workflow_node_name: str = "planner",
 ) -> list[dict[str, object]]:
     if project_config is None or not project_config.is_file():
+        if state.repository_baseline:
+            from goodteam_os.workflow_workspace import WorkflowWorkspaceError
+
+            raise WorkflowWorkspaceError("workflow_workspace_source_unavailable")
         return []
     target = load_project_target(project_config)
+    job_specs = implementation_worker_job_specs(state, target, workspace=workspace)
     runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
     if runtime_root is None:
+        from goodteam_os.workflow_workspace import WorkflowWorkspaceError, adapter_requires_workflow_workspace
+
+        if any(adapter_requires_workflow_workspace(str(spec["adapter"])) for spec in job_specs):
+            raise WorkflowWorkspaceError("workflow_workspace_source_unavailable")
         return []
     store = WorkerJobStore(runtime_root)
     retry_max, retry_on_classes = retry_policy_for_node(workflow_node_name)
-    return [
-        run_worker_job_with_retry(
-            store=store,
-            job_spec=job_spec,
-            retry_max=retry_max,
-            retry_on_classes=retry_on_classes,
-            state=state,
-            workspace=workspace,
+    results = []
+    for job_spec in job_specs:
+        result = run_worker_job_with_retry(
+            store=store, job_spec=job_spec, retry_max=retry_max,
+            retry_on_classes=retry_on_classes, state=state, workspace=workspace,
         )
-        for job_spec in implementation_worker_job_specs(state, target, workspace=workspace)
-    ]
+        results.append(result)
+        if (job_spec["role"] == "implementation" and result.get("status") == "completed"
+                and state.change_requests.get("release", "").strip()):
+            from goodteam_os.release_artifacts import ReleaseCandidateError, capture_release_candidate
+
+            if workspace is None:
+                raise RuntimeError("Release correction requires a durable workflow workspace.")
+            try:
+                capture_release_candidate(state, workspace, project_config, [result])
+            except ReleaseCandidateError as exc:
+                # Runtime completion does not establish that required delivery
+                # artifacts exist. Retain the process result on disk; report the
+                # controller's artifact validation failure through normal triage.
+                results[-1] = {**result, "status": "failed", "failure_class": "artifact_validation",
+                               "summary": str(exc)}
+                break
+    if results and all(not worker_result_reports_failure(result) for result in results):
+        if state.repository_baseline:
+            from goodteam_os.workflow_workspace import collect_workflow_workspace
+
+            repository_result = collect_workflow_workspace(runtime_root, state.repository_baseline,
+                                                            project_key=state.project_key, run_id=state.run_id,
+                                                            include_source_preview=True)
+            from goodteam_os.source_preview import register_source_preview
+
+            register_source_preview(workspace, state, repository_result)
+            results[-1]["repository_result"] = repository_result
+            state.release_candidate["repository_result"] = repository_result
+    return results
 
 
 def dispatch_gate_reviewer_jobs(
@@ -1808,6 +2010,7 @@ def implementation_worker_job_specs(
     workspace: Path | None = None,
 ) -> list[dict[str, object]]:
     delivery_mode = getattr(state, "delivery_mode", "init_project")
+    release_deliverables = ["release-notes.md"] if state.change_requests.get("release", "").strip() else []
     return [
         {
             "run_id": state.run_id,
@@ -1834,7 +2037,7 @@ def implementation_worker_job_specs(
                 "Do not touch real product repositories outside this isolated workspace.",
                 "Do not store secrets.",
             ],
-            "expected_artifacts": implementation_expected_artifacts(delivery_mode),
+            "expected_artifacts": implementation_expected_artifacts(delivery_mode) + release_deliverables,
             **_worker_job_fields(target, "implementation", state),
         },
         {
@@ -1872,10 +2075,18 @@ def run_worker_job_with_retry(
         operation = str(state.pending_transition.get("id") or "initial")
         fields = workflow_job_fields(state, role=str(job_spec["role"]),
                                      command_key=f"workflow:{state.run_id}:{operation}:{state.current_node}:{job_spec['role']}:{attempts}")
+        fields.update(_workflow_workspace_job_fields(state, job_spec, fields))
         job = store.create_job(**{**job_spec, **fields})
         job_id = str(job["id"])
         attempt_job_ids.append(job_id)
         result = store.run_job(job_id)
+        if fields.get("workflow_workspace"):
+            from goodteam_os.workflow_workspace import collect_workflow_workspace
+
+            result["repository_result"] = collect_workflow_workspace(
+                store.project_root, fields["workflow_workspace"],
+                project_key=state.project_key, run_id=state.run_id,
+            )
         result["attempts"] = max(int(result.get("attempts", 0) or 0), attempts)
         result["attempt_job_ids"] = attempt_job_ids.copy()
         append_worker_attempt_action(
@@ -1892,6 +2103,19 @@ def run_worker_job_with_retry(
         ):
             continue
         return result
+
+
+def _workflow_workspace_job_fields(
+    state: AgileDevState, job_spec: dict[str, object], protected_fields: dict[str, object],
+) -> dict[str, object]:
+    """Carry the retained run input; job creation validates its exact scope."""
+    from goodteam_os.workflow_workspace import adapter_requires_workflow_workspace
+
+    # Skill requests keep their captured execution protocol. Ordinary Skill
+    # runtimes remain blocked there; exact-source reviews own a frozen target.
+    if protected_fields.get("task_skill_context") or not adapter_requires_workflow_workspace(str(job_spec["adapter"])):
+        return {}
+    return {"workflow_workspace": state.repository_baseline, "project_key": state.project_key}
 
 
 def append_worker_attempt_action(
@@ -2496,7 +2720,10 @@ def run_adoption_until_next_gate(
     workflow_job_fields(state, role="product_requirement", command_key="validate-workflow-reference")
     if project_config is None:
         raise ValueError("Project config is required for existing project adoption.")
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    if "takeover" in state.artifacts:
+        invalidate_artifact(state, "takeover")
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     memory_path = ensure_project_memory(project_config)
     task_ledger_path = ensure_project_task_ledger(project_config)
     ensure_project_role_memories(project_config)
@@ -2504,7 +2731,7 @@ def run_adoption_until_next_gate(
     # Keep the detailed packet for the intake worker, but never make it the
     # human approval artifact.  A plain ArtifactStore avoids mirroring this
     # machine-oriented source material into the adopted project.
-    context_path = ArtifactStore(root=workspace).write_markdown(
+    context_path = ArtifactStore(root=workspace, revision_tokens=state.artifact_generations).write_markdown(
         state.run_id,
         "takeover",
         "takeover-context.md",
@@ -2528,7 +2755,7 @@ def run_adoption_until_next_gate(
             project_config=project_config,
             role="project_intake",
             artifact_key="takeover",
-            task_text=takeover_brief_worker_task(state, collect_project_context(project_config)),
+            task_text=takeover_brief_worker_task(state, collect_project_context(project_config, state)),
             failure_status=worker_failure,
         )
         if worker_content is not None:
@@ -2577,7 +2804,10 @@ def run_until_next_gate(
     from goodteam_os.skills.task_start import workflow_job_fields
 
     workflow_job_fields(state, role="product_requirement", command_key="validate-workflow-reference")
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    if "prd" in state.artifacts:
+        invalidate_artifact(state, "prd")
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     content = render_prd_markdown(state, project_config)
     if state.task_skill_context or should_generate_artifact_with_worker(project_config, "product_requirement"):
         worker_content = generate_artifact_via_worker(
@@ -2698,8 +2928,11 @@ def run_fix_until_next_gate(
     from goodteam_os.skills.task_start import workflow_job_fields
 
     workflow_job_fields(state, role="product_requirement", command_key="validate-workflow-reference")
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
-    context = collect_project_context(project_config)
+    if "fix_plan" in state.artifacts:
+        invalidate_artifact(state, "fix_plan")
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
+    context = collect_project_context(project_config, state)
     content = render_fix_plan_markdown(state, context)
     if state.task_skill_context or should_generate_artifact_with_worker(project_config, "architect"):
         worker_content = generate_artifact_via_worker(
@@ -2732,7 +2965,10 @@ def run_fix_implementation(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    if "implementation_handoff" in state.artifacts:
+        invalidate_artifact(state, "implementation_handoff")
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     worker_results = run_implementation_workers(state, project_config, workspace=workspace)
     if not worker_results:
         worker_results = [{"role": "implementation", "status": "failed",
@@ -2777,7 +3013,8 @@ def run_fix_qa(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
-    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     prior_qa = Path(state.artifacts["qa_report"]) if state.artifacts.get("qa_report") else None
     content = prior_qa.read_text(encoding="utf-8") if prior_qa and prior_qa.is_file() else render_fix_qa_report_markdown(state)
     qa_path = store.write_markdown(
@@ -2806,6 +3043,15 @@ def run_fix_close(
     workspace: Path,
     project_config: Path | None = None,
 ) -> AgileDevState:
+    from goodteam_os.release_artifacts import ReleaseCandidateError, retain_repository_candidate
+
+    try:
+        retain_repository_candidate(state)
+    except ReleaseCandidateError as exc:
+        state.current_node, state.next_node = "fix_implement", "blocked"
+        if str(exc) not in state.blockers:
+            state.blockers.append(str(exc))
+        return state
     state.current_node = "complete"
     state.next_node = ""
     sync_project_stage_tasks(state, project_config)
@@ -2952,6 +3198,10 @@ def generate_artifact_via_worker(
             from goodteam_os.skills.models import SkillError
 
             raise SkillError("skill_dispatch_unavailable", "The original task runtime root is unavailable; template fallback is forbidden.")
+        if state.repository_baseline:
+            from goodteam_os.workflow_workspace import WorkflowWorkspaceError
+
+            raise WorkflowWorkspaceError("workflow_workspace_source_unavailable")
         return None
     try:
         target = load_project_target(project_config)
@@ -2961,18 +3211,26 @@ def generate_artifact_via_worker(
                 from goodteam_os.skills.models import SkillError
 
                 raise SkillError("skill_dispatch_unavailable", "The original task runtime root is unavailable; template fallback is forbidden.")
+            from goodteam_os.workflow_workspace import WorkflowWorkspaceError, adapter_requires_workflow_workspace
+
+            if adapter_requires_workflow_workspace(str(_worker_job_fields(target, role, state)["adapter"])):
+                raise WorkflowWorkspaceError("workflow_workspace_source_unavailable")
             return None
 
         from goodteam_os.skills.task_start import workflow_job_fields
 
         job_fields = _worker_job_fields(target, role, state)
         operation = str(state.pending_transition.get("id") or "initial")
+        revision_input = json.dumps({"task": task_text,
+                                     "generation": state.artifact_generations.get(artifact_key, "")}, sort_keys=True)
+        revision_key = hashlib.sha256(revision_input.encode("utf-8")).hexdigest()
         job_fields.update(workflow_job_fields(state, role=role,
-                                             command_key=f"artifact:{state.run_id}:{operation}:{role}:{artifact_key}"))
+                                             command_key=f"artifact:{state.run_id}:{operation}:{role}:{artifact_key}:{revision_key}"))
         store = WorkerJobStore(runtime_root)
         from goodteam_os.skills.review_protocol import review_execution_fields
 
         job_fields.update(review_execution_fields(store, job_fields.get("task_skill_context"), role=role))
+        job_fields.update(_workflow_workspace_job_fields(state, job_fields, job_fields))
         job = store.create_job(
             run_id=state.run_id,
             role=role,
@@ -2998,51 +3256,16 @@ def generate_artifact_via_worker(
                 failure_status.update(status)
             return None
 
-        # 1. Look for artifact created directly by worker in runtime_root or docs/
-        candidate_names = [
-            _artifact_filename(artifact_key),
-            f"{artifact_key}.md",
-            artifact_key,
-        ]
-        candidate_dirs = [
-            runtime_root,
-            runtime_root / "docs",
-            runtime_root / ".goodteam",
-        ]
-        for cdir in candidate_dirs:
-            if not cdir.is_dir():
-                continue
-            for cname in candidate_names:
-                cpath = cdir / cname
-                if cpath.is_file():
-                    text = cpath.read_text(encoding="utf-8")
-                    if text.strip() and not _is_worker_meta_summary(text):
-                        return text
-
-        # 2. Check result_path
-        result_path = Path(str(status.get("result_path", ""))).expanduser()
-        if not result_path.is_file():
-            result_path = store.root / str(job["id"]) / "result.md"
-        if result_path.is_file():
-            result_text = result_path.read_text(encoding="utf-8")
-            if result_text.strip():
-                if not _is_worker_meta_summary(result_text):
-                    return result_text
-                # If result_text is a meta summary referencing a file (e.g. prd.md), read that file
-                ref_file = _extract_referenced_artifact_file(result_text, runtime_root)
-                if ref_file and ref_file.is_file():
-                    ref_text = ref_file.read_text(encoding="utf-8")
-                    if ref_text.strip() and not _is_worker_meta_summary(ref_text):
-                        return ref_text
-
-        # 3. Fallback: if no substantive content was found, fall back to template renderer
-        if artifact_key == "prd":
-            return render_prd_markdown(state, project_config)
-        return render_downstream_artifact_markdown(artifact_key, state, project_config)
+        content = current_job_artifact(store.root / str(job["id"]), status,
+                                       artifact_key=artifact_key, filename=_artifact_filename(artifact_key))
+        if content is None and failure_status is not None:
+            failure_status.update(status="failed", summary="The current Worker returned no owned artifact content.")
+        return content
     except Exception as exc:
         from goodteam_os.skills.models import SkillError
+        from goodteam_os.workflow_workspace import WorkflowWorkspaceError
 
-        if isinstance(exc, SkillError):
+        if isinstance(exc, (SkillError, WorkflowWorkspaceError)):
             raise
         if state.task_skill_context:
             raise SkillError("skill_dispatch_unavailable", "The task method dispatch failed; template fallback is forbidden.") from exc
@@ -3087,7 +3310,9 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
         raise RuntimeError(f"product_requirement worker failed: {summary}")
     state.change_requests.pop("prd", None)
 
-    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    invalidate_artifact(state, "prd", rewind=True)
+    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     prd_path = artifact_store.write_markdown(state.run_id, "prd", "prd.md", content)
     _register_written_markdown(state, "prd", prd_path)
     state.current_node = "prd_review_gate"
@@ -3129,7 +3354,13 @@ def refine_artifact(
 
     contract = artifact_contract(artifact_key)
     role = str(contract["role"])
-    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    base_ref = state.artifacts.get(artifact_key, "")
+    if not base_ref or not Path(base_ref).is_file() or Path(base_ref).read_text(encoding="utf-8") != content:
+        invalidate_artifact(state, artifact_key, rewind=True)
+    state.artifact_proposals.pop(artifact_key, None)
+    state.resources.pop(f"{artifact_key}_proposed", None)
+    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     filename = _artifact_filename(artifact_key)
     base_path = artifact_store.write_markdown(
         state.run_id,
@@ -3192,10 +3423,12 @@ def refine_artifact(
         proposed_path,
         base_key=artifact_key,
     )
+    proposal_binding = capture_proposal(state, artifact_key, proposed_path)
     sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
     return {
+        "proposal_binding": proposal_binding,
         "artifact": artifact_key,
         "base_path": str(base_path),
         "proposed_path": str(proposed_path),
@@ -3209,45 +3442,42 @@ def accept_refinement(
     workspace: Path,
     project_key: str,
     artifact_key: str,
+    expected_run_id: str = "", expected_artifact_key: str = "", expected_artifact_version: str = "",
+    expected_proposal_id: str = "", expected_proposal_version: str = "",
 ) -> dict[str, object]:
     key = normalize_project_key(project_key)
     state_store = StateStore(workspace)
     state = state_store.read_project_current(key)
     if state is None:
         raise ValueError(f"No active run for project: {key}")
+    require_proposal(state, artifact_key, expected_run_id=expected_run_id,
+                     expected_artifact_key=expected_artifact_key, expected_artifact_version=expected_artifact_version,
+                     expected_proposal_id=expected_proposal_id, expected_proposal_version=expected_proposal_version)
     proposed_key = f"{artifact_key}_proposed"
     proposed_ref = str(state.artifacts.get(proposed_key, "") or "")
     if not proposed_ref:
         raise ValueError(f"No proposed refinement for artifact: {artifact_key}")
-    proposed_path = Path(proposed_ref)
+    proposed_path = Path(proposed_ref).resolve()
+    run_root = (workspace / "artifacts" / "runs" / state.run_id).resolve()
+    if not proposed_path.is_relative_to(run_root) or proposed_path.suffix.lower() not in {".md", ".markdown"}:
+        raise ValueError("Proposed refinement must be a markdown file inside the current run artifacts directory.")
     if not proposed_path.is_file():
         raise ValueError(f"Proposed refinement file does not exist: {artifact_key}")
 
     project_config = _resolve_state_project_config(workspace, state, key)
     content = proposed_path.read_text(encoding="utf-8")
-    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    invalidate_artifact(state, artifact_key, rewind=True)
+    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     base_path = artifact_store.write_markdown(
         state.run_id,
         artifact_key,
         _artifact_filename(artifact_key),
         content,
     )
-    proposed_path.unlink()
     _register_written_markdown(state, artifact_key, base_path)
     state.resources.pop(proposed_key, None)
     state.artifacts.pop(proposed_key, None)
-    gate = next(
-        (gate for gate, gated_artifact in approval_artifact_map().items() if gated_artifact == artifact_key),
-        "",
-    )
-    if gate:
-        state.approvals[gate] = ApprovalDecision.PENDING
-        state.current_node = f"{gate}_review_gate"
-        state.next_node = gate_next_node(
-            state,
-            gate=gate,
-            approved_next=approved_next_for_gate(gate),
-        )
     sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
@@ -3262,17 +3492,21 @@ def discard_refinement(
     workspace: Path,
     project_key: str,
     artifact_key: str,
+    expected_run_id: str = "", expected_artifact_key: str = "", expected_artifact_version: str = "",
+    expected_proposal_id: str = "", expected_proposal_version: str = "",
 ) -> dict[str, object]:
     key = normalize_project_key(project_key)
     state_store = StateStore(workspace)
     state = state_store.read_project_current(key)
     if state is None:
         raise ValueError(f"No active run for project: {key}")
+    require_proposal(state, artifact_key, expected_run_id=expected_run_id,
+                     expected_artifact_key=expected_artifact_key, expected_artifact_version=expected_artifact_version,
+                     expected_proposal_id=expected_proposal_id, expected_proposal_version=expected_proposal_version)
     project_config = _resolve_state_project_config(workspace, state, key)
-    proposed_ref = str(state.artifacts.pop(f"{artifact_key}_proposed", "") or "")
+    state.artifact_proposals.pop(artifact_key, None)
+    state.artifacts.pop(f"{artifact_key}_proposed", None)
     state.resources.pop(f"{artifact_key}_proposed", None)
-    if proposed_ref:
-        Path(proposed_ref).unlink(missing_ok=True)
     sync_project_stage_tasks(state, project_config)
     state_store.write_project_current(state, key)
     state_store.write_project_checkpoint(state, key)
@@ -3346,7 +3580,9 @@ def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
         raise RuntimeError(f"architect worker failed: {summary}")
     state.change_requests.pop("rfc", None)
 
-    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config))
+    invalidate_artifact(state, "rfc", rewind=True)
+    artifact_store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
+                          revision_tokens=state.artifact_generations)
     rfc_path = artifact_store.write_markdown(state.run_id, "rfc", "rfc.md", content)
     _register_written_markdown(state, "rfc", rfc_path)
     state.current_node = "rfc_review_gate"

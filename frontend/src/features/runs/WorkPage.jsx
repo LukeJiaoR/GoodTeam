@@ -16,6 +16,7 @@ import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 import ProjectAttentionFocus from '../projects/ProjectAttentionFocus';
+import GitRecoveryPanel from '../projects/GitRecoveryPanel';
 import { readAttentionSelection } from '../projects/projectAttention';
 import CurrentWorkContext from './workspace/CurrentWorkContext.jsx';
 import GoalContinuationPanel from './workspace/GoalContinuationPanel.jsx';
@@ -1206,6 +1207,7 @@ export default function WorkPage() {
     <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
       {attentionFocus}
       {currentContext}
+      <GitRecoveryPanel projectKey={projectKey} language={language} />
       {inputContextRunId ? <TaskInputContext projectKey={projectKey} runId={inputContextRunId} language={language} t={t} /> : null}
       <details className="work-context-disclosure">
         <summary>{t('work.context.taskAndHistory')}</summary>
@@ -1266,6 +1268,8 @@ export default function WorkPage() {
       <GoalContinuationPanel
         key={projectKey}
         goals={data.task_assistant_session?.goals || []}
+        projectKey={projectKey}
+        historyCursor={data.task_assistant_session?.goal_page?.next_before || ''}
         busy={busy || conversation.busy}
         readOnly={isHistorical || contextIsLoading}
         activeRun={Boolean(data.active_run)}

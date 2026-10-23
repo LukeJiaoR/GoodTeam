@@ -2678,7 +2678,11 @@ def test_save_artifact_updates_current_run_artifact_and_logs_edit(tmp_path):
 
     assert payload["artifact"] == "prd"
     assert payload["bytes"] == len("# PRD\n\nAfter".encode("utf-8"))
-    assert artifact.read_text(encoding="utf-8") == "# PRD\n\nAfter"
+    assert artifact.read_text(encoding="utf-8") == "# PRD\n\nBefore"
+    assert Path(payload["path"]).read_text(encoding="utf-8") == "# PRD\n\nAfter"
+    current = StateStore(tmp_path).read_current()
+    assert current.artifacts["prd"] == payload["path"]
+    assert current.approvals["prd"] == "pending"
     edit_log = tmp_path / "state" / "edit-log.jsonl"
     assert edit_log.is_file()
     assert '"artifact": "prd"' in edit_log.read_text(encoding="utf-8")
@@ -3124,7 +3128,15 @@ def test_create_local_project_config_initializes_git_on_fresh_root(tmp_path):
     assert (project_root / "README.md").read_text(encoding="utf-8") == "# AI Content Studio\n"
     assert (project_root / ".gitignore").is_file()
     assert commit_count.stdout.strip() == "1"
-    assert payload["git"] == {"initialized": True, "remote_created": False, "warnings": []}
+    assert payload["git"]["initialized"] is True
+    assert payload["git"]["baseline_required"] is False
+    assert payload["git"]["state"] == "valid_head"
+    assert payload["git"]["head_sha"] == subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert payload["git"]["remote_created"] is False
+    assert payload["git"]["warnings"] == []
 
 
 def test_create_local_project_config_create_remote_without_token_warns(tmp_path, monkeypatch):
@@ -3138,12 +3150,11 @@ def test_create_local_project_config_create_remote_without_token_warns(tmp_path,
         project_name="AI Content Studio",
         project_key="CONTENTOPS",
         project_root=str(project_root),
-        init_git=False,
         create_remote=True,
     )
 
     assert Path(payload["project_config"]).is_file()
-    assert payload["git"]["initialized"] is False
+    assert payload["git"]["initialized"] is True
     assert payload["git"]["remote_created"] is False
     assert "create-remote requested but no GITHUB_TOKEN/GH_TOKEN set" in payload["git"]["warnings"]
 
@@ -3153,10 +3164,13 @@ def test_create_local_project_config_create_remote_uses_gh_token(tmp_path, monke
     project_root.mkdir()
     calls = []
     monkeypatch.setenv("GITHUB_TOKEN", "token-from-env")
+    real_run = subprocess.run
 
     def fake_run(command, **kwargs):
-        calls.append({"command": command, **kwargs})
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if command[0] == "gh":
+            calls.append({"command": command, **kwargs})
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return real_run(command, **kwargs)
 
     monkeypatch.setattr(web.subprocess, "run", fake_run)
 
@@ -3165,14 +3179,16 @@ def test_create_local_project_config_create_remote_uses_gh_token(tmp_path, monke
         project_name="AI Content Studio",
         project_key="CONTENTOPS",
         project_root=str(project_root),
-        init_git=False,
         create_remote=True,
         remote_private=False,
     )
 
     gh_calls = [call for call in calls if call["command"][:3] == ["gh", "repo", "create"]]
     assert Path(payload["project_config"]).is_file()
-    assert payload["git"] == {"initialized": False, "remote_created": True, "warnings": []}
+    assert payload["git"]["initialized"] is True
+    assert payload["git"]["baseline_required"] is False
+    assert payload["git"]["remote_created"] is True
+    assert payload["git"]["warnings"] == []
     assert len(gh_calls) == 1
     assert gh_calls[0]["command"] == [
         "gh",
@@ -3540,6 +3556,7 @@ def test_start_workflow_uses_project_model_profile_and_overrides(tmp_path):
         model_config=Path("models.yaml"),
         model_profile="",
         project_config=project_config,
+        dry_run=True,
     )
 
     assert payload["model_profile"] == "cheap"
@@ -3664,7 +3681,7 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
                 "deployment_backend:",
                 "  mode: ssh_compose",
                 "  staging_ssh_target: contentops-staging",
@@ -3706,7 +3723,7 @@ def test_decide_approval_approves_rfc_and_runs_to_release_gate(tmp_path, monkeyp
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
     monkeypatch.setattr(
         "goodteam_os.graph.run_staging_backend",
-        lambda project_config, command_runner=None: {
+        lambda project_config, command_runner=None, **_context: {
             "status": "passed",
             "failed_step": "",
             "steps": [
@@ -3767,7 +3784,7 @@ def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch)
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
                 "deployment_backend:",
                 "  mode: ssh_compose",
                 "  staging_ssh_target: contentops-staging",
@@ -3806,7 +3823,7 @@ def test_decide_approval_blocks_when_staging_runner_fails(tmp_path, monkeypatch)
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
     monkeypatch.setattr(
         "goodteam_os.graph.run_staging_backend",
-        lambda project_config, command_runner=None: {
+        lambda project_config, command_runner=None, **_context: {
             "status": "failed",
             "failed_step": "deploy",
             "steps": [{"label": "deploy", "exit_code": 1, "stdout": "", "stderr": "git pull failed", "timeout": 1800}],
@@ -3858,7 +3875,7 @@ def test_decide_approval_approves_security_and_runs_planner(tmp_path, monkeypatc
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
             ]
         ),
         encoding="utf-8",
@@ -3922,7 +3939,7 @@ def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
                 "deployment_backend:",
                 "  mode: ssh_compose",
                 "  staging_ssh_target: contentops-staging",
@@ -3964,7 +3981,7 @@ def test_decide_approval_blocks_when_staging_functional_evidence_is_insufficient
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
     monkeypatch.setattr(
         "goodteam_os.graph.run_staging_backend",
-        lambda project_config, command_runner=None: {
+        lambda project_config, command_runner=None, **_context: {
             "status": "failed",
             "failed_step": "acceptance",
             "evidence_level": "infrastructure",
@@ -4060,6 +4077,12 @@ def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_pa
         artifact_path = Path(path)
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_text("# Artifact\n", encoding="utf-8")
+    prior_staging = tmp_path / "artifacts" / "runs" / "run-1" / "staging_report" / "staging-report.md"
+    prior_staging.parent.mkdir(parents=True)
+    prior_staging.write_text("# Prior staging evidence\n")
+    state.artifacts["staging_report"] = str(prior_staging)
+    state.artifacts["release_notes"] = "old-release-evidence"
+    state.approvals["release"] = "approved"
     StateStore(tmp_path).write_project_current(state)
 
     run_jobs = {"count": 0}
@@ -4081,7 +4104,7 @@ def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_pa
     monkeypatch.setattr("goodteam_os.graph.WorkerJobStore.run_job", fake_run_job)
     monkeypatch.setattr(
         "goodteam_os.web.run_staging_backend",
-        lambda project_config, command_runner=None: {
+        lambda project_config, command_runner=None, **_context: {
             "status": "passed",
             "failed_step": "",
             "steps": [
@@ -4101,6 +4124,11 @@ def test_retry_blocked_workflow_reruns_only_staging_after_staging_failure(tmp_pa
     assert payload["current_node"] == "staging_review_gate"
     assert payload["next_node"] == "await_staging_approval"
     assert payload["blockers"] == []
+    assert payload["artifacts"]["staging_report"] != str(prior_staging)
+    assert prior_staging.read_text() == "# Prior staging evidence\n"
+    assert payload["approvals"]["release"] == "pending"
+    assert "release_notes" not in payload["artifacts"]
+    assert payload["approvals"]["rfc"] == "approved"
 
 
 def test_decide_approval_rejects_gate_that_is_not_actionable(tmp_path):
@@ -4140,7 +4168,7 @@ def test_retry_blocked_workflow_reruns_workers_to_release_gate(tmp_path, monkeyp
                 f"  backend: {project / 'backend'}",
                 f"  frontend: {project / 'frontend'}",
                 "worker_backend:",
-                "  mode: codex",
+                "  mode: fake",
             ]
         ),
         encoding="utf-8",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 from datetime import UTC, datetime
@@ -14,6 +15,30 @@ from goodteam_os.state import normalize_project_key
 
 LOGGER = logging.getLogger(__name__)
 _REGISTRY_LOCK = threading.Lock()
+
+
+class ProjectRegistryReadError(RuntimeError):
+    """The existing registry cannot be read safely and must not be overwritten."""
+
+
+def _registry_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> Any:
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
+def _registry_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("JSON number is outside the supported finite range")
+    return parsed
 
 
 def get_default_registry_path() -> Path:
@@ -31,11 +56,7 @@ class ProjectRegistry:
         self.registry_path = (registry_path or get_default_registry_path()).resolve()
 
     def list_registered_projects(self) -> list[dict[str, Any]]:
-        data = self._read_data()
-        projects = data.get("projects", [])
-        if not isinstance(projects, list):
-            return []
-        return [p for p in projects if isinstance(p, dict)]
+        return self._read_data()["projects"]
 
     def list_registered_configs(self) -> list[Path]:
         configs: list[Path] = []
@@ -153,17 +174,40 @@ class ProjectRegistry:
         return None
 
     def _read_data(self) -> dict[str, Any]:
-        if not self.registry_path.is_file():
-            return {"version": 1, "projects": []}
         try:
-            data = json.loads(self.registry_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                data.setdefault("version", 1)
-                data.setdefault("projects", [])
-                return data
-        except (OSError, json.JSONDecodeError) as exc:
+            data = json.loads(
+                self.registry_path.read_text(encoding="utf-8"),
+                object_pairs_hook=_registry_json_object,
+                parse_constant=_reject_json_constant,
+                parse_float=_registry_json_float,
+            )
+            if not isinstance(data, dict):
+                raise ValueError("expected a JSON object")
+            version = data.get("version", 1)
+            if type(version) is not int or version != 1:
+                raise ValueError("unsupported registry version")
+            projects = data.get("projects")
+            if not isinstance(projects, list):
+                raise ValueError("projects must be a list")
+            for index, entry in enumerate(projects):
+                if not isinstance(entry, dict):
+                    raise ValueError(f"projects[{index}] must be an object")
+                config_path = entry.get("config_path")
+                if not isinstance(config_path, str) or not config_path.strip():
+                    raise ValueError(f"projects[{index}].config_path must be a non-empty string")
+                for field in ("key", "root", "state_path", "updated_at"):
+                    if field in entry and not isinstance(entry[field], str):
+                        raise ValueError(f"projects[{index}].{field} must be a string")
+            data.setdefault("version", 1)
+            return data
+        except FileNotFoundError:
+            return {"version": 1, "projects": []}
+        except (OSError, ValueError, RecursionError) as exc:
             LOGGER.warning("Could not read project registry from %s: %s", self.registry_path, exc)
-        return {"version": 1, "projects": []}
+            raise ProjectRegistryReadError(
+                f"Could not read project registry from {self.registry_path}: {exc}. "
+                "The registry has been left unchanged."
+            ) from exc
 
     def _write_data(self, data: dict[str, Any]) -> None:
         try:

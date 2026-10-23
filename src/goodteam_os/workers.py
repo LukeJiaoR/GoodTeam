@@ -114,7 +114,15 @@ _MEMORY_WRITEBACK_BULLET_RE = re.compile(r"^\s*[-*•]\s+(.+?)\s*$")
 _sleep = time.sleep
 
 
+def _is_host_cli_timeout(summary: str, exit_code: int | None) -> bool:
+    return exit_code is None and re.fullmatch(r".+ timed out after \d+(?:\.\d+)? seconds\.", summary) is not None
+
+
 def classify_worker_failure(summary: str, exit_code: int | None, stderr: str = "") -> str:
+    # A host deadline is authoritative; a CLI transcript can mention auth or
+    # network errors from unrelated tools, source files, or successful checks.
+    if _is_host_cli_timeout(summary, exit_code):
+        return "timeout"
     del exit_code  # phase-1 classifier is text-pattern based.
     text = f"{summary}\n{stderr}".lower()
     if any(
@@ -161,11 +169,21 @@ def is_transient(failure_class: str) -> bool:
     return failure_class in {"auth", "rate_limit", "network", "timeout", "stream_disconnect"}
 
 
+def _worker_attempt_limit(job: dict[str, Any]) -> int:
+    raw_limit = os.environ.get("GOODTEAM_WORKER_MAX_ATTEMPTS", str(WORKER_MAX_ATTEMPTS))
+    if raw_limit not in {str(value) for value in range(1, WORKER_MAX_ATTEMPTS + 1)}:
+        raise ValueError(f"GOODTEAM_WORKER_MAX_ATTEMPTS must be between 1 and {WORKER_MAX_ATTEMPTS}.")
+    captured = job.get("max_attempts", WORKER_MAX_ATTEMPTS)
+    if type(captured) is not int or not 1 <= captured <= WORKER_MAX_ATTEMPTS:
+        raise ValueError("Worker max_attempts is invalid.")
+    return min(int(raw_limit), captured)
+
+
 def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
     claimed_paths = context.get("claimed_paths", [])
     if not isinstance(claimed_paths, list):
         claimed_paths = []
-    return {
+    safe = {
         "available": bool(context.get("available")),
         "schema_version": str(context.get("schema_version", "")),
         "execution_id": str(context.get("execution_id", "")),
@@ -176,6 +194,11 @@ def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
         "branch_name": str(context.get("branch_name", "")),
         "claimed_paths": [str(path) for path in claimed_paths],
     }
+    if safe["mode"] == "workflow_isolated":
+        safe.update({key: str(context.get(key, "")) for key in (
+            "workflow_run_id", "project_key", "job_id", "source_root", "baseline_commit",
+        )})
+    return safe
 
 
 def _worker_sandbox_context_prompt(job: dict[str, Any]) -> str:
@@ -1048,12 +1071,16 @@ class WorkerJobStore:
         required_skill_ids: tuple[str, ...] = (),
         review_target: dict[str, str] | None = None,
         task_input: "TaskExecutionSnapshot | None" = None,
+        workflow_workspace: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
+            if workflow_workspace is not None:
+                raise ValueError("Workflow workspaces cannot replace the protected Skill execution protocol.")
             if task_input is not None:
                 from goodteam_os.execution.task_snapshot import TaskInputError
                 raise TaskInputError("task_input_protocol_conflict")
             skill_request = locals().copy()
+            skill_request.pop("workflow_workspace")
             from goodteam_os.skills.worker_requests import create_skill_worker_job
 
             return create_skill_worker_job(self, skill_request)[0]
@@ -1069,6 +1096,8 @@ class WorkerJobStore:
         if task_input is None:
             self._reject_input_downgrade({"run_id": run_id, "execution_id": execution_id})
         if task_input is not None:
+            if workflow_workspace is not None:
+                raise ValueError("Workflow workspaces cannot replace the protected task-input execution protocol.")
             from goodteam_os.execution.task_snapshot import TaskExecutionSnapshot, TaskInputError
             from goodteam_os.execution.correction_input import CorrectionAttemptInput
             from goodteam_os.execution.task_context import task_worker_fields
@@ -1079,6 +1108,7 @@ class WorkerJobStore:
             if {"task": task, "context": context, "constraints": constraints or [],
                     "expected_artifacts": expected_artifacts or []} != task_worker_fields(task_input):
                 raise TaskInputError("task_input_operation_conflict")
+        max_attempts = _worker_attempt_limit({}) if adapter in CLI_BACKENDS and task_input is None else None
         job_id = task_input.job_id if task_input is not None else f"job-{uuid4()}"
         job_root = self.root / job_id
         if task_input is not None and isinstance(task_input, CorrectionAttemptInput):
@@ -1108,6 +1138,15 @@ class WorkerJobStore:
             "desired_instances": desired_instances,
             "execution_policy": execution_policy,
         }
+        if max_attempts is not None:
+            job["max_attempts"] = max_attempts
+        if workflow_workspace is not None:
+            from goodteam_os.workflow_workspace import context_for_job
+
+            job["workflow_workspace"] = workflow_workspace
+            job["sandbox_context"] = context_for_job(
+                self.project_root, workflow_workspace, project_key=project_key, run_id=run_id, job_id=job_id,
+            )
         for key, value in {
             "pi_path": pi_path,
             "pi_provider": pi_provider,
@@ -1161,6 +1200,8 @@ class WorkerJobStore:
         if task_input is None:
             MemoryHandoffStore(self.project_root).reserve(job)
         self._write_json(job_root / "job.json", job)
+        if workflow_workspace is not None:
+            self._write_json(job_root / "sandbox_context.json", job["sandbox_context"])
         role_config, role_prompt = _role_prompt_for_job(role)
         (job_root / "role_prompt.md").write_text(role_prompt, encoding="utf-8")
         role_memory_store = RoleMemoryStore(self.project_root, embedder=default_embedder())
@@ -1212,7 +1253,10 @@ class WorkerJobStore:
 
             bound = inspect.signature(type(self).create_job).bind(self, **job_spec)
             bound.apply_defaults()
-            return create_skill_worker_job(self, dict(bound.arguments))
+            values = dict(bound.arguments)
+            if values.pop("workflow_workspace") is not None:
+                raise ValueError("Workflow workspaces cannot replace the protected Skill execution protocol.")
+            return create_skill_worker_job(self, values)
         from goodteam_os.skills.worker_requests import has_skill_fields, is_skill_job_id
 
         if has_skill_fields(job_spec) or job_spec.get("required_skill_ids"):
@@ -1230,6 +1274,15 @@ class WorkerJobStore:
             if existing is not None:
                 if is_skill_job_id(existing.get("id")) or has_skill_fields(existing):
                     raise ValueError("A Skill-backed job cannot be replayed as legacy input.")
+                if (job_spec.get("workflow_workspace") is not None
+                        or existing.get("workflow_workspace") is not None):
+                    from goodteam_os.workflow_workspace import WorkflowWorkspaceError, validate_workflow_job_context
+
+                    if (existing.get("workflow_workspace") != job_spec.get("workflow_workspace")
+                            or existing.get("run_id") != job_spec.get("run_id")
+                            or existing.get("project_key") != job_spec.get("project_key")):
+                        raise WorkflowWorkspaceError("The existing Worker belongs to a different workflow baseline.")
+                    validate_workflow_job_context(self.project_root, existing)
                 return existing, False
         return self.create_job(**job_spec), True
 
@@ -1342,6 +1395,21 @@ class WorkerJobStore:
         return jobs
 
     def run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import is_skill_job_id
+
+        # Protected Skill execution keeps its own admission and exact-source
+        # protocol. Ordinary sequential workflow jobs own one shared task slot.
+        if not is_skill_job_id(job_id):
+            job = self._read_json(self.root / job_id / "job.json")
+            if (job.get("workflow_workspace") is not None or isinstance(job.get("sandbox_context"), dict)
+                    and job["sandbox_context"].get("mode") == "workflow_isolated"):
+                from goodteam_os.workflow_workspace import workflow_job_lock
+
+                with workflow_job_lock(self.project_root, job):
+                    return self._run_job(job_id, sandbox_context=sandbox_context)
+        return self._run_job(job_id, sandbox_context=sandbox_context)
+
+    def _run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
         from goodteam_os.skills.worker_requests import has_skill_fields, is_skill_job_id, run_skill_worker_job
 
         if is_skill_job_id(job_id):
@@ -1366,6 +1434,9 @@ class WorkerJobStore:
                     "external_invocation": False, "reason": "local_codex_task_capture_required"}})
         if sandbox_context is not None:
             job = self._attach_sandbox_context(job_root, job, sandbox_context)
+        if (job.get("workflow_workspace") is not None or isinstance(job.get("sandbox_context"), dict)
+                and job["sandbox_context"].get("mode") in {"dispatch_isolated", "workflow_isolated"}):
+            self._worker_runtime_cwd(job)
         handoff = self._ordinary_memory_handoff(job_root, job)
         if handoff is not None:
             handoff.load(job)  # Retained partial enrollment cannot become legacy.
@@ -1397,37 +1468,49 @@ class WorkerJobStore:
             spec = CLI_BACKENDS.get(adapter)
             if spec is None:
                 raise ValueError(f"Unsupported worker adapter: {adapter}")
+            ordinary = self.admit_task_input(job_id, job) is None
+            max_attempts = _worker_attempt_limit(job) if ordinary else WORKER_MAX_ATTEMPTS
             attempts = 0
             retried = False
             last_failure_class = "unknown"
+            attempt_history = []
             while True:
                 attempts += 1
                 status_payload = self._run_cli_backend(job_root, job, spec)
-                if status_payload.get("status") == "completed":
-                    status_payload["attempts"] = attempts
+                status_payload["attempts"] = attempts
+                completed = status_payload.get("status") == "completed"
+                disposition = "completed"
+                if not completed:
+                    stderr = ""
+                    stderr_path = status_payload.get("stderr_path")
+                    if isinstance(stderr_path, str) and stderr_path:
+                        try:
+                            stderr = Path(stderr_path).read_text(encoding="utf-8")
+                        except OSError:
+                            stderr = ""
+                    summary = str(status_payload.get("summary", ""))
+                    exit_code = status_payload.get("exit_code")
+                    last_failure_class = classify_worker_failure(summary, exit_code, stderr=stderr)
+                    status_payload["failure_class"] = last_failure_class
+                    if job_root.name.startswith("job-correction-") or _is_host_cli_timeout(summary, exit_code):
+                        disposition = "human_handoff"
+                    elif not is_transient(last_failure_class) or attempts >= max_attempts:
+                        disposition = "escalated"
+                    else:
+                        disposition = "retrying"
+                    status_payload["disposition"] = disposition
+                if ordinary:
+                    status_payload["max_attempts"] = max_attempts
+                    attempt_history.append(self._retain_cli_attempt(job_root, status_payload, disposition=disposition))
+                    status_payload["attempt_history"] = list(attempt_history)
+                if completed:
+                    # The public job outcome keeps its historical recovery fields;
+                    # the successful attempt above has no failure of its own.
                     if retried:
                         status_payload["failure_class"] = last_failure_class
                         status_payload["disposition"] = "recovered"
                     break
-                stderr = ""
-                stderr_path = status_payload.get("stderr_path")
-                if isinstance(stderr_path, str) and stderr_path:
-                    try:
-                        stderr = Path(stderr_path).read_text(encoding="utf-8")
-                    except OSError:
-                        stderr = ""
-                last_failure_class = classify_worker_failure(
-                    str(status_payload.get("summary", "")),
-                    status_payload.get("exit_code"),
-                    stderr=stderr,
-                )
-                status_payload["failure_class"] = last_failure_class
-                status_payload["attempts"] = attempts
-                if job_root.name.startswith("job-correction-"):
-                    status_payload["disposition"] = "human_handoff"
-                    break
-                if not is_transient(last_failure_class) or attempts >= WORKER_MAX_ATTEMPTS:
-                    status_payload["disposition"] = "escalated"
+                if disposition != "retrying":
                     break
                 retried = True
                 backoff = WORKER_RETRY_BACKOFF_SECONDS[min(attempts - 1, len(WORKER_RETRY_BACKOFF_SECONDS) - 1)]
@@ -1466,6 +1549,32 @@ class WorkerJobStore:
             self._input_store(task_input).record_host_return(task_input,
                 status=status_payload["status"], output_digest=digest(result_bytes))
         return status_payload
+
+    def _retain_cli_attempt(self, job_root: Path, status: dict[str, Any], *, disposition: str) -> dict[str, Any]:
+        retained = Path(tempfile.mkdtemp(prefix="attempt-", dir=job_root))
+        retained_status = {**status, "disposition": disposition}
+        copied_paths = {}
+        for name in ("stdout", "stderr", "result"):
+            source = job_root / (f"{name}.md" if name == "result" else f"{name}.txt")
+            if source.is_file():
+                target = retained / source.name
+                copy2(source, target)
+                copied_paths[str(source)] = str(target)
+                retained_status[f"{name}_path"] = str(target)
+        # Output aliases must refer to the retained bytes, without changing the
+        # live outcome's nested evidence or its private prompt/transport identity.
+        evidence = status.get("invocation_evidence")
+        if isinstance(evidence, dict):
+            retained_status["invocation_evidence"] = dict(evidence)
+        for metadata in (retained_status, retained_status.get("invocation_evidence", {})):
+            if isinstance(metadata, dict):
+                for key in ("stdout_path", "stderr_path", "result_path", "runtime_transcript_path"):
+                    value = metadata.get(key)
+                    if isinstance(value, str) and value in copied_paths:
+                        metadata[key] = copied_paths[value]
+        self._write_json(retained / "status.json", retained_status)
+        return {"attempt": status["attempts"], "status": status.get("status"),
+                "status_path": str(retained / "status.json")}
 
     def _ordinary_memory_handoff(self, job_root: Path, job: dict[str, Any]) -> MemoryHandoffStore | None:
         if job_root.name.startswith(("job-input-", "job-correction-")):
@@ -2321,6 +2430,14 @@ class WorkerJobStore:
             adapter=adapter,
             reasoning_depth=str(job.get("reasoning_depth", "") or ""),
         )
+        sandbox_mode = os.environ.get("GOODTEAM_CODEX_SANDBOX_MODE", "")
+        if adapter == "codex" and sandbox_mode:
+            if sandbox_mode not in {"workspace-write", "read-only"}:
+                raise ValueError("GOODTEAM_CODEX_SANDBOX_MODE must be workspace-write or read-only.")
+            if str(job.get("execution_policy", "standard")) != "read_only":
+                command = [value for value in command if value != "--dangerously-bypass-approvals-and-sandbox"]
+                prompt_index = command.index("-")
+                command[prompt_index:prompt_index] = ["--sandbox", sandbox_mode, "-c", 'approval_policy="never"']
         runtime_evidence = {
             **_worker_runtime_evidence(
                 runtime_context,
@@ -2384,6 +2501,16 @@ class WorkerJobStore:
 
     def _worker_runtime_cwd(self, job: dict[str, Any]) -> WorkerRuntimeContext:
         context = job.get("sandbox_context")
+        if (job.get("workflow_workspace") is not None or isinstance(context, dict)
+                and context.get("mode") == "workflow_isolated"):
+            from goodteam_os.workflow_workspace import validate_workflow_job_context
+
+            workspace_path = validate_workflow_job_context(self.project_root, job)
+            return WorkerRuntimeContext(
+                runtime_cwd=workspace_path, workspace_context_available=True,
+                workspace_cwd_fallback=False, workspace_cwd_fallback_reason="",
+                runtime_workspace_mode="workflow_isolated", runtime_workspace_status="ready",
+            )
         if not isinstance(context, dict) or not context.get("available"):
             return WorkerRuntimeContext(
                 runtime_cwd=self.project_root,
@@ -2396,6 +2523,14 @@ class WorkerJobStore:
         workspace_path = Path(str(context.get("workspace_path", "")))
         workspace_mode = str(context.get("mode") or "workspace")
         workspace_status = str(context.get("status") or "unknown")
+        if workspace_mode == "dispatch_isolated":
+            from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
+
+            workspace = prepare_dispatch_workspace(self.project_root, str(context.get("execution_id", "")),
+                                                   None)
+            if (str(context.get("sandbox_id", "")) != str(job["id"])
+                    or workspace.workspace(str(job["id"])) != workspace_path):
+                raise ValueError("dispatch_workspace_mismatch")
         if _is_repo_workspace(workspace_path):
             return WorkerRuntimeContext(
                 runtime_cwd=workspace_path,
@@ -2405,6 +2540,8 @@ class WorkerJobStore:
                 runtime_workspace_mode=workspace_mode,
                 runtime_workspace_status=workspace_status,
             )
+        if workspace_mode == "dispatch_isolated":
+            raise ValueError("dispatch_workspace_unavailable")
         return WorkerRuntimeContext(
             runtime_cwd=self.project_root,
             workspace_context_available=True,
@@ -2492,6 +2629,11 @@ class WorkerJobStore:
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"
+        if job.get("workflow_workspace") is not None:
+            bound_context = self._worker_runtime_cwd(job)
+            if runtime_context is not None and runtime_context != bound_context:
+                raise ValueError("workflow_runtime_context_mismatch")
+            runtime_context = bound_context
         runtime_context = runtime_context or self._worker_runtime_cwd(job)
         if correction and runtime_context.runtime_cwd != authority.check_runtime_context(task_input, job):
             raise ValueError("correction_workspace_mismatch")
@@ -2701,6 +2843,22 @@ class WorkerJobStore:
         memory = self._validated_worker_memory(job_root, role=str(job["role"]))
         pickup_context = memory.fragment
         sandbox_context = _worker_sandbox_context_prompt(job)
+        markdown_artifact = "Output markdown only." in (job_root / "constraints.md").read_text(encoding="utf-8")
+        final_output_instruction = (
+            "Return the complete requested markdown artifact as your final assistant response, "
+            "not a changed-files or verification summary. The adapter saves this response as the current job result. "
+            f"If you also write a deliverable file, write it under the current job directory {job_root}; "
+            "shared project/docs files are not accepted as this job's output."
+            if markdown_artifact else "At the end, summarize changed files, verification commands, and unresolved risks."
+        )
+        if job.get("role") == "implementation" and "release-notes.md" in job.get("expected_artifacts", []):
+            final_output_instruction += (
+                f" The release change request requires a complete corrected release document at {job_root / 'release-notes.md'}."
+                " Write it in this exact job-local path, not only in shared docs. Preserve verified corrections,"
+                " unresolved risks and skipped checks; do not invent rollback instructions or evidence."
+                " QA and staging after this job are not yet verified; describe those checks as pending."
+                " The controller will retain these bytes for release review; missing output blocks release."
+            )
         sections = [
                 f"# GoodTeam Worker Job {job['id']}",
                 f"Role: {job['role']}",
@@ -2711,7 +2869,7 @@ class WorkerJobStore:
                 "When modifying files, keep changes inside the current project root.",
                 "If Sandbox Context is available, treat workspace_path as the intended execution workspace.",
                 "Use bounded smoke checks. If you start dev servers, browser sessions, watchers, or other long-running processes, run them in a way you can stop and stop any dev servers, browser sessions, or watchers before exiting.",
-                "At the end, summarize changed files, verification commands, and unresolved risks.",
+                final_output_instruction,
                 "## Role Prompt",
                 (job_root / "role_prompt.md").read_text(encoding="utf-8"),
         ]
@@ -3097,6 +3255,13 @@ def _runtime_policy_evidence(command: list[str]) -> dict[str, Any]:
     if _has_flag_value(values, "--sandbox", "read-only"):
         return _runtime_policy(
             sandbox_mode="read-only",
+            approval_policy="non-interactive",
+            unsafe=False,
+            warning_reason="",
+        )
+    if _has_flag_value(values, "--sandbox", "workspace-write"):
+        return _runtime_policy(
+            sandbox_mode="workspace-write",
             approval_policy="non-interactive",
             unsafe=False,
             warning_reason="",

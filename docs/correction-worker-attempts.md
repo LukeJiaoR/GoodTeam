@@ -307,7 +307,7 @@ started, missing seal-result is unknown and cannot be retried. Terminal checked
 review can be read/replayed without credentials. The original process, check and
 Reviewer are not rerun on successful replay. The check must keep the retained
 worktree clean, including ignored files required by strict seal replay; select
-commands that do not leave caches/artifacts there. New files remain unsupported.
+commands that do not leave caches/artifacts there.
 
 Milestone status: code-integrated and offline-contract-tested; real native CLI,
 model quality, managed-tool behavior and end-to-end #347 acceptance remain pending.

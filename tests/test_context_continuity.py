@@ -125,6 +125,28 @@ def test_user_scope_uses_durable_requests_and_implicit_run_replies():
     assert session["timeline"][0]["run_id"] == "", "Filtering must not rewrite source events."
 
 
+def test_selected_task_priority_uses_resolved_scope_for_user_statements():
+    for binding in ("conversation_run_id", "context_run_id", "reply"):
+        session = long_session()
+        session["timeline"][20]["content"] = "SELECTED_TASK_REQUIREMENT must survive later project discussion."
+        session["timeline"][21].update(
+            message_id="reply:m20", actor="task_assistant", event="conversation_replied",
+            run_id="selected", content="The selected task was discussed.",
+        )
+        if binding != "reply":
+            session["assistant_requests"] = {"m20": {binding: "selected"}}
+            session["timeline"][21]["run_id"] = ""
+        before = deepcopy(session)
+        packet = conversation_context(session, run_id="selected")
+        excerpts = {item["message_id"]: item for item in packet["summary"]["excerpts"]}
+        assert "m20" in excerpts, binding
+        assert excerpts["m20"]["content"].startswith("SELECTED_TASK_REQUIREMENT")
+        assert excerpts["m20"]["run_id"] == "", "Preserve the exact raw source identity."
+        assert packet["recalled"] == [], "Retention must not depend on a matching query."
+        assert session == before
+        assert "m20" not in {item["message_id"] for item in intake_source_messages(session)}
+
+
 def test_real_manager_context_keeps_other_task_questions_out_and_current_state_in(tmp_path):
     from test_assistant_drafts import setup_service
 
@@ -284,6 +306,37 @@ def test_resource_backed_state_and_checkpoint_handoff_match_canonical_round_trip
         assert payload["continuity_state"] == expected
         assert {item["key"]: item["value"] for item in expected["artifact_refs"]} == payload["artifacts"]
     assert task_state_context(state) == expected
+
+
+def test_continuity_refresh_preserves_repository_and_artifact_revision_state(tmp_path):
+    """Adding a derived handoff must not discard newer main's retained state."""
+    state = create_initial_state("run-1", "DEMO", "Preserve current delivery evidence")
+    retained = {
+        "repository_baseline": {"schema_version": "repository_baseline.v1", "head": "a" * 40},
+        "artifact_proposals": {"prd": {"path": "prd-proposed.md", "generation": "proposal-1"}},
+        "artifact_generations": {"prd": "generation-1"},
+        "release_candidate": {"candidate_sha": "b" * 40, "artifact_sha256": "c" * 64},
+    }
+    for field, value in retained.items():
+        setattr(state, field, value)
+    states = StateStore(tmp_path)
+    current = states.write_project_current(state)
+    initial = json.loads(current.read_text())["continuity_state"]
+    checkpoint = states.write_project_checkpoint(state)
+    checkpoint_before = checkpoint.read_bytes()
+    restored = states.read_project_current("DEMO")
+    assert all(getattr(restored, field) == value for field, value in retained.items())
+    restored.current_node = "security_review"
+    restored.blockers = ["Wait for current candidate verification"]
+    states.write_project_current(restored)
+    saved = json.loads(current.read_text())
+    assert saved["continuity_state"]["source_sha256"] != initial["source_sha256"]
+    assert all(saved[field] == value for field, value in retained.items())
+    assert checkpoint.read_bytes() == checkpoint_before
+    archived = states.archive_project_current("DEMO", reason="complete")
+    archive = json.loads(archived.read_text())
+    assert all(archive[field] == value for field, value in retained.items())
+    assert archive["continuity_state"] == saved["continuity_state"]
 
 
 def test_projection_bounds_explain_omissions_without_dropping_authoritative_data():

@@ -102,6 +102,8 @@ def test_intake_artifact_dispatch_records_research_worker_and_fails_closed(tmp_p
 
     monkeypatch.setattr(WorkerJobStore, "run_job", fake_provider_execution)
     state = create_initial_state("intake-run", "DEMO", "Inspect existing project")
+    from test_graph_sample import prepare_repository_fixture
+    prepare_repository_fixture(state, root)
     failure = {}
     result = generate_artifact_via_worker(state=state, workspace=tmp_path, project_config=config,
                                          role="project_intake", artifact_key="takeover",

@@ -1,40 +1,110 @@
-# GoodTeam — Local-First AI Engineering Team OS
+<div align="center">
 
-GoodTeam is a local-first control layer for AI-assisted software delivery. It coordinates project understanding, AI workers, workflow state, review evidence, CI, human decisions, provenance, and memory through one owned control plane.
+# GoodTeam
 
-**GoodTeam owns the delivery protocol; external tools are adapters.** Coding agents, GitHub, CI, Telegram, and browser automation can perform work or produce evidence, but GoodTeam keeps the authoritative state and human decision trail.
+### A local-first control plane for AI software delivery
 
-## Current product model
+Turn a project conversation into bounded engineering work,<br>
+with persistent state, reviewable evidence, and explicit human decisions.
 
-The current product surface is:
+<p>
+  <a href="docs/architecture.md"><img src="https://img.shields.io/badge/Architecture-Local--first-2563EB?style=flat-square" alt="Architecture: local-first"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.11+"></a>
+  <a href="frontend/package.json"><img src="https://img.shields.io/badge/Frontend-React%2019%20%2B%20Vite-0891B2?style=flat-square&amp;logo=react&amp;logoColor=white" alt="Frontend: React 19 + Vite"></a>
+  <a href="docs/worker-backends.md#pi-persistent-sessions"><img src="https://img.shields.io/badge/Runtime-Pi%20RPC%20%2F%20JSONL-7C3AED?style=flat-square" alt="Runtime: Pi RPC / JSONL"></a>
+  <a href="docs/m0-product-acceptance.md"><img src="https://img.shields.io/badge/Stage-M0%20acceptance%20pending-D97706?style=flat-square" alt="Stage: M0 acceptance pending"></a>
+</p>
 
-```text
-Projects → Work / Team / Review / Knowledge
+[Overview](#overview) · [Capabilities](#capabilities) · [Architecture](#architecture) · [Quick start](#quick-start) · [Documentation](#documentation) · [Contributing](#contributing)
+
+</div>
+
+---
+
+## Overview
+
+GoodTeam coordinates AI-assisted engineering around an owned delivery protocol: understand the repository, agree on a bounded task, dispatch Workers, collect verification and review evidence, and preserve the human decision trail.
+
+**GoodTeam owns the control plane; coding agents and external tools are adapters.** A Worker can produce a patch, a test result, or a recommendation. It cannot turn its own output into approval.
+
+**Open repo → Describe task → Confirm plan → Follow execution → Review result**
+
+The desktop Web experience stays centered on one project conversation:
+
+| Surface | What you do |
+| --- | --- |
+| **Projects** | Import or open an explicitly selected local repository. |
+| **Work · Task Assistant / 任务助手** | Understand the project, clarify a task, confirm a proposal, and follow progress or recovery in the same conversation. |
+| **Team** | Configure project Roles, TeamRole membership, and Worker identities and runtimes. |
+| **Review** | Inspect evidence and make explicit approval or change decisions. |
+| **Knowledge** | Explore repository understanding, artifacts, provenance, and memory. |
+
+> **Current stage:** real-model delivery acceptance is pending under [M0 / #411](docs/m0-product-acceptance.md). Implemented features and deterministic CI coverage are not a claim of complete product acceptance.
+
+## Capabilities
+
+| Capability | What GoodTeam provides |
+| --- | --- |
+| **Durable conversation** | Project understanding, task clarification, progress, and recovery stay in one Task Assistant conversation, preserving the original request across workflow runs. |
+| **Configurable engineering team** | **Role → TeamRole → Worker** separates capabilities, project membership, and runtime identity. Codex, Claude/Anthropic, Pi, `fake`, `human`, and `noop` adapters serve different execution needs. |
+| **Persistent Pi runtime** | Pi RPC sessions support explicit resume, steering, follow-up, abort, and incremental event replay. Session metadata and JSONL protocol/event records remain tied to the originating job. |
+| **Traceable delivery** | Tasks, attempts, Workers, worktrees, PRs, commit SHAs, CI, artifacts, and reviewer evidence connect through execution identity and a durable ledger. |
+| **Explicit human decisions** | Workflow starts, task changes, and approvals are bound to server-owned state. Model interpretation and Worker output provide advice and evidence, not authority. |
+| **Local-first records** | Conversations, workflow state, checkpoints, task ledgers, artifacts, and memory persist in local workspace/project storage, with optional external integrations. |
+
+Explore [Worker backends and Pi controls](docs/worker-backends.md), [execution identity](docs/execution-identity.md), and the [review and approval guide](docs/review-and-approval-guide.md).
+
+Local-first describes ownership of state, not offline model execution. External providers still require configured access; Pi itself is not a sandbox. GoodTeam retains runtime/worktree policy and approval responsibility.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    Human[Human operator] --> UI[Projects / Work / Team / Review / Knowledge]
+    UI --> CP[GoodTeam control plane]
+    CP --> Gate[Readiness + explicit human confirmation]
+    Gate --> Workflow[Durable workflow + bounded jobs]
+    Workflow --> Runtime[Worker runtime + worktree policy]
+    Runtime --> Pi[Pi RPC / persistent session / JSONL events]
+    Runtime --> Other[Codex / Claude / fake / human / noop]
+    Pi --> Evidence[Artifacts + tests + review evidence]
+    Other --> Evidence
+    Workflow --> Adapters[GitHub / CI / optional integrations]
+    Adapters --> Evidence
+    Evidence --> Review[Human review decision]
+    Human --> Review
+    CP <--> Store[(Local state / ledger / provenance / memory)]
+    Workflow --> Store
+    Evidence --> Store
+    Review --> Store
 ```
 
-- **Projects** imports or opens a local project.
-- **Work** is the primary interaction surface. Task Assistant / 任务助手 handles project understanding, questions, work intake, clarification, progress, retries, and server-authorized actions in one project-scoped conversation.
-- **Team** exposes project execution configuration.
-- **Review** is the evidence-backed human review and approval surface.
-- **Knowledge** exposes repository understanding, artifacts, and memory.
+| Layer | Responsibility | Source |
+| --- | --- | --- |
+| Product UI | Project conversation and focused Team, Review, and Knowledge workbenches | [`frontend/`](frontend/) |
+| Control plane | HTTP/API boundaries, Task Assistant, readiness, and Team decisions | [`src/goodteam_os/`](src/goodteam_os/) |
+| Workflow & runtime | Gates, bounded dispatch, Worker lifecycle, and persistent execution | [`graph.py`](src/goodteam_os/graph.py), [`workers.py`](src/goodteam_os/workers.py) |
+| Durable records | Workflow state, task ledger, artifacts, provenance, and memory | [Architecture reference](docs/architecture.md) |
 
-Readiness still exists, but it is a backend-owned safety state rather than a separate user journey. Model interpretation may explain or classify intent; it cannot authorize consequential mutations. Workflow start and approval remain explicit human decisions bound to server-owned state.
-
-Legacy Project Home, Inbox, Activity, and Settings product pages have been retired. Compatibility redirects remain for old bookmarks.
-
-For the short current-state summary, see [`docs/status.md`](docs/status.md). For the canonical documentation map and authority rules, see [`docs/README.md`](docs/README.md).
-
-### Delivery acceptance boundary
-
-The first product-effect gate is deliberately narrow: desktop Web, an explicitly configured local Git repository, an explicitly verified real provider/model configuration, and one bounded coding task. Implemented UI and deterministic fake-Worker CI are not proof that real model execution, independent review/fix, and delivery have converged.
-
-[Issue #411](https://github.com/LukeJiaoR/GoodTeam/issues/411) remains the real-task acceptance owner. See [`docs/m0-product-acceptance.md`](docs/m0-product-acceptance.md) for the evidence matrix, safe run protocol and per-task scorecard. No complete real-model delivery acceptance is claimed by this README.
+See the [architecture guide](docs/architecture.md) for detailed component boundaries and sequence diagrams.
 
 ## Quick start
 
-Create a development environment:
+### Prerequisites
+
+- **Python 3.11+** with `venv` and `pip`
+- **Node.js 24.22.1** (the development/CI default in `.nvmrc`), or **22.23.4+ within the 22.x line**, plus npm, for the current frontend toolchain. These minimums include the [October 2026 security fixes](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases); Node.js 20 is end-of-life. Run `nvm install && nvm use` from the repository root before installing frontend dependencies
+- **Git** and a local repository you intend to work on
+- For real Workers: a supported agent CLI and explicitly verified provider/model configuration; installation alone does not prove readiness
+
+The commands below use a POSIX-style shell. They install and start the local application; they do not dispatch a coding task.
+
+### 1. Install
 
 ```bash
+git clone https://github.com/LukeJiaoR/GoodTeam.git
+cd GoodTeam
+
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
@@ -42,85 +112,96 @@ npm --prefix frontend install
 npm --prefix frontend run build
 ```
 
-Start GoodTeam as the managed local service:
+### 2. Start the local service
 
 ```bash
 goodteam restart
 goodteam status
 ```
 
-The managed service defaults to port `21001`. Open:
+Open **[localhost:21001/projects](http://localhost:21001/projects)**.
 
-```text
-http://localhost:21001/projects
-```
+The service defaults to `127.0.0.1:21001` and the current directory as its workspace (`--workspace` overrides it). If an installation is already running, use the [isolated live-smoke playbook](docs/live-smoke-playbook.md) rather than restarting its service for testing.
 
-`goodteam restart` uses the current directory as its runtime workspace unless you pass `--workspace`. The older `goodteam-os` command remains available for compatibility and direct CLI workflows.
-
-To stop the managed service:
+To stop it:
 
 ```bash
 goodteam stop
 ```
 
-## Add or inspect a project
+### 3. Open a project and configure the team
 
-The normal product path is to open `/projects`, select an absolute local directory, and continue directly into the project's Work conversation. Import records GoodTeam metadata without treating the selected repository as disposable workspace state.
+1. In **Projects**, select an absolute local repository directory.
+2. Continue in **Work** to understand the repository and clarify the task.
+3. In **Team**, configure the intended Workers and verify the Task Assistant's provider/model connection before real execution. A connection check may invoke the configured provider.
+4. Review the bounded proposal and explicitly confirm it before starting work. Inspect the resulting evidence in **Review**.
 
-For CLI-oriented setup and doctor checks:
+Import records GoodTeam metadata; it does not treat the selected repository as disposable workspace state. Machine-specific configuration belongs in `projects/<key>.local.yaml`. Never commit credentials or private secrets.
+
+<details>
+<summary><strong>CLI setup and doctor checks</strong></summary>
+
+The `goodteam-os` entry point remains available for direct CLI workflows:
 
 ```bash
 goodteam-os init --key MYAPP --name "My App" --repo /absolute/path/to/repo
 goodteam-os doctor --project-config projects/myapp.local.yaml
 ```
 
-Machine-specific project configs should normally live in `projects/<key>.local.yaml`; do not commit credentials or private secrets.
+CLI `init` defaults to credential-free `fake` Workers; Web Team defaults can differ. See the [configuration reference](docs/config-reference.md) before changing backends.
 
-See [`docs/config-reference.md`](docs/config-reference.md) for the implemented project configuration contract.
+</details>
 
-## Worker backends
+## Status and roadmap
 
-GoodTeam supports bounded worker execution through replaceable backends. Current references include Codex, Claude/Anthropic, Pi persistent sessions, `fake`, `human`, and `noop` paths; backend readiness and exact capabilities vary by adapter.
+| Area | Current boundary |
+| --- | --- |
+| Desktop Web and local project workflow | Implemented product surfaces; consult [current status](docs/status.md) for scope and evidence. |
+| Pi persistent runtime | Implemented adapter-level session lifecycle and event records. |
+| Real coding delivery | Next milestone: repeatable, inspectable real-task outcomes under [#411](https://github.com/LukeJiaoR/GoodTeam/issues/411). |
+| Shared Teams across projects | Follow-up scope in [#409](https://github.com/LukeJiaoR/GoodTeam/issues/409); Team configuration is currently project-scoped. |
+| Broader automation and packaging | Arbitrary in-flight changes, automatic replanning, external Planner/MCP expansion, and commercial packaging are outside the current M0 acceptance target. |
 
-The implemented **Role → TeamRole → Worker** control plane separates capability definitions, project Team membership, and Worker identity/lifecycle/runtime. Team mutations use one command/event boundary; execution records preserve the selected Worker and runtime. The Task Assistant remains one logical owner, not a TeamRole. Legacy default/per-role configuration remains a compatibility path. See [`docs/worker-backends.md`](docs/worker-backends.md) and [`docs/config-reference.md`](docs/config-reference.md).
+Active work lives in [Issues](https://github.com/LukeJiaoR/GoodTeam/issues) and [Pull requests](https://github.com/LukeJiaoR/GoodTeam/pulls), rather than a second backlog in this README.
 
-Team is still project-scoped. Workspace-wide Team reuse and migration are follow-up work in [#409](https://github.com/LukeJiaoR/GoodTeam/issues/409), not an implemented promise. Model catalog metadata or an installed CLI alone does not prove a particular account/model/reasoning combination works; use the explicit connection check and retain its configuration identity.
+## Documentation
 
-## Human authority and evidence
+| I want to… | Start here |
+| --- | --- |
+| Find the canonical docs and authority rules | [Documentation index](docs/README.md) |
+| Understand the product and current scope | [Explainer](docs/explainer.md) · [Current status](docs/status.md) |
+| Understand system boundaries | [Architecture](docs/architecture.md) |
+| Run and configure GoodTeam | [Operator guide](docs/operator-guide.md) · [Configuration reference](docs/config-reference.md) |
+| Configure agents and persistent sessions | [Worker backends](docs/worker-backends.md) |
+| Understand approvals and task changes | [Review guide](docs/review-and-approval-guide.md) · [Change-status contract](docs/conversation-change-status.md) |
+| Trace a result or recover context | [Execution identity](docs/execution-identity.md) · [Provenance](docs/provenance-ledger.md) · [Memory](docs/memory-model.md) |
+| Verify a change or a real delivery | [Testing strategy](docs/testing-strategy.md) · [Live smoke](docs/live-smoke-playbook.md) · [M0 acceptance](docs/m0-product-acceptance.md) |
 
-Worker output is evidence, not approval authority. GoodTeam keeps consequential transitions bound to explicit state and human decisions.
+When sources disagree: **code and tests → stable manuals → current status → historical records**. Generated `openwiki/` pages are a read-only projection, not the source of truth.
 
-A typical path is:
+## Repository structure
 
 ```text
-Project conversation
-  ↓
-read-only understanding / proposed work
-  ↓
-explicit human confirmation
-  ↓
-workflow + bounded workers
-  ↓
-tests / CI / smoke / reviewer evidence
-  ↓
-human review decision
-  ↓
-ledger + provenance + memory
+GoodTeam/
+├── src/goodteam_os/    # Python control plane, workflows, Workers, and local records
+├── frontend/          # React desktop Web UI and browser tests
+├── tests/             # Backend and contract coverage
+├── docs/              # Canonical manuals, acceptance protocols, and history
+├── projects/          # Project configuration examples and local config location
+├── scripts/           # Development and verification utilities
+├── ops/               # Operational helpers
+├── openwiki/          # Generated documentation; do not hand-edit
+└── .github/           # Candidate validation and repository workflows
 ```
 
-The same project conversation remains available across onboarding and workflow execution; starting a run does not replace the user's original request with a model rewrite.
+## Contributing
 
-Ordinary running-task discussion does not change Worker instructions. A task change uses the current version-bound review and explicit Intent Commit confirmation. A recorded change decision, completed process, or readable delivery report is not by itself verified completion. See [`docs/conversation-change-status.md`](docs/conversation-change-status.md).
+Start with [AGENTS.md](AGENTS.md), the [risk-tiered testing strategy](docs/testing-strategy.md), and [branch hygiene](docs/development-branch-hygiene.md). Keep changes scoped and report what was actually verified.
 
-## Local-first state
+<details>
+<summary><strong>Common development checks</strong></summary>
 
-GoodTeam keeps authoritative runtime and project records in local workspace/project storage, including workflow state, checkpoints, artifacts, worker jobs, action history, provenance, task ledgers, and memory. Exact storage locations are feature-specific; for example, the durable Task Assistant session is workspace-scoped under `state/projects/<PROJECT_KEY>/` rather than written into the imported repository.
-
-External systems may participate, but they are not the only copy of the delivery record.
-
-## Development
-
-Typical repository checks are:
+Run the checks appropriate to the changed contract; this is a menu, not a requirement to run every suite for a prose edit.
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m pytest tests -q
@@ -131,28 +212,15 @@ npm --prefix frontend run build
 git diff --check
 ```
 
-Use the risk-tiered verification policy in [`docs/testing-strategy.md`](docs/testing-strategy.md) rather than running expensive suites mechanically for every change.
+</details>
 
-For branch and worktree cleanup rules, read [`docs/development-branch-hygiene.md`](docs/development-branch-hygiene.md).
+For a merge candidate, follow [exact-SHA candidate validation](docs/candidate-validation.md): sync with current `main`, publish the committed candidate under `codex/candidate-*`, and wait for automatic validation plus the PR gate. A Draft PR or an older green SHA is not merge evidence. After merging, clean up the task branch and temporary worktrees according to the repository policy.
 
-## Documentation
+---
 
-Use documentation in this order when sources disagree:
+<div align="center">
 
-1. **Code and tests** for executable behavior.
-2. **Stable manuals** under `docs/` for current product/operator contracts.
-3. [`docs/status.md`](docs/status.md) for short-lived current orientation.
-4. Historical plans, audits, research, progress logs, and generated OpenWiki pages for design history and evidence.
+<strong>Bounded work. Durable context. Reviewable delivery.</strong><br>
+<sub>GoodTeam keeps the engineering record and the human decision connected.</sub>
 
-Start here:
-
-- [`docs/README.md`](docs/README.md) — documentation map, authority, and lifecycle rules.
-- [`docs/status.md`](docs/status.md) — current product surface and active-design boundary.
-- [`docs/explainer.md`](docs/explainer.md) — concise product explanation.
-- [`docs/architecture.md`](docs/architecture.md) — current system architecture.
-- [`docs/operator-guide.md`](docs/operator-guide.md) — day-to-day operation.
-- [`docs/review-and-approval-guide.md`](docs/review-and-approval-guide.md) — review and approval semantics.
-- [`docs/live-smoke-playbook.md`](docs/live-smoke-playbook.md) — isolated live-smoke guidance.
-- [`docs/testing-strategy.md`](docs/testing-strategy.md) — verification policy.
-
-Historical implementation records remain useful for traceability, but a completed plan or old progress snapshot is not proof of the current contract.
+</div>

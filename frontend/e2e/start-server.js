@@ -1,14 +1,10 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
+import { openOwnedE2ERoot } from './owned-root.js';
 
-const root = fs.realpathSync(process.env.GOODTEAM_E2E_ROOT);
-if (path.dirname(root) !== fs.realpathSync(os.tmpdir()) || !path.basename(root).startsWith('goodteam-e2e-')
-  || !process.env.GOODTEAM_E2E_OWNER || fs.readFileSync(path.join(root, '.owner'), 'utf8') !== process.env.GOODTEAM_E2E_OWNER) {
-  throw new Error('E2E requires its own temporary directory');
-}
+const { root, cleanup } = openOwnedE2ERoot(process.env.GOODTEAM_E2E_ROOT, process.env.GOODTEAM_E2E_OWNER);
 const isolatedHome = path.join(root, 'home');
 fs.mkdirSync(isolatedHome, { recursive: true });
 fs.mkdirSync(path.join(root, 'workspace'), { recursive: true });
@@ -34,6 +30,6 @@ process.on('SIGTERM', () => child.kill('SIGTERM'));
 process.on('SIGINT', () => child.kill('SIGINT'));
 child.on('error', (error) => { console.error(error); process.exitCode = 1; });
 child.on('exit', (code, signal) => {
-  fs.rmSync(root, { recursive: true, force: true });
+  cleanup();
   process.exitCode = signal === 'SIGTERM' || signal === 'SIGINT' ? 0 : (code ?? 1);
 });

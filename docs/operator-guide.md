@@ -109,6 +109,29 @@ project. Readiness facts, detected or confirmed project mode, and pending steps
 are persisted in the workspace and handled through Task Assistant after a browser
 reload or GoodTeam server restart.
 
+The project home API reports a fresh `git_baseline` with `state` (`non_git`,
+`unborn`, `valid_head`, or `invalid`), `head_sha`, and `baseline_required`.
+Registration and read-only preparation do not require Git. A new empty project
+created through `/api/project-config` initializes Git by default and commits only
+its newly generated README and ignore file. Existing repositories keep their
+history, branch, and identity configuration.
+
+If initialization fails, the response includes an actionable error and retains
+`baseline_required: true`; a leftover `.git` directory is not a valid baseline.
+To initialize an imported non-Git directory or retry an unborn repository,
+explicitly select regular files in the same-origin `POST /api/git-init` body:
+
+```json
+{"project_key": "MYAPP", "initial_files": ["README.md", "src/app.py"]}
+```
+
+Unselected staged and untracked files stay outside the initial commit. Without
+`initial_files`, this endpoint only reports the missing baseline; it does not
+stage the directory. A valid HEAD makes retries idempotent. Invalid metadata or
+a root inside another Git worktree must be repaired or reselected before retry.
+This initialization state does not itself establish a task-bound execution
+snapshot or isolate workflow Workers.
+
 Task Assistant distinguishes a successfully loaded project from one that is
 ready to start work, asks for preparation input when needed, and surfaces the
 persisted result in the conversation. Mode-specific initialization and
@@ -171,6 +194,48 @@ A good dispatch has:
 - constraints and non-goals,
 - verification commands,
 - expected artifact or PR output.
+
+Standalone `dispatch` tracks require a valid Git worktree root and commit.
+Before starting a Worker, GoodTeam retains the original HEAD and index plus the
+raw tracked and nonignored untracked files. Each track and its verification
+command run in a separate copy. The source checkout is not changed. Unsupported
+symlinks, submodules, sparse or unmerged indexes stop preparation with an error.
+
+`changed_files` compares each result with that retained working-tree baseline,
+including committed, staged, untracked, deleted and renamed files. Missing
+evidence is reported as unknown. Overlapping paths are informational; the
+independent integration candidate must merge successfully for `all_ok` to pass.
+Inspect `integration.candidate_path` and the report before applying the candidate
+to a project. A conflict or failed Worker retains its inputs and outputs.
+
+Pass `--task-id` to resume the same standalone dispatch after a process restart.
+An identical completed request returns its original report; changed input needs
+a new task ID. Recovery reuses the same job directories and saved Worker and
+verification outcomes. An interrupted verification or still-running Worker
+requires inspection instead of automatic reexecution. Retained baselines,
+reports and candidates live under the Operator state directory's
+`dispatch-workspaces/` subtree (`GOODTEAM_STATE_DIR` overrides that directory).
+They are not automatically deleted.
+
+Real sequential workflows also require a valid Git root and HEAD at task start.
+The run retains its HEAD, complete index and raw tracked/nonignored untracked
+input in one independent task directory. UI, implementation and QA share that
+directory in sequence so each sees the previous result. Job metadata stays in
+the original project store. Later source edits are not incorporated into the
+task. The state carries `repository_baseline`; recovery only reopens that
+binding and never captures a replacement from the source. A missing baseline,
+missing task directory or changed root identity blocks real execution. Start a
+new task after repairing the source rather than resuming an unbound older run.
+
+Cumulative workflow results describe the whole task, rather than attributing
+the same changes to individual Workers. Retained candidates require inspection
+before applying them to a project. Workflow documents remain in the workflow
+artifact store instead of being mirrored into the live source checkout. The
+current SSH staging adapter cannot attest this retained candidate, so workflow
+staging stops before deployment rather than approving a separately configured
+remote ref. Fake/noop/manual simulations do not claim
+this Git execution evidence. Registered Skill-backed tasks and exact-source
+reviews retain their existing captured protocols and admission rules.
 
 ```mermaid
 sequenceDiagram
