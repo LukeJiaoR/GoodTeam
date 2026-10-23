@@ -135,14 +135,14 @@ def workflow_job_lock(source_root: Path, job: dict):
 
 @_workspace_errors
 def collect_workflow_workspace(source_root: Path, binding: object, *, project_key: str,
-                               run_id: str, candidate: bool = False) -> dict:
+                               run_id: str, candidate: bool = False, include_source_preview: bool = False) -> dict:
     """Retain cumulative task changes; a candidate never writes to the source."""
     source, execution_id = _scope(source_root, project_key, run_id)
     # Verify first so a missing recovery lookup cannot create an artifact root.
     _reopen(source, binding, project_key=project_key, run_id=run_id)
     with dispatch_workspace_lock(source, execution_id):
         workspace = _reopen(source, binding, project_key=project_key, run_id=run_id)
-        result = workspace.collect(SLOT)
+        result = workspace.collect(SLOT, include_source_preview=True, source_preview_scope=(project_key, run_id)) if include_source_preview else workspace.collect(SLOT)
         result.update(schema=SCHEMA, project_key=project_key, run_id=run_id,
                       original_head=workspace.metadata["original_head"],
                       attribution_scope="workflow_task", exclusion_policy=workspace.metadata["exclusion_policy"])

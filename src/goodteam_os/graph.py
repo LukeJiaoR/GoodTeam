@@ -1924,7 +1924,11 @@ def run_implementation_workers(
             from goodteam_os.workflow_workspace import collect_workflow_workspace
 
             repository_result = collect_workflow_workspace(runtime_root, state.repository_baseline,
-                                                            project_key=state.project_key, run_id=state.run_id)
+                                                            project_key=state.project_key, run_id=state.run_id,
+                                                            include_source_preview=True)
+            from goodteam_os.source_preview import register_source_preview
+
+            register_source_preview(workspace, state, repository_result)
             results[-1]["repository_result"] = repository_result
             state.release_candidate["repository_result"] = repository_result
     return results

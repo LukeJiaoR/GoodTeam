@@ -18,6 +18,23 @@ export function isTableSeparatorRow(line) {
  * Parses inline markdown tokens (bold, italic, strikethrough, inline code, links).
  * Returns an array of React nodes.
  */
+// Match product navigation routes without interpreting arbitrary host paths as URLs.
+function isProductLink(url) {
+  const path = url.split(/[?#]/, 1)[0];
+  let parts;
+  try {
+    parts = path.split('/').slice(1).map(decodeURIComponent);
+  } catch {
+    return false;
+  }
+  if (!url.startsWith('/') || parts.some((part) => (
+    part === '.' || part === '..' || /[\\/%]/.test(part) || [...part].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+  ))) return false;
+  return /^\/(?:legacy|projects|inbox|activity|settings)?$/.test(path)
+    || /^\/projects\/[^/]+\/(?:home|team|work|review|knowledge|settings)$/.test(path)
+    || /^\/projects\/[^/]+\/(?:work\/runs|review|settings)\/[^/]+$/.test(path);
+}
+
 export function renderInlineMarkdown(text) {
   if (!text) return null;
 
@@ -68,7 +85,13 @@ export function renderInlineMarkdown(text) {
     const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (linkMatch) {
       const [, label, url] = linkMatch;
-      const isSafe = /^https?:\/\//i.test(url) || url.startsWith('/') || url.startsWith('#');
+      // Worker reports may contain absolute host paths. A leading slash does
+      // not make those files web resources (nor authorize a filesystem read).
+      const isArtifactRoute = /^\/(?:api\/)?artifact\?/.test(url)
+        || /^\/api\/delivery-artifact\?/.test(url);
+      const isSafe = /^https?:\/\//i.test(url) || isArtifactRoute || isProductLink(url) || url.startsWith('#');
+      const isLocalReference = url.startsWith('/') || /^file:/i.test(url)
+        || /^[A-Za-z]:[\\/]/.test(url);
       return isSafe ? (
         <a
           key={index}
@@ -80,7 +103,9 @@ export function renderInlineMarkdown(text) {
           {label}
         </a>
       ) : (
-        <span key={index} className="md-link-text">{label}</span>
+        <span key={index} className="md-link-text">
+          {isLocalReference ? `${label} (${url}; preview unavailable)` : label}
+        </span>
       );
     }
 
@@ -103,11 +128,13 @@ export function parseMarkdownBlocks(markdown) {
     const trimmed = line.trim();
 
     // 1. Fenced Code Block
-    if (trimmed.startsWith('```')) {
-      const lang = trimmed.slice(3).trim();
+    const openingFence = trimmed.match(/^(`{3,})([^`]*)$/);
+    if (openingFence) {
+      const lang = openingFence[2].trim();
+      const closingFence = new RegExp('^`{' + openingFence[1].length + ',}\\s*$');
       const codeLines = [];
       i++;
-      while (i < rawLines.length && !rawLines[i].trim().startsWith('```')) {
+      while (i < rawLines.length && !closingFence.test(rawLines[i].trim())) {
         codeLines.push(rawLines[i]);
         i++;
       }
@@ -239,7 +266,7 @@ export function parseMarkdownBlocks(markdown) {
       i < rawLines.length &&
       rawLines[i].trim() &&
       !rawLines[i].trim().startsWith('#') &&
-      !rawLines[i].trim().startsWith('```') &&
+      !/^(`{3,})([^`]*)$/.test(rawLines[i].trim()) &&
       !rawLines[i].trim().startsWith('>') &&
       !(rawLines[i].trim().startsWith('|') && rawLines[i].trim().endsWith('|') && i + 1 < rawLines.length && isTableSeparatorRow(rawLines[i + 1])) &&
       !rawLines[i].match(/^(\s*)([-*+]|\d+\.)\s+/)
