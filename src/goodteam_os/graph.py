@@ -1195,7 +1195,7 @@ def format_code_review_evidence_lines(worker_results: list[dict[str, object]]) -
     if not worker_results:
         return ["- No release-blocking findings can be assessed without worker evidence."]
     lines = [
-        "- No release-blocking worker failure was reported by GoodTeam.",
+        "- Agent process status does not establish that QA or acceptance passed.",
         "- Implementation and QA worker summaries are attached below for reviewer traceability.",
     ]
     combined = "\n".join(read_worker_result_excerpt(result) for result in worker_results).lower()
@@ -1215,7 +1215,31 @@ def format_release_evidence_lines(state: AgileDevState, worker_results: list[dic
         f"- Run: `{state.run_id}`",
         f"- Project: `{state.project_key}`",
         f"- Delivery mode: `{getattr(state, 'delivery_mode', '') or 'init_project'}`",
+        "- Agent process completion is not a test result or acceptance evidence.",
     ]
+    from urllib.parse import urlencode
+
+    qa_items = [item for item in state.delivery_items.values() if item.get("kind") == "qa"]
+    if not qa_items:
+        lines.append("- QA outcome: unknown. No exact QA report has been retained for this task result.")
+    for key, item in state.delivery_items.items():
+        lines.extend([
+            f"- Retained {item['kind']}: `{_worker_artifact_text(item['relative_path'])}`",
+            f"  - Baseline: `{item['baseline_commit']}`; result: `{item['result_commit']}`.",
+        ])
+        if item.get("kind") == "qa":
+            lines.append(f"  - QA outcome (Worker-reported): `{item.get('qa_status', 'unknown')}`; "
+                         f"process: `{item.get('process_status', 'unknown')}`; job: `{item.get('job_id', '')}`.")
+        if item.get("status") == "available":
+            query = urlencode({"project": state.project_key, "run": state.run_id,
+                               "key": key, "version": item["version"], "view": "text"})
+            lines.append(f"  - Content digest: `{item['version']}`; [open retained text](/api/delivery-artifact?{query}).")
+        else:
+            lines.append("  - Content unavailable; inspect the retained task evidence before deciding.")
+    qa_results = [result for result in worker_results if result.get("role") == "qa"]
+    if qa_results:
+        lines.extend(["", "### QA command evidence and report (Worker-authored)", ""])
+        lines.extend(format_worker_execution_evidence_lines(qa_results))
     if worker_results:
         lines.extend(format_worker_evidence_lines(worker_results))
     else:
@@ -1231,6 +1255,9 @@ def format_release_evidence_lines(state: AgileDevState, worker_results: list[dic
 def format_release_caveats_lines(state: AgileDevState, worker_results: list[dict[str, object]]) -> list[str]:
     combined = "\n".join(read_worker_result_excerpt(result) for result in worker_results).lower()
     caveats: list[str] = []
+    for item in state.delivery_items.values():
+        if item.get("kind") == "qa" and item.get("qa_status") in {"failed", "blocked", "unknown"}:
+            caveats.append(f"- Worker-reported QA outcome: `{item['qa_status']}`. Read the retained QA report and exact command results before approval.")
     if "better-sqlite3" in combined:
         caveats.append("- Native module caveat: `better-sqlite3` can require `npm rebuild better-sqlite3` after Node runtime changes.")
     if "no real-browser interactive e2e" in combined or "accessibility" in combined:
@@ -1581,6 +1608,9 @@ def run_delivery_until_release_gate(
 ) -> AgileDevState:
     # A new delivery attempt can never reuse a previous implementation's correction.
     state.release_candidate = {}
+    from goodteam_os.delivery_changes import clear_delivery_items
+
+    clear_delivery_items(state)
     if "review_report" in state.artifacts:
         invalidate_artifact(state, "review_report")
     if "task_breakdown" in state.artifacts:
@@ -2049,6 +2079,8 @@ def implementation_worker_job_specs(
                 "Prefer local deterministic tests.",
                 "Do not require external network services.",
                 "Do not leave long-running dev servers in the foreground; use bounded smoke checks and clean up background processes.",
+                "Begin result.md with one explicit Status: passed, Status: failed, Status: blocked, or Status: unknown line.",
+                "Record each exact verification command, exit code, tests executed, and any environment blocker. Agent completion is not tests passing; missing evidence is unknown.",
             ],
             "expected_artifacts": qa_expected_artifacts(delivery_mode),
             **_worker_job_fields(target, "qa", state),
@@ -2087,6 +2119,11 @@ def run_worker_job_with_retry(
                 store.project_root, fields["workflow_workspace"],
                 project_key=state.project_key, run_id=state.run_id,
             )
+            if workspace is not None and job_spec["role"] in {"ui", "implementation", "qa"}:
+                from goodteam_os.delivery_changes import retain_delivery_changes
+
+                retain_delivery_changes(workspace, state, result["repository_result"],
+                                        worker_store=store, worker_result=result, worker_job=job)
         result["attempts"] = max(int(result.get("attempts", 0) or 0), attempts)
         result["attempt_job_ids"] = attempt_job_ids.copy()
         append_worker_attempt_action(

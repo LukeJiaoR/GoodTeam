@@ -42,15 +42,25 @@ def _valid_run_id(value: object) -> bool:
 
 
 def _artifact_bytes(workspace, state, key):
-    if not _valid_run_id(state.run_id) or key not in DELIVERY_KEYS or not state.artifacts.get(key):
+    registered = state.delivery_items.get(key)
+    if not _valid_run_id(state.run_id) or (registered is None and (
+        key not in DELIVERY_KEYS or not state.artifacts.get(key)
+    )):
         raise DeliveryArtifactError("Delivery artifact is not registered.")
-    path = Path(state.artifacts[key])
     resource = state.resources.get(key)
+    if registered is not None and (
+        registered.get("project_key") != state.project_key or registered.get("run_id") != state.run_id
+        or registered.get("baseline_commit") != state.repository_baseline.get("baseline_commit")
+        or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", str(registered.get("result_commit", "")))
+        or registered.get("status") != "available" or not registered.get("version") or resource is None
+    ):
+        raise DeliveryArtifactError("Delivery artifact is not readable.")
+    path = Path(resource.path if registered is not None else state.artifacts[key])
     # A legacy artifacts-only state is supported. A present typed registry must
     # not be bypassed by a stray legacy map entry or a mismatched descriptor.
     if (resource is None and state.resources) or (resource is not None and (
         resource.key != key
-        or resource.kind != ResourceKind.MARKDOWN_ARTIFACT
+        or resource.kind != (ResourceKind.TEXT_ARTIFACT if registered is not None else ResourceKind.MARKDOWN_ARTIFACT)
         or resource.scope != ResourceScope.RUN
         or ResourceCapability.READ not in resource.capabilities
         or resource.path != str(path)
@@ -63,7 +73,7 @@ def _artifact_bytes(workspace, state, key):
         relative = path.relative_to(root).as_posix()
         with AnchoredRepository(root) as repository:
             result = repository.read_bytes(relative, max_bytes=MAX_ARTIFACT_BYTES)
-        if result.truncated or not result.data.strip():
+        if result.truncated or (registered is None and not result.data.strip()):
             raise DeliveryArtifactError("Delivery artifact is empty or exceeds the preview limit.")
         result.data.decode("utf-8")
         if key == "source_preview":
@@ -73,21 +83,34 @@ def _artifact_bytes(workspace, state, key):
             if (not source_preview_matches(result.data, state)
                     or path.name != version[7:] + ".md"):
                 raise DeliveryArtifactError("Source preview version is unavailable.")
+        if registered is not None and registered["version"] != "sha256:" + sha256(result.data).hexdigest():
+            raise DeliveryArtifactError("Retained delivery content changed. Reload the task.", 409)
         return result.data
+    except DeliveryArtifactError:
+        raise
     except (ValueError, OSError, RepositoryAccessError) as exc:
         # Do not expose local paths, directory contents or partial file bytes.
         raise DeliveryArtifactError("Delivery artifact is unavailable.") from exc
 
 
 def _artifact_item(workspace, state, key):
-    item = {"key": key, "label": Path(state.artifacts[key]).name, "status": "unavailable", "version": "", "href": ""}
+    registered = state.delivery_items.get(key)
+    item = {"key": key, "label": str(registered.get("relative_path") or key) if registered is not None
+            else Path(state.artifacts[key]).name, "status": "unavailable", "version": "", "href": ""}
+    if registered is not None:
+        item.update({name: registered[name] for name in (
+            "kind", "relative_path", "baseline_commit", "result_commit", "aliases", "unavailable_reason",
+            "job_id", "process_status", "qa_status", "size_bytes",
+        ) if name in registered})
+        item["format"] = "markdown" if registered.get("kind") == "qa" else "text"
     try:
         raw = _artifact_bytes(workspace, state, key)
     except DeliveryArtifactError:
         return item
     version = "sha256:" + sha256(raw).hexdigest()
     query = urlencode({"project": state.project_key, "run": state.run_id, "key": key, "version": version})
-    return {**item, "status": "available", "version": version, "href": "/api/delivery-artifact?" + query}
+    href = "/api/delivery-artifact?" + query
+    return {**item, "status": "available", "version": version, "href": href, "text_href": href + "&view=text"}
 
 
 def _retry_number(attempt):
@@ -186,8 +209,12 @@ def build_delivery_summary(workspace, *, state, jobs=(), historical_reason="", w
         and (not job.get("project_key") or normalize_project_key(str(job["project_key"])) == state.project_key)
     ]
     artifacts = [_artifact_item(workspace, state, key) for key in DELIVERY_KEYS if key in state.artifacts]
+    artifacts.extend(_artifact_item(workspace, state, key) for key in state.delivery_items)
     received_review_ids = (_received_review_ids(workspace, state, worker_root)
                            if any(item["status"] == "review_received" for item in attempts) else frozenset())
+    from goodteam_os.legacy_reviewer_reports import build_legacy_reviewer_reports
+
+    reviewer_reports = build_legacy_reviewer_reports(state, [worker_root]) if worker_root is not None else []
     return {
         "run_id": state.run_id,
         "project_key": state.project_key,
@@ -195,13 +222,14 @@ def build_delivery_summary(workspace, *, state, jobs=(), historical_reason="", w
                                    received_review_ids=received_review_ids),
         "verification": "unverified",
         "artifacts": artifacts,
+        "reviewer_reports": reviewer_reports,
         "attempts": attempts,
         "simulated": any(item["adapter"] in SIMULATED_ADAPTERS for item in attempts),
         "next_node": state.next_node,
     }
 
 
-def read_delivery_artifact(workspace, *, project_key, run_id, artifact_key, version):
+def delivery_state(workspace, *, project_key, run_id):
     if not _valid_run_id(run_id) or not isinstance(project_key, str) or not project_key.strip():
         raise DeliveryArtifactError("Delivery run was not found.")
     project_key = normalize_project_key(project_key)
@@ -214,9 +242,16 @@ def read_delivery_artifact(workspace, *, project_key, run_id, artifact_key, vers
     )
     if state is None or state.project_key != project_key:
         raise DeliveryArtifactError("Delivery run was not found.")
+    return state
+
+
+def read_delivery_artifact(workspace, *, project_key, run_id, artifact_key, version):
+    state = delivery_state(workspace, project_key=project_key, run_id=run_id)
     raw = _artifact_bytes(workspace, state, artifact_key)
     actual = "sha256:" + sha256(raw).hexdigest()
     if version != actual:
         raise DeliveryArtifactError("Delivery artifact changed. Reload the task.", 409)
+    item = state.delivery_items.get(artifact_key, {})
     return {"content": raw.decode("utf-8"), "version": actual, "artifact": artifact_key,
-            "run_id": run_id, "project_key": project_key}
+            "run_id": state.run_id, "project_key": state.project_key,
+            **{name: item[name] for name in ("baseline_commit", "result_commit", "kind") if name in item}}

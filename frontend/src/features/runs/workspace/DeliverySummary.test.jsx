@@ -107,3 +107,24 @@ it('discards delivery review evidence when the same run receives a newer artifac
   expect(screen.queryByText('No registered review evidence for this task. This does not prove that no execution occurred.')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Review evidence for this delivery' })).toHaveAttribute('aria-expanded', 'false');
 });
+
+it('maps only registered source and patch links to the exact run text endpoint', async () => {
+  const source = { key: 'delivery-source-one', kind: 'source', label: 'regression.js', format: 'text',
+    aliases: ['/private/tmp/task/regression.js', 'regression.js'], version: 'sha256:source',
+    baseline_commit: 'base', result_commit: 'result',
+    href: '/api/delivery-artifact?project=DEMO&run=run&key=delivery-source-one&version=sha256%3Asource' };
+  const patch = { ...source, key: 'delivery-patch', kind: 'patch', label: 'changes.patch', aliases: ['changes.patch'],
+    href: '/api/delivery-artifact?project=DEMO&run=run&key=delivery-patch&version=sha256%3Asource' };
+  requestJson.mockResolvedValueOnce({ ...response,
+    content: '[Source](/private/tmp/task/regression.js:169) [Patch](changes.patch) [Unregistered](/private/tmp/secret.txt)' })
+    .mockResolvedValueOnce({ content: '<img src=x>\n', project_key: 'DEMO', run_id: 'run', artifact: source.key,
+      version: source.version, kind: 'source', baseline_commit: 'base', result_commit: 'result' });
+  render(<DeliverySummary summary={{ ...summary, artifacts: [artifact, source, patch] }} t={t} />);
+  open();
+  expect(await screen.findByRole('link', { name: 'Source' })).toHaveAttribute('href', `${source.href}&view=text`);
+  expect(screen.getByRole('link', { name: 'Patch' })).toHaveAttribute('href', `${patch.href}&view=text`);
+  expect(screen.queryByRole('link', { name: 'Unregistered' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'regression.js' }));
+  expect(await screen.findByText('<img src=x>')).toBeInTheDocument();
+  expect(screen.queryByRole('img')).not.toBeInTheDocument();
+});

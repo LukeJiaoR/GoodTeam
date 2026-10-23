@@ -373,6 +373,7 @@ def run_queued_reviewer_jobs_for_gate(
                 "profile_id": _clean_text(status.get("profile_id") or job.get("profile_id")),
                 "approval": _clean_text(status.get("approval") or status.get("gate") or job.get("approval") or job.get("gate")),
                 "artifact_key": _clean_text(status.get("artifact_key") or job.get("artifact_key")),
+                "artifact_version": _clean_text(status.get("artifact_version") or job.get("artifact_version")),
                 "result_path": _clean_text(status.get("result_path")),
             }
         )

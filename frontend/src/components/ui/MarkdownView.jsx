@@ -35,7 +35,7 @@ function isProductLink(url) {
     || /^\/projects\/[^/]+\/(?:work\/runs|review|settings)\/[^/]+$/.test(path);
 }
 
-export function renderInlineMarkdown(text) {
+export function renderInlineMarkdown(text, resolveLink) {
   if (!text) return null;
 
   // Regex splitting on code `...`, bold **...**, italic *...*, strikethrough ~~...~~, and links [...](...)
@@ -58,7 +58,7 @@ export function renderInlineMarkdown(text) {
     if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
       return (
         <strong key={index} className="md-bold">
-          {renderInlineMarkdown(part.slice(2, -2))}
+          {renderInlineMarkdown(part.slice(2, -2), resolveLink)}
         </strong>
       );
     }
@@ -67,7 +67,7 @@ export function renderInlineMarkdown(text) {
     if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
       return (
         <em key={index} className="md-italic">
-          {renderInlineMarkdown(part.slice(1, -1))}
+          {renderInlineMarkdown(part.slice(1, -1), resolveLink)}
         </em>
       );
     }
@@ -76,7 +76,7 @@ export function renderInlineMarkdown(text) {
     if (part.startsWith('~~') && part.endsWith('~~') && part.length >= 4) {
       return (
         <del key={index} className="md-del">
-          {renderInlineMarkdown(part.slice(2, -2))}
+          {renderInlineMarkdown(part.slice(2, -2), resolveLink)}
         </del>
       );
     }
@@ -87,15 +87,17 @@ export function renderInlineMarkdown(text) {
       const [, label, url] = linkMatch;
       // Worker reports may contain absolute host paths. A leading slash does
       // not make those files web resources (nor authorize a filesystem read).
-      const isArtifactRoute = /^\/(?:api\/)?artifact\?/.test(url)
-        || /^\/api\/delivery-artifact\?/.test(url);
-      const isSafe = /^https?:\/\//i.test(url) || isArtifactRoute || isProductLink(url) || url.startsWith('#');
+      const href = resolveLink ? resolveLink(url) : url;
+      const isArtifactRoute = typeof href === 'string' && (/^\/(?:api\/)?artifact\?/.test(href)
+        || /^\/api\/delivery-artifact\?/.test(href));
+      const isSafe = typeof href === 'string' && (/^https?:\/\//i.test(href)
+        || isArtifactRoute || isProductLink(href) || href.startsWith('#'));
       const isLocalReference = url.startsWith('/') || /^file:/i.test(url)
         || /^[A-Za-z]:[\\/]/.test(url);
       return isSafe ? (
         <a
           key={index}
-          href={url}
+          href={href}
           target="_blank"
           rel="noopener noreferrer"
           className="md-link"
@@ -283,7 +285,7 @@ export function parseMarkdownBlocks(markdown) {
   return blocks;
 }
 
-function MarkdownList({ block }) {
+function MarkdownList({ block, resolveLink }) {
   const ListTag = block.ordered ? 'ol' : 'ul';
   return (
     <ListTag start={block.ordered ? block.start : undefined} className={`md-list ${block.ordered ? 'md-ol' : 'md-ul'}`}>
@@ -294,11 +296,11 @@ function MarkdownList({ block }) {
           )}
           <div>
             <span className={item.checked ? 'md-task-done' : undefined}>
-              {renderInlineMarkdown(item.content)}
+              {renderInlineMarkdown(item.content, resolveLink)}
             </span>
             {item.children.map((child, childIndex) => child.type === 'continuation'
-              ? <div key={childIndex}>{renderInlineMarkdown(child.content)}</div>
-              : <MarkdownList key={childIndex} block={child} />)}
+              ? <div key={childIndex}>{renderInlineMarkdown(child.content, resolveLink)}</div>
+              : <MarkdownList key={childIndex} block={child} resolveLink={resolveLink} />)}
           </div>
         </li>
       ))}
@@ -340,7 +342,7 @@ function CodeBlock({ lang, content }) {
   );
 }
 
-export default function MarkdownView({ content, className = '' }) {
+export default function MarkdownView({ content, className = '', resolveLink }) {
   const blocks = useMemo(() => parseMarkdownBlocks(content), [content]);
 
   if (!content) return null;
@@ -353,14 +355,14 @@ export default function MarkdownView({ content, className = '' }) {
             const Tag = `h${block.level}`;
             return (
               <Tag key={idx} className={`md-h${block.level}`}>
-                {renderInlineMarkdown(block.content)}
+                {renderInlineMarkdown(block.content, resolveLink)}
               </Tag>
             );
           }
           case 'paragraph': {
             return (
               <p key={idx} className="md-p">
-                {renderInlineMarkdown(block.content)}
+                {renderInlineMarkdown(block.content, resolveLink)}
               </p>
             );
           }
@@ -370,7 +372,7 @@ export default function MarkdownView({ content, className = '' }) {
           case 'blockquote': {
             return (
               <blockquote key={idx} className="md-blockquote">
-                {renderInlineMarkdown(block.content)}
+                {renderInlineMarkdown(block.content, resolveLink)}
               </blockquote>
             );
           }
@@ -381,7 +383,7 @@ export default function MarkdownView({ content, className = '' }) {
                   <thead>
                     <tr>
                       {block.headers.map((h, hIdx) => (
-                        <th key={hIdx}>{renderInlineMarkdown(h)}</th>
+                        <th key={hIdx}>{renderInlineMarkdown(h, resolveLink)}</th>
                       ))}
                     </tr>
                   </thead>
@@ -389,7 +391,7 @@ export default function MarkdownView({ content, className = '' }) {
                     {block.rows.map((row, rIdx) => (
                       <tr key={rIdx}>
                         {row.map((cell, cIdx) => (
-                          <td key={cIdx}>{renderInlineMarkdown(cell)}</td>
+                          <td key={cIdx}>{renderInlineMarkdown(cell, resolveLink)}</td>
                         ))}
                       </tr>
                     ))}
@@ -399,7 +401,7 @@ export default function MarkdownView({ content, className = '' }) {
             );
           }
           case 'list': {
-            return <MarkdownList key={idx} block={block} />;
+            return <MarkdownList key={idx} block={block} resolveLink={resolveLink} />;
           }
           case 'hr': {
             return <hr key={idx} className="md-hr" />;

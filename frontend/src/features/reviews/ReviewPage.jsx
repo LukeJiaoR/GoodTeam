@@ -17,6 +17,9 @@ import { runApi } from '../runs/runApi';
 import useProjectState from '../runs/useProjectState';
 import { reviewApi } from './reviewApi';
 import useReviewArtifactDraft from './useReviewArtifactDraft';
+import LegacyReviewerEvidence from './LegacyReviewerEvidence';
+import { DeliveryArtifacts } from '../runs/workspace/DeliverySummary';
+import { deliveryLinkResolver } from '../runs/workspace/deliveryLinks';
 
 function reviewTone(review) {
   if (review.is_actionable) return 'warning';
@@ -164,7 +167,7 @@ function TakeoverRecovery({ busy, error, onRecover, review, t }) {
   );
 }
 
-function ArtifactPanel({ baseline, canEdit, onChange, review, t, value }) {
+function ArtifactPanel({ baseline, canEdit, onChange, review, t, value, deliverySummary }) {
   const isBrief = review.approval === 'takeover';
   const [view, setView] = useState('preview');
   return (
@@ -186,7 +189,7 @@ function ArtifactPanel({ baseline, canEdit, onChange, review, t, value }) {
           <BriefPreview content={value} t={t} />
         ) : (
           <div className="review-rendered-container" tabIndex={0}>
-            <MarkdownView content={value} />
+            <MarkdownView content={value} resolveLink={deliveryLinkResolver(deliverySummary)} />
           </div>
         )
       ) : view === 'edit' ? (
@@ -199,6 +202,10 @@ function ArtifactPanel({ baseline, canEdit, onChange, review, t, value }) {
           {lineDiff(baseline, value)}
         </pre>
       )}
+      {deliverySummary && ['security', 'staging', 'release', 'qa'].includes(review.approval) ? <section>
+        <h3>{t('work.deliverySummary.retained')}</h3>
+        <DeliveryArtifacts summary={{ ...deliverySummary, artifacts: (deliverySummary.artifacts || []).filter(item => item.kind) }} t={t} />
+      </section> : null}
     </article>
   );
 }
@@ -215,7 +222,7 @@ function DecisionResult({ decisionNote, projectKey, onReturn, t }) {
   );
 }
 
-function Inspector({ onReturn, answers, decisionContextKey, approveDisabled, artifactConflict, artifactReady, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onReloadArtifact, onRequestChanges, onRetryError, onSave, projectKey, proposed, questions, review, setAnswers, submittedCount, t }) {
+function Inspector({ onReturn, answers, decisionContextKey, approveDisabled, artifactConflict, artifactReady, busy, decisionNote, error, onAccept, onAnswer, onDecision, onDiscard, onDismissDecision, onRefine, onReloadArtifact, onRequestChanges, onRetryError, onSave, projectKey, runId, onRefresh, deliverySummary, proposed, questions, review, setAnswers, submittedCount, t }) {
   const evidence = asObject(review.evidence_snapshot);
   const provenance = asObject(review.reviewer_provenance);
   const recommendation = asObject(review.recommendation);
@@ -228,6 +235,9 @@ function Inspector({ onReturn, answers, decisionContextKey, approveDisabled, art
         {recommendation.reasons?.map?.((reason, index) => <p key={index}>{recommendationReason(reason, t)}</p>)}
       </section>
       <EvidenceSummary evidence={evidence} t={t} />
+      <LegacyReviewerEvidence projectKey={projectKey} runId={runId} items={review.legacy_reviewer_jobs || []}
+        activeApproval={review.is_actionable && !busy && artifactReady ? review.approval : ''}
+        onRefresh={onRefresh} deliverySummary={deliverySummary} t={t} />
       <details><summary>{t('review.evidence.title')}</summary><pre>{JSON.stringify(evidence, null, 2)}</pre></details>
       <details><summary>{t('review.provenance.title')}</summary><pre>{JSON.stringify(provenance, null, 2)}</pre></details>
       <details><summary>{t('review.dissent.title')}</summary>{dissent.length ? dissent.map((reason, index) => <p key={index}>{reason.text || reason}</p>) : <p>{t('review.dissent.none')}</p>}{review.multi_reviewer_projection ? <pre>{JSON.stringify(review.multi_reviewer_projection, null, 2)}</pre> : null}</details>
@@ -581,9 +591,10 @@ function ReviewWorkspace({ embedded, onClose, onUpdated, onChangeDiscussion, pro
           {selected.recovery?.available ? <TakeoverRecovery key={selected.approval} busy={busy} error={mutationError} review={selected} t={t}
             onRecover={(note) => mutate('recover', () => reviewApi.recoverTakeoverBrief(projectKey, note))}
           /> : <>
-            <ArtifactPanel key={`${projectKey}:${runId}:${selected.approval}`} baseline={baseline} canEdit={artifactFull && !busy} review={selected} value={content} onChange={(value) => { editRevision.current += 1; setProposed(null); artifactDraft.setContent(value); }} t={t} />
+            <ArtifactPanel key={`${projectKey}:${runId}:${selected.approval}`} baseline={baseline} canEdit={artifactFull && !busy} review={selected} value={content} onChange={(value) => { editRevision.current += 1; setProposed(null); artifactDraft.setContent(value); }} t={t} deliverySummary={data?.delivery_summary} />
             <Inspector onReturn={embedded ? requestClose : undefined} answers={answers} approveDisabled={approveDisabled} artifactConflict={artifactDraft.conflict} artifactReady={artifactReady && !busy} busy={busy} decisionNote={decisionNote} error={displayedError} proposed={proposed} questions={questions} review={selected} setAnswers={setAnswers} submittedCount={submittedCount} t={t}
               projectKey={projectKey}
+              runId={runId} onRefresh={refresh} deliverySummary={data?.delivery_summary}
               decisionContextKey={approvalConfirmationKey([
                 projectKey, artifactDraft.runId, selected.approval, selected.artifact, artifactVersion,
                 asObject(selected.recommendation), asObject(selected.evidence_snapshot),

@@ -52,6 +52,8 @@ class AgileDevState:
     task_skill_context: dict[str, object] = field(default_factory=dict)
     # Full raw repository input retained for this run; old runs stay unbound.
     repository_baseline: dict[str, object] = field(default_factory=dict)
+    # Host-retained, run-bound source/patch and QA report registrations.
+    delivery_items: dict[str, dict[str, object]] = field(default_factory=dict)
 
     artifact_proposals: dict[str, dict[str, str]] = field(default_factory=dict)
     artifact_generations: dict[str, str] = field(default_factory=dict)

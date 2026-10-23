@@ -7,16 +7,20 @@ every later lookup reopens the original baseline without sampling source files.
 from __future__ import annotations
 
 import hashlib
+import os
+import re
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 
 from goodteam_os.dispatch_workspace import (
+    _read_git,
     dispatch_artifact_root,
     dispatch_workspace_lock,
     prepare_dispatch_workspace,
 )
 from goodteam_os.repository_snapshot import _absolute_root, _canonical_json
+from goodteam_os.repository_access import canonical_relative_path
 from goodteam_os.state import normalize_project_key
 
 
@@ -149,3 +153,55 @@ def collect_workflow_workspace(source_root: Path, binding: object, *, project_ke
         if candidate:
             result["integration"] = workspace.integrate([SLOT], expected_results={SLOT: result["result_commit"]})
         return result
+
+
+@_workspace_errors
+def read_workflow_delivery(source_root: Path, binding: object, result: dict, *,
+                           project_key: str, run_id: str, max_bytes: int, max_files: int) -> list[dict]:
+    """Read only a host-collected result, never paths proposed in Worker prose."""
+    source, execution_id = _scope(source_root, project_key, run_id)
+    _reopen(source, binding, project_key=project_key, run_id=run_id)
+    with dispatch_workspace_lock(source, execution_id):
+        workspace = _reopen(source, binding, project_key=project_key, run_id=run_id)
+        root = workspace._verify_job(SLOT)
+        baseline, commit = workspace.metadata["baseline_commit"], result.get("result_commit", "")
+        if (result.get("schema") != SCHEMA or result.get("project_key") != project_key
+                or result.get("run_id") != run_id or result.get("job_id") != SLOT
+                or result.get("workspace_path") != str(root) or result.get("baseline_commit") != baseline
+                or not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit)):
+            raise WorkflowWorkspaceError("Delivery requires the original host-collected task result.")
+        parents = _read_git(root, ["rev-list", "--parents", "-n", "1", commit]).decode("ascii").split()
+        if parents != [commit, baseline]:
+            raise WorkflowWorkspaceError("Delivery result is not a direct child of its task baseline.")
+        paths = [canonical_relative_path(os.fsdecode(path)) for path in
+                 _read_git(root, ["diff", "--name-only", "--no-renames", "-z", baseline, commit]).split(b"\0") if path]
+        if paths != result.get("changed_files"):
+            raise WorkflowWorkspaceError("Delivery paths no longer match the collected result.")
+        patch = _read_git(root, ["diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+                                 "--no-renames", baseline, commit, "--"])
+        items = [{"kind": "patch", "relative_path": "changes.patch", "aliases": ["changes.patch", "./changes.patch"],
+                  "data": patch}]
+        entries = {}
+        for row in _read_git(root, ["ls-tree", "-r", "-z", commit]).split(b"\0"):
+            if row:
+                metadata, path = row.split(b"\t", 1)
+                entries[os.fsdecode(path)] = metadata.split()
+        for path in paths[:max_files]:
+            item = {"kind": "source", "relative_path": path,
+                    "aliases": [path, "./" + path, str(root / path), str(source / path)]}
+            entry = entries.get(path)
+            if entry is None:
+                item["unavailable_reason"] = "deleted"
+            elif entry[0] not in {b"100644", b"100755"} or entry[1] != b"blob":
+                item["unavailable_reason"] = "not_regular_file"
+            else:
+                blob = entry[2].decode("ascii")
+                item["blob_id"] = blob
+                if int(_read_git(root, ["cat-file", "-s", blob])) > max_bytes:
+                    item["unavailable_reason"] = "preview_limit"
+                else:
+                    item["data"] = _read_git(root, ["cat-file", "blob", blob])
+            items.append(item)
+        if len(paths) > max_files:
+            items.append({"kind": "source", "relative_path": "", "unavailable_reason": "file_count_limit"})
+        return items
