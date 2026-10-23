@@ -418,7 +418,11 @@ def _run_queued_reviewer_jobs_for_current_run(
         return 409, {"error": "artifact_key does not match the current approval gate"}
     artifact_path = str(state.artifacts.get(artifact_key, "") or "")
     profile_id = str(request.get("profile_id", "") or "").strip()
-    artifact_version = str(request.get("artifact_version", "") or "").strip() or artifact_version_for_path(artifact_path)
+    current_artifact_version = artifact_version_for_path(artifact_path)
+    artifact_version = str(request.get("artifact_version", "") or "").strip() or current_artifact_version
+    if artifact_version != current_artifact_version:
+        return 409, {"error": "artifact_version does not match the current approval artifact"}
+    requested_job_id = str(request.get("job_id", "") or "").strip()
     target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
     profile_order = _reviewer_profile_order_for_gate(target, current_gate)
 
@@ -436,7 +440,7 @@ def _run_queued_reviewer_jobs_for_current_run(
         from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
 
         admission = runtime_kwargs.get("codex_review_admission")
-        if isinstance(admission, TrustedCodexReviewAdmission) and not state.task_skill_context:
+        if isinstance(admission, TrustedCodexReviewAdmission) and not state.task_skill_context and not requested_job_id:
             # Default workflows have no Skill lock. At the explicit guarded Run
             # action, produce a separate task-bound review using the actual Team
             # Worker/profile and artifact, leaving other workflow roles intact.
@@ -466,7 +470,7 @@ def _run_queued_reviewer_jobs_for_current_run(
                              "message": "The current task could not start its authorized native review."}
         result = run_queued_reviewer_jobs_for_gate(
             store=store,
-            jobs=jobs,
+            jobs=[job for job in jobs if not requested_job_id or job.get("id") == requested_job_id],
             run_id=state.run_id,
             approval=current_gate,
             artifact_key=artifact_key,
@@ -1100,6 +1104,11 @@ def build_approval_evidence_snapshot(
         "provenance_refs": [],
         "smoke_refs": [],
     }
+    if getattr(state, "delivery_items", None):
+        from goodteam_os.delivery_outcomes import _artifact_item
+
+        snapshot["delivery_refs"] = [_artifact_item(workspace, state, key)
+                                     for key in getattr(state, "delivery_items", {})]
     try:
         artifacts = getattr(state, "artifacts", {}) if state is not None else {}
         approvals = getattr(state, "approvals", {}) if state is not None else {}
@@ -5497,6 +5506,10 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
     relevant_gates = None if profile.name == "greenfield" else set(profile.gate_names())
     reviewer_target = _reviewer_target_for_state(workspace=workspace, project_key=state.project_key)
     reviewer_statuses = _reviewer_statuses_for_state(state=state, workspace=workspace, project_key=state.project_key)
+    from goodteam_os.legacy_reviewer_reports import build_legacy_reviewer_reports
+
+    reviewer_reports = build_legacy_reviewer_reports(state, _project_runtime_roots_for_state(
+        state=state, workspace=workspace, project_key=state.project_key))
     for approval, decision in state.approvals.items():
         if relevant_gates is not None and approval not in relevant_gates:
             continue
@@ -5562,6 +5575,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             artifact_version=artifact_version,
             profile_order=_reviewer_profile_order_for_gate(reviewer_target, approval),
         )
+        review["legacy_reviewer_jobs"] = [item for item in reviewer_reports if item["approval"] == approval]
         review["failed_reviewer_jobs"] = select_failed_reviewer_jobs_for_gate(
             reviewer_statuses,
             run_id=state.run_id,
@@ -7920,13 +7934,34 @@ def serve(
             if parsed.path == "/api/delivery-artifact":
                 from goodteam_os.delivery_outcomes import DeliveryArtifactError, read_delivery_artifact
                 try:
-                    self._send_json(200, read_delivery_artifact(
+                    payload = read_delivery_artifact(
                         workspace, project_key=project_key,
                         run_id=_decode_project_run_id(query.get("run", [""])[0]),
                         artifact_key=query.get("key", [""])[0], version=query.get("version", [""])[0],
-                    ))
+                    )
+                    if query.get("view") == ["text"]:
+                        self._send_text(payload["content"])
+                    else:
+                        self._send_json(200, payload)
                 except DeliveryArtifactError as exc:
                     self._send_json(exc.status, {"error": "delivery_artifact_unavailable", "message": str(exc)})
+                except Exception as exc:
+                    self._send_api_error(exc)
+                return
+            if parsed.path == "/api/reviewer-report":
+                from goodteam_os.delivery_outcomes import DeliveryArtifactError, delivery_state
+                from goodteam_os.legacy_reviewer_reports import read_legacy_reviewer_report
+
+                try:
+                    state = delivery_state(workspace, project_key=project_key,
+                        run_id=_decode_project_run_id(query.get("run", [""])[0]))
+                    roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=state.project_key)
+                    self._send_json(200, read_legacy_reviewer_report(state, roots,
+                        job_id=query.get("job", [""])[0], profile_id=query.get("profile", [""])[0],
+                        approval=query.get("approval", [""])[0], artifact_key=query.get("artifact", [""])[0],
+                        artifact_version=query.get("artifact_version", [""])[0], version=query.get("version", [""])[0]))
+                except DeliveryArtifactError as exc:
+                    self._send_json(exc.status, {"error": "reviewer_report_unavailable", "message": str(exc)})
                 except Exception as exc:
                     self._send_api_error(exc)
                 return
@@ -8678,6 +8713,20 @@ def serve(
             self.end_headers()
             self.wfile.write(body)
             self.wfile.flush()
+
+        def _send_text(self, payload: str) -> None:
+            body = payload.encode("utf-8")
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
 
         def log_message(self, format: str, *args: object) -> None:
             return

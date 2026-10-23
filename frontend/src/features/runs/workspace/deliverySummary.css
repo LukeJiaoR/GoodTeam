@@ -8,6 +8,9 @@
 .delivery-report button { display: inline-flex; align-items: center; gap: 6px; text-align: left; }
 .delivery-version { display: block; font-size: 11px; overflow-wrap: anywhere; margin-top: 4px; }
 .delivery-report-content { overflow-wrap: anywhere; margin-top: 12px; }
+.delivery-report-content pre { max-height: 60vh; overflow: auto; white-space: pre; }
+.legacy-reviewer-job { margin: 12px 0; padding: 8px 0; border-top: 1px solid var(--product-border); }
+.legacy-reviewer-job button { margin: 4px 8px 4px 0; }
 
 .delivery-summary h4 { margin: 16px 0 4px; font-size: 12px; font-weight: 650; }
 .delivery-summary .delivery-scope { margin-top: 0; color: var(--product-text-muted); font-size: 12px; }

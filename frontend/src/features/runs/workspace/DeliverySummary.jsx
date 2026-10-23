@@ -6,34 +6,26 @@ import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
 import { documentTitle } from '../../../lib/presentation/filePresentation';
 import SkillReviewExecutions from './SkillReviewExecutions';
+import LegacyReviewerEvidence from '../../reviews/LegacyReviewerEvidence';
+import { deliveryLinkResolver, isBoundReportUrl } from './deliveryLinks';
 import './deliverySummary.css';
-
-function isBoundReportUrl(artifact, summary) {
-  if (!artifact.href || !summary.project_key || !summary.run_id || !artifact.version) return false;
-  try {
-    const url = new URL(artifact.href, 'https://goodteam.invalid');
-    const expected = { project: summary.project_key, run: summary.run_id, key: artifact.key, version: artifact.version };
-    return artifact.href.startsWith('/api/delivery-artifact?')
-      && url.origin === 'https://goodteam.invalid' && !url.hash
-      && Object.entries(expected).every(([key, value]) => (
-        url.searchParams.getAll(key).length === 1 && url.searchParams.get(key) === value
-      ));
-  } catch { return false; }
-}
 
 function ArtifactReport({ artifact, summary, t }) {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const request = useRef(null);
+  const pending = useRef(false);
   useEffect(() => () => request.current?.abort(), []);
   const readable = isBoundReportUrl(artifact, summary);
   const close = () => {
     request.current?.abort();
+    pending.current = false;
     setResult(null);
     setBusy(false);
   };
   const open = async () => {
-    if (!readable || busy) return;
+    if (!readable || pending.current) return;
+    pending.current = true;
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
@@ -44,14 +36,16 @@ function ArtifactReport({ artifact, summary, t }) {
       if (controller.signal.aborted) return;
       if (payload.project_key !== summary.project_key || payload.run_id !== summary.run_id
         || payload.artifact !== artifact.key || payload.version !== artifact.version
-        || typeof payload.content !== 'string' || !payload.content.trim()) {
+        || (artifact.kind && (payload.kind !== artifact.kind || payload.baseline_commit !== artifact.baseline_commit
+          || payload.result_commit !== artifact.result_commit))
+        || typeof payload.content !== 'string' || (!artifact.kind && !payload.content.trim())) {
         throw new Error(t('work.deliverySummary.readMismatch'));
       }
       setResult(payload);
     } catch (error) {
       if (!controller.signal.aborted) setResult({ error });
     } finally {
-      if (!controller.signal.aborted && request.current === controller) setBusy(false);
+      if (!controller.signal.aborted && request.current === controller) { setBusy(false); pending.current = false; }
     }
   };
   return (
@@ -59,17 +53,32 @@ function ArtifactReport({ artifact, summary, t }) {
       <div className="delivery-report-heading">
         <button type="button" disabled={!readable || busy} onClick={open}>
           {busy ? <Loader2 size={15} aria-hidden="true" /> : <FileText size={15} aria-hidden="true" />}
-          {documentTitle(artifact.key, t)}
+          {artifact.kind ? artifact.label : documentTitle(artifact.key, t)}
         </button>
         {!readable ? <span>{t('work.deliverySummary.unavailable')}</span> : null}
         {result || busy ? <button type="button" aria-label={t('work.plan.close')} onClick={close}><X size={15} aria-hidden="true" /></button> : null}
       </div>
       {artifact.version ? <details className="delivery-evidence"><summary>{t('work.deliverySummary.version')}</summary><code className="delivery-version">{artifact.version}</code></details> : null}
+      {artifact.kind ? <p><span>{t('work.deliverySummary.base')}</span><code className="delivery-version">{artifact.baseline_commit}</code>
+        <span>{t('work.deliverySummary.result')}</span><code className="delivery-version">{artifact.result_commit}</code></p> : null}
+      {artifact.kind === 'qa' ? <p>{t('work.deliverySummary.qaOutcome')}: <strong>{artifact.qa_status || 'unknown'}</strong>
+        {' · '}{t('work.deliverySummary.process')}: {artifact.process_status || 'unknown'}<code className="delivery-version">{artifact.job_id}</code></p> : null}
       {busy ? <p role="status">{t('work.deliverySummary.loading')}</p> : null}
       {result?.error ? <ProductError error={result.error} t={t} /> : null}
-      {result?.content ? <div className="delivery-report-content" tabIndex={0}><MarkdownView content={result.content} /></div> : null}
+      {typeof result?.content === 'string' ? <div className="delivery-report-content" tabIndex={0}>
+        {artifact.format === 'text' ? <pre>{result.content}</pre>
+          : <MarkdownView content={result.content} resolveLink={deliveryLinkResolver(summary)} />}
+      </div> : null}
     </li>
   );
+}
+
+export function DeliveryArtifacts({ summary, t }) {
+  const artifacts = Array.isArray(summary?.artifacts) ? summary.artifacts : [];
+  return artifacts.length ? <ul className="delivery-report-list">{artifacts.map((artifact) => (
+    <ArtifactReport key={JSON.stringify([summary.project_key, summary.run_id, artifact.key, artifact.version, artifact.href])}
+      artifact={artifact} summary={summary} t={t} />
+  ))}</ul> : <p>{t('work.deliverySummary.noArtifacts')}</p>;
 }
 
 export default function DeliverySummary({ summary, historical = false, language, t }) {
@@ -86,14 +95,14 @@ export default function DeliverySummary({ summary, historical = false, language,
       <SkillReviewExecutions mode="delivery" language={language}
         key={JSON.stringify([summary.project_key, summary.run_id, artifacts.map(item => [item.key, item.version])])}
         projectKey={summary.project_key} runId={summary.run_id} />
+      <LegacyReviewerEvidence projectKey={summary.project_key} runId={summary.run_id} t={t}
+        items={summary.reviewer_reports || []} deliverySummary={summary}
+        activeApproval={historical ? '' : summary.next_node?.match(/^await_(.+)_approval$/)?.[1] || ''} />
       {summary.simulated ? <p role="status">{t('work.deliverySummary.simulated')}</p> : null}
       <h4>{t('work.deliverySummary.nextStep')}</h4>
       <p>{t(`work.deliverySummary.next.${summary.status}`)}</p>
       <h4>{t('work.deliverySummary.reports')}</h4>
-      {artifacts.length ? <ul className="delivery-report-list">{artifacts.map((artifact) => (
-        <ArtifactReport key={JSON.stringify([summary.project_key, summary.run_id, artifact.key, artifact.version, artifact.href])}
-          artifact={artifact} summary={summary} t={t} />
-      ))}</ul> : <p>{t('work.deliverySummary.noArtifacts')}</p>}
+      <DeliveryArtifacts summary={summary} t={t} />
       <details className="delivery-evidence"><summary>{t('work.deliverySummary.attempts')}</summary><code className="delivery-version">{summary.run_id}</code><ul>{attempts.map((attempt) => <li key={attempt.id}><span>{t(`work.plan.role.${attempt.role}`)} · {attempt.adapter} · {attempt.status}</span><code className="delivery-version">{attempt.id}</code></li>)}</ul></details>
     </section>
   );

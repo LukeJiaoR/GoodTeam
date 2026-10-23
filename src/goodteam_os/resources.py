@@ -8,6 +8,7 @@ from typing import Any
 
 class ResourceKind(StrEnum):
     MARKDOWN_ARTIFACT = "markdown_artifact"
+    TEXT_ARTIFACT = "text_artifact"
     PROPOSED_MARKDOWN_ARTIFACT = "proposed_markdown_artifact"
     TASK_LEDGER = "task_ledger"
     RUNTIME_RESOURCE = "runtime_resource"
