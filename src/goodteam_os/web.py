@@ -5326,7 +5326,12 @@ def build_resource_items(state: AgileDevState | None) -> list[dict[str, object]]
 
 def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
     state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
-    raw_content = path.read_bytes()
+    if artifact_key == "source_preview":
+        from goodteam_os.delivery_outcomes import _artifact_bytes
+
+        raw_content = _artifact_bytes(workspace, state, artifact_key)
+    else:
+        raw_content = path.read_bytes()
     content = raw_content.decode("utf-8")
     return {
         **({"proposal_binding": dict(state.artifact_proposals[artifact_key.removesuffix("_proposed")])}
@@ -5341,10 +5346,10 @@ def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") 
 
 
 def read_open_questions(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    _, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
+    artifact = read_artifact(workspace=workspace, artifact_key=artifact_key, project_key=project_key)
     return {
         "artifact": artifact_key,
-        "questions": extract_open_questions(path.read_text(encoding="utf-8")),
+        "questions": extract_open_questions(artifact["content"]),
     }
 
 
@@ -5383,6 +5388,9 @@ def answer_open_questions(
 @serialized_workflow
 def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_key: str = "",
                   expected_run_id: str = "", expected_artifact_version: str = "") -> dict[str, object]:
+    # Enforce this for older persisted registries that still advertise EDIT too.
+    if artifact_key == "source_preview":
+        raise ProjectApiError("read_only_artifact", "Retained source evidence is read-only.", 403)
     state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
     if (expected_run_id and expected_run_id != state.run_id) or (
         expected_artifact_version and expected_artifact_version != artifact_version_for_path(str(path))

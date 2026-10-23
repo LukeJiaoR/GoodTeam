@@ -117,11 +117,12 @@ def register_markdown_artifact(
     title: str = "",
     producer: str = "",
     reviewable: bool = True,
+    editable: bool = True,
 ) -> ResourceDescriptor:
     capabilities = _capabilities(
         ResourceCapability.READ,
         ResourceCapability.PREVIEW,
-        ResourceCapability.EDIT,
+        *([ResourceCapability.EDIT] if editable else []),
         ResourceCapability.DOWNLOAD,
     )
     if reviewable:
