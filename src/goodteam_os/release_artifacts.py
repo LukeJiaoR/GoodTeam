@@ -134,4 +134,11 @@ def retain_repository_candidate(state):
                                            run_id=state.run_id, candidate=True)
     if candidate['result_commit'] != current['result_commit'] or candidate['integration']['status'] != 'succeeded':
         raise ReleaseCandidateError('The retained task code could not produce the reviewed release candidate.')
+    if reviewed.get('source_preview_version'):
+        keys = ('job_id', 'baseline_commit', 'result_commit', 'project_key', 'run_id')
+        if any(not reviewed.get(key) or reviewed[key] != current.get(key)
+               or reviewed[key] != candidate.get(key) for key in keys):
+            raise ReleaseCandidateError('Source preview belongs to a different task candidate.')
+        for key in ('source_preview_version', 'source_manifest_version'):
+            candidate[key] = reviewed[key]
     state.release_candidate['repository_result'] = candidate

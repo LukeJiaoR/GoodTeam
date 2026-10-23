@@ -25,6 +25,23 @@ export default function EvidenceSummary({ evidence, t }) {
         <StatusBadge tone={evidenceTone(evidence.qa_status)}>{t('review.evidence.qa')}: {evidenceStatusLabel(evidence.qa_status, t)}</StatusBadge>
         <StatusBadge tone={blockerCount > 0 ? 'danger' : 'neutral'}>{t('review.evidence.blockers', { count: blockerCount })}</StatusBadge>
       </div>
+      {Array.isArray(evidence.reviewer_reports) && evidence.reviewer_reports.length > 0 ? (
+        <section aria-label={t('review.reports.title')}>
+          <h3>{t('review.reports.title')}</h3>
+          <p>{t('review.reports.boundary')}</p>
+          {evidence.reviewer_reports.map((report) => (
+            <article key={report.job_id}>
+              <h4>{report.profile_id || report.job_id}</h4>
+              <p>{t('review.reports.process')}: {report.status || 'unknown'}</p>
+              <p>{t('review.reports.identity')}: {report.job_id} · {report.artifact_version}</p>
+              {report.report_status === 'available' ? <>
+                <p>{t('review.reports.hash')}: {report.report_sha256}</p>
+                <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{report.content}</pre>
+              </> : <p role="status">{t('review.reports.unavailable')}</p>}
+            </article>
+          ))}
+        </section>
+      ) : null}
     </section>
   );
 }

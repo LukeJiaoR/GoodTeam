@@ -303,7 +303,7 @@ class DispatchWorkspace:
             raise DispatchWorkspaceError("Retained dispatch original index changed.")
         return captured
 
-    def collect(self, job_id: str) -> dict:
+    def collect(self, job_id: str, *, include_source_preview: bool = False, source_preview_scope=None) -> dict:
         root = self._verify_job(job_id)
         first = _capture(root, self.limits, extra_paths=self.metadata["files"])
         second = _capture(root, self.limits, extra_paths=self.metadata["files"])
@@ -317,6 +317,11 @@ class DispatchWorkspace:
                   "workspace_path": str(root)}
         _write_json(self.artifact_root / f"result-{hashlib.sha256(job_id.encode()).hexdigest()[:24]}.json",
                     {**result, "files": _file_manifest(second)})
+        if include_source_preview:
+            from goodteam_os.source_preview import build_source_preview
+
+            result["source_preview"] = build_source_preview(capture=second, result=result,
+                                                            project_key=source_preview_scope[0], run_id=source_preview_scope[1])
         return result
 
     def integrate(self, job_ids: list[str], *, expected_results: dict[str, str] | None = None) -> dict:

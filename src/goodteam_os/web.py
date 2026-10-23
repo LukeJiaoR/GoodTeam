@@ -5537,6 +5537,14 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             artifact_path=artifact_path,
             artifact_version=artifact_version,
         )
+        from goodteam_os.gate_report_projection import project_gate_reports
+
+        review["reviewer_reports"] = project_gate_reports(
+            [entry["status"] for entry in review["multi_reviewer_projection"]["reviewers"]
+             if isinstance(entry.get("status"), dict)],
+            roots=_project_runtime_roots_for_state(state=state, workspace=workspace, project_key=state.project_key),
+            run_id=state.run_id, project_key=state.project_key,
+        )
         review["queued_reviewer_jobs"] = select_queued_reviewer_jobs_for_gate(
             reviewer_statuses,
             run_id=state.run_id,
@@ -5580,6 +5588,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
                 workspace=workspace,
                 project_key=state.project_key,
             )
+            evidence_snapshot["reviewer_reports"] = review["reviewer_reports"]
             review["evidence_snapshot"] = evidence_snapshot
             review["recommendation"] = build_approval_recommendation(
                 state=state,
