@@ -439,6 +439,11 @@ class TaskAssistantSessionStore:
             try:
                 fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
                 session = operation(self.read())
+                from goodteam_os.context_continuity import compact_conversation
+
+                # Derived and persisted under the same atomic write as its
+                # exact source timeline. Never discard or rewrite source text.
+                session["conversation_continuity"] = compact_conversation(session)
                 self._write(session)
                 return session
             finally:

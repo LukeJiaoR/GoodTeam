@@ -2564,7 +2564,9 @@ def implementation_task(state: AgileDevState, delivery_mode: str = "init_project
     )
 
 
-def worker_context(state: AgileDevState) -> str:
+def worker_context(state: AgileDevState, *, recipient_role: str = "") -> str:
+    from goodteam_os.context_continuity import task_handoff_context
+
     artifacts = "\n".join(f"- {name}: {path}" for name, path in sorted(state.artifacts.items()))
     context = "\n".join(
         [
@@ -2587,6 +2589,7 @@ def worker_context(state: AgileDevState) -> str:
     if state.change_requests:
         changes = "\n".join(f"- {gate}: {note}" for gate, note in state.change_requests.items())
         context += f"\nRequested changes:\n{changes}"
+    context += "\n\n" + task_handoff_context(state, recipient_role=recipient_role)
     return context
 
 
@@ -2597,7 +2600,7 @@ def worker_context_for_role(
     workspace: Path | None = None,
     gate: str | None = None,
 ) -> str:
-    base_context = worker_context(state)
+    base_context = worker_context(state, recipient_role=role_key)
     advisory = role_messages_advisory_section(
         workspace=workspace,
         project_key=state.project_key,

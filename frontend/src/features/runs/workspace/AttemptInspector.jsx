@@ -1,6 +1,7 @@
 import WorkspacePanel from '../../../components/ui/WorkspacePanel';
 import TaskInputContext from './TaskInputContext.jsx';
 import DeliverySummary from './DeliverySummary';
+import { resolveAttemptMemory } from './attemptMemory';
 import './attemptInspector.css';
 
 const words = {
@@ -15,7 +16,21 @@ const words = {
     noJob: 'Matching job details are absent from this snapshot. The saved attempt record is still shown above.',
     input: 'Task-start baseline', inputNote: 'This run-level record is the task-start baseline, not the full input to this attempt.',
     memory: 'Attempt memory', memoryInput: 'Memory input', memoryRead: 'Memory read evidence', memoryWrite: 'Memory writeback',
-    unknown: 'Unknown', memoryNote: 'The available data does not establish memory input, reading, or writeback for this exact attempt.',
+    unknown: 'Unknown', memoryNote: 'Host records do not establish provider receipt or reading. Writeback records do not establish learning or task success.',
+    captured: 'Pickup packet captured; preparation not recorded', prepared: 'Host input preparations', writebacks: 'Recorded writeback observations',
+    capturedAt: 'Pickup captured', transport: 'Host call entries', noTransport: 'Not recorded', receiptDetails: 'Memory observation details',
+    preparation: 'Input preparation', resultMemory: 'Result memory', auditMemory: 'Execution audit', observedAt: 'Observed',
+    contextStatus: 'Prepared memory context', citations: 'Referenced events', sources: 'Rendered sources', inputDigest: 'Prepared input digest',
+    fragmentDigest: 'Memory fragment digest', resultDigest: 'Result digest', outcome: 'Recorded outcome', appended: 'New WAL events',
+    replayed: 'Same-source replays', deduplicated: 'Other-source duplicates', unattempted: 'Unprocessed items',
+    lowerBounds: 'Counts are lower bounds because part of the write outcome is unknown.',
+    omittedPreparations: 'Earlier input preparations omitted from this view', omittedWrites: 'Earlier writeback observations omitted from this view',
+    inputScope: 'Preparation describes the host-rendered input, not a provider read. Event references and summary sources are different counts.',
+    captureChanged: 'Prepared packet differs from the captured packet.',
+    memoryReasons: { not_recorded: 'No retained observations are available for this attempt.', unsupported_attempt: 'This attempt uses a separate input protocol; ordinary Worker memory observations are unknown.',
+      scope_mismatch: 'Memory observations do not match this exact project, run, and attempt.', records_unavailable: 'Retained memory observations could not be verified.' },
+    memoryStatuses: { available: 'Available', partial: 'Partial', unavailable: 'Unavailable', unknown: 'Unknown',
+      completed: 'Completed', skipped: 'Skipped', known_not_committed: 'No commit observed' },
     delivery: 'Delivery and review for this run', deliveryNote: 'These versioned records belong to the same run. They do not establish what this attempt produced or reviewed.',
     noDelivery: 'No matching run-level delivery record is available.', identity: 'More record identity', actor: 'Assignment record ID',
     worker: 'Worker ID', execution: 'Execution ID', profile: 'Profile ID', retry: 'Recorded retry ordinal',
@@ -40,7 +55,21 @@ const words = {
     noJob: '本次快照没有匹配的作业详情，上方仍显示已保存的尝试记录。',
     input: '任务启动基线', inputNote: '这是运行级的任务启动记录，不是本次尝试的完整输入。',
     memory: '本次尝试的记忆', memoryInput: '记忆输入', memoryRead: '记忆读取依据', memoryWrite: '记忆回写',
-    unknown: '未知', memoryNote: '现有数据无法确认此执行尝试的记忆输入、读取或回写。',
+    unknown: '未知', memoryNote: '主机记录不能证明模型已接收或读取。回写记录也不能证明已学习或任务成功。',
+    captured: '已捕获记忆包；未记录输入准备', prepared: '主机输入准备记录', writebacks: '已记录的回写观测',
+    capturedAt: '记忆包捕获时间', transport: '主机调用入口记录', noTransport: '未记录', receiptDetails: '记忆观测详情',
+    preparation: '输入准备', resultMemory: '结果记忆', auditMemory: '执行审计', observedAt: '观测时间',
+    contextStatus: '已准备的记忆上下文', citations: '引用事件数', sources: '已渲染来源数', inputDigest: '已准备输入摘要',
+    fragmentDigest: '记忆片段摘要', resultDigest: '结果摘要', outcome: '已记录的结果', appended: '新增 WAL 事件',
+    replayed: '同源重放', deduplicated: '其他来源的重复项', unattempted: '未处理项',
+    lowerBounds: '部分写入结果未知，所示计数仅为已知下限。',
+    omittedPreparations: '此视图省略的较早输入准备记录', omittedWrites: '此视图省略的较早回写观测',
+    inputScope: '输入准备描述主机渲染内容，不能证明模型已读取。事件引用与摘要来源是不同计数。',
+    captureChanged: '已准备的记忆包与捕获时不同。',
+    memoryReasons: { not_recorded: '此尝试没有可用的留存观测记录。', unsupported_attempt: '此尝试采用独立输入协议，普通 Worker 的记忆观测未知。',
+      scope_mismatch: '记忆观测与当前项目、运行及尝试不匹配。', records_unavailable: '无法验证留存的记忆观测。' },
+    memoryStatuses: { available: '可用', partial: '部分可用', unavailable: '不可用', unknown: '未知',
+      completed: '已完成', skipped: '已跳过', known_not_committed: '未观测到提交' },
     delivery: '本次运行的交付与审查', deliveryNote: '这些有版本的记录属于同一次运行，不能据此归因于所选尝试的产出或审查。',
     noDelivery: '没有匹配的运行级交付记录。', identity: '更多记录标识', actor: '分工记录 ID',
     worker: 'Worker ID', execution: '执行 ID', profile: '配置 ID', retry: '记录的重试序号',
@@ -74,6 +103,56 @@ function RecordedTime({ value, missing }) {
   const recorded = text(value);
   if (!recorded) return missing;
   return Number.isFinite(Date.parse(recorded)) ? <time dateTime={recorded}>{recorded}</time> : recorded;
+}
+
+function AttemptMemory({ inspection, projectKey, runId, w }) {
+  const memory = resolveAttemptMemory({ inspection, projectKey, runId });
+  const observed = memory.status === 'observed';
+  return <section className="attempt-inspector__section" aria-label={w.memory}>
+    <h3>{w.memory}</h3>
+    <dl className="attempt-inspector__facts">
+      <Fact name={w.memoryInput}>{observed ? memory.preparationCount ? `${w.prepared}: ${memory.preparationCount}` : w.captured : w.unknown}</Fact>
+      <Fact name={w.memoryRead}>{w.unknown}</Fact>
+      <Fact name={w.memoryWrite}>{observed && memory.writebackCount ? `${w.writebacks}: ${memory.writebackCount}` : w.unknown}</Fact>
+      {observed ? <>
+        <Fact name={w.capturedAt}><RecordedTime value={memory.capture.captured_at} missing={w.missing} /></Fact>
+        <Fact name={w.transport}>{memory.transportAttemptCount || w.noTransport}</Fact>
+      </> : null}
+    </dl>
+    <p className="attempt-inspector__note">{w.memoryNote}</p>
+    {!observed ? <p className="attempt-inspector__note">{w.memoryReasons[memory.reason]}</p> : null}
+    {observed && (memory.preparationCount > 0 || memory.writebackCount > 0) ? <details className="attempt-inspector__identity">
+      <summary>{w.receiptDetails}</summary>
+      {memory.preparationCount > 0 ? <p className="attempt-inspector__note">{w.inputScope}</p> : null}
+      {memory.omittedPreparations > 0 ? <p>{w.omittedPreparations}: {memory.omittedPreparations}</p> : null}
+      {memory.preparations.map(item => <section key={item.id} className="attempt-inspector__section" aria-label={w.preparation}>
+        <h4>{w.preparation}</h4>
+        <dl className="attempt-inspector__facts">
+          <Fact name={w.observedAt}><RecordedTime value={item.prepared_at} missing={w.missing} /></Fact>
+          <Fact name={w.contextStatus}>{w.memoryStatuses[item.context_status]}</Fact>
+          <Fact name={w.citations}>{item.citation_count}</Fact>
+          <Fact name={w.sources}>{item.rendered_source_count}</Fact>
+          <Fact name={w.inputDigest}><code>{item.input_digest}</code></Fact>
+          <Fact name={w.fragmentDigest}><code>{item.fragment_digest}</code></Fact>
+        </dl>
+        {!item.capture_packet_match ? <p className="attempt-inspector__note">{w.captureChanged}</p> : null}
+      </section>)}
+      {memory.omittedWritebacks > 0 ? <p>{w.omittedWrites}: {memory.omittedWritebacks}</p> : null}
+      {memory.writebacks.map(item => <section key={item.id} className="attempt-inspector__section" aria-label={item.kind === 'result' ? w.resultMemory : w.auditMemory}>
+        <h4>{item.kind === 'result' ? w.resultMemory : w.auditMemory}</h4>
+        <dl className="attempt-inspector__facts">
+          <Fact name={w.observedAt}><RecordedTime value={item.observed_at} missing={w.missing} /></Fact>
+          <Fact name={w.outcome}>{w.memoryStatuses[item.outcome]}</Fact>
+          <Fact name={w.appended}>{item.appended}</Fact>
+          <Fact name={w.replayed}>{item.replayed}</Fact>
+          <Fact name={w.deduplicated}>{item.deduplicated}</Fact>
+          <Fact name={w.unattempted}>{item.unattempted}</Fact>
+          <Fact name={w.resultDigest}><code>{item.result_digest}</code></Fact>
+        </dl>
+        {!item.counts_complete ? <p className="attempt-inspector__note">{w.lowerBounds}</p> : null}
+      </section>)}
+    </details> : null}
+  </section>;
 }
 
 function AttemptRecord({ inspection, projectKey, runId, historical, language, t, w }) {
@@ -126,11 +205,7 @@ function AttemptRecord({ inspection, projectKey, runId, historical, language, t,
       <h3>{w.input}</h3><p className="attempt-inspector__note">{w.inputNote}</p>
       <TaskInputContext projectKey={projectKey} runId={runId} language={language} t={t} />
     </section>
-    <section className="attempt-inspector__section" aria-label={w.memory}>
-      <h3>{w.memory}</h3>
-      <dl className="attempt-inspector__facts">{[w.memoryInput, w.memoryRead, w.memoryWrite].map(name => <Fact key={name} name={name}>{w.unknown}</Fact>)}</dl>
-      <p className="attempt-inspector__note">{w.memoryNote}</p>
-    </section>
+    <AttemptMemory inspection={inspection} projectKey={projectKey} runId={runId} w={w} />
     <section className="attempt-inspector__section" aria-label={w.delivery}>
       <h3>{w.delivery}</h3><p className="attempt-inspector__note">{w.deliveryNote}</p>
       {runSummary ? <DeliverySummary summary={runSummary} historical={historical} language={language} t={t} /> : <p>{w.noDelivery}</p>}

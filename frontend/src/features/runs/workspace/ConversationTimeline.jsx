@@ -1,7 +1,8 @@
 import { Bot } from 'lucide-react';
+import { timelineReadingId } from './conversationReading';
 import MarkdownView from '../../../components/ui/MarkdownView';
 import ProjectUnderstandingReply from './ProjectUnderstandingReply';
-import { reviewGateName, statusText, translated } from './presentationUtils';
+import { timelineCopy } from './timelineCopy';
 import { deliveryLabel } from './conversationFeedback';
 
 function TeamAvatar({ label, manager = false }) {
@@ -26,24 +27,6 @@ const SYSTEM_TIMELINE_EVENTS = new Set([
   'work_retry_converged',
 ]);
 
-function timelineCopy(item, t) {
-  if (item.actor === 'user' && item.event === 'mission_requested') return item.content;
-  if (item.content && ['intent_clarification_requested', 'project_question_answered'].includes(item.event)) return item.content;
-  const details = item.details || {};
-  return translated(
-    t,
-    `work.manager.events.${item.event}`,
-    item.content || translated(t, 'work.manager.events.progress', 'The team state changed.'),
-    {
-      artifact: details.artifact || t('work.manager.deliverable'),
-      decision: details.decision ? statusText(details.decision, t) : '',
-      gate: details.gate ? reviewGateName(details.gate, t) : '',
-      attemptCount: details.attempt_count || 0,
-      retryCount: details.retry_count ?? Math.max(0, (details.attempt_count || 0) - 1),
-      taskCount: details.task_count || 0,
-    },
-  );
-}
 
 function TimelineItem({ item, language, t }) {
   const itemTimestamp = item.timestamp || item.created_at || '';
@@ -57,7 +40,7 @@ function TimelineItem({ item, language, t }) {
 
   if (isSystem) {
     return (
-      <li className="team-manager-event team-manager-event--system" data-actor={item.actor} data-kind={item.kind} data-system="true">
+      <li data-reading-id={timelineReadingId(item)} tabIndex={-1} className="team-manager-event team-manager-event--system" data-actor={item.actor} data-kind={item.kind} data-system="true">
         <div className="team-manager-system-chip">
           <span className="team-manager-system-chip__dot" aria-hidden="true" />
           <span className="team-manager-system-chip__text">{copy}</span>
@@ -68,7 +51,7 @@ function TimelineItem({ item, language, t }) {
   }
 
   return (
-    <li className="team-manager-event" data-actor={item.actor} data-kind={item.kind} data-delivery={item.delivery_status}>
+    <li data-reading-id={timelineReadingId(item)} tabIndex={-1} className="team-manager-event" data-actor={item.actor} data-kind={item.kind} data-delivery={item.delivery_status}>
       <TeamAvatar label={actorLabel} manager={item.actor !== 'user'} />
       <div className="team-manager-event__bubble">
         <div className="team-manager-event__meta">

@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlencode
 
 from goodteam_os.assistant_workspace import is_assistant_activity
+from goodteam_os.attempt_memory import attempt_memory_observations
 from goodteam_os.repository_access import AnchoredRepository, RepositoryAccessError
 from goodteam_os.resources import ResourceCapability, ResourceKind, ResourceScope
 from goodteam_os.state import StateStore, normalize_project_key
@@ -177,7 +178,9 @@ def build_delivery_summary(workspace, *, state, jobs=(), historical_reason="", w
     if state is None:
         return None
     attempts = [
-        {name: str(job.get(name, "") or "") for name in ATTEMPT_FIELDS}
+        {**{name: str(job.get(name, "") or "") for name in ATTEMPT_FIELDS},
+         "memory_observations": attempt_memory_observations(
+             worker_root, project_key=state.project_key, run_id=state.run_id, job=job)}
         for job in jobs
         if isinstance(job, Mapping) and not is_assistant_activity(job) and job.get("run_id") == state.run_id
         and (not job.get("project_key") or normalize_project_key(str(job["project_key"])) == state.project_key)

@@ -36,9 +36,15 @@ The panel preserves three distinct scopes:
   outputs of the selected attempt. Protected Reviewer evidence retains its own
   validation and run-level label; the panel never exposes review mutation mode.
 
-Generic Worker memory input/read/writeback receipts are not publicly bound to
-this attempt. The panel says unknown; it does not substitute a role's latest
-retrieval, a search match, a status citation, or an issue-execution receipt.
+Ordinary Worker memory observations are included on the exact server-bound
+`delivery_summary.attempts` row. The panel distinguishes captured pickup input,
+host preparation, host call entry and WAL writeback observations. Provider
+receipt and actual reading stay unknown. The panel does not substitute a role's
+latest retrieval, a search match, mutable status citations, or another attempt's
+receipts. Missing legacy history and protected task-input/correction/Skill
+protocols remain unknown; damaged retained proofs are unavailable. See
+[Worker memory observations](worker-memory-observations.md) for source and
+truncation boundaries.
 
 ## Navigation and invalidation
 
@@ -61,6 +67,6 @@ historical records, route changes, new attempts, duplicate IDs, stale snapshots,
 late responses, draft preservation and focus return. Focused/full frontend
 tests, lint, production build and independent final-source review are recorded
 in the PR. These are DOM/source/build checks, not actual-browser pixel or real
-model Runtime acceptance. No new backend contract, execution permission, CI
-workflow, dependency or deployment is introduced. #409/#420 remain parked;
+model Runtime acceptance. The read-only memory observation extension adds no
+execution permission, CI workflow, dependency or deployment. #409/#420 remain parked;
 #411/#418/#419 retain their real-task and browser gates.

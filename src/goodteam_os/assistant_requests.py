@@ -84,14 +84,27 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
         previous = store.read().get("assistant_requests", {}).get(message_id)
         if previous and previous.get("context_run_id", "") != context_run_id:
             raise ValueError("message_id is already used with different task context")
-        if context_run_id:
-            conversation_scope(store, context_run_id)
+        try:
+            accepted_scope = conversation_scope(store, context_run_id)
+        except Exception as exc:
+            if context_run_id:
+                raise  # Explicit reference validation keeps its existing API.
+            # Invalid implicit state fails before acceptance/model input, while
+            # preserving the existing Manager failure contract for callers.
+            raise ManagerExecutionError(safe_failure(exc)["message"]) from exc
         attempt = _next_attempt(previous, text, expected_attempt)
         if attempt is None:
             return response(service, project_key, root, intent=(previous or {}).get("intent", "ambiguous"))
         store.initialize_context(assess_project_mode(root))
         store.append_message(message_id, "user", text)
-        update_request(store, message_id, text=text, context_run_id=context_run_id, attempt=attempt, status="running", phase="model", error=None)
+        # Bind implicit task context with the accepted request, before runtime
+        # inspection can fail. Preserve it on retries rather than retargeting a
+        # failed question to whatever task happens to be current now.
+        captured_run = (previous or {}).get("conversation_run_id")
+        if captured_run is None:
+            captured_run = ((accepted_scope or {}).get("run") or {}).get("run_id", "")
+        update_request(store, message_id, text=text, context_run_id=context_run_id,
+                       conversation_run_id=captured_run, attempt=attempt, status="running", phase="model", error=None)
         snapshot = None
         try:
             snapshot = runtime_snapshot(service.project_config)

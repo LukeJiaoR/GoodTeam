@@ -1,9 +1,10 @@
 # Ordinary Worker memory observations
 
 Tracked by [#534](https://github.com/LukeJiaoR/GoodTeam/issues/534).
-This is an internal metadata contract for newly created ordinary Worker jobs.
-It supplies evidence for later task/attempt views without introducing a public
-API, provider acknowledgement, new retrieval policy, or adapter permission.
+This is a retained metadata contract for newly created ordinary Worker jobs.
+The existing delivery-summary API exposes a bounded read-only projection for
+the exact attempt inspector. It introduces no provider acknowledgement, new
+retrieval policy, or adapter permission.
 Protected task-input, correction and Skill authority remain separate protocols.
 
 ## What each observation establishes
@@ -64,6 +65,28 @@ events. It does not copy memory text,
 prompts, result text, task text, free-form source paths, exception messages,
 credentials or provider session material into the observation store. Existing
 job/status JSON shapes gain no internal receipt IDs or raw context.
+
+## Exact-attempt Work display
+
+`goodteam.attempt-memory.v1` is attached only to the server-selected attempt in
+`delivery_summary.attempts`. The project root, project key when present, run,
+job ID, role, adapter and optional execution ID must agree with retained proof.
+All receipt relationships and the complete bounded history are validated before
+the projection retains the latest eight preparations and eight writebacks, with
+explicit omitted counts. It never looks up the latest record for a role.
+
+The reader uses anchored, read-only opens and the existing lock inode; GET does
+not create locks/directories, enroll old jobs, repair proof or write memory.
+Unenrolled jobs and protected task-input/correction/Skill protocols display
+unknown. Incomplete or mismatched retained proof displays unavailable.
+
+The UI shows host preparation counts/times/digests, captured versus prepared
+packet match, source/citation counts, call-entry count, and separate result and
+audit-provenance writebacks. Appended events, replayed own-source events and
+other-source text deduplication remain distinct. Incomplete counts are lower
+bounds; omitted observations are visible. This does not measure memory usage,
+provider receipt, provider reads or comprehension. Raw memory/prompt/result
+content and private store paths are never included in this projection.
 
 ## WAL writeback outcomes
 
