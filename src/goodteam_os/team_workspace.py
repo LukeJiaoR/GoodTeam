@@ -1031,7 +1031,10 @@ def _workflow_attention(
         }
     blocked_tasks = [item for item in outcomes if item.get("status") == "blocked"]
     blocked_actors = [item for item in execution_actors if item.get("state") == "blocked"]
-    if state.blockers or blocked_tasks or blocked_actors:
+    # The workflow may stop after successful Worker attempts (for example when
+    # retained output cannot be accepted). The terminal node remains evidence
+    # of blocking even when no separate blocker string was retained.
+    if state.next_node == "blocked" or state.blockers or blocked_tasks or blocked_actors:
         refs = [_text(item.get("id")) for item in blocked_tasks]
         refs.extend(
             _text(item.get("current_attempt_id")) or _text(item.get("id"))

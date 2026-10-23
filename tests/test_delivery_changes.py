@@ -144,3 +144,68 @@ def test_qa_raw_commands_survive_completed_process_without_inventing_pass(tmp_pa
     release = "\n".join(format_release_evidence_lines(state, [{**worker_result, "result_path": str(report)}]))
     assert "BLOCKED" in release and "exit: 1; tests: 0" in release
     assert item["version"] in release and result["result_commit"] in release
+
+
+
+@pytest.mark.parametrize("old,new", [
+    (b"", b'\0API_KEY="private-fixture-secret-value"'),
+    (b'\0API_KEY="private-fixture-secret-value"', b""),
+    (b'\0API_KEY="private-fixture-secret-value"', b"ordinary text\n"),
+])
+def test_binary_patch_never_registers_encoded_old_or_new_content(tmp_path, old, new):
+    from goodteam_os.delivery_changes import _retain
+
+    before, after = tmp_path / "before.dat", tmp_path / "after.dat"
+    before.write_bytes(old)
+    after.write_bytes(new)
+    diff = subprocess.run(["git", "diff", "--no-index", "--binary", "--", str(before), str(after)], capture_output=True)
+    assert diff.returncode == 1
+    assert b"GIT binary patch\n" in diff.stdout
+    assert b"private-fixture-secret-value" not in diff.stdout
+    state = create_initial_state("binary-run", "DEMO", "Fixture")
+    result = {"baseline_commit": "a" * 40, "result_commit": "b" * 40, "changed_files": ["settings.dat"]}
+    _retain(tmp_path, state, result, "delivery-patch", {
+        "kind": "patch", "relative_path": "changes.patch", "data": diff.stdout,
+    })
+    assert state.delivery_items["delivery-patch"]["status"] == "unavailable"
+    assert state.delivery_items["delivery-patch"]["unavailable_reason"] == "binary_patch"
+    assert "delivery-patch" not in state.resources
+
+
+def test_safe_text_patch_with_literal_binary_marker_is_still_exact(tmp_path):
+    from goodteam_os.delivery_changes import _retain
+
+    patch = b"diff --git a/readme b/readme\n--- a/readme\n+++ b/readme\n@@ -0,0 +1 @@\n+GIT binary patch\n"
+    state = create_initial_state("text-run", "DEMO", "Fixture")
+    result = {"baseline_commit": "a" * 40, "result_commit": "b" * 40, "changed_files": ["readme"]}
+    _retain(tmp_path, state, result, "delivery-patch", {"kind": "patch", "relative_path": "changes.patch", "data": patch})
+    assert state.delivery_items["delivery-patch"]["status"] == "available"
+    assert Path(state.resources["delivery-patch"].path).read_bytes() == patch
+
+
+def test_unavailable_patch_preserves_safe_source_and_exact_qa(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    state = create_initial_state("limit-run", "DEMO", "Fixture")
+    source = tmp_path / "source"
+    source.mkdir()
+    state.repository_baseline = {"source_root": str(source)}
+    result = {"baseline_commit": "a" * 40, "result_commit": "b" * 40, "changed_files": ["safe.txt"]}
+    monkeypatch.setattr("goodteam_os.workflow_workspace.read_workflow_delivery", lambda *args, **kwargs: [
+        {"kind": "patch", "relative_path": "changes.patch", "unavailable_reason": "preview_limit"},
+        {"kind": "source", "relative_path": "safe.txt", "data": b"safe bytes\n"},
+    ])
+    store = SimpleNamespace(root=tmp_path / "jobs")
+    job = {"id": "job-11111111-1111-1111-1111-111111111111", "role": "qa",
+           "run_id": state.run_id, "project_key": state.project_key, "workflow_workspace": state.repository_baseline}
+    (store.root / job["id"]).mkdir(parents=True)
+    qa = b"Status: blocked\nNo execution; fixture only.\n"
+    (store.root / job["id"] / "result.md").write_bytes(qa)
+    retain_delivery_changes(tmp_path, state, result, worker_store=store,
+                            worker_result={"status": "completed"}, worker_job=job)
+    assert state.delivery_items["delivery-patch"]["status"] == "unavailable"
+    assert "delivery-patch" not in state.resources
+    assert state.delivery_items["delivery-qa"]["qa_status"] == "blocked"
+    assert Path(state.resources["delivery-qa"].path).read_bytes() == qa
+    item = next(item for item in state.delivery_items.values() if item["kind"] == "source")
+    assert item["status"] == "available"

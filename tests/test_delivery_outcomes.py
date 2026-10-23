@@ -256,3 +256,16 @@ def test_unregistered_or_malformed_run_ids_fail_closed(tmp_path, delivery, run_i
     with pytest.raises(DeliveryArtifactError):
         read_delivery_artifact(tmp_path, project_key="DEMO", run_id=run_id,
                                artifact_key="implementation_handoff", version="sha256:unknown")
+
+
+def test_terminal_blocked_node_is_not_running_with_completed_process(tmp_path):
+    state = create_initial_state("blocked-run", "DEMO", "Blocked result")
+    state.current_node = "failure_triage"
+    state.next_node = "blocked"
+    state.blockers = []
+    jobs = [{"id": "done", "run_id": state.run_id, "role": "qa", "adapter": "fake", "status": "completed"}]
+    summary = build_delivery_summary(tmp_path, state=state, jobs=jobs)
+    assert summary["status"] == "blocked"
+    assert summary["attempts"][0]["status"] == "completed"
+    assert state.next_node == "blocked"
+    assert state.blockers == []

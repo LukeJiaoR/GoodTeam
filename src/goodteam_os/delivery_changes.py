@@ -42,6 +42,11 @@ def _retain(workspace, state, result, key, item):
     if len(data) > MAX_DELIVERY_BYTES or "\0" in text:
         registered["unavailable_reason"] = "preview_limit_or_binary"
         return
+    if item["kind"] == "patch" and b"GIT binary patch" in data.splitlines():
+        # Both old and new binary payloads are reversibly encoded by Git; text
+        # secret scanning cannot inspect either side. Withhold the whole patch.
+        registered["unavailable_reason"] = "binary_patch"
+        return
     if item["kind"] in {"source", "patch"}:
         paths = result["changed_files"] if item["kind"] == "patch" else [item["relative_path"]]
         if (any(part in {".ssh", ".aws"} or SENSITIVE_NAME.search(part)
