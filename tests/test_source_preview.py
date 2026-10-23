@@ -236,3 +236,75 @@ def test_release_preserves_only_same_host_candidate_binding(tmp_path, monkeypatc
     StateStore(tmp_path).write_project_current(state)
     assert read_delivery_artifact(tmp_path, project_key="DEMO", run_id="run-one", artifact_key="source_preview",
                                   version=result["source_preview_version"])["content"]
+
+
+def test_registered_source_preview_is_read_only_and_generic_read_is_bound(tmp_path):
+    from goodteam_os.resources import ResourceCapability
+    from goodteam_os.web import read_artifact
+    state, result = registered(tmp_path)
+    assert ResourceCapability.EDIT not in state.resources['source_preview'].capabilities
+    generic = read_artifact(workspace=tmp_path, project_key='DEMO', artifact_key='source_preview')
+    assert generic['artifact_version'] == result['source_preview_version']
+    assert generic['content'] == read_delivery_artifact(
+        tmp_path, project_key='DEMO', run_id=state.run_id, artifact_key='source_preview',
+        version=result['source_preview_version'])['content']
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.parametrize('project_key', ['', 'DEMO'])
+def test_source_save_rejected_without_mutating_evidence_or_state(tmp_path, legacy, project_key):
+    from goodteam_os.resources import ResourceCapability
+    from goodteam_os.web import ProjectApiError, save_artifact
+    state, result = registered(tmp_path)
+    if legacy:
+        state.resources['source_preview'].capabilities.append(ResourceCapability.EDIT)
+    store = StateStore(tmp_path)
+    store.write_project_current(state)
+    store.write_current(state)
+    before = {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    with pytest.raises(ProjectApiError, match='read-only'):
+        save_artifact(workspace=tmp_path, project_key=project_key, artifact_key='source_preview',
+                      content='replacement evidence', expected_run_id=state.run_id,
+                      expected_artifact_version=result['source_preview_version'])
+    after = {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    # Workflow serialization may create a lock file; no evidence/state/log bytes may change.
+    assert all(after.get(name) == content for name, content in before.items())
+    assert not any('edit-log' in name for name in after)
+    assert read_delivery_artifact(tmp_path, project_key='DEMO', run_id=state.run_id,
+                                  artifact_key='source_preview', version=result['source_preview_version'])['content']
+
+
+@pytest.mark.parametrize('mutation', ['bytes', 'identity', 'symlink', 'registry_path'])
+@pytest.mark.parametrize('reader', ['artifact', 'questions'])
+def test_generic_source_reads_reject_unbound_evidence(tmp_path, mutation, reader):
+    from goodteam_os.web import read_artifact, read_open_questions
+    state, _ = registered(tmp_path)
+    path = Path(state.artifacts['source_preview'])
+    if mutation == 'bytes':
+        path.write_text('# Open Questions\n- forged evidence?\n')
+    elif mutation == 'identity':
+        state.release_candidate['repository_result']['result_commit'] = 'c' * 40
+    elif mutation == 'registry_path':
+        other = path.parent / 'other.md'
+        other.write_text('unbound text')
+        state.resources['source_preview'].path = str(other)
+    else:
+        other = path.parent / 'other.md'
+        other.write_bytes(path.read_bytes())
+        path.unlink()
+        path.symlink_to(other)
+    StateStore(tmp_path).write_project_current(state)
+    fn = read_artifact if reader == 'artifact' else read_open_questions
+    with pytest.raises(DeliveryArtifactError):
+        fn(workspace=tmp_path, project_key='DEMO', artifact_key='source_preview')
+
+
+def test_legacy_artifacts_only_preview_remains_readable_but_not_editable(tmp_path):
+    from goodteam_os.web import ProjectApiError, read_artifact, save_artifact
+    state, result = registered(tmp_path)
+    state.resources.clear()
+    StateStore(tmp_path).write_project_current(state)
+    artifact = read_artifact(workspace=tmp_path, project_key='DEMO', artifact_key='source_preview')
+    assert artifact['artifact_version'] == result['source_preview_version']
+    with pytest.raises(ProjectApiError, match='read-only'):
+        save_artifact(workspace=tmp_path, project_key='DEMO', artifact_key='source_preview', content='replacement')

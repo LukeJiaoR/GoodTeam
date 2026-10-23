@@ -101,7 +101,7 @@ def register_source_preview(workspace, state, result):
         raise ValueError("Invalid source preview run.")
     path = workspace / "artifacts" / "runs" / state.run_id / "source_preview" / (version[7:] + ".md")
     atomic_write(path, raw, maximum=MAX_PREVIEW_BYTES)
-    register_markdown_artifact(state, "source_preview", path, reviewable=False)
+    register_markdown_artifact(state, "source_preview", path, reviewable=False, editable=False)
     result["source_preview_version"] = version
     result["source_manifest_version"] = bundle["manifest_version"]
 
