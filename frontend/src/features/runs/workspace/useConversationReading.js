@@ -101,6 +101,10 @@ export default function useConversationReading({ scope, conversationRef, timelin
       acknowledgeVisible(node, true);
       state.anchor = captureAnchor(node);
     }
+    // Showing a responsive panel can queue native scroll notifications without
+    // any reader movement. Keep a visible-layout baseline while away; those
+    // notifications must not silently resume following or consume delayed polls.
+    if (state.away && visible && !hidden()) state.awayPosition = node.scrollTop;
     // This state is a projection of measured/restored DOM position, not data
     // fetching. Publish it before paint so the return controls match the view.
     publish();
@@ -136,6 +140,7 @@ export default function useConversationReading({ scope, conversationRef, timelin
     const node = event.currentTarget;
     const state = current.current;
     if (!visible || hidden() || !state.initialized) return;
+    if (state.away && Math.abs(node.scrollTop - state.awayPosition) < 1) return;
     const inspected = state.inspection;
     state.inspection = null;
     if (inspected !== null && Math.abs(node.scrollTop - inspected) < 1) return;

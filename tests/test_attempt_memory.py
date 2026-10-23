@@ -260,3 +260,32 @@ def test_preparation_packet_match_must_agree_with_capture_even_with_updated_proo
         assert view["preparations"][0]["capture_packet_match"] is False
     else:
         assert "preparations" not in view
+
+
+def test_legacy_browser_fixture_retains_real_receipts_and_exact_archived_actor_binding(context):
+    from fixtures.attempt_memory_browser_driver import create_legacy_run
+    from goodteam_os import web
+    from goodteam_os.project_registry import ProjectRegistry
+    from goodteam_os.projects import write_project_config
+
+    root, _, _, _ = context
+    workspace = root.parent / "browser-workspace"
+    config = write_project_config(workspace / "projects", "DEMO", "Demo", repo_path=str(root), worker_mode="fake")
+    ProjectRegistry().register_project(config, root=root, key="DEMO")
+    first = create_legacy_run(workspace, root, "DEMO")
+    data = web.build_project_work_state(workspace, "DEMO")
+    attempt = next(item for item in data["delivery_summary"]["attempts"] if item["id"] == first["job_id"])
+    assert any(actor["current_attempt_id"] == first["job_id"] for actor in data["team_workspace"]["execution_actors"])
+    observed = attempt["memory_observations"]
+    assert observed["status"] == "observed"
+    assert observed["writeback_count"] == 2
+    assert {item["kind"] for item in observed["writebacks"]} == {"result", "provenance"}
+    assert observed["preparation_count"] == observed["transport_attempt_count"] == 0
+    assert observed["provider_receipt"] == observed["provider_read"] == "unknown"
+    second = create_legacy_run(workspace, root, "DEMO", archive=True)
+    current = web.build_project_work_state(workspace, "DEMO")
+    assert [item["id"] for item in current["delivery_summary"]["attempts"]] == [second["job_id"]]
+    code, archived = web.handle_project_api_get(workspace, f"/api/projects/DEMO/runs/{first['run_id']}")
+    assert code == 200
+    assert archived["delivery_summary"]["attempts"][0]["memory_observations"] == observed
+    assert any(actor["current_attempt_id"] == first["job_id"] for actor in archived["team_workspace"]["execution_actors"])

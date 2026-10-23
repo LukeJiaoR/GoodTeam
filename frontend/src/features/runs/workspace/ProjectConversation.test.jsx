@@ -477,6 +477,8 @@ test('returning from a hidden conversation preserves its away boundary through u
   rerender(view({ timeline: history, sectionProps: { hidden: true } }));
   rerender(view({ timeline: history.map(item => ({ ...item })) }));
   rerender(view({ timeline: history.map(item => ({ ...item })) }));
+  fireEvent.scroll(node); // Native hide/show scroll at the unchanged position is not reading.
+  fireEvent.scroll(node); // Duplicate queued notifications must not clear the away boundary.
   const arrival = { id: 'after-panel-return', actor: 'system', content: 'Delayed unseen update' };
   rerender(view({ timeline: [...history, arrival] }));
   expect(node.scrollTop).toBe(1200);
@@ -489,6 +491,24 @@ test('returning from a hidden conversation preserves its away boundary through u
   rerender(view({ timeline: [...history, arrival, { id: 'after-reading', actor: 'system', content: 'Latest update' }] }));
   expect(node.scrollTop).toBe(1800);
   expect(readingStorage().seenId).toBe('after-reading');
+});
+
+test('actual scroll movement after panel return resumes reading normally', () => {
+  const { container, rerender } = render(view({ timeline: history }));
+  const node = measuredHistory(container);
+  node.scrollTop = 1100;
+  fireEvent.scroll(node);
+  rerender(view({ timeline: history, sectionProps: { hidden: true } }));
+  rerender(view({ timeline: history }));
+  fireEvent.scroll(node); // Show notification is not a reader movement.
+  node.scrollTop = 1200;
+  fireEvent.scroll(node); // A real movement to the bottom resumes following.
+  const arrival = { id: 'after-real-scroll', actor: 'system', content: 'Latest update' };
+  Object.defineProperty(node, 'scrollHeight', { configurable: true, value: 1800 });
+  rerender(view({ timeline: [...history, arrival] }));
+  expect(node.scrollTop).toBe(1800);
+  expect(readingStorage().seenId).toBe(arrival.id);
+  expect(screen.queryByRole('button', { name: 'Read new updates' })).not.toBeInTheDocument();
 });
 
 test.each([false, true])('an initially hidden conversation defers checkpoint restoration until shown, following=%s', following => {

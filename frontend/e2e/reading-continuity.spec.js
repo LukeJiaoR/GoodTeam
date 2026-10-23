@@ -43,8 +43,12 @@ async function readHistory(page) {
   return anchor(page);
 }
 async function checkpoint(page, key) {
-  return page.evaluate(({ storageKey, key }) => JSON.parse(localStorage.getItem(storageKey) || '[]')
-    .find(item => JSON.parse(item.scope)[0] === key), { storageKey, key });
+  const data = await workState(page, key);
+  const scope = JSON.stringify([key, data.state?.run_id || '', false]);
+  // Intake and current-task checkpoints coexist for the same project. Read the
+  // exact active task, not the older project-only record created before start.
+  return page.evaluate(({ storageKey, scope }) => JSON.parse(localStorage.getItem(storageKey) || '[]')
+    .find(item => item.scope === scope), { storageKey, scope });
 }
 async function expectAnchor(page, expected) {
   await expect.poll(async () => (await anchor(page))?.id).toBe(expected.id);
