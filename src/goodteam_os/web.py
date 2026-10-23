@@ -1103,9 +1103,8 @@ def build_approval_evidence_snapshot(
         "blocker_count": 0,
         "provenance_refs": [],
         "smoke_refs": [],
-        "delivery_refs": [],
     }
-    if state is not None:
+    if getattr(state, "delivery_items", None):
         from goodteam_os.delivery_outcomes import _artifact_item
 
         snapshot["delivery_refs"] = [_artifact_item(workspace, state, key)
