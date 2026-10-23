@@ -18,6 +18,14 @@ function boundAttempt(data) {
   throw new Error('The explicit legacy fake Worker did not retain an inspectable memory observation.');
 }
 
+function archivedBinding(data, attemptId) {
+  const attempt = data.delivery_summary.attempts.find(item => item.id === attemptId);
+  const actor = data.team_workspace.execution_actors.find(item => item.current_attempt_id === attemptId);
+  expect(attempt, 'The exact saved attempt remains in the archive').toBeTruthy();
+  expect(actor, 'The archive has an actor bound to the exact saved attempt').toBeTruthy();
+  return { actor, attempt };
+}
+
 async function inspect(page, binding) {
   const disclosure = page.locator('.team-execution-disclosure');
   if (!await disclosure.evaluate(element => element.open)) await disclosure.locator('summary').click();
@@ -78,7 +86,7 @@ test('legacy attempt memory shows real fake-Worker receipts and archived isolati
   const saved = archived.delivery_summary.attempts.find(item => item.id === binding.attempt.id);
   expect(saved.memory_observations).toEqual(expected);
   await page.goto(`/projects/${fixture.key}/work/runs/${runId}`);
-  const historical = await inspect(page, binding);
+  const historical = await inspect(page, archivedBinding(archived, binding.attempt.id));
   await verifyMemory(historical.panel, expected);
   await expect(historical.panel).toContainText('Historical task · read-only');
   await page.setViewportSize({ width: 390, height: 844 });
@@ -91,47 +99,34 @@ test('legacy attempt memory shows real fake-Worker receipts and archived isolati
 });
 
 
-test('protected workflow attempts keep ordinary memory unknown in current and archived views', async ({ page, fixture }) => {
+test('workflow memory receipts remain exact after completion and archival', async ({ page, fixture }) => {
   await importProject(page, fixture);
   await sendTask(page, fixture, 'Implement searchable task history.');
   const runId = await prepareFirstTask(page, fixture, []);
   for (const gate of ['takeover', 'prd', 'rfc', 'security', 'release']) await approveGate(page, fixture, gate);
   await expect.poll(async () => (await workState(page, fixture.key)).state.current_node).toBe('complete');
-  const first = await workState(page, fixture.key);
-  expect(first.state.current_node).toBe('complete');
-  const attempts = first.delivery_summary.attempts;
+  // The completed current view intentionally has no execution actors. Assert
+  // retained receipts directly, independently of that presentation lifecycle.
+  const completed = await workState(page, fixture.key);
+  const attempts = completed.delivery_summary.attempts;
   expect(attempts.length).toBeGreaterThan(0);
   for (const attempt of attempts) {
-    expect(attempt.id).toMatch(/^job-skill-/);
-    expect(attempt.memory_observations).toMatchObject({ status: 'unknown', reason: 'unsupported_attempt',
-      provider_receipt: 'unknown', provider_read: 'unknown', run_id: runId, attempt_id: attempt.id });
-    expect(attempt.memory_observations).not.toHaveProperty('writebacks');
+    expect(attempt.memory_observations).toMatchObject({ status: 'observed', project_key: fixture.key,
+      run_id: runId, attempt_id: attempt.id, provider_receipt: 'unknown', provider_read: 'unknown',
+      preparation_count: 0, transport_attempt_count: 0, writeback_count: 2 });
+    expect(attempt.memory_observations.writebacks.map(item => item.kind).sort()).toEqual(['provenance', 'result']);
   }
-  const actor = first.team_workspace.execution_actors.find(item => attempts.some(attempt => attempt.id === item.current_attempt_id));
-  expect(actor).toBeTruthy();
-  const binding = { actor, attempt: attempts.find(item => item.id === actor.current_attempt_id) };
-  const verifyUnknown = async panel => {
-    const memory = panel.getByRole('region', { name: 'Attempt memory', exact: true });
-    for (const label of ['Memory input', 'Memory read evidence', 'Memory writeback']) {
-      await expect(memory.locator('dt').filter({ hasText: new RegExp(`^${label}$`) }).locator('..')).toHaveText(`${label}Unknown`);
-    }
-    await expect(memory).toContainText('This attempt uses a separate input protocol');
-    await expect(memory.getByText('Memory observation details', { exact: true })).toHaveCount(0);
-  };
-  await page.goto(`/projects/${fixture.key}/work`);
-  await verifyUnknown((await inspect(page, binding)).panel);
-  await page.getByRole('button', { name: 'Close attempt details' }).click();
   await sendTask(page, fixture, 'Add a separate task filter.');
   const next = await clickMutation(page, page.getByRole('button', { name: 'Start this task', exact: true }),
     `/api/projects/${fixture.key}/task-assistant/actions`);
   expect(next.run_id).not.toBe(runId);
   const current = await workState(page, fixture.key);
   expect(current.delivery_summary.attempts.every(item => item.memory_observations.run_id === next.run_id)).toBe(true);
+  expect(current.delivery_summary.attempts.some(item => attempts.some(old => old.id === item.id))).toBe(false);
   const archived = await getJson(page, `/api/projects/${fixture.key}/runs/${runId}`);
-  expect(archived.delivery_summary.attempts.find(item => item.id === binding.attempt.id).memory_observations)
-    .toEqual(binding.attempt.memory_observations);
-  await page.goto(`/projects/${fixture.key}/work/runs/${runId}`);
-  const historical = await inspect(page, binding);
-  await verifyUnknown(historical.panel);
-  await expect(historical.panel).toContainText('Historical task · read-only');
+  expect(archived.delivery_summary.attempts.map(item => item.id).sort()).toEqual(attempts.map(item => item.id).sort());
+  for (const attempt of attempts) {
+    expect(archived.delivery_summary.attempts.find(item => item.id === attempt.id).memory_observations)
+      .toEqual(attempt.memory_observations);
+  }
 });

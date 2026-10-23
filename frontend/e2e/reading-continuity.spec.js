@@ -238,10 +238,25 @@ test('missing anchors, corrupted storage and unavailable storage recover without
   await fillHistory(page, fixture);
   const before = await snapshot(page, fixture, []);
   const saved = await checkpoint(page, fixture.key);
-  await page.evaluate(({ storageKey, saved }) => localStorage.setItem(storageKey, JSON.stringify([
+  // The outgoing document checkpoints on visibility/pagehide. Inject only in
+  // the next document, before React reads storage, so that checkpoint cannot
+  // overwrite the intentionally missing/corrupt record under test.
+  const pendingStorageKey = `${storageKey}:next-document-fixture`;
+  await page.addInitScript(({ storageKey, pendingStorageKey }) => {
+    const raw = sessionStorage.getItem(pendingStorageKey);
+    if (raw !== null) {
+      sessionStorage.removeItem(pendingStorageKey);
+      localStorage.setItem(storageKey, raw);
+    }
+  }, { storageKey, pendingStorageKey });
+  const reloadWithReadingStorage = async raw => {
+    await page.evaluate(({ pendingStorageKey, raw }) => sessionStorage.setItem(pendingStorageKey, raw),
+      { pendingStorageKey, raw });
+    await page.reload();
+  };
+  await reloadWithReadingStorage(JSON.stringify([
     { ...saved, following: false, anchor: { id: 'removed-event', offset: -18 }, seenId: 'removed-event' },
-  ])), { storageKey, saved });
-  await page.reload();
+  ]));
   await expect(progress(page)).toContainText('no longer in this history');
   expect(await conversation(page).evaluate(node => node.scrollTop)).toBe(0);
   await expect(page.getByRole('button', { name: 'Read new updates', exact: true })).toHaveCount(0);
@@ -249,8 +264,7 @@ test('missing anchors, corrupted storage and unavailable storage recover without
   await expect(progress(page)).toHaveCount(0);
 
   for (const raw of ['{tampered', JSON.stringify([{ ...saved, savedAt: 1 }]), JSON.stringify([{ ...saved, anchor: { id: 'invalid', offset: 1e99 } }])]) {
-    await page.evaluate(({ storageKey, raw }) => localStorage.setItem(storageKey, raw), { storageKey, raw });
-    await page.reload();
+    await reloadWithReadingStorage(raw);
     await expect(page.getByRole('heading', { name: 'Task Assistant', exact: true })).toBeVisible();
     await expect(progress(page)).toHaveCount(0);
   }
