@@ -420,6 +420,67 @@ def test_project_list_keeps_legacy_readiness_read_only(tmp_path: Path) -> None:
     assert readiness_path.exists() is False
 
 
+def test_project_list_bounds_config_scans(tmp_path: Path, monkeypatch) -> None:
+    first_root = tmp_path / "one"
+    first_root.mkdir()
+    first_config = _write_context_project(tmp_path, first_root, key="ONE")
+    for key in ("ONE", "TWO", "THREE"):
+        if key != "ONE":
+            root = tmp_path / key.lower()
+            root.mkdir()
+            first_config.with_name(f"{key.lower()}.local.yaml").write_text(
+                first_config.read_text().replace("key: ONE", f"key: {key}").replace(str(first_root), str(root))
+            )
+        state = create_initial_state(f"run-{key.lower()}", key, "Review the confirmed task")
+        state.current_node = "takeover_review_gate"
+        state.next_node = "await_takeover_approval"
+        state.approvals["takeover"] = ApprovalDecision.PENDING
+        StateStore(tmp_path).write_project_current(state)
+
+    scans = []
+    discover = web.discover_project_configs
+
+    def count_scans(workspace):
+        scans.append(workspace)
+        return discover(workspace)
+
+    monkeypatch.setattr(web, "discover_project_configs", count_scans)
+    projects = web.build_project_list(tmp_path)["projects"]
+
+    assert len(projects) == 3
+    assert all(project["attention"]["counts"]["approval"] == 1 for project in projects)
+    # One list discovery plus at most one binding lookup per active project.
+    assert len(scans) <= len(projects) + 1
+
+
+@pytest.mark.parametrize("projection_fails", [False, True])
+def test_project_list_resolves_replaced_config_after_each_request(tmp_path: Path, monkeypatch, projection_fails) -> None:
+    root = tmp_path / "target"
+    root.mkdir()
+    config = _write_context_project(tmp_path, root, key="TEAM")
+    state = create_initial_state("run-team", "TEAM", "Review the confirmed task")
+    state.current_node = "takeover_review_gate"
+    state.next_node = "await_takeover_approval"
+    state.approvals["takeover"] = ApprovalDecision.PENDING
+    StateStore(tmp_path).write_project_current(state)
+    if projection_fails:
+        def interrupted_projection(*args):
+            raise RuntimeError("interrupted project list")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(web, "build_capabilities", interrupted_projection)
+            with pytest.raises(RuntimeError, match="interrupted project list"):
+                web.build_project_list(tmp_path)
+    else:
+        assert web.build_project_list(tmp_path)["projects"][0]["project"]["display_name"] == "Context Project"
+
+    replacement = config.with_name("replacement.local.yaml")
+    replacement.write_text(config.read_text().replace("Context Project", "Replacement Project"))
+    config.unlink()
+    assert web._project_config_for_key(tmp_path, "TEAM") == replacement
+    assert web.build_project_list(tmp_path)["projects"][0]["project"]["display_name"] == "Replacement Project"
+
+
 def test_unknown_project_home_uses_stable_error_shape(tmp_path: Path) -> None:
     status, payload = _get_web_json(tmp_path, "/api/projects/MISSING/home")
 

@@ -6071,6 +6071,16 @@ def _project_attention_snapshot(workspace, key, root, readiness, state):
 
 
 def build_project_list(workspace: Path) -> dict[str, object]:
+    # Reuse project binding lookups across the overview's approval projections.
+    # Only paths are cached, and only for this read, including its error paths.
+    token = _project_config_paths_in_work_state.set({})
+    try:
+        return _build_project_list(workspace)
+    finally:
+        _project_config_paths_in_work_state.reset(token)
+
+
+def _build_project_list(workspace: Path) -> dict[str, object]:
     projects: list[dict[str, object]] = []
     state_store = StateStore(workspace)
     for config_path in discover_project_configs(workspace):
