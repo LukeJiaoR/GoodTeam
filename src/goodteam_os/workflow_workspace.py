@@ -14,6 +14,7 @@ from functools import wraps
 from pathlib import Path
 
 from goodteam_os.dispatch_workspace import (
+    DispatchGitOutputLimitError,
     _read_git,
     dispatch_artifact_root,
     dispatch_workspace_lock,
@@ -177,10 +178,15 @@ def read_workflow_delivery(source_root: Path, binding: object, result: dict, *,
                  _read_git(root, ["diff", "--name-only", "--no-renames", "-z", baseline, commit]).split(b"\0") if path]
         if paths != result.get("changed_files"):
             raise WorkflowWorkspaceError("Delivery paths no longer match the collected result.")
-        patch = _read_git(root, ["diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
-                                 "--no-renames", baseline, commit, "--"])
-        items = [{"kind": "patch", "relative_path": "changes.patch", "aliases": ["changes.patch", "./changes.patch"],
-                  "data": patch}]
+        patch_item = {"kind": "patch", "relative_path": "changes.patch", "aliases": ["changes.patch", "./changes.patch"]}
+        try:
+            patch_item["data"] = _read_git(root, ["diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+                                          "--no-renames", baseline, commit, "--"], max_output_bytes=max_bytes)
+        except DispatchGitOutputLimitError:
+            # Optional preview only: binding, identity and Git failures still fail closed.
+            # Never retain a truncated diff as the exact patch.
+            patch_item["unavailable_reason"] = "preview_limit"
+        items = [patch_item]
         entries = {}
         for row in _read_git(root, ["ls-tree", "-r", "-z", commit]).split(b"\0"):
             if row:

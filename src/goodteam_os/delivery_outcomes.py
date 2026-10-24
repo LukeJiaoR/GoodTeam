@@ -160,7 +160,7 @@ def _delivery_status(state, attempts, historical_reason="", *, received_review_i
     unknown = any(item["status"] not in known and not (
         item["status"] == "review_received" and item["id"] in received_review_ids
     ) for item in attempts)
-    if state.blockers or statuses & FAILED_STATUSES or unknown:
+    if state.next_node == "blocked" or state.blockers or statuses & FAILED_STATUSES or unknown:
         return "blocked"
     if statuses & ACTIVE_STATUSES:
         return "working"

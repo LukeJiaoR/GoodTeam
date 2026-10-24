@@ -1959,3 +1959,26 @@ def test_active_workflow_keeps_authority_over_the_assistant_conversation():
 
     assert "active-run" == projection["mission"]["run_id"]
     assert "workflow" == projection["mission"]["source"]
+
+
+@pytest.mark.parametrize("with_completed_job", [False, True])
+def test_blocked_next_node_remains_blocked_without_worker_failure(with_completed_job):
+    """Workflow stopping state is not inferred from individual Worker success."""
+    from copy import deepcopy
+
+    state = create_initial_state("run-blocked-node", "DEMO", "Retain workflow stopping state")
+    state.current_node = "implementation"
+    state.next_node = "blocked"
+    assert state.blockers == []
+    tasks = [_workflow_task("DEMO-DONE", "Completed assignment", "architect", status="done")]
+    jobs = ([_workflow_job("job-completed", "completed", "2026-08-31T10:02:00Z",
+                           run_id=state.run_id, task_id="DEMO-DONE")] if with_completed_job else [])
+    before = deepcopy((state, tasks, jobs))
+    projection = build_team_workspace(state=state, workflow_active=True, project_root=None,
+                                      tasks=tasks, worker_jobs=jobs)
+    assert projection["mission"]["status"] == "blocked"
+    assert projection["attention_request"]["kind"] == "blocker"
+    assert projection["attention_request"]["target_id"] == state.run_id
+    assert projection["attention_request"]["reason"] == "execution_blocked"
+    assert all(actor["state"] != "working" for actor in projection["execution_actors"])
+    assert (state, tasks, jobs) == before

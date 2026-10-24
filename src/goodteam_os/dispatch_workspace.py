@@ -36,6 +36,10 @@ class DispatchWorkspaceError(ValueError):
     """A workspace could not be completely and safely captured or integrated."""
 
 
+class DispatchGitOutputLimitError(DispatchWorkspaceError):
+    """A successful Git command exceeded the caller's output read limit."""
+
+
 def _identifier(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,159}", value):
         raise DispatchWorkspaceError("Invalid dispatch run or job identity.")
@@ -79,7 +83,8 @@ def _artifact_root(project_root: Path, run_id: str, artifact_root: Path | None) 
 
 
 def _git(root: Path, arguments: list[str], *, data: bytes | None = None,
-         index: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
+         index: Path | None = None, check: bool = True,
+         max_output_bytes: int = 32 * 1024 * 1024) -> subprocess.CompletedProcess:
     executable, trusted_path, identity = _trusted_git_executable(root, arguments[0])
     environment = {
         "PATH": trusted_path, "HOME": os.environ.get("HOME", ""),
@@ -103,8 +108,13 @@ def _git(root: Path, arguments: list[str], *, data: bytes | None = None,
                                         stdout=stdout, stderr=stderr, timeout=60, check=False)
             except subprocess.TimeoutExpired as exc:
                 raise DispatchWorkspaceError("Dispatch Git operation timed out.") from exc
-            if stdout.tell() + stderr.tell() > 32 * 1024 * 1024:
-                raise DispatchWorkspaceError("Dispatch Git operation exceeded its output limit.")
+            if stdout.tell() + stderr.tell() > max_output_bytes:
+                if result.returncode:
+                    # A real Git failure is never an optional-preview limit.
+                    stderr.seek(0)
+                    detail = os.fsdecode(stderr.read(1000))
+                    raise DispatchWorkspaceError(f"Dispatch Git {arguments[0]} failed: {detail}")
+                raise DispatchGitOutputLimitError("Dispatch Git operation exceeded its output limit.")
             stdout.seek(0)
             stderr.seek(0)
             result.stdout, result.stderr = stdout.read(), stderr.read()
@@ -115,8 +125,8 @@ def _git(root: Path, arguments: list[str], *, data: bytes | None = None,
     return result
 
 
-def _read_git(root: Path, arguments: list[str]) -> bytes:
-    return _git(root, arguments).stdout
+def _read_git(root: Path, arguments: list[str], *, max_output_bytes: int = 32 * 1024 * 1024) -> bytes:
+    return _git(root, arguments, max_output_bytes=max_output_bytes).stdout
 
 
 def _metadata_path(path: str) -> bool:
