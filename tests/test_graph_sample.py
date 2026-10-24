@@ -3,6 +3,8 @@ import subprocess
 from pathlib import Path
 from types import MappingProxyType
 
+import pytest
+
 from goodteam_os.artifact_revisions import capture_proposal
 from goodteam_os.graph import (
     accept_refinement,
@@ -1798,7 +1800,8 @@ def test_delivery_workflow_stops_when_implementation_worker_fails(tmp_path, monk
     assert "release_notes" not in result.artifacts
 
 
-def test_delivery_workflow_blocks_when_qa_result_reports_failure(tmp_path, monkeypatch):
+@pytest.mark.parametrize("qa_status", ["passed", "failed", "blocked", "**fail with one release-blocking UI/API integration gap**."])
+def test_delivery_qa_status_preserves_release_stage_boundary(tmp_path, monkeypatch, qa_status):
     project_config = write_contentops_project_fixture(tmp_path, adapter="fake")
     state = create_initial_state(
         "run-1",
@@ -1815,8 +1818,16 @@ def test_delivery_workflow_blocks_when_qa_result_reports_failure(tmp_path, monke
         job_root = self.root / job_id
         job = json.loads((job_root / "job.json").read_text(encoding="utf-8"))
         if job["role"] == "qa":
+            constraints = (job_root / "constraints.md").read_text(encoding="utf-8")
+            assert "independent release Reviewer" in constraints
+            assert "not QA blockers solely because they have not happened yet" in constraints
+            assert "missing required verification evidence" in constraints
             (job_root / "result.md").write_text(
-                "# QA Report\n\nStatus: **fail with one release-blocking UI/API integration gap**.\n",
+                f"Status: {qa_status}\n\n" + (
+                    "Allowed implementation checks passed. Pending downstream work: "
+                    "release evidence sealing, independent release Reviewer, and human approval.\n"
+                    if qa_status == "passed" else "Required implementation verification could not pass.\n"
+                ),
                 encoding="utf-8",
             )
         return {
@@ -1835,10 +1846,17 @@ def test_delivery_workflow_blocks_when_qa_result_reports_failure(tmp_path, monke
 
     result = advance_approved_workflow(state=state, workspace=tmp_path, project_config=project_config)
 
-    assert result.current_node == "implementation"
-    assert result.next_node == "blocked"
-    assert any("qa worker reported release-blocking failure" in blocker for blocker in result.blockers)
-    assert "release_notes" not in result.artifacts
+    if qa_status == "passed":
+        assert result.current_node == "release_review_gate"
+        assert result.next_node == "await_release_approval"
+        assert result.approvals["release"] == "pending"
+        assert result.blockers == []
+        assert "release_notes" in result.artifacts
+    else:
+        assert result.current_node == "implementation"
+        assert result.next_node == "blocked"
+        assert any("qa worker reported release-blocking failure" in blocker for blocker in result.blockers)
+        assert "release_notes" not in result.artifacts
 
 
 def test_delivery_failure_uses_declared_on_error_target(tmp_path, monkeypatch):

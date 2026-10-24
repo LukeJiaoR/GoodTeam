@@ -2048,6 +2048,7 @@ def implementation_worker_job_specs(
             "task": ui_delivery_task(state, delivery_mode),
             "context": worker_context_for_role(state, "ui", workspace=workspace),
             "constraints": [
+                "Follow the confirmed task's file and verification scope. UI implementation and screenshot requirements below apply only when UI delivery is in scope; do not expand a bounded documentation task into frontend work.",
                 "Directly implement UI changes in the configured frontend project; do not stop at ui-spec.md.",
                 "Keep generated files inside the configured project runtime root.",
                 "Do not touch real product repositories outside this isolated workspace.",
@@ -2077,6 +2078,8 @@ def implementation_worker_job_specs(
             "context": worker_context_for_role(state, "qa", workspace=workspace),
             "constraints": [
                 "Prefer local deterministic tests.",
+                "Verify the current implementation against the confirmed task's scope and allowed checks; delivery-mode templates do not require out-of-scope files, tests, or browser evidence.",
+                "Report QA status for this verification stage. Controller-owned release evidence sealing/binding, an independent release Reviewer, and final human approval happen after QA; list them as pending downstream work, not QA blockers solely because they have not happened yet. Actual implementation failures, missing required verification evidence, and environment blockers must still be reported as failed, blocked, or unknown. A QA pass does not mean release approval or complete workflow acceptance.",
                 "Do not require external network services.",
                 "Do not leave long-running dev servers in the foreground; use bounded smoke checks and clean up background processes.",
                 "Begin result.md with one explicit Status: passed, Status: failed, Status: blocked, or Status: unknown line.",
