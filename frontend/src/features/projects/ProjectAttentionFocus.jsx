@@ -52,7 +52,14 @@ export default function ProjectAttentionFocus({ selection, projectKey, runId, da
               : `readiness:${node.dataset.attentionId?.slice('project-preparation:'.length)}` === result.item.id
             : `workflow:${runId}:${node.dataset.attentionId}` === result.item.id,
       });
-    } else notice.current?.focus({ preventScroll: true });
+    } else {
+      // Let the conversation composer finish its mount-time autofocus before
+      // restoring the explicit attention destination, including changed items.
+      const frame = requestAnimationFrame(() => {
+        if (current.current?.focusKey === focusKey) notice.current?.focus({ preventScroll: true });
+      });
+      return () => cancelAnimationFrame(frame);
+    }
   // Status and exact identity, not polling object references, own focus.
   }, [focusKey, reducedMotion, runId]); // eslint-disable-line react-hooks/exhaustive-deps
 
