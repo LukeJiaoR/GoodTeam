@@ -110,7 +110,7 @@ test('unborn recovery preserves branch, identity, unrelated index and working fi
   expect(git(fixture.root, 'remote')).toBe('');
 
   await page.goto('/projects');
-  await page.getByRole('button', { name: `Enter workspace: ${fixture.name}` }).click();
+  await page.getByRole('link', { name: `Enter workspace: ${fixture.name}` }).click();
   const reopened = await inspect(page, 'Valid Git commit');
   await expect(reopened.locator('code')).toHaveText(head);
   await reopened.getByRole('button', { name: 'Refresh Git status', exact: true }).click();

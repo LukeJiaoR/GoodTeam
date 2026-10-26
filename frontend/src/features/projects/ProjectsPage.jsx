@@ -1,6 +1,6 @@
 import { ArrowRight, FolderGit2, FolderPlus, Play, Plus } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import FileLocation from '../../components/ui/FileLocation';
 import { fileName } from '../../lib/presentation/filePresentation';
 import CollectionToolbar from '../../components/ui/CollectionToolbar';
@@ -40,16 +40,26 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
   const { projects, status, refresh } = useProjectsSnapshot(api);
   const hasProjects = ['ready', 'refreshing', 'stale'].includes(status);
   const [importOpen, setImportOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get('q') || '';
+  const requestedFilter = searchParams.get('filter');
+  const filter = ['attention_required', 'active'].includes(requestedFilter) ? requestedFilter : 'all';
+  const updateBrowse = (changes, replace = false) => setSearchParams(previous => {
+    const next = new URLSearchParams(previous);
+    for (const [key, value] of Object.entries(changes)) {
+      if (!value || value === 'all') next.delete(key);
+      else next.set(key, value);
+    }
+    return next;
+  }, { replace });
+  const setQuery = value => updateBrowse({ q: value }, true);
+  const setFilter = value => updateBrowse({ filter: value });
   const visibleProjects = browseProjects(projects, { query, filter });
 
   const closeImport = () => {
     setImportOpen(false);
     requestAnimationFrame(() => document.getElementById('projects-add-project')?.focus());
   };
-
-  const enterProject = (projectKey) => navigate(routes.projectWork(projectKey));
 
   const handleImported = (payload) => {
     const projectKey = payload?.project?.project_key;
@@ -98,7 +108,7 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
             selected={filter} onSelect={setFilter} count={visibleProjects.length} t={t} />
         ) : null}
         {hasProjects && projects.length > 0 && !visibleProjects.length ? (
-          <div className="collection-empty"><p>{t('collection.noResults')}</p><Button variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>{t('collection.reset')}</Button></div>
+          <div className="collection-empty"><p>{t('collection.noResults')}</p><Button variant="secondary" onClick={() => { updateBrowse({ q: '', filter: 'all' }); }}>{t('collection.reset')}</Button></div>
         ) : null}
         {status === 'loading' ? <ProjectsSkeleton title={t('projects.list.loading')} /> : null}
         {status === 'error' ? (
@@ -129,10 +139,9 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
               const project = item.project;
               return (
                 <li className="project-launcher-entry" key={project.project_key}>
-                <button
-                  type="button"
+                <Link
                   className="project-launcher-row"
-                  onClick={() => enterProject(project.project_key)}
+                  to={routes.projectWork(project.project_key)}
                   aria-label={`${t('projects.launcher.enter')}: ${project.display_name || project.project_key}`}
                 >
                   <span className="project-launcher-row__icon" aria-hidden="true">
@@ -150,7 +159,7 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
                     {t('projects.launcher.enter')}
                     <ArrowRight aria-hidden="true" size={16} />
                   </span>
-                </button>
+                </Link>
                 <FileLocation path={project.root} t={t} />
                 </li>
               );

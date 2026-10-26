@@ -23,7 +23,7 @@ test('refresh revokes old attention links and counts until successful revalidati
   expect(within(overview()).queryByRole('link')).not.toBeInTheDocument();
   expect(within(overview()).queryByRole('definition')).not.toBeInTheDocument();
   expect(within(overview()).getByRole('status')).toHaveTextContent('previous attention snapshot is no longer current');
-  expect(screen.getByRole('button', { name: 'Enter workspace: A' })).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Enter workspace: A' })).toBeVisible();
   await act(async () => pending.reject(new Error('offline')));
   expect(within(overview()).getByRole('status')).toHaveTextContent('Attention is unknown');
   expect(within(overview()).queryByText(/No current workflow/)).not.toBeInTheDocument();
@@ -36,14 +36,14 @@ test('project search cannot filter away a cross-project attention item', async (
   render(page({ listProjects: vi.fn().mockResolvedValue(payload()) }));
   await screen.findByRole('link', { name: /Ship search/ });
   await user.type(screen.getByRole('searchbox'), 'missing project');
-  expect(screen.queryByRole('button', { name: 'Enter workspace: A' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Enter workspace: A' })).not.toBeInTheDocument();
   expect(within(overview()).getByRole('link', { name: /Ship search/ })).toBeVisible();
 });
 
 test('older servers keep launcher navigation and never become an all-clear', async () => {
   const data = payload(); delete data.projects[0].attention;
   render(page({ listProjects: vi.fn().mockResolvedValue(data) }));
-  expect(await screen.findByRole('button', { name: 'Enter workspace: A' })).toBeVisible();
+  expect(await screen.findByRole('link', { name: 'Enter workspace: A' })).toBeVisible();
   expect(within(overview()).getByRole('status')).toHaveTextContent('These projects are not confirmed clear');
   expect(within(overview()).queryByText(/No current workflow/)).not.toBeInTheDocument();
 });

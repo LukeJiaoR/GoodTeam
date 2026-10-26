@@ -86,6 +86,7 @@
 
 /* Base Theme Variables */
 :root {
+  color-scheme: light;
   --surface-base: #F7F7F7;
   --surface-raised: #FFFFFF;
   --surface-sunken: #F1F1F1;
@@ -125,6 +126,7 @@
 
 /* Dark appearance (light/dark only; legacy Vivid/Minimal dataset themes removed) */
 .dark {
+  color-scheme: dark;
   --surface-base: #121212;
   --surface-raised: #1F1F1F;
   --surface-sunken: #151515;

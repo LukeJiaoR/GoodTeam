@@ -454,7 +454,7 @@ test.each([
   renderProjects({ api });
 
   expect(await screen.findByRole('alert')).toHaveTextContent('GoodTeam could not complete this request.');
-  expect(screen.queryByRole('button', { name: /Enter workspace:/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /Enter workspace:/ })).not.toBeInTheDocument();
 });
 
 test('normalizes unknown lifecycle to legacy and keeps the first duplicate key', () => {
@@ -493,7 +493,7 @@ test('survives StrictMode list cancellation and renders only the current request
     </StrictMode>,
   );
 
-  expect(await screen.findByRole('button', { name: 'Enter workspace: Current' })).toBeVisible();
+  expect(await screen.findByRole('link', { name: 'Enter workspace: Current' })).toBeVisible();
   expect(api.listProjects).toHaveBeenCalledTimes(2);
   expect(signals[0].aborted).toBe(true);
   expect(signals[1].aborted).toBe(false);
@@ -514,6 +514,6 @@ test('retry replaces the list error with only the fresh normalized response', as
 
   await user.click(screen.getByRole('button', { name: 'Try again' }));
 
-  expect(await screen.findByRole('button', { name: 'Enter workspace: Fresh' })).toBeVisible();
+  expect(await screen.findByRole('link', { name: 'Enter workspace: Fresh' })).toBeVisible();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });

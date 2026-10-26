@@ -34,7 +34,7 @@ test('project entry paths converge on Work without writing to the target', async
   await expect(page.getByRole('button', { name: 'Start understanding the codebase' })).toHaveCount(0);
 
   await page.goto('/projects');
-  await page.getByRole('button', { name: `Enter workspace: ${fixture.name}` }).click();
+  await page.getByRole('link', { name: `Enter workspace: ${fixture.name}` }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/work$`));
 
   await page.goto(`/projects/${fixture.key}/home`);

@@ -47,6 +47,10 @@ export function useAppearancePreferences() {
   }, [darkMode]);
 
   useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+
+  useEffect(() => {
     if (typeof window.localStorage?.setItem === 'function') {
       window.localStorage.setItem(LANGUAGE_STORAGE_KEY, languagePreference);
     }
