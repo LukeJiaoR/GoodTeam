@@ -47,7 +47,7 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
   const updateBrowse = (changes, replace = false) => setSearchParams(previous => {
     const next = new URLSearchParams(previous);
     for (const [key, value] of Object.entries(changes)) {
-      if (!value || value === 'all') next.delete(key);
+      if (!value || (key === 'filter' && value === 'all')) next.delete(key);
       else next.set(key, value);
     }
     return next;
