@@ -35,7 +35,8 @@ test('all-project attention links preserve exact run/gate identity through keybo
   await expect(notice).toHaveAttribute('data-status', 'current');
   await expect(page.locator('.team-attention[data-attention-id="approval:takeover"]')).toBeFocused();
   await page.goBack();
-  await expect(page).toHaveURL(/\/projects$/);
+  await expect(page).toHaveURL(/\/projects\?q=no-such-project-filter$/);
+  await expect(page.getByRole('searchbox')).toHaveValue('no-such-project-filter');
   await page.goForward();
   await expect(notice).toHaveAttribute('data-status', 'current');
   await expect(page.locator('.team-attention[data-attention-id="approval:takeover"]')).toBeFocused();
