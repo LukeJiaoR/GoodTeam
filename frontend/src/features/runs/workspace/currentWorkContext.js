@@ -72,7 +72,7 @@ export const WORK_CONTEXT_TARGETS = {
   composer: { tab: 'manager', selector: '.team-manager-dock textarea, .work-start-panel textarea' },
   outcomes: { tab: 'outcomes', selector: '.team-pane--outcomes' },
   execution: { tab: 'execution', selector: '.team-pane--execution' },
-  tasks: { tab: 'manager', selector: '#project-task-navigation' },
+  tasks: { tab: 'outcomes', selector: '#project-task-navigation' },
 };
 
 export function focusWorkContext(root, target, { reducedMotion = false, isCurrent = () => true, matches = () => true } = {}) {
@@ -93,7 +93,8 @@ export function focusWorkContext(root, target, { reducedMotion = false, isCurren
     const executionDetails = node.matches('.team-pane--execution')
       ? node.querySelector('.team-execution-disclosure') : node.closest('.team-execution-disclosure');
     if (executionDetails) executionDetails.open = true;
-    node.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'nearest' });
+    const surface = target === 'composer' ? node.closest('.team-manager-dock') || node : node;
+    surface.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'nearest' });
     if (!node.matches('input, textarea, button, a[href]')) node.setAttribute('tabindex', '-1');
     node.focus?.({ preventScroll: true });
   });

@@ -15,7 +15,7 @@
   --studio-text-small: .75rem;
   --studio-text-control: .875rem;
   --studio-text-body: .9375rem;
-  --product-heading-size: clamp(1.5rem, 1.25rem + .5vw, 1.75rem);
+  --product-heading-size: 1.5rem;
   --product-shadow: 0 3px 10px #23232c05, 0 12px 28px #23232c03;
   --product-sticky-offset: 4.5rem;
   display: grid;
@@ -131,21 +131,38 @@
 .product-shell.product-shell--studio .review-view-switcher { border-radius: 999px; background: var(--product-bg); padding: 3px; }
 .product-shell.product-shell--studio .review-view-switcher button { border-radius: 999px; font-size: var(--studio-text-small); }
 .product-shell.product-shell--studio .review-view-switcher button.is-active { background: var(--product-surface); color: var(--product-text); box-shadow: 0 1px 4px #0000000a; }
-/* Work: conversation-first workspace, with task and delivery context as rails. */
+/* Work: Worker status | Chat | History & delivery. */
 .product-shell--studio .work-workspace-shell[data-workspace] {
   --work-bg: var(--product-bg); --work-surface: var(--product-surface); --work-surface-muted: var(--product-bg); --work-surface-sunken: var(--product-surface-muted); --work-material: var(--product-surface); --work-material-deep: var(--product-bg); --work-border: var(--product-border); --work-text: var(--product-text); --work-text-muted: var(--product-text-muted); --work-accent: var(--product-accent); --work-accent-strong: var(--product-accent-strong); --work-accent-soft: var(--product-accent-soft); --work-radius: 18px; --work-shadow-raised: var(--product-shadow); --work-shadow-soft: var(--product-shadow);
 }
-.product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { width: calc(100% - 40px); height: calc(100dvh - 58px); min-height: 580px; padding: 18px 0 20px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { width: calc(100% - 40px); height: calc(100dvh - 58px); min-height: 0; padding: 18px 0 20px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding: 0 4px 12px; margin-bottom: 0; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity strong { font-size: 24px; font-weight: 550; }
+.product-shell--studio .work-workspace-shell[data-workspace] .work-focus-banner__content h2 { font-size: 1.5rem; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-entry h3 { font-size: 1.25rem; }
 .studio-work-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 4px 12px; color: var(--product-text-muted); font-size: var(--studio-text-small); }
-.studio-work-toolbar button { display: inline-flex; align-items: center; gap: 6px; color: var(--product-text-muted); border: 0; background: transparent; cursor: pointer; padding: 5px 8px; border-radius: 8px; }
-.studio-work-toolbar button:hover { background: var(--product-surface); color: var(--product-text); }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace { grid-template-columns: 172px minmax(310px,1fr) minmax(255px,.64fr); gap: 16px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace.team-workspace--composing,
-.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed=true] { grid-template-columns: 172px minmax(0,1fr); grid-template-areas: 'tasks center'; }
+.studio-work-toolbar__actions > button { display: inline-flex; align-items: center; gap: 6px; color: var(--product-text-muted); border: 0; background: transparent; cursor: pointer; padding: 5px 8px; border-radius: 8px; }
+.studio-work-toolbar__actions > button:hover { background: var(--product-surface); color: var(--product-text); }
+.studio-work-toolbar__actions { display: flex; align-items: center; gap: 8px; }
+.studio-project-tools { position: relative; }
+.studio-project-tools > summary { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 8px; cursor: pointer; list-style: none; }
+.studio-project-tools > summary::-webkit-details-marker { display: none; }
+.studio-project-tools > summary:hover { color: var(--product-text); background: var(--product-surface); }
+.studio-project-tools > summary:focus-visible { outline: 2px solid var(--product-focus); outline-offset: 2px; }
+.studio-project-tools__panel { position: absolute; z-index: 30; top: calc(100% + 8px); right: 0; width: min(400px, calc(100vw - 40px)); max-height: 65dvh; overflow: auto; padding: 16px; border: 1px solid var(--product-border); border-radius: 12px; background: var(--product-surface); color: var(--product-text); box-shadow: var(--product-shadow); font-size: 14px; }
+.studio-project-tools__panel > .work-context-disclosure { margin: 0; border: 0; padding: 0; }
+.studio-project-tools__panel .work-context-drawer { display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
+@media (max-width: 767px) {
+  .studio-work-toolbar { flex-wrap: wrap; }
+  .studio-work-toolbar__actions { margin-inline-start: auto; }
+  .studio-project-tools { position: static; }
+  .studio-work-toolbar { position: relative; }
+  .studio-project-tools > summary { min-height: 44px; }
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace { grid-template-columns: minmax(200px,.8fr) minmax(0,1.8fr) minmax(270px,1fr); gap: 16px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed=true] { grid-template-columns: minmax(200px,.8fr) minmax(0,2.8fr); grid-template-areas: 'execution center'; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-task-sidebar { border-right: 0; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation { padding: 8px 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation { padding: 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation__heading { padding: 0 10px; font-size: var(--studio-text-small); font-weight: 500; color: var(--product-text-muted); }
 .product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation button:not(.product-button) { padding: 12px; border-radius: 12px; font-size: var(--studio-text-control); }
 .product-shell--studio .work-workspace-shell[data-workspace] .project-task-navigation button[aria-current=page] { border: 1px solid var(--product-border); background: var(--product-surface); box-shadow: var(--product-shadow); color: var(--product-text); }
@@ -153,23 +170,84 @@
 .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace-center { gap: 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane { border-radius: 18px; background: var(--product-surface); border: 1px solid var(--product-border); box-shadow: var(--product-shadow); }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-pane__header { min-height: 64px; padding: 14px 18px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-pane__header h2 { font-size: 14px; font-weight: 550; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-pane__header h2 { font-size: 1rem; font-weight: 550; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-pane__eyebrow { display: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-avatar--manager { border-radius: 11px; color: var(--product-text-muted); background: var(--product-bg); }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__bubble { border: 0; background: var(--product-bg); border-radius: 16px; padding: 12px 15px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-dock { padding: 16px; border-top: 0; background: var(--product-surface); }
-/* Reserve the input and action row before allocating room to execution.
-   The scrolling transcript must not contribute its full history to that minimum. */
-.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace:not(.team-workspace--composing) .team-pane--manager { min-height: min-content; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__bubble { position: relative; border: 0; background: transparent; border-radius: 0; padding: 0; box-shadow: none; max-width: min(100%, 65ch); flex: 1; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-dock { padding: 12px 20px 20px; border-top: 0; background: var(--product-surface); overflow: visible; }
+/* Reserve the composer; only the transcript consumes the remaining chat height. */
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace .team-pane--manager { min-height: 0; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace:not(.team-workspace--composing) .team-manager-conversation { contain: size; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace:not(.team-workspace--composing) .team-manager-dock { max-height: none; flex-shrink: 0; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace:not(.team-workspace--composing) .conversation-entry-context { max-height: 8rem; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-entry textarea { border: 1px solid var(--product-border); background: var(--product-bg); border-radius: 18px; padding: 15px; font-size: var(--studio-text-control); box-shadow: inset 0 1px 2px #00000002; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace:not(.team-workspace--composing) .team-manager-dock { max-height: none; flex-shrink: 1; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace:not(.team-workspace--composing) .conversation-entry-context { min-height: 1.5rem; max-height: 8rem; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-actor-list { padding: 10px 14px 14px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-actor-list > li { background: var(--product-bg); border: 0; border-radius: 18px; padding: 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-outcome-list > li { background: var(--product-bg); border: 0; border-radius: 15px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .team-pane__header { padding: 16px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane__eyebrow { font-size: var(--studio-text-small); }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes[hidden] { display: none; }
+/* Chat typography and the composer are one scoped presentation contract. */
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager {
+  --chat-body: 1rem;
+  --chat-control: .875rem;
+  --chat-meta: .8125rem;
+  font-size: var(--chat-body);
+  line-height: 1.65;
+  letter-spacing: normal;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-timeline { display: flex; flex-direction: column; gap: .5rem; width: 100%; max-width: 48rem; margin-inline: auto; padding: 1.25rem 1rem; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__bubble :is(p, .md-renderer, .md-list-item, .md-task-item) { font-size: var(--chat-body); line-height: 1.75; color: var(--work-text); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__bubble > p { white-space: pre-wrap; margin: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__meta { justify-content: flex-start; align-items: center; gap: .5rem; margin: .25rem 0 0; min-height: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__meta :is(strong, time, [role="status"]) { font-size: var(--chat-meta); color: var(--work-text-muted); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event[data-actor="user"] .team-manager-event__bubble { flex: 0 1 auto; max-width: 88%; padding: .75rem 1rem; border-radius: 20px; background: var(--product-surface-muted); color: var(--work-text); box-shadow: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event--system { justify-content: flex-start; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-system-chip { display: flex; justify-content: flex-start; gap: .5rem; width: 100%; max-width: 100%; padding: .15rem 0; font-size: var(--chat-control); line-height: 1.6; text-align: start; background: transparent; border-radius: 0; box-shadow: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-system-chip time { font-size: var(--chat-meta); color: var(--work-text-muted); margin-inline-start: auto; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager :is(.project-conversation-scope, .project-conversation-follow, .team-change-context, .project-composer-modes) { font-size: var(--chat-control); line-height: 1.5; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager :is(.team-pane__eyebrow, .team-manager-heading .product-status-badge) { font-size: var(--chat-meta); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-entry { margin: 0; padding: 0; background: transparent; border-radius: 0; box-shadow: none; gap: .5rem; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-composer-modes { border: 0; padding: 0; gap: .25rem; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-composer-modes button { min-height: 2.75rem; padding: .35rem .65rem; font-weight: 400; color: var(--work-text-muted); }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-composer-modes button[aria-pressed="true"] { background: var(--product-surface-muted); color: var(--work-text); border-color: transparent; box-shadow: none; font-weight: 550; border-radius: 999px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor { display: flex; flex-direction: column; flex: 0 0 auto; min-width: 0; border: 1px solid var(--product-border); border-radius: 24px; background: var(--work-surface); transition: border-color 140ms ease, box-shadow 140ms ease; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor:focus-within { border-color: var(--work-text-muted); box-shadow: 0 0 0 1px var(--product-border); }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor > label { display: block; margin: 0; min-width: 0; font-weight: 400; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor textarea { display: block; width: 100%; height: 4rem; min-height: 4rem; max-height: 12rem; padding: 1rem 1rem .4rem; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--work-text); font: inherit; font-size: var(--chat-body); line-height: 1.6; resize: vertical; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor textarea:focus-visible { outline: 0; box-shadow: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor textarea::placeholder { color: var(--work-text-muted); font-weight: 400; opacity: 1; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row { gap: .5rem; padding: .25rem .5rem .5rem; align-items: flex-end; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row .product-button { min-height: 2.75rem; font-size: var(--chat-control); border-radius: 8px; }
+/* ChatGPT reference: quiet message canvas and a single composer surface. */
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event:not(.team-manager-event--system) { margin-block: .75rem; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event > .team-avatar { display: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-system-chip__text { flex: 1; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-system-chip__dot { background: var(--work-text-muted); width: 4px; height: 4px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-heading > .team-avatar { display: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-assistant-settings { border-color: transparent; background: transparent; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-scope { border-bottom: 0; color: var(--work-text-muted); font-size: var(--chat-meta); }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-tools { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem; min-width: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row [data-send-icon="true"] { width: 44px; height: 44px; padding: 0; border-radius: 50%; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row .project-composer-modes { flex-wrap: wrap; gap: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-tools .team-change-context { border: 0; padding: 0; margin: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-tools .team-change-context > button { width: 44px; height: 44px; min-height: 44px; margin: 0; padding: 0; border: 0; background: transparent; color: var(--work-text-muted); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-change-context-help { position: relative; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-change-context-help > summary { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; list-style: none; color: var(--work-text-muted); border-radius: 50%; cursor: pointer; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-change-context-help > summary::-webkit-details-marker { display: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-change-context-help__body { position: absolute; z-index: 10; bottom: calc(100% + 8px); inset-inline-start: -7rem; width: min(18rem, 65vw); max-height: 12rem; overflow: auto; padding: 1rem; background: var(--work-surface); border: 1px solid var(--work-border); border-radius: 12px; box-shadow: var(--product-shadow); font-size: var(--chat-control); }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-message-details { position: relative; margin-inline-start: auto; color: var(--work-text-muted); font-size: var(--chat-meta); }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-message-details > summary { display: flex; align-items: center; justify-content: center; width: 32px; height: 28px; border-radius: 6px; list-style: none; cursor: pointer; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-message-details > summary::-webkit-details-marker { display: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-message-details > div { position: absolute; z-index: 5; inset-inline-end: 0; bottom: 100%; display: grid; gap: .25rem; width: max-content; max-width: 65vw; padding: .5rem .75rem; background: var(--work-surface); border: 1px solid var(--work-border); border-radius: 8px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__meta > .conversation-message-details { position: absolute; inset-inline-end: 0; bottom: -28px; }
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.conversation-message-details, .team-change-context-help) > summary:focus-visible { outline: 2px solid var(--work-focus); outline-offset: 2px; }
+@media (min-width: 768px) {
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace { min-height: 36rem; }
+}
+@media (max-width: 767px) {
+  .product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row { flex-wrap: wrap; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row .product-button { margin-inline-start: auto; }
+}
 /* Preferences are a destination, not a redirect that changes the user's context. */
 .product-shell.product-shell--studio .studio-settings-page { max-width: 880px; }
 .studio-settings-section { padding: 20px 24px; border: 1px solid var(--product-border); border-radius: var(--product-radius); background: var(--product-surface); box-shadow: var(--product-shadow); margin-bottom: 14px; }
@@ -192,10 +270,8 @@
 @media (max-width: 1250px) and (min-width: 768px) {
   .product-shell.product-shell--studio { grid-template-columns: 174px minmax(0,1fr); }
   .product-shell--studio .studio-sidebar { padding-inline: 10px; }
-  .studio-brand { font-size: 15px; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace { grid-template-columns: 135px minmax(280px,1fr) minmax(220px,.65fr); gap: 10px; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace.team-workspace--composing,
-  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed=true] { grid-template-columns: 135px minmax(0,1fr); }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace { grid-template-columns: minmax(145px,.7fr) minmax(0,1.5fr) minmax(200px,1fr); gap: 10px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed=true] { grid-template-columns: minmax(145px,.7fr) minmax(0,2.5fr); }
   .product-shell.product-shell--studio :is(.projects-page,.product-knowledge-page,.team-page,.product-review-page,.studio-settings-page) { width: calc(100% - 40px); }
   .product-shell.product-shell--studio .review-workspace { grid-template-columns: minmax(150px,.7fr) minmax(0,2fr); }
   .product-shell.product-shell--studio .review-inspector { grid-column: 2; position: static; max-height: none; }
@@ -218,7 +294,7 @@
 @media (max-width: 767px) {
   .product-shell.product-shell--studio { display: block; }
   .product-shell--studio .studio-sidebar { position: sticky; height: auto; min-height: 0; padding: 10px 12px 7px; display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 6px; border-right: 0; border-bottom: 1px solid var(--product-border); }
-  .studio-brand { font-size: 15px; padding: 0; }
+  .studio-brand { padding: 0; }
   .studio-brand small, .studio-project-context, .studio-sidebar__hint, .studio-preferences, .studio-topbar__label { display: none; }
   .studio-brand__mark { width: 30px; height: 30px; border-radius: 9px; }
   .studio-sidebar > .studio-navigation__link { grid-row: 1; grid-column: 2; min-height: 32px; padding: 5px 8px; font-size: var(--studio-text-small); }

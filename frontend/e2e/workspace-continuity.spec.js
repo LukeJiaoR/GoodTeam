@@ -32,6 +32,7 @@ test('task context opens explicitly on desktop and narrow screens', async ({ pag
   await summary.click();
   await page.screenshot({ path: testInfo.outputPath('desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('tab', { name: /History & delivery/ }).click();
   await summary.click();
   await expect(disclosure).toHaveAttribute('open', '');
   await expect(disclosure.getByRole('heading', { name: 'Work', exact: true })).toBeVisible();
@@ -80,7 +81,8 @@ test('running workspace keeps the composer usable on short and narrow screens', 
   await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/work$`));
   await expect(page.getByRole('button', { name: 'Inspect details →', exact: true })).toBeVisible();
   await expect(page.locator('.team-workspace')).not.toHaveClass(/team-workspace--composing/);
-  for (const viewport of [{ width: 1440, height: 1000 }, { width: 1280, height: 720 }, { width: 1024, height: 768 }, { width: 390, height: 844 }]) {
+  await expect(page.locator('.team-execution-disclosure')).toHaveJSProperty('open', true);
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 1280, height: 720 }, { width: 1227, height: 763 }, { width: 1024, height: 768 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     const manager = page.locator('.team-pane--manager');
     await manager.scrollIntoViewIfNeeded();
@@ -104,6 +106,14 @@ test('running workspace keeps the composer usable on short and narrow screens', 
       await expect(input).toBeFocused();
     } else {
       await expect(navigation).toBeVisible();
+      const workers = page.locator('.team-pane--execution');
+      const delivery = page.locator('.team-pane--outcomes');
+      const [left, center, right] = await Promise.all([workers.boundingBox(), manager.boundingBox(), delivery.boundingBox()]);
+      expect(left.x + left.width).toBeLessThanOrEqual(center.x);
+      expect(center.x + center.width).toBeLessThanOrEqual(right.x);
+      expect(Math.abs(left.y - center.y)).toBeLessThan(2);
+      expect(Math.abs(right.y - center.y)).toBeLessThan(2);
+      await expect(delivery.getByRole('navigation', { name: 'Project tasks', exact: true })).toBeVisible();
       await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
       await expect(navigation).toBeFocused();
       const execution = page.locator('.team-execution-disclosure');

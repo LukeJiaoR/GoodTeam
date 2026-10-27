@@ -358,8 +358,8 @@ test('does not infer outcome data from a shared role when task identity is absen
 
   renderWorkPage();
 
-  const execution = screen.getByRole('region', { name: 'Execution' });
-  await userEvent.click(execution.querySelector('.team-execution-disclosure > summary'));
+  const execution = screen.getByRole('region', { name: 'Worker status' });
+  expect(execution.querySelector('.team-execution-disclosure')).toHaveAttribute('open');
   expect(within(execution).getByText('Trace the current worker signal')).toBeVisible();
   expect(within(execution).queryByText('Architecture A')).not.toBeInTheDocument();
   expect(within(execution).queryByText('Architecture B')).not.toBeInTheDocument();
@@ -466,7 +466,7 @@ test('keeps an active Operator mission on Work when workflow history has a stale
   renderWorkPage('/projects/DEMO/work');
 
   expect(await screen.findByRole('region', { name: 'Task Assistant' })).toBeVisible();
-  await userEvent.click(document.querySelector('.team-execution-disclosure > summary'));
+  expect(document.querySelector('.team-execution-disclosure')).toHaveAttribute('open');
   expect(screen.getByText('Keep the current Operator mission visible through review.')).toBeVisible();
   expect(screen.getByTestId('location-path')).toHaveTextContent('/projects/DEMO/work');
   if (!document.querySelector('.work-context-disclosure').open) fireEvent.click(screen.getByText('Task & history'));
@@ -880,7 +880,7 @@ test('opens exact review from the mobile Outcomes tab and retains its Outcome ta
   renderWorkPage('/projects/DEMO/work/runs/run-active?mobile=manager-first');
   const tablist = screen.getByRole('tablist', { name: 'Team panes' });
   const managerTab = within(tablist).getByRole('tab', { name: /Task Assistant/ });
-  const outcomesTab = within(tablist).getByRole('tab', { name: /Outcomes/ });
+  const outcomesTab = within(tablist).getByRole('tab', { name: /History & delivery/ });
   const managerPanel = document.getElementById('team-panel-manager');
   const outcomesPanel = document.getElementById('team-panel-outcomes');
   await user.click(outcomesTab);
@@ -1027,7 +1027,7 @@ test.each([false, true])('keeps project chat available while historical task act
 
   renderWorkPage('/projects/DEMO/work/runs/run-history');
 
-  expect(await screen.findByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
+  await screen.findByText('Historical runs are read-only and visually separate from the active run.');
   const historicalWorkspace = document.querySelector('.team-workspace[data-read-only="true"]');
   expect(historicalWorkspace).toBeInTheDocument();
   const manager = historicalWorkspace.querySelector('.team-pane--manager');
@@ -1040,6 +1040,9 @@ test.each([false, true])('keeps project chat available while historical task act
   expect(within(manager).getByRole('textbox', { name: 'Message' })).toBeVisible();
   expect(within(manager).queryByRole('button', { name: 'Approve', exact: true })).not.toBeInTheDocument();
   expect(within(manager).queryByRole('button', { name: 'Cancel entire mission' })).not.toBeInTheDocument();
+  if (mobile) {
+    fireEvent.click(screen.getByRole('tab', { name: /History & delivery/ }));
+  }
   fireEvent.click(screen.getByText('Historical runs are read-only and visually separate from the active run.'));
   const activity = screen.getByRole('list', { name: 'Historical task activity' });
   const request = within(activity).getByText('Ship the earlier OAuth revision');

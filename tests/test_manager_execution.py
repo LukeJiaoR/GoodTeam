@@ -370,6 +370,21 @@ def test_project_question_is_a_valid_read_only_chat_intent():
     assert "current project" in prompt
 
 
+def test_rich_answer_stays_response_text_without_granting_team_authority():
+    from goodteam_os.manager_execution import _parse_chat_turn
+
+    rich = 'Comparison\n\n```goodteam-ui\n' + json.dumps({
+        "type": "chart", "title": "Observed counts", "columns": ["Stage", "Count"],
+        "rows": [["Design", 3], ["Build", 4]],
+    }) + '\n```'
+    parsed = _parse_chat_turn(json.dumps({
+        "intent": "project_question", "response": rich,
+        "team_commands": [{"kind": "delete_worker", "worker_id": "worker-a"}],
+        "team_authorization": "user_authorized",
+    }))
+    assert parsed == {"intent": "project_question", "response": rich}
+
+
 @pytest.mark.parametrize("legacy", [False, True])
 def test_cached_chat_job_keeps_its_original_intake_contract(tmp_path, monkeypatch, legacy):
     class CachedStore:

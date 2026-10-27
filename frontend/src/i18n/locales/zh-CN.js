@@ -121,6 +121,7 @@ export const zhCN = {
   "product.studio.showEvidence": "显示交付面板",
   "product.studio.hideEvidence": "收起交付面板",
   "product.studio.focusConversation": "专注对话",
+  "product.studio.projectTools": "项目工具",
 
   "work.retry.attemptEvidence": "阶段恢复依据：此运行已记录的各次尝试。恢复操作作用于工作流阶段。",
   "work.retry.countUnknown": "未记录",
@@ -979,6 +980,8 @@ export const zhCN = {
   'work.team.execution': '执行',
   'work.team.liveExecution': '团队角色与当前状态',
   'work.team.outcomes': '结果',
+  'work.team.workerStatus': 'Worker 状态',
+  'work.team.historyDelivery': '历史与交付',
   'work.team.deliveryBoard': '核心任务与交付',
   'work.team.convergence': '正在收敛的工作',
   'work.team.outcomeViews': '结果视图',

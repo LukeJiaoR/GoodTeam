@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ArrowUp } from 'lucide-react';
 import Button from '../../../components/ui/Button';
 import ProductError from '../../../components/ui/ProductError';
 import { isChangeDiscussion, sendConversationInput } from './conversationRouting';
@@ -126,25 +127,10 @@ function Composer({
 
   return (
     <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
-      {onQueueTask || (editableIntent && !queuing) ? (
-        <div className="project-composer-modes" aria-label={t('assistant.project.inputMode')}>
-          <button type="button" aria-pressed={!queuing && !changing} onClick={() => {
-            setEntryMode('message');
-            if (changeIntent?.id) setModes((current) => ({ ...current, [changeIntent.id]: 'message' }));
-          }}>{t('work.taskAssistant.message')}</button>
-          {onQueueTask ? <button type="button" aria-pressed={queuing} onClick={() => setEntryMode('new_task')}>
-            {t('assistant.project.newTask')}
-          </button> : null}
-          {editableIntent && !queuing ? <button type="button" aria-pressed={changing} onClick={() => {
-            setEntryMode('message');
-            setModes((current) => ({ ...current, [changeIntent.id]: 'changes' }));
-          }}>{t('work.manager.requestChanges')}</button> : null}
-        </div>
-      ) : null}
       <div className="conversation-entry-context">
       {queuing ? <p className="product-empty-copy">{t('assistant.project.queueBoundary')}</p> : null}
-      <ConversationChangeContext active={!queuing && activeTask} intent={queuing ? null : changeIntent} target={queuing ? null : changeTarget}
-        recordedChange={recordedChange} busy={blocked} onBegin={beginChange} t={t} />
+      {changeIntent ? <ConversationChangeContext active={!queuing && activeTask} intent={queuing ? null : changeIntent} target={queuing ? null : changeTarget}
+        recordedChange={recordedChange} busy={blocked} onBegin={beginChange} t={t} /> : null}
       {changing ? <p className="team-intent-commit__boundary">{t('work.manager.intent.confirmBoundary')}</p> : null}
       {!changing && suggestions.length ? (
         <div className="team-manager-suggestions" aria-label={t('work.taskAssistant.suggestions')}>
@@ -160,10 +146,13 @@ function Composer({
         </div>
       ) : null}
       </div>
+      <div className="conversation-editor">
       <label>
         <span className="sr-only">{t(queuing ? 'assistant.project.newTask' : changing ? 'work.manager.changeReason' : 'work.taskAssistant.message')}</span>
         <textarea
           ref={inputRef}
+          name="conversation-message"
+          autoComplete="off"
           aria-keyshortcuts="Enter"
           onKeyDown={(event) => {
             if (!shouldSubmitConversationOnEnter(event)) return;
@@ -179,10 +168,31 @@ function Composer({
       </label>
       {error || submitError ? <ProductError error={error || submitError} t={t} /> : null}
       <div className="conversation-submit-row">
-      <small className="conversation-keyboard-hint">{t('work.composer.keyboardHint')}</small>
-      <Button busy={sending && !awaitingReply} disabled={blocked || !goal.trim()} type="submit">
-        {t(awaitingReply && !queuing && !changing ? 'work.composer.awaitingReply' : queuing ? 'assistant.project.saveTask' : changing ? 'work.manager.intent.reviewInterpretation' : 'work.taskAssistant.send')}
+      <div className="conversation-tools">
+      {onQueueTask || (editableIntent && !queuing) ? (
+        <div className="project-composer-modes" aria-label={t('assistant.project.inputMode')}>
+          <button type="button" aria-pressed={!queuing && !changing} onClick={() => {
+            setEntryMode('message');
+            if (changeIntent?.id) setModes((current) => ({ ...current, [changeIntent.id]: 'message' }));
+          }}>{t('work.taskAssistant.message')}</button>
+          {onQueueTask ? <button type="button" aria-pressed={queuing} onClick={() => setEntryMode('new_task')}>
+            {t('assistant.project.newTask')}
+          </button> : null}
+          {editableIntent && !queuing ? <button type="button" aria-pressed={changing} onClick={() => {
+            setEntryMode('message');
+            setModes((current) => ({ ...current, [changeIntent.id]: 'changes' }));
+          }}>{t('work.manager.requestChanges')}</button> : null}
+        </div>
+      ) : null}
+        {!changeIntent && !queuing ? <ConversationChangeContext active={activeTask} target={changeTarget}
+          recordedChange={recordedChange} busy={blocked} onBegin={beginChange} t={t} /> : null}
+      </div>
+      <Button busy={sending && !awaitingReply} disabled={blocked || !goal.trim()} type="submit" data-send-icon={!queuing && !changing}
+        title={t('work.composer.keyboardHint')}>
+        {!queuing && !changing ? <ArrowUp size={20} aria-hidden="true" /> : null}
+        <span className={!queuing && !changing ? 'sr-only' : undefined}>{t(awaitingReply && !queuing && !changing ? 'work.composer.awaitingReply' : queuing ? 'assistant.project.saveTask' : changing ? 'work.manager.intent.reviewInterpretation' : 'work.taskAssistant.send')}</span>
       </Button>
+      </div>
       </div>
     </form>
   );

@@ -35,6 +35,7 @@ test('current identity and decision stay visible without opening the context dra
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await testInfo.attach('current-work-dark-1440', { body: await page.screenshot(), contentType: 'image/png' });
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('tab', { name: /History & delivery/ }).click();
     await page.locator('details.work-context-disclosure summary').click();
     await expect(page.locator('.work-run-context')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

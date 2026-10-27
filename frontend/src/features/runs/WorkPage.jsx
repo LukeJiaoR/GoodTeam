@@ -1203,12 +1203,10 @@ export default function WorkPage() {
       />
   );
 
-  return (
-    <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
-      {attentionFocus}
-      {currentContext}
-      <GitRecoveryPanel projectKey={projectKey} language={language} />
+  const executionContext = (<>
       {inputContextRunId ? <TaskInputContext projectKey={projectKey} runId={inputContextRunId} language={language} t={t} /> : null}
+  </>);
+  const historyContext = (<>
       <details className="work-context-disclosure">
         <summary>{t('work.context.taskAndHistory')}</summary>
         <header className="product-page-header work-context-drawer">
@@ -1255,16 +1253,6 @@ export default function WorkPage() {
           </div>
         </header>
       </details>
-      {status === 'stale' ? <ProductError error={error} onRetry={() => { void handleRefreshContext(); }} t={t} /> : null}
-      {status === 'stale' ? <p role="status">{t('work.context.staleActions')}</p> : null}
-      {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
-      {retryConflict ? <section className="task-blocker" role="alert">
-        <p>{t(['retry_target_changed', 'run_binding_mismatch', 'retry_attempt_active', 'retry_attempt_unknown', 'retry_not_available', 'retry_refresh_required'].includes(scopedRetry.error?.code)
-          ? `work.retry.conflict.${scopedRetry.error.code}` : 'work.retry.uncertain')}</p>
-        <p>{t('work.retry.refreshRequired')}</p>
-        <Button variant="secondary" onClick={() => { void handleRefreshContext(); }}>{t('work.retry.refresh')}</Button>
-      </section> : null}
-      <fieldset className="work-interaction-scope" disabled={interactionsPaused}>
       <GoalContinuationPanel
         key={projectKey}
         goals={data.task_assistant_session?.goals || []}
@@ -1283,10 +1271,30 @@ export default function WorkPage() {
         onAction={handleAssistantAction}
         t={t}
       />
+      {isHistorical ? <HistoricalRunSummary language={language} detail={historicalDetail} summary={selectedSummary} projectKey={projectKey} t={t} /> : null}
+  </>);
+
+  return (
+    <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
+      {attentionFocus}
+      {currentContext}
+      {status === 'stale' ? <ProductError error={error} onRetry={() => { void handleRefreshContext(); }} t={t} /> : null}
+      {status === 'stale' ? <p role="status">{t('work.context.staleActions')}</p> : null}
+      {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
+      {retryConflict ? <section className="task-blocker" role="alert">
+        <p>{t(['retry_target_changed', 'run_binding_mismatch', 'retry_attempt_active', 'retry_attempt_unknown', 'retry_not_available', 'retry_refresh_required'].includes(scopedRetry.error?.code)
+          ? `work.retry.conflict.${scopedRetry.error.code}` : 'work.retry.uncertain')}</p>
+        <p>{t('work.retry.refreshRequired')}</p>
+        <Button variant="secondary" onClick={() => { void handleRefreshContext(); }}>{t('work.retry.refresh')}</Button>
+      </section> : null}
+      <fieldset className="work-interaction-scope" disabled={interactionsPaused}>
+      {!hasProjectedWorkspace ? <><GitRecoveryPanel projectKey={projectKey} language={language} />{executionContext}{historyContext}</> : null}
       {hasProjectedWorkspace ? (
         <>
-          {isHistorical ? <HistoricalRunSummary language={language} detail={historicalDetail} summary={selectedSummary} projectKey={projectKey} t={t} /> : null}
           <TeamWorkspace
+            projectTools={<GitRecoveryPanel projectKey={projectKey} language={language} />}
+            executionContext={executionContext}
+            historyContext={historyContext}
             onInspectAttempt={inputContextRunId ? actor => setAttemptSelection({
               scope: retryScope, runId: inputContextRunId, actorId: actor.id, attemptId: actor.current_attempt_id,
             }) : undefined}

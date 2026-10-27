@@ -17,6 +17,8 @@ function sourceBytes(root) {
 }
 
 async function inspect(page, state) {
+  await expect(page.locator('.team-pane--execution').getByRole('region', { name: 'Git baseline and recovery', exact: true })).toHaveCount(0);
+  await page.getByText('Project tools', { exact: true }).click();
   const panel = panelFor(page);
   await panel.getByRole('button', { name: 'Git baseline and recovery', exact: true }).click();
   await expect(panel.getByRole('status')).toHaveText(state);

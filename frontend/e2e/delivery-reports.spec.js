@@ -137,8 +137,8 @@ test('delivery: exact constraints, current reports and archived versions remain 
     const postsBeforeHistory = [...requests];
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/projects/${fixture.key}/work/runs/${runId}`);
+    await page.getByRole('tab', { name: /History & delivery/ }).click();
     await expect(page.getByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
-    await page.getByRole('tab', { name: /Outcomes/ }).click();
     await expect(reports).toContainText('Historical task delivery · read-only');
     await expect(reports).toContainText(finished);
     await expect(reports).toContainText(unverified);
@@ -152,7 +152,7 @@ test('delivery: exact constraints, current reports and archived versions remain 
     await reports.locator('.delivery-report-content').scrollIntoViewIfNeeded();
     await testInfo.attach('delivery-historical-mobile', { body: await page.screenshot(), contentType: 'image/png' });
     await page.reload();
-    await page.getByRole('tab', { name: /Outcomes/ }).click();
+    await page.getByRole('tab', { name: /History & delivery/ }).click();
     await expect(reports).toContainText(finished);
     const current = await snapshot(page, fixture, evidence);
     expect(current.state).toEqual(active.state);

@@ -1,0 +1,76 @@
+/* Chat answers use the application theme and remain within the message column. */
+:is(.chat-rich-table, .chat-rich-chart, .chat-rich-steps, .chat-rich-cards, .chat-rich-flowchart) { min-width: 0; max-width: 100%; margin: 1rem 0; color: var(--product-text); font-size: 14px; line-height: 1.6; }
+:is(.chat-rich-table, .chat-rich-chart, .chat-rich-steps, .chat-rich-cards, .chat-rich-flowchart) :is(h3, h4) { margin: 0 0 .75rem; font-size: 16px; line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; }
+:is(.chat-rich-table, .chat-rich-chart, .chat-rich-steps, .chat-rich-cards) :is(button, input, select, summary) { font: inherit; color: inherit; }
+:is(.chat-rich-table, .chat-rich-chart, .chat-rich-steps, .chat-rich-cards) :is(button, select, summary) { cursor: pointer; }
+:is(.chat-rich-table, .chat-rich-chart, .chat-rich-steps, .chat-rich-cards) :is(button, input, select, summary, [tabindex]):focus-visible { outline: 2px solid var(--product-focus); outline-offset: 2px; }
+.chat-rich-table { border: 1px solid var(--product-border); border-radius: 14px; background: var(--product-surface); overflow: hidden; }
+.chat-rich-table > h3 { padding: 1rem 1rem 0; margin-bottom: 0; }
+.chat-rich-table__toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; padding: .5rem .75rem; }
+.chat-rich-table__search { display: flex; align-items: center; gap: .4rem; flex: 1 1 8rem; min-width: 0; color: var(--product-text-muted); }
+.chat-rich-table__search input { width: 100%; min-width: 0; min-height: 44px; padding: .35rem; border: 0; border-radius: 6px; background: transparent; }
+.chat-rich-table__search input::placeholder { color: var(--product-text-muted); }
+.chat-rich-table__toolbar > button { display: inline-flex; align-items: center; gap: .35rem; min-height: 44px; padding: .35rem .5rem; border: 0; border-radius: 8px; background: transparent; }
+.chat-rich-table__scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.chat-rich-table table { width: 100%; border-collapse: collapse; text-align: start; font-size: 14px; }
+.chat-rich-table th { background: var(--product-surface-muted); font-weight: 550; text-align: start; }
+.chat-rich-table th > button { display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: 100%; min-height: 44px; padding: .5rem .75rem; border: 0; background: transparent; text-align: start; font-weight: inherit; }
+.chat-rich-table th svg { flex-shrink: 0; color: var(--product-text-muted); }
+.chat-rich-table td { min-width: 5rem; padding: .65rem .75rem; border-top: 1px solid var(--product-border); vertical-align: top; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.chat-rich-table__status { display: flex; justify-content: space-between; gap: .5rem; padding: .4rem .75rem; border-top: 1px solid var(--product-border); color: var(--product-text-muted); font-size: 13px; }
+.chat-rich-empty { padding: 1rem; color: var(--product-text-muted); }
+.chat-rich-chart { padding: 1rem; border: 1px solid var(--product-border); border-radius: 14px; background: var(--product-surface); }
+.chat-rich-chart > header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+.chat-rich-chart > header h3 { margin: 0; }
+.chat-rich-chart > header label { display: flex; align-items: center; gap: .4rem; min-width: 0; max-width: 100%; color: var(--product-text-muted); }
+.chat-rich-chart select { min-height: 44px; min-width: 0; max-width: 100%; padding: .35rem .5rem; border: 1px solid var(--product-border); border-radius: 8px; background: var(--product-surface); }
+.chat-rich-chart__bars { display: grid; gap: .25rem; }
+.chat-rich-chart__row { display: grid; grid-template-columns: minmax(3rem, 25%) minmax(0, 1fr) minmax(2rem, auto); align-items: center; gap: .65rem; min-height: 44px; width: 100%; padding: .45rem .5rem; border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: start; }
+.chat-rich-chart__row[aria-pressed=true] { background: var(--product-surface-muted); border-color: var(--product-border); }
+.chat-rich-chart__label { overflow-wrap: anywhere; }
+.chat-rich-chart__plot { position: relative; display: block; height: 20px; }
+.chat-rich-chart__zero { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--product-border); }
+.chat-rich-chart__bar { position: absolute; top: 0; bottom: 0; min-width: 0; border-radius: 4px; background: var(--product-accent); opacity: .8; }
+.chat-rich-chart__row strong { text-align: end; font-weight: 550; font-variant-numeric: tabular-nums; }
+.chat-rich-chart__detail { display: block; min-height: 2.25rem; padding: .5rem; color: var(--product-text-muted); font-size: 13px; }
+.chat-rich-chart__data > summary { min-height: 44px; padding-block: .5rem; color: var(--product-text-muted); }
+.chat-rich-chart__data .chat-rich-table { margin-bottom: 0; }
+.chat-rich-steps > ol { display: grid; gap: .5rem; padding: 0; margin: 0; list-style: none; }
+.chat-rich-steps details { border: 1px solid var(--product-border); border-radius: 12px; background: var(--product-surface); }
+.chat-rich-steps summary { display: flex; align-items: center; gap: .75rem; min-height: 48px; padding: .65rem .75rem; list-style: none; font-weight: 550; overflow-wrap: anywhere; }
+.chat-rich-steps summary::after { content: '+'; margin-inline-start: auto; color: var(--product-text-muted); }
+.chat-rich-steps details[open] summary::after { content: '−'; }
+.chat-rich-steps summary::-webkit-details-marker { display: none; }
+.chat-rich-step-number { display: grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; border-radius: 50%; background: var(--product-surface-muted); color: var(--product-text-muted); font-size: 13px; }
+.chat-rich-preview { padding: .75rem; font-size: 16px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--product-border); }
+.chat-rich-cards__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: .75rem; }
+.chat-rich-cards article { min-width: 0; border: 1px solid var(--product-border); border-radius: 14px; padding: 1rem; background: var(--product-surface); }
+.chat-rich-cards article > p { margin: 0 0 .5rem; color: var(--product-text-muted); font-size: 14px; }
+.chat-rich-cards summary { min-height: 44px; padding-block: .5rem; color: var(--product-text-muted); }
+.chat-rich-cards .chat-rich-preview { padding-inline: 0; }
+.chat-rich-flowchart { border: 1px solid var(--product-border); border-radius: 14px; background: var(--product-surface); overflow: hidden; }
+.chat-rich-flowchart > h3 { padding: 1rem 1rem 0; }
+.chat-rich-flowchart__scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.chat-rich-flowchart__scroll:focus-visible { outline: 2px solid var(--product-focus); outline-offset: -2px; }
+.chat-rich-flowchart__canvas { position: relative; margin-inline: auto; }
+.chat-rich-flowchart svg { position: absolute; inset: 0; max-width: none; fill: var(--product-text-muted); font-family: inherit; font-size: 13px; }
+.chat-rich-flowchart__edge { fill: none; stroke: var(--product-text-muted); stroke-width: 1.5; }
+.chat-rich-flowchart text { font-size: 13px; paint-order: stroke; stroke: var(--product-surface); stroke-width: 5px; stroke-linejoin: round; }
+.chat-rich-flowchart__node { position: absolute; display: grid; place-items: center; padding: 8px 18px; border: 1px solid var(--product-border); border-radius: 10px; background: var(--product-surface-muted); text-align: center; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.chat-rich-flowchart__node[data-kind=terminal] { border-radius: 48px; }
+.chat-rich-flowchart__node[data-kind=decision] { border: 0; border-radius: 0; background: var(--product-accent); color: var(--product-surface); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); padding-inline: 38px; }
+.chat-rich-flowchart > details { padding: .5rem 1rem; border-top: 1px solid var(--product-border); color: var(--product-text-muted); }
+.chat-rich-flowchart summary { min-height: 44px; padding-block: .5rem; cursor: pointer; }
+.chat-rich-flowchart summary:focus-visible { outline: 2px solid var(--product-focus); outline-offset: 2px; }
+.chat-rich-flowchart details ul { margin: .5rem 0; padding-inline-start: 1.25rem; overflow-wrap: anywhere; }
+@media (hover: hover) and (pointer: fine) {
+  .chat-rich-table button { transition: background-color 140ms ease, color 140ms ease; }
+  .chat-rich-table button:hover { background: var(--product-surface-muted); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-rich-table button { transition: none; }
+}
+@media (max-width: 767px) {
+  .chat-rich-table__search input { font-size: 16px; }
+  .chat-rich-chart { padding: .75rem; }
+}
