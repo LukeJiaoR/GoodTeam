@@ -50,6 +50,7 @@ test('Goal history uses canonical identity, real paginated HTTP reads and histor
   ]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto(route);
+    if (width < 768) await page.getByRole('tab', { name: /History & delivery/ }).click();
     const latest = page.getByRole('article', { name: 'Latest Goal', exact: true });
     await expect(latest).toContainText('History goal 22');
     await expect(history.locator(':scope > details')).toHaveCount(0);
@@ -79,6 +80,7 @@ test('Goal history uses canonical identity, real paginated HTTP reads and histor
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await testInfo.attach(`goal-history-${width}`, { body: await page.screenshot(), contentType: 'image/png' });
     await page.reload();
+    if (width < 768) await page.getByRole('tab', { name: /History & delivery/ }).click();
     await expect(history.locator(':scope > details')).toHaveCount(0);
     await expect(history.getByRole('button', { name: 'Load older goals' })).toBeVisible();
   }

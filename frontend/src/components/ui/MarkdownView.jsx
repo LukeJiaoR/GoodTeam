@@ -1,6 +1,8 @@
 /* eslint-disable react-refresh/only-export-components -- parsing utilities are exported for unit tests. */
 import { useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
+import ChatRichContent, { InteractiveTable } from './ChatRichContent';
+import { parseChatRichContent } from './chatRichContentParser';
 
 /**
  * Validates whether a line is a GFM table separator row (e.g. |---|:---:|---:|).
@@ -342,7 +344,7 @@ function CodeBlock({ lang, content }) {
   );
 }
 
-export default function MarkdownView({ content, className = '', resolveLink }) {
+export default function MarkdownView({ content, className = '', resolveLink, interactive = false, language = 'en' }) {
   const blocks = useMemo(() => parseMarkdownBlocks(content), [content]);
 
   if (!content) return null;
@@ -367,6 +369,8 @@ export default function MarkdownView({ content, className = '', resolveLink }) {
             );
           }
           case 'code': {
+            const rich = interactive && block.lang === 'goodteam-ui' ? parseChatRichContent(block.content) : null;
+            if (rich) return <ChatRichContent key={`${idx}:${block.content}`} value={rich} language={language} renderCell={value => renderInlineMarkdown(value, resolveLink)} />;
             return <CodeBlock key={idx} lang={block.lang} content={block.content} />;
           }
           case 'blockquote': {
@@ -377,6 +381,7 @@ export default function MarkdownView({ content, className = '', resolveLink }) {
             );
           }
           case 'table': {
+            if (interactive) return <InteractiveTable key={`${idx}:${JSON.stringify(block)}`} headers={block.headers} rows={block.rows} language={language} renderCell={value => renderInlineMarkdown(value, resolveLink)} />;
             return (
               <div key={idx} className="md-table-wrap">
                 <table className="md-table">

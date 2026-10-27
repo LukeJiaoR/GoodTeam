@@ -63,6 +63,7 @@ test('Goal confirmation and exact one-unit gate remain explicit on desktop and m
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
+  await page.getByRole('tab', { name: /History & delivery/ }).click();
   await expect(panel).toContainText('Run: browser-bound-run');
   expect(commands).toHaveLength(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -113,6 +114,7 @@ test('Goal workflow approval waiting uses the current review panel and stays dis
   const url = page.url();
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
+    if (width < 768) await page.getByRole('tab', { name: /History & delivery/ }).click();
     await panel.getByRole('button', { name: 'Review workflow approval' }).click();
     const review = page.getByRole('dialog', { name: 'Review', exact: true });
     await expect(review).toBeVisible();
@@ -124,11 +126,13 @@ test('Goal workflow approval waiting uses the current review panel and stays dis
   }
   goal = { ...goal, work_units: [{ ...goal.work_units[0], observed_execution_status: 'blocked' }] };
   await page.reload();
+  await page.getByRole('tab', { name: /History & delivery/ }).click();
   await expect(panel).toContainText('Execution status: Blocked');
   await expect(panel.getByRole('button', { name: 'Review workflow approval' })).toHaveCount(0);
   for (const status of ['stopped', 'canceled']) {
     goal = { ...goal, status, work_units: [{ ...goal.work_units[0], observed_execution_status: 'awaiting_approval' }] };
     await page.reload();
+    await page.getByRole('tab', { name: /History & delivery/ }).click();
     await expect(panel).toContainText(status === 'stopped' ? 'Stopped' : 'Canceled');
     await expect(panel.getByRole('button', { name: 'Review workflow approval' })).toHaveCount(0);
     await expect(panel.getByRole('button', { name: 'Stop continuation' })).toHaveCount(0);

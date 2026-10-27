@@ -121,6 +121,7 @@ export const en = {
   "product.studio.showEvidence": "Show delivery panel",
   "product.studio.hideEvidence": "Hide delivery panel",
   "product.studio.focusConversation": "Focus conversation",
+  "product.studio.projectTools": "Project tools",
 
   "work.retry.attemptEvidence": "Recovery evidence: recorded attempts from this run. Recovery applies to the workflow stage.",
   "work.retry.countUnknown": "not recorded",
@@ -979,6 +980,8 @@ export const en = {
   'work.team.execution': 'Execution',
   'work.team.liveExecution': 'Team roles and current state',
   'work.team.outcomes': 'Outcomes',
+  'work.team.workerStatus': 'Worker status',
+  'work.team.historyDelivery': 'History & delivery',
   'work.team.deliveryBoard': 'Outcomes & delivery',
   'work.team.convergence': 'What is converging',
   'work.team.outcomeViews': 'Outcome views',
