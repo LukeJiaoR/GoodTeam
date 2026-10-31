@@ -171,7 +171,7 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
 def latest_iteration_choice(session: dict[str, Any] | None, snapshot: dict[str, Any]) -> dict[str, Any] | None:
     """Show a persisted choice only while its task-ledger revision is current."""
     for event in reversed((session or {}).get("timeline", [])):
-        if event.get("event") != "project_iteration_choice_recorded":
+        if not isinstance(event, dict) or event.get("event") != "project_iteration_choice_recorded":
             continue
         choice = (event.get("details") or {}).get("choice")
         if not isinstance(choice, dict) or choice.get("schema_version") != "project_iteration_choice.v1":
