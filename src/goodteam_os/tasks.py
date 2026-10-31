@@ -1,4 +1,5 @@
 import fcntl
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -58,6 +59,13 @@ STAGE_TASKS = (
         "role": "release",
     },
 )
+
+
+def task_evidence_digest(task: dict[str, Any]) -> str:
+    """Exact project task identity, independently of unrelated backlog edits."""
+    return "sha256:" + hashlib.sha256(
+        json.dumps(task, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
 
 
 class LocalTaskStore:
@@ -163,6 +171,44 @@ class LocalTaskStore:
             self._write(ledger)
             return updated
         raise ValueError(f"Unknown task id: {task_id}")
+
+    @_locked
+    def claim_project_workflow(self, task_id: str, *, expected_digest: str, run_id: str) -> dict[str, Any]:
+        """Claim a Manager-selected task for the EXISTING Workflow, not a new engine.
+
+        Reserve before external Worker effects. A lost start response leaves the
+        bound identity inspectable; the same run may reconcile, never replace
+        an unknown outcome or silently claim another workflow.
+        """
+        if not isinstance(run_id, str) or not run_id.startswith("task-") or len(run_id) > 200:
+            raise ValueError("Project task requires an existing Task Assistant run identity.")
+        ledger = self._read()
+        tasks = list(ledger["tasks"])
+        known = {task["id"]: task for task in tasks}
+        current = known.get(task_id)
+        if current is None:
+            raise ValueError("Manager project task is missing.")
+        if current.get("run_id") == run_id and current["status"] == "in_progress":
+            return dict(current)
+        if current["status"] != "todo" or current.get("run_id"):
+            raise ValueError("Project task was already claimed by another execution.")
+        if not isinstance(expected_digest, str) or task_evidence_digest(current) != expected_digest:
+            raise ValueError("Project task evidence changed since Manager selected it.")
+        if any(known.get(dep, {}).get("status") != "done" for dep in current.get("dependencies", [])):
+            raise ValueError("Project task has unfinished dependencies.")
+        if current.get("execution_policy") == "read_only":
+            raise ValueError("A read-only task cannot enter a writing Workflow.")
+        claimed = {
+            **current, "status": "in_progress", "run_id": run_id,
+            "execution_origin": "manager_project_iteration", "updated_at": self._now(),
+        }
+        for index, task in enumerate(tasks):
+            if task["id"] == task_id:
+                tasks[index] = claimed
+                break
+        ledger["tasks"] = tasks
+        self._write(ledger)
+        return dict(claimed)
 
     @_locked
     def upsert_external_task(self, *, external_ref: str, **fields: Any) -> dict[str, Any]:
