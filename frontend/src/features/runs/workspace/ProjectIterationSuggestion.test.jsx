@@ -40,6 +40,28 @@ describe('project iteration planning', () => {
     expect(onPlan).not.toHaveBeenCalled();
   });
 
+  it('renders a parallel batch as advice, not launched Workers', () => {
+    const onPlan = vi.fn();
+    const choice = {
+      schema_version: 'project_iteration_choice.v1',
+      backlog_version: 'sha256:abc', status: 'recommended',
+      execution_mode: 'parallel', selected_task_id: 'DEMO-7',
+      selected_task_ids: ['DEMO-7', 'DEMO-8'],
+      selected_tasks: [
+        { task_id: 'DEMO-7', title: 'Fix booking validation' },
+        { task_id: 'DEMO-8', title: 'Improve invoice preview' },
+      ],
+      rationale: 'The two tasks have declared disjoint paths, but execution isolation is not verified.',
+      parallel_execution_authorized: false,
+    };
+    render(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} onPlan={onPlan} language="en" />);
+    expect(screen.getByText(/Manager recommends parallel tasks/)).toBeInTheDocument();
+    expect(screen.getByText('DEMO-7 — Fix booking validation')).toBeInTheDocument();
+    expect(screen.getByText('DEMO-8 — Improve invoice preview')).toBeInTheDocument();
+    expect(screen.getByText(/no workers launched, isolation or merge verified/)).toBeInTheDocument();
+    expect(onPlan).not.toHaveBeenCalled();
+  });
+
   it('invalidates old decisions after the source backlog version changes', () => {
     const oldChoice = {
       schema_version: 'project_iteration_choice.v1', backlog_version: 'sha256:old',
