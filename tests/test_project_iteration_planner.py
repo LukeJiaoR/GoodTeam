@@ -204,6 +204,8 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     assert len(queue) == 2
     assert [item["project_task_id"] for item in queue] == [task_a["id"], task_b["id"]]
     assert all(item["confirmed"] is False and item["status"] == "queued" for item in queue)
+    assert all(item["source_message_ids"] == [] for item in queue)
+    assert all(item["source_event_id"] == f"iteration-choice:{snapshot['version']}" for item in queue)
     assert all(item["run_id"] == "" for item in queue)
     assert ledger.get_task(task_a["id"])["status"] == "todo"
 
@@ -226,6 +228,14 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     with pytest.raises(ValueError, match="changed"):
         require_queued_project_task(project, "DEMO", first_draft)
     assert require_queued_project_task(project, "DEMO", queue[1])["id"] == task_b["id"]
+    edited = session_store._mutate(lambda original: _apply(original, {
+        "action": "edit_queued_task", "proposal_id": queue[1]["id"],
+        "expected_revision": 1, "text": "Human-edited scope", "message_id": "human-edit-1",
+    }))["queued_task_proposals"][1]
+    assert edited["source"] == "human_edited"
+    assert "project_task_id" not in edited and "source_event_id" not in edited
+    assert edited["source_message_ids"] == ["human-edit-1"]
+    assert ledger.get_task(task_b["id"])["status"] == "todo"
 
     # Actual Workflow completion is not identical to integrated delivery:
     # reconciliation exposes review-required evidence and does NOT mark done.
