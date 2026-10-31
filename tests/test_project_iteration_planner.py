@@ -154,3 +154,47 @@ def test_dependency_state_changes_invalidate_choice():
     assert first["version"] != second["version"]
     assert first["next_candidate"] is None
     assert second["next_candidate"]["task_id"] == "T-1"
+
+
+
+def test_active_workflow_cannot_be_bypassed_by_iteration_selection(tmp_path):
+    from goodteam_os.state import StateStore, create_initial_state
+
+    root = tmp_path / "project"
+    root.mkdir()
+    store = LocalTaskStore(root, "DEMO")
+    task(store, "A candidate")
+    snapshot = project_iteration_backlog(root, "DEMO")
+    state = create_initial_state("live-run", "DEMO", "Live task")
+    state.current_node = "implementation"
+    state.next_node = "code_review"
+    StateStore(tmp_path).write_project_current(state)
+    with pytest.raises(ValueError, match="active workflow"):
+        plan_next_iteration(
+            workspace=tmp_path, project_key="DEMO", root=root,
+            project_config=tmp_path / "project.yaml",
+            expected_backlog_version=snapshot["version"],
+            confirmed=True, manager_runner=lambda **_: pytest.fail("Model was invoked"),
+        )
+
+
+def test_active_goal_cannot_be_bypassed_by_iteration_selection(tmp_path):
+    from goodteam_os.goals import GoalStore
+
+    root = tmp_path / "project"
+    root.mkdir()
+    store = LocalTaskStore(root, "DEMO")
+    task(store, "Another candidate")
+    snapshot = project_iteration_backlog(root, "DEMO")
+    GoalStore(tmp_path, "DEMO").create_goal(
+        objective="Deliver a bounded goal", acceptance_criteria=["A real test passes"],
+        allowed_scope=["docs"], max_work_units=1, confirmed=True,
+        idempotency_key="goal-unit-test",
+    )
+    with pytest.raises(ValueError, match="active Goal"):
+        plan_next_iteration(
+            workspace=tmp_path, project_key="DEMO", root=root,
+            project_config=tmp_path / "project.yaml",
+            expected_backlog_version=snapshot["version"],
+            confirmed=True, manager_runner=lambda **_: pytest.fail("Model was invoked"),
+        )
