@@ -14,6 +14,7 @@ import AssistantControls from './AssistantControls';
 import AssistantPendingReply from './AssistantPendingReply';
 import ConversationComposer from './ConversationComposer';
 import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
+import ProjectIterationSuggestion from './ProjectIterationSuggestion';
 
 function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, assistantFocusKey, visible, language, hasPendingItems, t, children }) {
   const conversationRef = useRef(null);
@@ -80,6 +81,8 @@ export default function ProjectConversation({
   t,
   suggestions,
   proposedTask,
+  iterationBacklog,
+  canPlanIteration = false,
   onQueueTask,
   contextTitle,
   onClearContext,
@@ -129,6 +132,8 @@ export default function ProjectConversation({
         <span>{contextTitle ? t('assistant.project.taskContext', { title: contextTitle }) : t('assistant.project.projectContext')}</span>
         {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
       </div>
+      <ProjectIterationSuggestion snapshot={iterationBacklog} onPlan={onStart}
+        disabled={!canPlanIteration || Boolean(busy) || Boolean(assistantBusy)} language={language} />
       <ConversationReadingFrame key={scope} scope={scope} timeline={timeline || []} attentionKey={attentionKey}
         deliveryKey={deliveryKey} assistantFocusKey={`${assistantState?.pending_team_decision?.id || ''}:${requestStatus || ''}`}
         visible={!sectionProps?.hidden} language={language} hasPendingItems={hasPendingItems} t={t}>
