@@ -93,3 +93,17 @@ def test_manager_chat_receives_project_backlog_without_auto_dispatch(tmp_path):
     assert '"execution_authorized": false' in context
     assert session["proposed_task"] is None
     assert executor.started == []
+
+
+def test_iteration_preview_never_creates_task_even_if_manager_misclassifies(tmp_path):
+    from test_assistant_drafts import send, setup_service
+
+    service, root, executor, _calls = setup_service(
+        tmp_path, turn={"intent": "work_request", "response": "Ready to implement."},
+    )
+    result = send(service, root,
+                  "GoodTeam project iteration preview (read-only).\n"
+                  "Evaluate the next backlog candidate, do not execute.")
+    assert result["proposed_task"] is None
+    assert result["timeline"][-1]["event"] == "project_question_answered"
+    assert executor.started == []
