@@ -32,6 +32,19 @@ mutating smoke commands against an active real project workspace.
 
 ### Exact-SHA candidate CI
 
+**CI PAUSED — 2026-10-31 (explicit owner decision):** GitHub-hosted automatic
+PR CI, candidate-publication and candidate-reconciliation workflows are
+temporarily disabled. The manual workflow definitions are retained for later
+reactivation. Do **not** publish candidate branches or dispatch manual
+GitHub Actions CI for ordinary development during this pause. The
+exact-SHA candidate workflow steps below are suspended until the owner
+explicitly re-enables CI. Continue focused local/unit, lint, and isolated
+smoke checks appropriate to the change; report observed results, skipped
+checks and unverified risks truthfully. An old green SHA is never proof for
+a new head. Keep approval, isolation, secrets, review and source-identity
+requirements. Merging during the pause needs an explicit, evidence-informed
+maintainer decision; do not imply that CI passed.
+
 Follow `docs/candidate-validation.md` for publication, dispatch, evidence, and
 recovery details.
 
