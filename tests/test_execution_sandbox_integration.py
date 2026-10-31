@@ -14,7 +14,7 @@ from goodteam_os.execution.models import ExecutionRunStatus
 from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.workers import WorkerJobStore
 
-from tests.test_execution_orchestrator import FakeClock, FakeGitHubClient, _snapshot as _orchestrator_snapshot
+from execution_fixture import FakeClock, FakeGitHubClient, _snapshot as _orchestrator_snapshot
 
 
 def _snapshot() -> GitHubIssueSnapshot:
