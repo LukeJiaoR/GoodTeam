@@ -1,0 +1,86 @@
+"""Ten is a real direct-dispatch concurrency bound, not a planning limit."""
+
+from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
+from threading import Barrier, BrokenBarrierError, Lock
+
+import pytest
+
+import goodteam_os.dispatch as dispatch_module
+from goodteam_os.dispatch import dispatch_tracks
+from goodteam_os.parallel_capacity import DEFAULT_MAX_CONCURRENT_WORKERS, dispatch_pool_size
+from test_dispatch_isolation import repository
+
+
+@pytest.mark.parametrize("jobs,expected", [(1, 1), (3, 3), (10, 10), (11, 10), (25, 10)])
+def test_dispatch_pool_size_is_bounded_but_planned_job_count_is_not(jobs, expected):
+    assert DEFAULT_MAX_CONCURRENT_WORKERS == 10
+    assert dispatch_pool_size(jobs) == expected
+
+
+@pytest.mark.parametrize("jobs", [0, -1, True, 1.0, "10"])
+def test_dispatch_pool_size_rejects_invalid_counts(jobs):
+    with pytest.raises(ValueError, match="positive job count"):
+        dispatch_pool_size(jobs)
+
+
+def test_real_dispatch_queues_the_eleventh_worker_without_losing_it(tmp_path, monkeypatch):
+    """Exercise the existing isolated dispatch seam with credential-free workers.
+
+    All jobs must be represented in the result; at most ten may enter the
+    worker runner simultaneously. The test double does not claim real-model
+    quality, actual code integration or project-level multi-run concurrency.
+    """
+    source = repository(tmp_path / "source")
+    roles = [
+        "research", "product_requirement", "architect", "review", "planner",
+        "ui", "implementation", "frontend", "backend", "qa", "code_review",
+    ]
+    tracks = [{"role":role, "adapter":"fake", "task":"Do not change the checkout."}
+              for role in roles]
+
+    recorded_pool_sizes = []
+
+    class CapturingPool(RealThreadPoolExecutor):
+        def __init__(self, *args, **kwargs):
+            recorded_pool_sizes.append(kwargs.get("max_workers"))
+            super().__init__(*args, **kwargs)
+
+    worker_runner = dispatch_module._run_dispatched_job
+    gate = Barrier(DEFAULT_MAX_CONCURRENT_WORKERS, timeout=15)
+    lock = Lock()
+    active = 0
+    peak = 0
+    started = []
+
+    def observed_runner(project_root, job, verify_commands, **kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(active, peak)
+            started.append(job["id"])
+        try:
+            # Ten simultaneous entrants prove the extra job must wait.
+            try:
+                gate.wait()
+            except BrokenBarrierError as exc:
+                pytest.fail(f"Expected ten worker slots to be schedulable: {exc}")
+            return worker_runner(project_root, job, verify_commands, **kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(dispatch_module, "ThreadPoolExecutor", CapturingPool)
+    monkeypatch.setattr(dispatch_module, "_run_dispatched_job", observed_runner)
+
+    result = dispatch_tracks(project_root=source, tracks=tracks,
+                             logical_task_id="limit-ten-concurrent-workers")
+    assert recorded_pool_sizes == [10]
+    assert peak == 10
+    assert len(started) == len(roles) == len(result["jobs"]) == 11
+    assert len({job["job_id"] for job in result["jobs"]}) == 11
+    assert result["worker_capacity"] == {
+        "configured_max_concurrent_workers": 10,
+        "pool_size": 10,
+        "scheduled_jobs": 11,
+        "jobs_beyond_initial_capacity": 1,
+    }
