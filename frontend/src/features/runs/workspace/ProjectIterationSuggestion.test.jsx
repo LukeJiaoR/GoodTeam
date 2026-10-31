@@ -38,11 +38,22 @@ describe('project iteration recommendation', () => {
       rationale: 'These independent tasks have disjoint declared paths.',
       max_simultaneous_workers_per_dispatch: 10,
     };
-    render(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} />);
+    const onQueue = vi.fn();
+    const view = render(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} onQueue={onQueue} />);
     fireEvent.click(screen.getByText('View candidate tasks (16)'));
     expect(screen.getByText('DEMO-16 — Task 16')).toBeInTheDocument();
     expect(screen.getByText(/Direct-dispatch cap: 10 concurrent Workers/)).toBeInTheDocument();
     expect(screen.getByText(/no workers launched, isolation or merge verified/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Queue selected tasks in existing workflow' }));
+    expect(onQueue).toHaveBeenCalledExactlyOnceWith({
+      action: 'queue_iteration_choice',
+      expected_backlog_version: snapshot.version,
+      confirmed: true,
+    });
+    view.rerender(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} onQueue={onQueue}
+      queuedTasks={tasks.map(item => ({ project_task_id: item.task_id, status: 'queued' }))} />);
+    expect(screen.getByText(/In the existing task queue/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Queue selected tasks in existing workflow' })).not.toBeInTheDocument();
   });
 
   it('marks an old recommendation stale after the backlog changes', () => {
