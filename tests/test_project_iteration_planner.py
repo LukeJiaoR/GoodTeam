@@ -7,6 +7,7 @@ from goodteam_os.project_iteration import (
     validate_iteration_choice,
 )
 from goodteam_os.project_iteration_planner import plan_next_iteration
+from goodteam_os.assistant_queue import queue_manager_iteration_choice, require_queued_project_task, _apply
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
@@ -186,6 +187,40 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     choice = latest_iteration_choice(read, snapshot)
     assert choice["selected_task_ids"] == [task_a["id"], task_b["id"]]
     assert choice["execution_authorized"] is False
+
+    # A Manager recommendation enters the SAME durable queue used by a human
+    # request. No special Manager dispatcher, duplicate task or provider call.
+    handoff = dict(workspace=tmp_path, project_key="DEMO", root=project,
+                   expected_backlog_version=snapshot["version"])
+    first_queue = queue_manager_iteration_choice(**handoff)
+    again = queue_manager_iteration_choice(**handoff)
+    assert first_queue["workflow_started"] is False
+    assert first_queue["queued_proposal_ids"] == again["queued_proposal_ids"]
+    persisted = TaskAssistantSessionStore(tmp_path, "DEMO").read()
+    queue = persisted["queued_task_proposals"]
+    assert len(queue) == 2
+    assert [item["project_task_id"] for item in queue] == [task_a["id"], task_b["id"]]
+    assert all(item["confirmed"] is False and item["status"] == "queued" for item in queue)
+    assert all(item["run_id"] == "" for item in queue)
+    assert ledger.get_task(task_a["id"])["status"] == "todo"
+
+    # Existing select->draft->confirm->start claims the original project task,
+    # and a replay can only reuse its *same* run identity.
+    first_draft = _apply(persisted, {
+        "action": "select_queued_task", "proposal_id": queue[0]["id"],
+        "expected_revision": 1,
+    })["proposed_task"]
+    task_record = require_queued_project_task(project, "DEMO", first_draft)
+    assert task_record["id"] == task_a["id"]
+    run_id = f"task-{first_draft['id']}"
+    claimed = ledger.claim_project_workflow(task_a["id"],
+        expected_digest=first_draft["project_task_digest"], run_id=run_id)
+    assert claimed["run_id"] == run_id and claimed["status"] == "in_progress"
+    assert ledger.claim_project_workflow(task_a["id"],
+        expected_digest=first_draft["project_task_digest"], run_id=run_id) == claimed
+    with pytest.raises(ValueError, match="changed"):
+        require_queued_project_task(project, "DEMO", first_draft)
+    assert require_queued_project_task(project, "DEMO", queue[1])["id"] == task_b["id"]
 
 
 def test_full_planning_inventory_is_not_limited_by_ui_candidate_preview(tmp_path):
