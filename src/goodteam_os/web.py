@@ -2607,7 +2607,7 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
     approval_reviews = build_approval_reviews(state, workspace=workspace)
     action_items = build_action_items(workspace, project_key=project_key)
     agile_board = build_agile_board(state)
-    from goodteam_os.project_iteration import project_iteration_backlog
+    from goodteam_os.project_iteration import project_iteration_backlog, latest_iteration_choice
     iteration_backlog = project_iteration_backlog(project_root, project_key)
     worker_job_records = WorkerJobStore(project_root).list_jobs() if project_root is not None else []
     worker_jobs = _serialize_worker_job_items(worker_job_records)
@@ -2652,6 +2652,7 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
         "smoke_run_items": build_smoke_run_items(workspace),
         "agile_board": agile_board,
         "iteration_backlog": iteration_backlog,
+        "iteration_choice": latest_iteration_choice(task_assistant_session, iteration_backlog),
         "worker_jobs": worker_jobs,
         # Team projection can migrate configuration; version its final config
         # against the same persisted state, not the display-only revision hint.
@@ -6359,6 +6360,24 @@ def handle_project_api_post(
                 result["projection_unavailable"] = True
             return 200, result
         key, target, root = _project_target_and_root(workspace, key)
+        if action == "plan_next_iteration":
+            from goodteam_os.project_iteration_planner import plan_next_iteration
+
+            try:
+                result = plan_next_iteration(
+                    workspace=workspace, project_key=key, root=root,
+                    project_config=_project_config_for_key(workspace, key),
+                    expected_backlog_version=request.get("expected_backlog_version"),
+                    confirmed=request.get("confirmed") is True,
+                )
+                result["task_assistant_session"] = TaskAssistantService(
+                    workspace, project_config=_project_config_for_key(workspace, key),
+                ).session(key, root)
+                return 200, result
+            except ManagerExecutionError as exc:
+                raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
+            except ValueError as exc:
+                raise ProjectApiError("iteration_plan_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
         if action in {"create_goal", "decide_goal_gate", "retry_goal_assessment"}:
             from goodteam_os.goal_continuation import handle_goal_action
 
