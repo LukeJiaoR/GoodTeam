@@ -113,6 +113,10 @@ def edit_draft(store, request):
         proposal.update(exact_request=text, revision=proposal["revision"] + 1,
                         source_message_ids=[*proposal["source_message_ids"], message_id], pending_change=None)
         proposal.pop("needs_clarification", None)
+        # A human edit is a new task, not the Manager-selected source task.
+        for field in ("project_task_id", "project_task_digest"):
+            proposal.pop(field, None)
+        proposal["source"] = "human_edited"
         session["proposed_task"] = proposal
         return session
     return store._mutate(mutate)
@@ -136,6 +140,9 @@ def resolve_draft(store, request):
             proposal["source_message_ids"] = (([*proposal["source_message_ids"]] if choice == "append" else [])
                                               + change.get("source_message_ids", [change["message_id"]]))
             proposal.pop("needs_clarification", None)
+            for field in ("project_task_id", "project_task_digest"):
+                proposal.pop(field, None)
+            proposal["source"] = "human_edited"
         proposal.update(revision=proposal["revision"] + 1, pending_change=None)
         session["proposed_task"] = proposal
         session["timeline"].append({"message_id": f"draft:{proposal['id']}:{proposal['revision']}", "actor": "system",
@@ -210,6 +217,8 @@ def confirm_and_prepare(service, *, project_key, root, request):
 
                 reject_missing_task_context(TaskSkillIdentity("workflow_run", project_key, f"task-{proposal_id}"))
         else:
+            from goodteam_os.assistant_queue import require_queued_project_task
+            require_queued_project_task(root, project_key, proposal)
             from goodteam_os.skills.task_locks import TaskSkillIdentity
             from goodteam_os.skills.task_start import capture_task_start
 
