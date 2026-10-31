@@ -28,6 +28,12 @@ def handle_queue_action(service, *, project_key, root, request):
         if action == "select_queued_task":
             if active_project_run(service.workspace, project_key):
                 raise ValueError("Finish or cancel the active task before preparing another task.")
+            queued = next(
+                (item for item in store.read().get("queued_task_proposals", [])
+                 if item.get("id") == request.get("proposal_id")), None
+            )
+            if queued is not None and queued.get("status") == "queued":
+                require_queued_project_task(root, project_key, queued)
             archive_terminal_proposal(store, workspace=service.workspace)
         store._mutate(lambda session: _apply(session, request))
         return response(service, project_key, root)
@@ -67,6 +73,11 @@ def _apply(session, request):
         if action == "edit_queued_task":
             proposal.update(exact_request=text, revision=proposal["revision"] + 1,
                             source_message_ids=[*proposal["source_message_ids"], message_id])
+            # Editing the Manager's exact task removes its source binding.
+            # The result is ordinary human-authored work, not a prior decision.
+            for field in ("project_task_id", "project_task_digest"):
+                proposal.pop(field, None)
+            proposal["source"] = "human_edited"
         elif action == "discard_queued_task":
             proposal["status"] = "cancelled"
         else:
