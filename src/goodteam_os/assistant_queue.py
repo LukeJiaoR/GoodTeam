@@ -96,6 +96,18 @@ def _apply(session, request):
     return session
 
 
+def require_no_active_project_goal(workspace, project_key):
+    """Do not silently launch an unrelated Manager task inside a bounded Goal."""
+    from pathlib import Path
+
+    if not (Path(workspace) / "state" / "goals.sqlite3").is_file():
+        return
+    from goodteam_os.goals import GoalStore
+
+    if GoalStore(Path(workspace), project_key).list_goals(active_only=True):
+        raise ValueError("Finish or explicitly stop the active Goal before a separate project task.")
+
+
 def require_queued_project_task(root, project_key, proposal):
     """Revalidate an original Manager-selected task before the existing Workflow.
 
@@ -161,6 +173,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
     store = TaskAssistantSessionStore(workspace, project_key)
     tasks = LocalTaskStore(root, project_key)
     with conversation_lock(store):
+        require_no_active_project_goal(workspace, project_key)
         # Follow the existing Assistant->Task lock order, pinning task facts
         # until the atomic queue write completes. Other tasks may be queued
         # meanwhile; per-task digests later survive unrelated ledger updates.
