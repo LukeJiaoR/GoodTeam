@@ -174,7 +174,7 @@ class TaskAssistantService:
         if not str(text).strip():
             raise ValueError("Task Assistant message must not be blank")
         store = TaskAssistantSessionStore(self.workspace, project_key)
-        archive_terminal_proposal(store, workspace=self.workspace)
+        archive_terminal_proposal(store, workspace=self.workspace, root=root)
         mode_hint = assess_project_mode(root)
         store.initialize_context(mode_hint)
         store.append_message(message_id, "user", str(text))
