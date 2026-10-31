@@ -58,12 +58,15 @@ def test_real_dispatch_queues_the_eleventh_worker_without_losing_it(tmp_path, mo
             active += 1
             peak = max(active, peak)
             started.append(job["id"])
+            arrival = len(started)
         try:
-            # Ten simultaneous entrants prove the extra job must wait.
-            try:
-                gate.wait()
-            except BrokenBarrierError as exc:
-                pytest.fail(f"Expected ten worker slots to be schedulable: {exc}")
+            # Only the first ten synchronize; the queued eleventh must not
+            # be forced into a second ten-party barrier.
+            if arrival <= DEFAULT_MAX_CONCURRENT_WORKERS:
+                try:
+                    gate.wait()
+                except BrokenBarrierError as exc:
+                    pytest.fail(f"Expected ten worker slots to be schedulable: {exc}")
             return worker_runner(project_root, job, verify_commands, **kwargs)
         finally:
             with lock:
