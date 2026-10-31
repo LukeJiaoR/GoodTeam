@@ -1,5 +1,45 @@
 # GoodTeam Agent Rules
 
+## Project-iteration-first task selection
+
+The product target is **an autonomous, continuing AI engineering team for an
+entire project**, not just an issue executor. The only current two-class
+development scope is [#381](https://github.com/LukeJiaoR/GoodTeam/issues/381):
+(1) essential for repeatable project-level iterations, or (2) not essential.
+Historical design plans, progress logs and model/role playbooks do not create
+a parallel work queue.
+
+1. **Essential**: understand an existing repository and its goals, history,
+   issues, risks and pending work; Manager autonomously identifies and
+   prioritizes the next iteration, chooses and coordinates Workers, verifies
+   results through task-relevant tests and independent review/fix, updates
+   project memory/backlog, and selects the following iteration based on
+   observed outcomes. The project moves across *multiple distinct iterations*
+   without the user manually supplying each next Issue. Preserve necessary
+   scoped human gates, authorization, failure recovery and honest artifacts.
+2. **Not essential**: do not expand optional Telegram, external Planner/MCP,
+   complete Skill marketplaces/runtime/version flows, workspace-wide Team
+   migrations, mobile extras, billing, broad multi-provider matrices or
+   speculative control-plane frameworks unless a demonstrated dependency
+   blocks the actual project-iteration loop. Do not delete working shared
+   dependencies without proof and regressions.
+
+A new implementation task must name the **project-level user outcome**, the
+existing code and observed gap, the smallest change, and a test that shows
+the Manager can *pick, execute, learn and pick again*. One successfully
+implemented user-specified Issue is necessary evidence, but is **not**
+acceptance of project-level autonomy. [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419)
+retains the real product acceptance record; [#540](https://github.com/LukeJiaoR/GoodTeam/issues/540)
+already implements bounded continuation inside one approved Goal, not
+open-ended project prioritization. Prefer extending/reusing these paths and
+the existing `fix` profile, not creating a second workflow engine.
+
+Preserve all existing approval, trusted-path, isolation, review provenance,
+idempotency, exact-head CI, cost/scope bounds and fail-closed protections.
+Within approved project scope, avoid unnecessary per-task user decisions;
+outside it, never infer permission to merge, deploy or spend without the
+specified authorization.
+
 This file contains project-specific rules for automated coding agents working in
 this repository.
 
