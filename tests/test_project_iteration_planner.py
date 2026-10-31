@@ -9,7 +9,8 @@ from goodteam_os.project_iteration import (
 from goodteam_os.project_iteration_planner import plan_next_iteration
 from goodteam_os.assistant_queue import queue_manager_iteration_choice, require_queued_project_task, _apply
 from goodteam_os.assistant_drafts import archive_terminal_proposal
-from goodteam_os.state import StateStore, create_initial_state
+from goodteam_os.state import create_initial_state
+from goodteam_os.workflow_mutations import persist_transition
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
@@ -151,7 +152,7 @@ def test_manager_parallel_plan_rejects_overlapping_write_domains(left, right):
         validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
 
 
-def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_path):
+def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_path, monkeypatch):
     project = tmp_path / "project"
     project.mkdir()
     ledger = LocalTaskStore(project, "DEMO")
@@ -232,8 +233,10 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     state = create_initial_state(run_id, "DEMO", first_draft["exact_request"])
     state.current_node = "complete"
     state.next_node = "complete"
-    StateStore(tmp_path).write_project_current(state)
-    assert archive_terminal_proposal(session_store, workspace=tmp_path, root=project) is True
+    monkeypatch.setattr("goodteam_os.web._project_target_and_root", lambda workspace, key: (key, {}, project))
+    persist_transition(tmp_path, state)
+    # The existing Workflow terminal transition itself reconciles the Manager
+    # task; no parallel status poller or manual handoff is required.
     assert archive_terminal_proposal(session_store, workspace=tmp_path, root=project) is False
     task_after = ledger.get_task(task_a["id"])
     assert task_after["status"] == "review"
