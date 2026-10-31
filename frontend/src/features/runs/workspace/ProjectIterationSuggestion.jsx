@@ -15,6 +15,8 @@ export default function ProjectIterationSuggestion({
   const candidate = snapshot.next_candidate;
   const chosen = choice?.schema_version === 'project_iteration_choice.v1' ? choice : null;
   const current = chosen && chosen.status === 'recommended' && chosen.backlog_version === snapshot.version;
+  const batch = current && chosen.execution_mode === 'parallel' && Array.isArray(chosen.selected_tasks)
+    && chosen.selected_tasks.length > 1 ? chosen.selected_tasks : null;
   const unavailable = snapshot.status === 'unavailable';
   const label = zh ? '下一轮项目迭代' : 'Next project iteration';
   const hint = unavailable
@@ -42,9 +44,17 @@ export default function ProjectIterationSuggestion({
     </div>
     {current ? (
       <div className="project-iteration-suggestion__choice">
-        <strong>{zh ? 'Manager 建议' : 'Manager recommends'}: {chosen.selected_task_id} — {chosen.selected_title}</strong>
+        <strong>{batch ? (zh ? 'Manager 建议并行任务组' : 'Manager recommends parallel tasks')
+          : (zh ? 'Manager 建议' : 'Manager recommends')}: {batch ? '' : chosen.selected_task_id}</strong>
+        {batch ? (
+          <ol className="project-iteration-suggestion__batch">
+            {batch.map(item => <li key={item.task_id}>{item.task_id} — {item.title}</li>)}
+          </ol>
+        ) : <p>{chosen.selected_title}</p>}
         <p>{chosen.rationale}</p>
-        <small>{zh ? '仅供规划；尚未执行' : 'Advisory only; no execution started'}</small>
+        <small>{batch ? (zh ? '并行仅为规划建议；未隔离、派发或合并'
+          : 'Parallel plan only; no workers launched, isolation or merge verified')
+          : (zh ? '仅供规划；尚未执行' : 'Advisory only; no execution started')}</small>
       </div>
     ) : candidate ? (
       <p><strong>{candidate.task_id}: {candidate.title}</strong> · {candidate.priority}
