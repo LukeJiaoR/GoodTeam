@@ -2,10 +2,7 @@ name: Candidate published
 run-name: Candidate ${{ github.sha }}
 
 on:
-  create:
-  push:
-    branches:
-      - codex/candidate-**
+  workflow_dispatch:
 
 permissions:
   contents: read
