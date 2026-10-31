@@ -33,7 +33,7 @@ def handle_queue_action(service, *, project_key, root, request):
             )
             if queued is not None and queued.get("status") == "queued":
                 require_queued_project_task(root, project_key, queued)
-            archive_terminal_proposal(store, workspace=service.workspace)
+            archive_terminal_proposal(store, workspace=service.workspace, root=root)
         store._mutate(lambda session: _apply(session, request))
         return response(service, project_key, root)
 
