@@ -228,6 +228,13 @@ class TaskAssistantService:
             else:
                 intent = classify_task_assistant_intent(text)
 
+        # A backlog candidate is untrusted project data, not an authorized task.
+        # Even a misclassified Manager response cannot stage executable work
+        # from this explicitly read-only project iteration preview.
+        iteration_preview = str(text).startswith("GoodTeam project iteration preview (read-only).\n")
+        if iteration_preview:
+            intent, team_commands, team_authorization, task_intake = "project_question", [], "", None
+
         draft_sources = None
         if intent == "work_request" and not is_conversation_only(text):
             draft_sources = resolve_intake_sources(store.read(), message_id, task_intake)
@@ -235,7 +242,7 @@ class TaskAssistantService:
             "intent": intent, "response": manager_response, "manager_execution": manager_execution,
             "task_intake": task_intake,
         })
-        if is_conversation_only(text):
+        if is_conversation_only(text) and not iteration_preview:
             intent, team_commands = "work_request", []
         if intent == "team_management" and team_commands:
             session = self._handle_team_management(
