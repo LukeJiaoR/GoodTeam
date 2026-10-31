@@ -181,3 +181,44 @@
   text-decoration: underline;
   text-underline-offset: .15em;
 }
+
+/* First read-only project iteration foothold; never represent a candidate as running. */
+.work-workspace-shell .project-iteration-suggestion {
+  display: grid;
+  flex: 0 0 auto;
+  gap: .35rem;
+  padding: .55rem 1rem;
+  border-bottom: 1px solid var(--work-border, #d7e1ef);
+  background: var(--work-material, #edf2f8);
+  font-size: .78rem;
+  min-width: 0;
+}
+.work-workspace-shell .project-iteration-suggestion__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem .75rem;
+  align-items: baseline;
+}
+.work-workspace-shell .project-iteration-suggestion__header span {
+  color: var(--work-text-muted);
+}
+.work-workspace-shell .project-iteration-suggestion p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.work-workspace-shell .project-iteration-suggestion button {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--work-border);
+  border-radius: .5rem;
+  padding: .4rem .6rem;
+  background: transparent;
+  color: var(--work-accent-strong, #205ab7);
+  cursor: pointer;
+  font: inherit;
+}
+.work-workspace-shell .project-iteration-suggestion button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
