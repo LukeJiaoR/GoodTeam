@@ -1,21 +1,15 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from goodteam_os import repository_inventory
-from goodteam_os.repository_access import RepositoryEntry, RepositoryAccessError
 from goodteam_os.repository_inventory import build_repository_inventory
 from goodteam_os.repository_snapshot import (
-    RepositorySnapshot,
     RepositorySnapshotError,
     capture_repository_snapshot,
-    compute_repository_snapshot_id,
 )
 
 
