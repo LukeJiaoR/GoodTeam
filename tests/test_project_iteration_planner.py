@@ -295,12 +295,23 @@ def test_dependent_work_cannot_be_added_to_parallel_batch():
         validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
 
 
-def test_parallel_batch_size_and_exact_primary_identity_are_validated():
+def test_parallel_batch_size_tracks_actual_eligible_work_not_a_fixed_three():
+    tasks = [_batch_candidate(f"T-{i}", domains=[f"src/scope-{i}"]) for i in range(1, 25)]
+    snapshot = rank_project_backlog(tasks, "T", limit=None)
+    all_ids = [task["id"] for task in tasks]
+    result = validate_iteration_choice(snapshot, _batch_response(*all_ids))
+    assert result["selected_task_ids"] == all_ids
+    assert result["execution_mode"] == "parallel"
+    assert result["parallel_execution_authorized"] is False
+    assert result["execution_authorized"] is False
+
+
+def test_parallel_selection_cannot_exceed_known_candidates_or_mismatch_primary():
     snapshot = rank_project_backlog([
         _batch_candidate(f"T-{i}", domains=[f"src/scope-{i}"]) for i in range(1, 5)
-    ], "T")
-    with pytest.raises(ValueError, match="one to three"):
-        validate_iteration_choice(snapshot, _batch_response("T-1", "T-2", "T-3", "T-4"))
+    ], "T", limit=None)
+    with pytest.raises(ValueError, match="candidate inventory"):
+        validate_iteration_choice(snapshot, _batch_response("T-1", "T-2", "T-3", "T-4", "T-5"))
     with pytest.raises(ValueError, match="primary"):
         validate_iteration_choice(snapshot, {
             **_batch_response("T-1", "T-2"), "selected_task_id": "T-2",
@@ -345,3 +356,41 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     choice = latest_iteration_choice(read, snapshot)
     assert choice["selected_task_ids"] == [task_a["id"], task_b["id"]]
     assert choice["execution_authorized"] is False
+
+
+
+def test_full_planning_inventory_is_not_limited_by_ui_candidate_preview(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    store = LocalTaskStore(project, "DEMO")
+    created = [
+        store.create_task(
+            title=f"Independent feature {i}", description=f"Implement independent component {i}",
+            role="implementation", write_domains=[f"src/module-{i}"],
+        ) for i in range(16)
+    ]
+    ui_snapshot = project_iteration_backlog(project, "DEMO")
+    full_snapshot = project_iteration_backlog(project, "DEMO", limit=None)
+    assert len(ui_snapshot["candidates"]) == 8
+    assert ui_snapshot["truncated"] is True
+    assert len(full_snapshot["candidates"]) == 16
+    assert full_snapshot["truncated"] is False
+    assert ui_snapshot["version"] == full_snapshot["version"]
+    captures = []
+
+    def choose(**kwargs):
+        captures.append(kwargs["backlog"])
+        eligible = kwargs["backlog"]["candidates"]
+        assert len(eligible) == 16
+        ids = [row["task_id"] for row in eligible]
+        return {"selection": _batch_response(*ids), "manager_execution": {"job_id": "synthetic"}}
+
+    result = plan_next_iteration(
+        workspace=tmp_path, project_key="DEMO", root=project,
+        project_config=tmp_path / "project.yaml",
+        expected_backlog_version=ui_snapshot["version"],
+        confirmed=True, manager_runner=choose,
+    )
+    assert len(result["iteration_choice"]["selected_task_ids"]) == len(created)
+    assert len(captures) == 1
+    assert result["workflow_started"] is False
