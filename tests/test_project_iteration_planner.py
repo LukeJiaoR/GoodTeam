@@ -234,6 +234,11 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     state.current_node = "complete"
     state.next_node = "complete"
     monkeypatch.setattr("goodteam_os.web._project_target_and_root", lambda workspace, key: (key, {}, project))
+    state.pending_transition = {"status": "executing"}
+    persist_transition(tmp_path, state)
+    assert ledger.get_task(task_a["id"])["status"] == "in_progress"
+    assert session_store.read()["proposed_task"]["run_id"] == run_id
+    state.pending_transition = {"status": "completed"}
     persist_transition(tmp_path, state)
     # The existing Workflow terminal transition itself reconciles the Manager
     # task; no parallel status poller or manual handoff is required.
