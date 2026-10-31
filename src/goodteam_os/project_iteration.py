@@ -34,6 +34,56 @@ def _internal(task: dict[str, Any]) -> bool:
     )
 
 
+def normalize_write_domains(value: object) -> list[str] | None:
+    """Validate declared project-relative write scopes; never infer safe scopes.
+
+    Paths are advisory planning metadata, not an OS sandbox. Real dispatch
+    still needs its own worktree isolation, file collision and fan-in checks.
+    """
+    if not isinstance(value, list) or not 1 <= len(value) <= 12:
+        return None
+    domains: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item or item != item.strip() or len(item) > 160:
+            return None
+        if item.startswith("/") or "\\" in item or ":" in item or any(ord(ch) < 32 for ch in item):
+            return None
+        if any(character in item for character in "*?[]"):
+            return None
+        segments = item.removesuffix("/").split("/")
+        if not segments or any(segment in {"", ".", ".."} for segment in segments):
+            return None
+        normalized = "/".join(segments)
+        if normalized.casefold() in seen:
+            return None
+        seen.add(normalized.casefold())
+        domains.append(normalized)
+    return domains
+
+
+def _domains_overlap(left: str, right: str) -> bool:
+    a, b = left.casefold(), right.casefold()
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def _validate_parallel_group(tasks: list[dict[str, Any]]) -> None:
+    """Fail closed unless every selected writer has explicit disjoint scopes."""
+    owners: list[tuple[str, str]] = []
+    for task in tasks:
+        if task["execution_policy"] == "read_only":
+            continue
+        if task["write_domain_status"] != "declared":
+            raise ValueError("Parallel writing needs explicit write domains for each selected task.")
+        for domain in task["write_domains"]:
+            for other_task, other_domain in owners:
+                if _domains_overlap(domain, other_domain):
+                    raise ValueError(
+                        f"Parallel write-domain collision between {other_task} and {task['task_id']}."
+                    )
+            owners.append((task["task_id"], domain))
+
+
 def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit: int = 8) -> dict[str, Any]:
     """Rank real backlog entries without inventing work or authorizing execution.
 
@@ -55,6 +105,7 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
                 "id", "title", "description", "status", "priority", "role",
                 "dependencies", "acceptance_criteria", "external_refs",
                 "artifact_refs", "source_evidence_refs", "review_gaps", "updated_at",
+                "write_domains", "execution_policy",
             )}
             for task in sorted(relevant, key=lambda row: str(row.get("id", "")))
         ],
@@ -72,6 +123,9 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
         dependencies = _items(task.get("dependencies"), 64, 120)
         blockers = [dep for dep in dependencies if known.get(dep, {}).get("status") != "done"]
         eligible = status == "todo" and not blockers
+        domains = normalize_write_domains(task.get("write_domains"))
+        policy = task.get("execution_policy")
+        policy = "read_only" if policy == "read_only" else "workspace_write"
         reason = ("ready_to_plan" if eligible else "blocked_by_dependencies" if blockers
                   else "blocked" if status == "blocked" else "already_active" if status == "in_progress"
                   else "awaiting_review")
@@ -88,6 +142,9 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
             "source_refs": _items(task.get("external_refs"), 12, 256),
             "artifact_refs": _items(task.get("artifact_refs"), 12, 256),
             "review_gaps": _items(task.get("review_gaps"), 6, 300),
+            "execution_policy": policy,
+            "write_domains": domains or [],
+            "write_domain_status": "declared" if domains else "unknown",
             "eligible_to_plan": eligible,
             "reason": reason,
         })
@@ -139,27 +196,44 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
     if not isinstance(response, dict):
         raise ValueError("Manager choice must be a JSON object.")
     selected = response.get("selected_task_id")
+    selected_ids = response.get("selected_task_ids")
+    if selected_ids is None:
+        selected_ids = [selected]
+    if (not isinstance(selected_ids, list) or not 1 <= len(selected_ids) <= 3
+            or any(not isinstance(item, str) or not item or len(item) > 120 for item in selected_ids)
+            or len(set(selected_ids)) != len(selected_ids)):
+        raise ValueError("Manager must select one to three distinct candidate IDs.")
+    if selected is not None and selected != selected_ids[0]:
+        raise ValueError("Manager primary task ID differs from the selected batch.")
+    selected = selected_ids[0]
     reason = response.get("rationale")
     compared = response.get("compared_task_ids")
-    if not isinstance(selected, str) or not selected or len(selected) > 120:
-        raise ValueError("Manager must choose one exact candidate task ID.")
     if not isinstance(reason, str) or not 20 <= len(reason.strip()) <= 1600:
         raise ValueError("Manager must explain the project-level priority choice.")
     if (not isinstance(compared, list) or not 1 <= len(compared) <= 8
             or any(not isinstance(item, str) for item in compared)
-            or len(compared) != len(set(compared)) or selected not in compared):
+            or len(compared) != len(set(compared))
+            or any(item not in compared for item in selected_ids)):
         raise ValueError("Manager must name the candidate IDs it compared.")
     candidates = {item["task_id"]: item for item in snapshot.get("candidates", [])}
-    if selected not in candidates or not candidates[selected]["eligible_to_plan"]:
-        raise ValueError("Manager choice is missing, stale or blocked.")
+    if any(item not in candidates or not candidates[item]["eligible_to_plan"] for item in selected_ids):
+        raise ValueError("Manager selected a missing, stale or blocked task.")
     if any(item not in candidates or not candidates[item]["eligible_to_plan"] for item in compared):
         raise ValueError("Manager compared an unavailable or blocked candidate.")
+    if len(selected_ids) > 1:
+        _validate_parallel_group([candidates[task_id] for task_id in selected_ids])
     return {
         "schema_version": "project_iteration_choice.v1",
         "project_key": snapshot["project_key"],
         "backlog_version": snapshot["version"],
         "selected_task_id": selected,
         "selected_title": candidates[selected]["title"],
+        "selected_task_ids": list(selected_ids),
+        "selected_tasks": [{"task_id": item, "title": candidates[item]["title"]} for item in selected_ids],
+        "execution_mode": "parallel" if len(selected_ids) > 1 else "single",
+        "parallel_execution_authorized": False,
+        "requires_worktree_isolation": len(selected_ids) > 1,
+        "fan_in_required": len(selected_ids) > 1,
         "compared_task_ids": list(compared),
         "rationale": reason.strip(),
         "status": "recommended",
