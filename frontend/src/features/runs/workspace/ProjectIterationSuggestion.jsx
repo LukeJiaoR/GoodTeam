@@ -46,11 +46,18 @@ export default function ProjectIterationSuggestion({
       <div className="project-iteration-suggestion__choice">
         <strong>{batch ? (zh ? 'Manager 建议并行任务组' : 'Manager recommends parallel tasks')
           : (zh ? 'Manager 建议' : 'Manager recommends')}: {batch ? '' : chosen.selected_task_id}</strong>
-        {batch ? (
+        {batch ? (batch.length > 6 ? (
+          <details>
+            <summary>{zh ? '查看并行候选任务' : 'View candidate tasks'} ({batch.length})</summary>
+            <ol className="project-iteration-suggestion__batch">
+              {batch.map(item => <li key={item.task_id}>{item.task_id} — {item.title}</li>)}
+            </ol>
+          </details>
+        ) : (
           <ol className="project-iteration-suggestion__batch">
             {batch.map(item => <li key={item.task_id}>{item.task_id} — {item.title}</li>)}
           </ol>
-        ) : <p>{chosen.selected_title}</p>}
+        )) : <p>{chosen.selected_title}</p>}
         <p>{chosen.rationale}</p>
         <small>{batch ? (zh ? '并行仅为规划建议；未隔离、派发或合并'
           : 'Parallel plan only; no workers launched, isolation or merge verified')
