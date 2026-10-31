@@ -46,13 +46,19 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
         raise ValueError("Project backlog must be a task list.")
     relevant = [task for task in tasks if isinstance(task, dict) and not _internal(task)]
     known = {str(task.get("id", "")): task for task in tasks if isinstance(task, dict)}
-    fingerprint = [
-        {key: task.get(key) for key in (
-            "id", "title", "description", "status", "priority", "role",
-            "dependencies", "acceptance_criteria", "external_refs",
-        )}
-        for task in sorted((row for row in tasks if isinstance(row, dict)), key=lambda row: str(row.get("id", "")))
-    ]
+    # Workflow-stage and Goal-owned cards are not project backlog decisions.
+    # Only include their *status* when a genuine project task depends on them.
+    dependency_ids = {dep for task in relevant for dep in _items(task.get("dependencies"), 64, 120)}
+    fingerprint = {
+        "tasks": [
+            {key: task.get(key) for key in (
+                "id", "title", "description", "status", "priority", "role",
+                "dependencies", "acceptance_criteria", "external_refs",
+            )}
+            for task in sorted(relevant, key=lambda row: str(row.get("id", "")))
+        ],
+        "dependencies": {dep: known.get(dep, {}).get("status") for dep in sorted(dependency_ids)},
+    }
     version = "sha256:" + hashlib.sha256(
         json.dumps(fingerprint, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
@@ -116,3 +122,57 @@ def project_iteration_backlog(project_root: Path | None, project_key: str, *, li
                 "status": "unavailable", "reason": "task_ledger_unreadable",
                 "next_candidate": None, "candidates": [], "execution_authorized": False}
     return rank_project_backlog(tasks, project_key, limit=limit)
+
+
+def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dict[str, Any]:
+    """Bind a model's advisory choice to the exact eligible candidate inventory.
+
+    A task description and a model response are untrusted data. This result
+    carries no authority to create tasks, dispatch Workers or change the Goal.
+    """
+    if snapshot.get("schema_version") != "project_iteration_backlog.v1" or snapshot.get("status") != "candidate_ready":
+        raise ValueError("No valid project backlog is available for planning.")
+    if not isinstance(response, dict):
+        raise ValueError("Manager choice must be a JSON object.")
+    selected = response.get("selected_task_id")
+    reason = response.get("rationale")
+    compared = response.get("compared_task_ids")
+    if not isinstance(selected, str) or not selected or len(selected) > 120:
+        raise ValueError("Manager must choose one exact candidate task ID.")
+    if not isinstance(reason, str) or not 20 <= len(reason.strip()) <= 1600:
+        raise ValueError("Manager must explain the project-level priority choice.")
+    if (not isinstance(compared, list) or not 1 <= len(compared) <= 8
+            or any(not isinstance(item, str) for item in compared)
+            or len(compared) != len(set(compared)) or selected not in compared):
+        raise ValueError("Manager must name the candidate IDs it compared.")
+    candidates = {item["task_id"]: item for item in snapshot.get("candidates", [])}
+    if selected not in candidates or not candidates[selected]["eligible_to_plan"]:
+        raise ValueError("Manager choice is missing, stale or blocked.")
+    if any(item not in candidates or not candidates[item]["eligible_to_plan"] for item in compared):
+        raise ValueError("Manager compared an unavailable or blocked candidate.")
+    return {
+        "schema_version": "project_iteration_choice.v1",
+        "project_key": snapshot["project_key"],
+        "backlog_version": snapshot["version"],
+        "selected_task_id": selected,
+        "selected_title": candidates[selected]["title"],
+        "compared_task_ids": list(compared),
+        "rationale": reason.strip(),
+        "status": "recommended",
+        "execution_authorized": False,
+        "source": "manager_on_backlog_snapshot",
+    }
+
+
+def latest_iteration_choice(session: dict[str, Any] | None, snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Show a persisted choice only while its task-ledger revision is current."""
+    for event in reversed((session or {}).get("timeline", [])):
+        if event.get("event") != "project_iteration_choice_recorded":
+            continue
+        choice = (event.get("details") or {}).get("choice")
+        if not isinstance(choice, dict) or choice.get("schema_version") != "project_iteration_choice.v1":
+            continue
+        if choice.get("backlog_version") != snapshot.get("version"):
+            return {**choice, "status": "stale", "execution_authorized": False}
+        return {**choice, "execution_authorized": False}
+    return None
