@@ -2607,6 +2607,8 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
     approval_reviews = build_approval_reviews(state, workspace=workspace)
     action_items = build_action_items(workspace, project_key=project_key)
     agile_board = build_agile_board(state)
+    from goodteam_os.project_iteration import project_iteration_backlog
+    iteration_backlog = project_iteration_backlog(project_root, project_key)
     worker_job_records = WorkerJobStore(project_root).list_jobs() if project_root is not None else []
     worker_jobs = _serialize_worker_job_items(worker_job_records)
     task_rows = [
@@ -2649,6 +2651,7 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
         "action_items": action_items,
         "smoke_run_items": build_smoke_run_items(workspace),
         "agile_board": agile_board,
+        "iteration_backlog": iteration_backlog,
         "worker_jobs": worker_jobs,
         # Team projection can migrate configuration; version its final config
         # against the same persisted state, not the display-only revision hint.
