@@ -62,6 +62,26 @@ describe('project iteration planning', () => {
     expect(onPlan).not.toHaveBeenCalled();
   });
 
+  it('keeps a large parallel batch accessible without flooding the conversation', () => {
+    const items = Array.from({ length: 16 }, (_, index) => ({
+      task_id: `DEMO-${index + 1}`, title: `Task ${index + 1}`,
+    }));
+    const choice = {
+      schema_version: 'project_iteration_choice.v1',
+      backlog_version: 'sha256:abc', status: 'recommended',
+      execution_mode: 'parallel', selected_task_id: 'DEMO-1',
+      selected_task_ids: items.map(item => item.task_id),
+      selected_tasks: items,
+      rationale: 'The project has multiple independent tasks with declared disjoint scopes.',
+    };
+    render(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} />);
+    const details = screen.getByText('View candidate tasks (16)').closest('details');
+    expect(details).not.toHaveAttribute('open');
+    fireEvent.click(screen.getByText('View candidate tasks (16)'));
+    expect(details).toHaveAttribute('open');
+    expect(screen.getByText('DEMO-16 — Task 16')).toBeInTheDocument();
+  });
+
   it('invalidates old decisions after the source backlog version changes', () => {
     const oldChoice = {
       schema_version: 'project_iteration_choice.v1', backlog_version: 'sha256:old',
