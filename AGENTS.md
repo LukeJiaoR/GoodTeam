@@ -58,6 +58,14 @@ value.
 
 ## Verification Strategy
 
+**Lean test budget (2026-10-31):** The owner intentionally reduced test
+source by approximately 90%. Keep a single meaningful representative case per
+distinct feature contract; avoid rebuilding multiple near-identical permutations
+or historical large suites. See `docs/testing-strategy.md` for the retained
+smoke inventory. This reduces safety regression coverage, not permissions:
+preserve independent review, bounded real-Worker evidence, fail-closed paths,
+and explicit merge/release authority. The GitHub CI pause below remains in force.
+
 Follow `docs/testing-strategy.md` when choosing local validation for a PR.
 Every PR should name its verification tier, the changed contract area, the
 commands that were run, and any skipped validation with a safety reason.
