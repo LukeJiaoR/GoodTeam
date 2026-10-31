@@ -62,6 +62,11 @@ export default function ProjectIterationSuggestion({
         <small>{batch ? (zh ? '并行仅为规划建议；未隔离、派发或合并'
           : 'Parallel plan only; no workers launched, isolation or merge verified')
           : (zh ? '仅供规划；尚未执行' : 'Advisory only; no execution started')}</small>
+        {batch && Number.isInteger(chosen.max_simultaneous_workers_per_dispatch) ? (
+          <small>{zh
+            ? `直接派发上限：同时运行 ${chosen.max_simultaneous_workers_per_dispatch} 个 Worker；超出的待接入排队执行`
+            : `Direct-dispatch cap: ${chosen.max_simultaneous_workers_per_dispatch} concurrent Workers; excess work requires queueing after integration`}</small>
+        ) : null}
       </div>
     ) : candidate ? (
       <p><strong>{candidate.task_id}: {candidate.title}</strong> · {candidate.priority}
