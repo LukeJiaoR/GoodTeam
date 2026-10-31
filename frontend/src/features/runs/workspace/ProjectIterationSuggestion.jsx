@@ -8,7 +8,7 @@ export function iterationPlanningRequest(snapshot, language = 'en') {
 }
 
 export default function ProjectIterationSuggestion({
-  snapshot, choice, onPlan, onInspect, disabled, language = 'en',
+  snapshot, choice, queuedTasks = [], onPlan, onQueue, onInspect, disabled, language = 'en',
 }) {
   if (snapshot?.schema_version !== 'project_iteration_backlog.v1') return null;
   const zh = String(language).startsWith('zh');
@@ -17,6 +17,12 @@ export default function ProjectIterationSuggestion({
   const current = chosen && chosen.status === 'recommended' && chosen.backlog_version === snapshot.version;
   const batch = current && chosen.execution_mode === 'parallel' && Array.isArray(chosen.selected_tasks)
     && chosen.selected_tasks.length > 1 ? chosen.selected_tasks : null;
+  const queued = new Set((queuedTasks || [])
+    .filter(item => ['queued', 'selected'].includes(item.status))
+    .map(item => item.project_task_id).filter(Boolean));
+  const selectedIds = current ? (chosen.selected_task_ids || [chosen.selected_task_id]) : [];
+  const queuedCount = selectedIds.filter(id => queued.has(id)).length;
+  const fullyQueued = Boolean(current && selectedIds.length && queuedCount === selectedIds.length);
   const unavailable = snapshot.status === 'unavailable';
   const label = zh ? '下一轮项目迭代' : 'Next project iteration';
   const hint = unavailable
@@ -73,6 +79,15 @@ export default function ProjectIterationSuggestion({
         {candidate.description ? <span> — {candidate.description.slice(0, 220)}</span> : null}</p>
     ) : null}
     {chosen && !current ? <small>{zh ? '旧建议已过期，请重新评估。' : 'Previous recommendation is stale; re-evaluate.'}</small> : null}
+    {current && (fullyQueued ? (
+      <small>{zh ? '已进入普通任务队列；通过现有任务确认流程执行' : 'In the existing task queue; the normal confirmation flow applies'}</small>
+    ) : (
+      <button type="button" disabled={disabled} onClick={() => onQueue?.({
+        action: 'queue_iteration_choice',
+        expected_backlog_version: snapshot.version,
+        confirmed: true,
+      })}>{zh ? '将 Manager 选择加入现有任务队列' : 'Queue selected tasks in existing workflow'}</button>
+    ))}
     {!current && <button
       type="button" disabled={disabled || unavailable} onClick={submit}>
       {candidate
