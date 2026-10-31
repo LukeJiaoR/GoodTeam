@@ -54,6 +54,7 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
             {key: task.get(key) for key in (
                 "id", "title", "description", "status", "priority", "role",
                 "dependencies", "acceptance_criteria", "external_refs",
+                "artifact_refs", "source_evidence_refs", "review_gaps", "updated_at",
             )}
             for task in sorted(relevant, key=lambda row: str(row.get("id", "")))
         ],
@@ -84,6 +85,9 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
             "dependencies": dependencies,
             "blocked_by": blockers,
             "acceptance_criteria": _items(task.get("acceptance_criteria"), 8, 400),
+            "source_refs": _items(task.get("external_refs"), 12, 256),
+            "artifact_refs": _items(task.get("artifact_refs"), 12, 256),
+            "review_gaps": _items(task.get("review_gaps"), 6, 300),
             "eligible_to_plan": eligible,
             "reason": reason,
         })
