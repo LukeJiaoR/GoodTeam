@@ -1,16 +1,11 @@
 import json
 from datetime import datetime, UTC, timedelta
 
-import pytest
-
 from goodteam_os.telegram import (
     TelegramReviewSessionStore,
     mask_sensitive_data,
-    split_artifact_into_review_items,
     process_telegram_update,
-    update_active_tg_review_on_web_decision,
 )
-from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore
 
 
 def _review_session_data(
