@@ -53,12 +53,14 @@ describe('project iteration planning', () => {
       ],
       rationale: 'The two tasks have declared disjoint paths, but execution isolation is not verified.',
       parallel_execution_authorized: false,
+      max_simultaneous_workers_per_dispatch: 10,
     };
     render(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} onPlan={onPlan} language="en" />);
     expect(screen.getByText(/Manager recommends parallel tasks/)).toBeInTheDocument();
     expect(screen.getByText('DEMO-7 — Fix booking validation')).toBeInTheDocument();
     expect(screen.getByText('DEMO-8 — Improve invoice preview')).toBeInTheDocument();
     expect(screen.getByText(/no workers launched, isolation or merge verified/)).toBeInTheDocument();
+    expect(screen.getByText(/Direct-dispatch cap: 10 concurrent Workers/)).toBeInTheDocument();
     expect(onPlan).not.toHaveBeenCalled();
   });
 
