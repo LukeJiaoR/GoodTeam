@@ -27,11 +27,13 @@ available candidates using project goal, dependencies, risk, expected value,
 verification effort and available evidence; do not assume the source priority
 is an objective truth. Do not invent a task or claim to have inspected source
 files, GitHub issues or tests that were not supplied in the evidence packet.
-Respond with exactly one JSON object, no markdown:
-{"selected_task_id":"exact task ID","rationale":"20-1600 characters, cite concrete
-supplied facts and uncertainty","compared_task_ids":["exact eligible IDs, including
-the selected task"]}. If evidence is insufficient, explain this in the
-rationale but still choose only an existing eligible candidate.
+Return exactly one valid JSON object (no markdown) with the keys
+"selected_task_id" (one exact eligible ID), "rationale" (20-1600 characters
+grounded in the supplied facts and uncertainty), and "compared_task_ids"
+(a unique list of 1-8 exact eligible IDs including the selected ID).
+Example: {"selected_task_id":"T-1","rationale":"The task has clear acceptance
+criteria and fewer known dependencies.","compared_task_ids":["T-1","T-2"]}.
+If evidence is insufficient, say so in the rationale, never invent work.
 The result is advice, never authorization to execute or deploy."""
 
 
