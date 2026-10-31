@@ -9,8 +9,6 @@ from goodteam_os import repository_access
 from goodteam_os.repository_access import (
     AnchoredRepository,
     RepositoryAccessError,
-    RepositoryBytes,
-    canonical_relative_path,
 )
 
 
