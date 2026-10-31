@@ -2,7 +2,6 @@
 
 from datetime import UTC, datetime
 from hashlib import sha256
-import json
 from uuid import uuid4
 
 from goodteam_os.assistant_drafts import archive_terminal_proposal
@@ -97,13 +96,6 @@ def _apply(session, request):
     return session
 
 
-def _task_digest(task):
-    """Fingerprint one original task, not the entire changing project backlog."""
-    return "sha256:" + sha256(
-        json.dumps(task, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
-
-
 def require_queued_project_task(root, project_key, proposal):
     """Revalidate an original Manager-selected task before the existing Workflow.
 
@@ -113,7 +105,7 @@ def require_queued_project_task(root, project_key, proposal):
     task_id = proposal.get("project_task_id")
     if not task_id:
         return None
-    from goodteam_os.tasks import LocalTaskStore
+    from goodteam_os.tasks import LocalTaskStore, task_evidence_digest
     from goodteam_os.project_iteration import _internal
 
     store = LocalTaskStore(root, project_key)
@@ -124,7 +116,7 @@ def require_queued_project_task(root, project_key, proposal):
     task = matched[0]
     if (_internal(task) or task.get("status") != "todo"
             or task.get("run_id")
-            or _task_digest(task) != proposal.get("project_task_digest")):
+            or task_evidence_digest(task) != proposal.get("project_task_digest")):
         raise ValueError("The Manager-selected task changed; obtain a new project recommendation.")
     known = {item.get("id"): item for item in tasks}
     if any(known.get(dep, {}).get("status") != "done" for dep in task.get("dependencies", [])):
@@ -160,7 +152,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
     from goodteam_os.project_iteration import (
         latest_iteration_choice, rank_project_backlog, validate_iteration_choice,
     )
-    from goodteam_os.tasks import LocalTaskStore
+    from goodteam_os.tasks import LocalTaskStore, task_evidence_digest
 
     if (not isinstance(expected_backlog_version, str)
             or not expected_backlog_version.startswith("sha256:")
@@ -194,7 +186,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
                 raise ValueError("The Manager recommendation does not have its original session event.")
             prepared = []
             for task in selected:
-                digest = _task_digest(task)
+                digest = task_evidence_digest(task)
                 proposal_id = sha256(
                     f"{project_key}:{snapshot['version']}:{task['id']}".encode("utf-8")
                 ).hexdigest()[:32]
