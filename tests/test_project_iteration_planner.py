@@ -212,3 +212,136 @@ def test_new_evidence_invalidates_prior_manager_choice():
     assert before["version"] != later["version"]
     assert before["next_candidate"]["source_refs"] == ["https://example.test/issues/1"]
     assert before["next_candidate"]["review_gaps"] == ["No integration test yet"]
+
+
+
+def _batch_candidate(identifier, *, domains=None, policy="workspace_write", dependencies=None,
+                     status="todo"):
+    return {
+        "id": identifier, "title": "Independent work " + identifier,
+        "description": "A real task in its own scope", "role": "implementation",
+        "status": status, "priority": "high", "dependencies": dependencies or [],
+        "external_refs": [], "write_domains": domains,
+        "execution_policy": policy,
+    }
+
+
+def _batch_response(*ids):
+    return {
+        "selected_task_ids": list(ids), "selected_task_id": ids[0],
+        "compared_task_ids": list(ids),
+        "rationale": "The selected tasks are independent in the supplied project plan; verify actual worktree isolation.",
+    }
+
+
+def test_manager_can_plan_two_disjoint_writing_agents_in_parallel():
+    snapshot = rank_project_backlog([
+        _batch_candidate("T-1", domains=["backend/orders/"]),
+        _batch_candidate("T-2", domains=["frontend/orders/"]),
+    ], "T")
+    result = validate_iteration_choice(snapshot, _batch_response("T-2", "T-1"))
+    assert result["selected_task_ids"] == ["T-2", "T-1"]
+    assert result["selected_task_id"] == "T-2"  # Backwards-compatible primary choice
+    assert result["selected_tasks"][1]["title"] == "Independent work T-1"
+    assert result["execution_mode"] == "parallel"
+    assert result["parallel_execution_authorized"] is False
+    assert result["requires_worktree_isolation"] is True
+    assert result["fan_in_required"] is True
+    assert result["execution_authorized"] is False
+
+
+@pytest.mark.parametrize("left,right", [
+    ("src/api", "src/api"),
+    ("src/api", "src/api/routes"),
+    ("src/api/routes", "src/api"),
+    ("src/API", "SRC/api/routes"),
+])
+def test_manager_parallel_plan_rejects_overlapping_write_domains(left, right):
+    snapshot = rank_project_backlog([
+        _batch_candidate("T-1", domains=[left]),
+        _batch_candidate("T-2", domains=[right]),
+    ], "T")
+    with pytest.raises(ValueError, match="write-domain collision"):
+        validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
+
+
+def test_unknown_writer_scope_forces_single_task_planning():
+    snapshot = rank_project_backlog([
+        _batch_candidate("T-1", domains=["backend/api"]),
+        _batch_candidate("T-2"),  # Legacy task without declared write scope
+    ], "T")
+    with pytest.raises(ValueError, match="explicit write domains"):
+        validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
+    single = validate_iteration_choice(snapshot, _batch_response("T-2"))
+    assert single["execution_mode"] == "single"
+    assert single["selected_task_ids"] == ["T-2"]
+
+
+def test_independent_read_only_agent_can_join_parallel_writer():
+    snapshot = rank_project_backlog([
+        _batch_candidate("T-1", domains=["backend/api"]),
+        _batch_candidate("T-2", policy="read_only"),
+    ], "T")
+    result = validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
+    assert result["execution_mode"] == "parallel"
+
+
+def test_dependent_work_cannot_be_added_to_parallel_batch():
+    snapshot = rank_project_backlog([
+        _batch_candidate("T-1", domains=["src/a"]),
+        _batch_candidate("T-2", domains=["src/b"], dependencies=["T-1"]),
+    ], "T")
+    with pytest.raises(ValueError, match="missing, stale or blocked"):
+        validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
+
+
+def test_parallel_batch_size_and_exact_primary_identity_are_validated():
+    snapshot = rank_project_backlog([
+        _batch_candidate(f"T-{i}", domains=[f"src/scope-{i}"]) for i in range(1, 5)
+    ], "T")
+    with pytest.raises(ValueError, match="one to three"):
+        validate_iteration_choice(snapshot, _batch_response("T-1", "T-2", "T-3", "T-4"))
+    with pytest.raises(ValueError, match="primary"):
+        validate_iteration_choice(snapshot, {
+            **_batch_response("T-1", "T-2"), "selected_task_id": "T-2",
+        })
+
+
+def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    ledger = LocalTaskStore(project, "DEMO")
+    task_a = ledger.create_task(
+        title="Write one service", description="Implement service A",
+        role="backend", write_domains=["backend/service-a"],
+    )
+    task_b = ledger.create_task(
+        title="Write another service", description="Implement service B",
+        role="frontend", write_domains=["frontend/service-b"],
+    )
+    snapshot = project_iteration_backlog(project, "DEMO")
+    calls = []
+
+    def choose(**kwargs):
+        calls.append(kwargs)
+        return {
+            "selection": _batch_response(task_a["id"], task_b["id"]),
+            "manager_execution": {"job_id": "fixture"},
+        }
+
+    spec = dict(
+        workspace=tmp_path, project_key="DEMO", root=project,
+        project_config=tmp_path / "unused-project.yaml",
+        expected_backlog_version=snapshot["version"],
+        confirmed=True, manager_runner=choose,
+    )
+    first = plan_next_iteration(**spec)
+    second = plan_next_iteration(**spec)
+    assert first["iteration_choice"]["execution_mode"] == "parallel"
+    assert first["workflow_started"] is False
+    assert second["reused"] is True
+    assert len(calls) == 1
+    read = TaskAssistantSessionStore(tmp_path, "DEMO").read()
+    choice = latest_iteration_choice(read, snapshot)
+    assert choice["selected_task_ids"] == [task_a["id"], task_b["id"]]
+    assert choice["execution_authorized"] is False
