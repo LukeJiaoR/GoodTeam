@@ -6561,9 +6561,10 @@ def handle_project_api_post(
         if proposal.get("project_task_id"):
             # The Manager's queue item is the SAME task the existing Workflow
             # will run. Claim its ledger identity BEFORE any Worker side effect.
-            from goodteam_os.assistant_queue import require_queued_project_task
+            from goodteam_os.assistant_queue import require_no_active_project_goal, require_queued_project_task
 
             try:
+                require_no_active_project_goal(workspace, key)
                 require_queued_project_task(root, key, proposal)
                 existing = StateStore(workspace).read_project_current(key)
                 if existing and is_active_run(existing) and existing.run_id != start_run_id:
