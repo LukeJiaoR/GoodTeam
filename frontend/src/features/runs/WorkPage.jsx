@@ -557,53 +557,14 @@ export function PlanView({
   );
 }
 
-function ExecutionView({ defaultAdapter = 'codex', jobs, onDispatch, t }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  const [dispatched, setDispatched] = useState(null);
-  const [values, setValues] = useState({ name: '', role: 'implementation', adapter: defaultAdapter, task: '' });
-  const submit = async (event) => {
-    event.preventDefault();
-    setBusy(true); setError(null);
-    try {
-      const payload = await onDispatch(values);
-      setDispatched({ name: values.name, role: values.role });
-      setOpen(false);
-      setValues({ name: '', role: 'implementation', adapter: defaultAdapter, task: '' });
-      return payload;
-    } catch (caught) {
-      setError(caught);
-      return null;
-    } finally {
-      setBusy(false);
-    }
-  };
-  useEffect(() => {
-    if (!dispatched) return undefined;
-    const timer = globalThis.setTimeout(() => setDispatched(null), 3000);
-    return () => globalThis.clearTimeout(timer);
-  }, [dispatched]);
+function ExecutionView({ jobs, t }) {
+  // Work owns one new-task entry: Manager -> Task Assistant queue -> Workflow.
+  // Historical direct-dispatch jobs remain inspectable, not a second UI path.
   return (
     <div className="work-section-stack">
       <header className="work-section-header">
-        <div><h2>{t('work.execution.title')}</h2><p>{t('work.execution.description')}</p></div>
-        <Button onClick={() => setOpen((value) => !value)}>{t('work.execution.dispatch')}</Button>
+        <div><h2>{t('work.execution.title')}</h2></div>
       </header>
-      {dispatched ? <p className="work-dispatch-result" role="status">{t('work.execution.dispatched', { name: dispatched.name, role: dispatched.role })}</p> : null}
-      {open ? (
-        <form className="product-inline-form" onSubmit={submit}>
-          {['name', 'role', 'adapter', 'task'].map((field) => (
-            <label key={field}><span>{t(`work.execution.${field}`)}</span>
-              {field === 'task'
-                ? <textarea required rows="3" value={values[field]} onChange={(event) => setValues({ ...values, [field]: event.target.value })} />
-                : <input required value={values[field]} onChange={(event) => setValues({ ...values, [field]: event.target.value })} />}
-            </label>
-          ))}
-          {error ? <ProductError error={error} t={t} /> : null}
-          <Button busy={busy} type="submit">{t('work.execution.confirmDispatch')}</Button>
-        </form>
-      ) : null}
       {jobs.length ? <ul className="work-item-list">{jobs.map((job, index) => (
         <li key={job.job_id || job.id || index}>
           <div><strong>{job.role || job.name || t('work.execution.worker')}</strong><code>{job.job_id || job.id}</code></div>
@@ -1139,9 +1100,7 @@ export default function WorkPage() {
       {inspectorView === 'activity' ? <ActivityView data={data} language={language} projectKey={projectKey} t={t} /> : null}
       {inspectorView === 'execution' ? (
         <ExecutionView
-          defaultAdapter={data?.start_context?.worker_backend?.mode || 'codex'}
           jobs={data.worker_jobs || []}
-          onDispatch={(values) => mutate('dispatch', () => runApi.dispatchTrack({ ...values, project_key: projectKey }))}
           t={t}
         />
       ) : null}
