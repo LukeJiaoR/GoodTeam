@@ -96,6 +96,57 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
     }
 
 
+def _project_evidence(workspace: Path, project_key: str, root: Path) -> dict[str, Any]:
+    """Summarize only a properly bound existing repository-understanding artifact.
+
+    Absence of a completed scan is not proof that no code, tests or risks exist.
+    Never start a scan, execute a command or recover an interrupted task here.
+    """
+    from goodteam_os.project_readiness_executor import ProjectReadinessExecutor
+
+    executor = ProjectReadinessExecutor(workspace)
+    try:
+        readiness = executor.status(project_key, root, recover=False)
+        if (readiness.get("execution") or {}).get("status") == "running":
+            return {"status": "unavailable", "reason": "project_inspection_running"}
+        step = next(
+            (item for item in readiness.get("steps", [])
+             if isinstance(item, dict) and item.get("id") == "repository_understanding"
+             and item.get("status") in {"complete", "failed"}
+             and item.get("artifact_refs")), None,
+        )
+        if step is None:
+            return {"status": "unavailable", "reason": "no_completed_project_inspection"}
+        reference = str(step["artifact_refs"][-1])
+        artifact = executor.artifact(project_key, root, reference)
+        facts = artifact.get("content")
+        if not isinstance(facts, dict):
+            return {"status": "unavailable", "reason": "project_inspection_content_unavailable"}
+        fields = {}
+        for key in ("technology_stack", "entry_points", "commands", "constraints", "risks"):
+            entries = facts.get(key)
+            if not isinstance(entries, list):
+                continue
+            values = []
+            for item in entries[:10]:
+                raw = item.get("command", "") if isinstance(item, dict) and key == "commands" else item
+                if isinstance(raw, str) and raw.strip():
+                    values.append(raw.strip()[:240])
+            if values:
+                fields[key] = values
+        scan = facts.get("scan") or {}
+        complete = step.get("status") == "complete" and isinstance(scan, dict) and scan.get("complete") is not False
+        return {
+            "status": "complete" if complete else "incomplete",
+            "source": "repository_understanding",
+            "artifact_ref": reference,
+            "snapshot_id": str(facts.get("snapshot_id") or "")[:128],
+            "observations": fields,
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"status": "unavailable", "reason": "project_inspection_not_verified"}
+
+
 def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                         project_config: Path, expected_backlog_version: str,
                         manager_runner: Callable[..., dict[str, Any]] = run_manager_iteration_choice,
@@ -128,6 +179,7 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             "schema_version": "project_iteration_choice_packet.v1",
             "project_key": project_key,
             "backlog": snapshot,
+            "repository_understanding": _project_evidence(workspace, project_key, root),
             "conversation": conversation_context(session, query="next project iteration"),
         }
         result = manager_runner(project_config=project_config, project_key=project_key,
