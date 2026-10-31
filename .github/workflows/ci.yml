@@ -2,7 +2,6 @@ name: CI
 run-name: CI ${{ inputs.target_sha || github.event.pull_request.head.sha || github.sha }}
 
 on:
-  pull_request:
   workflow_dispatch:
     inputs:
       target_sha:
