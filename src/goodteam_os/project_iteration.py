@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from goodteam_os.parallel_capacity import DEFAULT_MAX_CONCURRENT_WORKERS
+
 _PRIORITY = {"critical": 0, "urgent": 0, "p0": 0, "high": 1, "p1": 1,
              "medium": 2, "normal": 2, "p2": 2, "low": 3, "p3": 3}
 _INTERNAL_REFS = ("stage:", "goal:")
@@ -234,6 +236,7 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
         "selected_tasks": [{"task_id": item, "title": candidates[item]["title"]} for item in selected_ids],
         "execution_mode": "parallel" if len(selected_ids) > 1 else "single",
         "parallel_execution_authorized": False,
+        "max_simultaneous_workers_per_dispatch": DEFAULT_MAX_CONCURRENT_WORKERS,
         "requires_worktree_isolation": len(selected_ids) > 1,
         "fan_in_required": len(selected_ids) > 1,
         "compared_task_ids": list(compared),
