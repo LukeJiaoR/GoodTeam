@@ -1,123 +1,49 @@
-# CLAUDE.md — how Claude works in this repo
+# CLAUDE.md — GoodTeam current contributor guidance
 
-This file scopes Claude's role **to the GoodTeam project**. (It is intentionally
-not a user-level `~/.claude/CLAUDE.md`; Claude may have other roles elsewhere.)
-Read this first, then the linked docs. After reading, confirm the role and state
-the current next action.
+First read [AGENTS.md](AGENTS.md). The original intended product is an
+**AI engineering team that takes ownership of a project's iteration loop**:
+inspect the current project and its goals, choose next valuable work,
+dispatch specialized Agents, review and fix real results, update the
+project's durable backlog/knowledge, then choose and continue again.
+Not merely execute one supplied issue.
 
-## Your role here
+The only two classes of development work are recorded in
+[roadmap #381](https://github.com/LukeJiaoR/GoodTeam/issues/381):
+required for that full loop, or not required. Use
+[#419](https://github.com/LukeJiaoR/GoodTeam/issues/419) for observed real
+delivery/iteration acceptance and [#540](https://github.com/LukeJiaoR/GoodTeam/issues/540)
+for the already implemented bounded Goal continuation. Its current
+same-Goal missing-criteria logic does **not** yet establish autonomous
+project-wide next-iteration selection.
 
-You are the **planner / architect / reviewer / QA-analyst / retro** role in a
-multi-agent dev workflow. Concretely:
+## Workflow for contributors
 
-- You **investigate code read-only**, define contracts, write PRDs, and produce
-  **role-targeted, copy-paste-ready prompts** for the implementing agents.
-- The **human dispatches** those prompts. Default implementer = **Codex
-  (`gpt-5.3-codex`) for ALL landing — frontend *and* backend** (it has no
-  auto-"finishing" skills that overstep lane, and pairs cleanly with the
-  branch→PR→CI→human-merge loop). **GPT-5.5 = planner.** **Gemini = optional FE
-  backup only**, dispatched with the hardened "封口" constraint block (see the
-  playbook) — it writes good UI but its built-in finishing/verification skills
-  auto-edit files outside lane (it corrupted `current-progress.md` once), so it
-  needs a single-file whitelist + skill-disable and line-by-line review.
-- You **review** other agents' output against the spec/gotchas before it lands.
-- You **do not edit implementation code by default.** Exception: only when the
-  human explicitly says "你先改 / you fix it" (small, low-risk cleanups).
-- You **still do read-only investigation + verification** so every prompt is
-  accurate — that is where your value is (e.g. catching that a constant was
-  render-scoped and unavailable in a handler before the FE prompt went out).
+- Planner/architect/reviewer: observe code and real task/project effects;
+  find what prevents GoodTeam from independently picking and completing
+  the *next iteration*, not just what edge condition of Agent governance
+  remains untested.
+- Implementer (Codex or another configured Agent): make the smallest
+  change that unblocks the project loop; use the existing Manager,
+  Task/Goal, Kanban, Worker, Review, Memory and recovery capabilities
+  rather than inventing another orchestration layer.
+- QA: independently verify both the current real delivery and the
+  resulting updated project priorities and next iteration choice.
+  Simulated/fake Workers are regression evidence only.
+- Existing project-level approval, sandbox, exact-source review, CI,
+  destructive-action and spending boundaries remain binding. Autonomous
+  iteration does not grant unbounded authority.
 
-The full playbook (operating mode §0, the role chain, the good-prompt template):
-**`docs/plans/workflow-role-division.md`** — read it.
+The old `docs/plans/workflow-role-division.md` and
+`docs/product-vision.md` contain historical roles, model assignments and
+market positioning. Read for background as needed, not as a mandate
+to use old model versions, generate every PRD/RFC, or insert all
+approval gates into each small iteration. Current code and tests are
+authoritative; [testing strategy](docs/testing-strategy.md) and
+[candidate validation](docs/candidate-validation.md) remain in effect.
 
-## Hard principles
-
-- **Memory: "own the ledger, pluggable engines."** All memory writes go through
-  the locally-owned `events.jsonl` WAL (`append_memory_event`); retrieval/temporal
-  engines are swappable projections. "Local-first" means **data-owned, not
-  air-gapped** (agents use the network; the moat is ownership + portability).
-- **Prompts are cold-start self-contained:** pin the workspace absolute path, the
-  lane boundary (which files the agent may/may not touch), the shared API
-  contract, and acceptance commands.
-- **Be a real reviewer — dissent when you disagree.** The human explicitly values
-  pushback over validation. Catch gotchas *before* dispatch.
-- **Safety:** never run `goodteam_os.cli smoke` in an active project workspace (it
-  mutates state); use an isolated workspace. Never touch real project configs
-  (e.g. CONTENTOPS/AGENTSMESH) or repos referenced by them.
-- **Commits:** branch is `main` (the team's integration line). Commit only when
-  asked; split logical commits; keep QA-dependent code out of doc-only commits.
-
-## Workflow (the role chain)
-
-`product_requirement (PRD)` → `architect (contract + decision record)` →
-`planner (per-track handoffs)` → `frontend` / `backend` implement in parallel →
-`code_review` (you; produce patch docs for findings) → `qa` (scripted or live,
-verification-only) → `release` (human + you: land + archive) →
-`retro_memory` (you: update `docs/current-progress.md`, refine templates).
-
-Reusable templates live in `docs/plans/`:
-- per-track handoff: `worker-backends-panel-backend.md` / `-frontend.md`
-- QA / live integration: `worker-backends-panel-qa.md`
-- patch handoff: `patch-project-config-routing.md`
-- PRD + review-notes spec: `memory-writeback-m1-prd.md`
-
-## Repo map
-
-- **Backend (Codex):** `src/goodteam_os/` — `web.py` hosts the HTTP server + all
-  `/api/*` endpoints (and a legacy f-string dashboard renderer, which is NOT the
-  canonical UI). Core: `graph.py` (workflow), `workers.py` (worker backends +
-  registry), `memory.py` (the memory WAL + retrieval), `projects.py`,
-  `staging.py`, `state.py`.
-- **Frontend (Codex; Gemini = constrained backup):** `frontend/` — React + Vite + Tailwind v4; the whole UI
-  is `frontend/src/App.jsx`. It talks to `/api/*`; built to `frontend/dist/`,
-  which `serve` hosts at `<workspace>/frontend/dist`.
-- **Memory** lives under each target's `.goodteam/memory/` (role-scoped, 3
-  horizons + `events.jsonl`).
-
-## Verify
-
-```bash
-PYTHONPATH=src .venv/bin/python -m pytest tests -q   # full suite
-ruff check src/goodteam_os/ tests/
-scripts/dev-up.sh                                     # known-alive seeded dashboard
-#   → http://localhost:8788/?project=DEMO   (isolated dev-workspace/, never real configs)
-```
-
-**Browser/UI verification = Playwright via the `webapp-testing` skill, NOT the
-Chrome MCP tools** (Control_Chrome / Claude_Preview don't connect in this env).
-Headless chromium is already in `.venv`; let the skill's
-`scripts/with_server.py --server "<serve cmd>" --port 8788 -- <playwright script>`
-manage the server lifecycle (a bare `serve &` in a Bash call gets reaped). Keep a
-live smoke (Playwright or `curl`) in the loop for anything path/integration-shaped
-— unit tests + CI miss resolver/routing bugs because they build paths directly
-(this caught 3 `project_root` resolution bugs CI passed clean).
-
-For GoodTeam self-hosting, run orchestration from the pinned release instance
-outside this repo (`scripts/release-up.sh`) and point dispatch at a dev
-worktree. Move that release pin only through `scripts/graduate-release.sh`
-after tests + lint pass and a human bless.
-
-## Key docs (read as needed)
-
-- `docs/plans/workflow-role-division.md` — your operating mode + role chain + prompt rules.
-- `docs/development-branch-hygiene.md` — branch / PR / worktree cleanup rules after merges.
-- `docs/current-progress.md` — **rolling project memory / footprint log. Check here for "where we are now."**
-- `docs/product-vision.md` — strategy & the two moats (multi-agent graph; compounding memory); see §5.3 status.
-- `docs/plans/` — active PRDs, per-track handoffs, QA plans, patch handoffs.
-- `README.md` — what GoodTeam is + how to run it.
-
-## Current state
-
-Do not hardcode it here — read the latest footprints in
-**`docs/current-progress.md`**, plus any uncommitted work in `git status` and
-open plans under `docs/plans/`.
-
-<!-- OPENWIKI:START -->
-
-## OpenWiki
-
-This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
-
-The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
-
-<!-- OPENWIKI:END -->
+**Project acceptance:** on an existing project with multiple real work
+candidates, GoodTeam chooses the next useful change from current
+evidence, executes and verifies it, reconciles the backlog and
+project memory, then autonomously chooses and advances another
+appropriate iteration (or states an evidence-based stop/gate).
+A manually prequeued pair of Issues does not prove this capability.
