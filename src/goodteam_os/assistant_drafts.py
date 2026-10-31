@@ -217,7 +217,9 @@ def confirm_and_prepare(service, *, project_key, root, request):
 
                 reject_missing_task_context(TaskSkillIdentity("workflow_run", project_key, f"task-{proposal_id}"))
         else:
-            from goodteam_os.assistant_queue import require_queued_project_task
+            from goodteam_os.assistant_queue import require_no_active_project_goal, require_queued_project_task
+            if proposal.get("project_task_id"):
+                require_no_active_project_goal(service.workspace, project_key)
             require_queued_project_task(root, project_key, proposal)
             from goodteam_os.skills.task_locks import TaskSkillIdentity
             from goodteam_os.skills.task_start import capture_task_start
