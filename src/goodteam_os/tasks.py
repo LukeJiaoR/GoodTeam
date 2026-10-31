@@ -87,9 +87,20 @@ class LocalTaskStore:
         dependencies: list[str] | None = None,
         artifact_refs: list[str] | None = None,
         external_refs: list[str] | None = None,
+        write_domains: list[str] | None = None,
+        execution_policy: str = "workspace_write",
     ) -> dict[str, Any]:
         if role == "orchestrator":
             raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
+        if execution_policy not in {"read_only", "workspace_write"}:
+            raise ValueError("Project task execution policy must be read_only or workspace_write.")
+        if write_domains is not None:
+            from goodteam_os.project_iteration import normalize_write_domains
+
+            normalized = normalize_write_domains(write_domains)
+            if normalized is None:
+                raise ValueError("Write domains must be declared as valid project-relative paths.")
+            write_domains = normalized
         ledger = self._read()
         tasks = list(ledger.get("tasks", []))
         now = self._now()
@@ -110,6 +121,8 @@ class LocalTaskStore:
             "acceptance_criteria": acceptance_criteria or [],
             "artifact_refs": artifact_refs or [],
             "external_refs": external_refs or [],
+            **({"write_domains": write_domains} if write_domains is not None else {}),
+            **({"execution_policy": execution_policy} if execution_policy != "workspace_write" else {}),
             "created_at": now,
             "updated_at": now,
         }
