@@ -3,9 +3,9 @@ export function iterationPlanningRequest(snapshot, language = 'en') {
   if (snapshot?.schema_version !== 'project_iteration_backlog.v1') return '';
   const candidate = snapshot.next_candidate;
   const isZh = String(language).startsWith('zh');
-  if (!candidate) return isZh
+  if (!candidate) return 'GoodTeam project iteration preview (read-only).\n' + (isZh
     ? '请先只读检查本项目的代码、历史、现有任务和真实验证结果，发现并比较下一轮值得做的工作。不要假装已有可执行任务，也不要自动运行或变更权限。'
-    : 'Read this project and its existing code, history, tasks and verified results. Discover and compare possible next iterations. Do not invent actionable work or start execution.';
+    : 'Read this project and its existing code, history, tasks and verified results. Discover and compare possible next iterations. Do not invent actionable work or start execution.');
   const criteria = (candidate.acceptance_criteria || []).map(value => '- ' + value).join('\n');
   const source = [
     'Local task: ' + candidate.task_id,
@@ -18,7 +18,7 @@ export function iterationPlanningRequest(snapshot, language = 'en') {
   const instruction = isZh
     ? '请基于当前仓库、项目目标、依赖与实际工作状态独立判断下一轮迭代。这是一个真实本地 Backlog 候选，不是系统已经确定的最优优先级。核对该任务是否仍存在、版本/依赖是否有效；如有更有价值的候选请解释证据。给出有界实施草稿与验收标准，不能凭此直接开工。'
     : 'Evaluate the next project iteration against actual repository evidence, goals, dependencies and outcomes. This is a candidate from the local backlog, not a proven optimum. Recheck its identity, revision and dependencies; explain any better alternative. Draft bounded work and acceptance criteria, but do not execute from this suggestion.';
-  return instruction + '\n\n' + source;
+  return 'GoodTeam project iteration preview (read-only).\n' + instruction + '\n\n' + source;
 }
 
 export default function ProjectIterationSuggestion({ snapshot, onPlan, disabled, language = 'en' }) {
