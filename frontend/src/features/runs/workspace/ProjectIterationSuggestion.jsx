@@ -86,7 +86,7 @@ export default function ProjectIterationSuggestion({
         action: 'queue_iteration_choice',
         expected_backlog_version: snapshot.version,
         confirmed: true,
-      })}>{zh ? '将 Manager 选择加入现有任务队列' : 'Queue selected tasks in existing workflow'}</button>
+      })}>{zh ? '将 Manager 选择加入现有任务队列' : 'Add selected tasks to existing queue'}</button>
     ))}
     {!current && <button
       type="button" disabled={disabled || unavailable} onClick={submit}>
