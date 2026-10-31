@@ -82,6 +82,7 @@ export default function ProjectConversation({
   suggestions,
   proposedTask,
   iterationBacklog,
+  iterationChoice,
   canPlanIteration = false,
   onQueueTask,
   contextTitle,
@@ -132,7 +133,8 @@ export default function ProjectConversation({
         <span>{contextTitle ? t('assistant.project.taskContext', { title: contextTitle }) : t('assistant.project.projectContext')}</span>
         {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
       </div>
-      <ProjectIterationSuggestion snapshot={iterationBacklog} onPlan={onStart}
+      <ProjectIterationSuggestion snapshot={iterationBacklog} choice={iterationChoice}
+        onPlan={onAssistantAction} onInspect={onStart}
         disabled={!canPlanIteration || Boolean(busy) || Boolean(assistantBusy)} language={language} />
       <ConversationReadingFrame key={scope} scope={scope} timeline={timeline || []} attentionKey={attentionKey}
         deliveryKey={deliveryKey} assistantFocusKey={`${assistantState?.pending_team_decision?.id || ''}:${requestStatus || ''}`}
