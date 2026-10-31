@@ -211,6 +211,40 @@ class LocalTaskStore:
         return dict(claimed)
 
     @_locked
+    def settle_project_workflow(self, task_id: str, *, run_id: str, terminal_status: str) -> dict[str, Any]:
+        """Project the existing Workflow outcome back onto its original backlog.
+
+        A completed Workflow is only ready for delivery review, NOT 'done':
+        the candidate must still be independently reviewed/integrated into a
+        real repository before the project can credit completed work.
+        """
+        if terminal_status not in {"complete", "rejected", "archived"}:
+            raise ValueError("A terminal Workflow observation is required.")
+        ledger = self._read()
+        tasks = list(ledger["tasks"])
+        for index, current in enumerate(tasks):
+            if current["id"] != task_id:
+                continue
+            if current.get("run_id") != run_id or current.get("execution_origin") != "manager_project_iteration":
+                raise ValueError("Workflow outcome belongs to another project task.")
+            expected = "review" if terminal_status == "complete" else "blocked"
+            if current["status"] == expected and current.get("observed_workflow_status") == terminal_status:
+                return dict(current)
+            if current["status"] != "in_progress":
+                raise ValueError("Project task is no longer awaiting this Workflow outcome.")
+            task = {
+                **current, "status": expected,
+                "observed_workflow_status": terminal_status,
+                "delivery_verified": False,
+                "updated_at": self._now(),
+            }
+            tasks[index] = task
+            ledger["tasks"] = tasks
+            self._write(ledger)
+            return dict(task)
+        raise ValueError("The original project task is unavailable.")
+
+    @_locked
     def upsert_external_task(self, *, external_ref: str, **fields: Any) -> dict[str, Any]:
         """One atomic read/modify/write for a durable external projection identity."""
         if not isinstance(external_ref, str) or not external_ref.strip():
