@@ -20,7 +20,7 @@ def is_conversation_only(text):
     return bool(_CANCEL.search(text) or _DISCUSSION.search(text))
 
 
-def archive_terminal_proposal(store, *, workspace):
+def archive_terminal_proposal(store, *, workspace, root=None):
     proposal = dict(store.read().get("proposed_task") or {})
     run_id = str(proposal.get("run_id", "")).strip()
     if not proposal or not run_id:
@@ -29,6 +29,14 @@ def archive_terminal_proposal(store, *, workspace):
     terminal_status = _terminal_run_status(StateStore(workspace), store.project_key, run_id)
     if not terminal_status:
         return False
+    if proposal.get("project_task_id"):
+        if root is None:
+            raise ValueError("Cannot reconcile a Manager task without its original project root.")
+        from goodteam_os.tasks import LocalTaskStore
+
+        LocalTaskStore(root, store.project_key).settle_project_workflow(
+            str(proposal["project_task_id"]), run_id=run_id, terminal_status=terminal_status,
+        )
     store.archive_task_proposal(proposal["id"], run_id, terminal_status)
     return True
 
