@@ -11,6 +11,7 @@ from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from goodteam_os.models import _parse_simple_yaml
+from goodteam_os.parallel_capacity import DEFAULT_MAX_CONCURRENT_WORKERS, dispatch_pool_size
 from goodteam_os.workers import WorkerJobStore
 
 if TYPE_CHECKING:
@@ -279,7 +280,9 @@ def _dispatch_tracks(
 
         isolated = prepare_dispatch_workspace(project_root, run_id, [str(job["id"]) for job in jobs_by_role])
     results_by_role: dict[str, dict[str, object]] = {}
-    max_workers = max(1, len(jobs_by_role))
+    # Extra jobs wait in ThreadPoolExecutor's queue; planned work is not
+    # discarded just because it exceeds the simultaneous Worker capacity.
+    max_workers = dispatch_pool_size(len(jobs_by_role))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(_run_dispatched_job, project_root, job, dict(verify_commands or {}),
@@ -340,6 +343,12 @@ def _dispatch_tracks(
         "run_id": run_id,
         "project_root": str(project_root),
         "integration": integration,
+        "worker_capacity": {
+            "configured_max_concurrent_workers": DEFAULT_MAX_CONCURRENT_WORKERS,
+            "pool_size": max_workers,
+            "scheduled_jobs": len(jobs_by_role),
+            "jobs_beyond_initial_capacity": max(0, len(jobs_by_role) - max_workers),
+        },
         **({"baseline": {name: value for name, value in isolated.metadata.items() if name != "files"}}
            if isolated else {}),
     }
