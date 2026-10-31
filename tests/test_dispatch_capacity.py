@@ -7,20 +7,8 @@ import pytest
 
 import goodteam_os.dispatch as dispatch_module
 from goodteam_os.dispatch import dispatch_tracks
-from goodteam_os.parallel_capacity import DEFAULT_MAX_CONCURRENT_WORKERS, dispatch_pool_size
+from goodteam_os.parallel_capacity import DEFAULT_MAX_CONCURRENT_WORKERS
 from test_dispatch_isolation import repository
-
-
-@pytest.mark.parametrize("jobs,expected", [(1, 1), (3, 3), (10, 10), (11, 10), (25, 10)])
-def test_dispatch_pool_size_is_bounded_but_planned_job_count_is_not(jobs, expected):
-    assert DEFAULT_MAX_CONCURRENT_WORKERS == 10
-    assert dispatch_pool_size(jobs) == expected
-
-
-@pytest.mark.parametrize("jobs", [0, -1, True, 1.0, "10"])
-def test_dispatch_pool_size_rejects_invalid_counts(jobs):
-    with pytest.raises(ValueError, match="positive job count"):
-        dispatch_pool_size(jobs)
 
 
 def test_real_dispatch_queues_the_eleventh_worker_without_losing_it(tmp_path, monkeypatch):

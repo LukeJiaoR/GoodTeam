@@ -20,23 +20,22 @@ _DOC_PATHS = {
 }
 
 _TIER2_BACKEND_TARGETS = {
-    "src/goodteam_os/artifacts.py": ("tests/test_artifacts.py",),
-    "src/goodteam_os/cli.py": (
-        "tests/test_cli.py",
-        "tests/test_cli_doctor.py",
-        "tests/test_init.py",
-    ),
-    "src/goodteam_os/context.py": ("tests/test_context.py",),
-    "src/goodteam_os/cross_project_memory.py": ("tests/test_cross_project_memory.py",),
-    "src/goodteam_os/failure_patterns.py": ("tests/test_failure_patterns.py",),
-    "src/goodteam_os/frontend_assets.py": ("tests/test_frontend_assets.py",),
-    "src/goodteam_os/memory.py": ("tests/test_memory.py",),
-    "src/goodteam_os/messages.py": ("tests/test_messages.py",),
-    "src/goodteam_os/projects.py": ("tests/test_projects.py",),
-    "src/goodteam_os/resources.py": ("tests/test_resources.py",),
-    "src/goodteam_os/role_prompts.json": ("tests/test_roles.py",),
-    "src/goodteam_os/roles.py": ("tests/test_roles.py",),
+    "src/goodteam_os/artifacts.py": ("tests/test_delivery_api.py",),
+    "src/goodteam_os/cli.py": ("tests/test_cli_doctor.py", "tests/test_init.py"),
+    "src/goodteam_os/context.py": ("tests/test_repository_inventory.py",),
+    "src/goodteam_os/cross_project_memory.py": ("tests/test_memory_core.py",),
+    "src/goodteam_os/failure_patterns.py": ("tests/test_full_smoke_preflight.py",),
+    "src/goodteam_os/frontend_assets.py": ("tests/test_web_cors.py",),
+    "src/goodteam_os/memory.py": ("tests/test_memory_core.py",),
+    "src/goodteam_os/messages.py": ("tests/test_task_assistant_session.py",),
+    "src/goodteam_os/projects.py": ("tests/test_project_readiness_web.py",),
+    "src/goodteam_os/resources.py": ("tests/test_project_readiness_web.py",),
+    "src/goodteam_os/role_prompts.json": ("tests/test_models.py",),
+    "src/goodteam_os/roles.py": ("tests/test_models.py",),
     "src/goodteam_os/tasks.py": ("tests/test_tasks.py",),
+    "src/goodteam_os/project_iteration.py": ("tests/test_project_iteration.py",),
+    "src/goodteam_os/project_iteration_planner.py": ("tests/test_project_iteration_planner.py",),
+    "src/goodteam_os/parallel_capacity.py": ("tests/test_dispatch_capacity.py",),
 }
 
 _TIER3_BACKEND_FILES = {
@@ -194,7 +193,7 @@ def _decision_for_frontend(path: str) -> Plan:
             "full",
             path,
             "browser-visible workflow",
-            backend_targets=("tests/test_web.py",),
+            backend_targets=("tests/test_web_cors.py",),
             smoke=True,
         )
 
@@ -205,7 +204,7 @@ def _decision_for_frontend(path: str) -> Plan:
             "full",
             path,
             "frontend helper contract",
-            backend_targets=("tests/test_web.py",),
+            backend_targets=("tests/test_web_cors.py",),
         )
 
     if path.startswith(("frontend/public/", "frontend/src/assets/")):
