@@ -31,8 +31,7 @@ Return exactly one valid JSON object (no markdown) with the keys
 "selected_task_id" (one exact eligible ID), "rationale" (20-1600 characters
 grounded in the supplied facts and uncertainty), and "compared_task_ids"
 (a unique list of 1-8 exact eligible IDs including the selected ID).
-Example: {"selected_task_id":"T-1","rationale":"The task has clear acceptance
-criteria and fewer known dependencies.","compared_task_ids":["T-1","T-2"]}.
+Example: {"selected_task_id":"T-1","rationale":"Clear checks and few dependencies.","compared_task_ids":["T-1","T-2"]}.
 If evidence is insufficient, say so in the rationale, never invent work.
 The result is advice, never authorization to execute or deploy."""
 
@@ -135,7 +134,7 @@ def _project_evidence(workspace: Path, project_key: str, root: Path) -> dict[str
             if values:
                 fields[key] = values
         scan = facts.get("scan") or {}
-        complete = step.get("status") == "complete" and isinstance(scan, dict) and scan.get("complete") is not False
+        complete = step.get("status") == "complete" and isinstance(scan, dict) and scan.get("complete") is True
         return {
             "status": "complete" if complete else "incomplete",
             "source": "repository_understanding",
