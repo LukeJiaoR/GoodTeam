@@ -1,5 +1,37 @@
 # GoodTeam Agent Rules
 
+## Delivery-first task selection
+
+The current work scope has **exactly two classes**, recorded in
+[GitHub #381](https://github.com/LukeJiaoR/GoodTeam/issues/381)
+(2026-10-31 binary pruning). Older plans, strategy notes and progress
+logs are history; they are not a parallel task queue.
+
+1. **Required for a real end-to-end delivery**: an existing local Git
+   project, Manager-owned intent/constraints, real Worker dispatch,
+   bounded execution, independent relevant verification/review/fix,
+   accurate artifacts and final human decisions, and safe continuation/
+   recovery. Repair concrete failures from [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419)
+   and [#540](https://github.com/LukeJiaoR/GoodTeam/issues/540)
+   using current source and actual evidence. Prefer an existing workflow
+   path (including the existing `fix` profile) over a new execution engine.
+2. **Not required for that delivery**: do not initiate or expand it in
+   this development line. This includes optional Telegram, external
+   Planner/MCP, custom Skill installation/lifecycle and strict Skill
+   runtime, workspace-wide Team migration, mobile extras, commercialization,
+   universal long-memory work and generalized platform refactoring.
+   Already implemented integrations are not permission to strip a shared
+   dependency without a tested replacement.
+
+A new implementation task must identify the **real user-facing failing
+step, a reproducible exact-version observation, the smallest viable fix,
+and how to re-enter the same real delivery**. If there is no such
+required outcome or an independently confirmed security defect in the
+required path, do not turn speculative hardening into a new task.
+Keep the existing approval, trusted-path, isolation, evidence,
+idempotency and exact-head CI protections. Pruning is never a
+permission bypass, blanket test skip, source deletion or false PASS.
+
 This file contains project-specific rules for automated coding agents working in
 this repository.
 
