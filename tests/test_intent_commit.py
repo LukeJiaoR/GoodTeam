@@ -1,11 +1,10 @@
-import json
 from pathlib import Path
 
 import pytest
 
 from goodteam_os import web
-from goodteam_os.intent_commit import IntentCommitStore, deterministic_interpretation
-from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
+from goodteam_os.intent_commit import IntentCommitStore
+from goodteam_os.state import StateStore, create_initial_state
 
 
 def _approval_fixture(workspace: Path) -> tuple[dict[str, str], str]:
