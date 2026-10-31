@@ -126,7 +126,7 @@ def edit_draft(store, request):
                         source_message_ids=[*proposal["source_message_ids"], message_id], pending_change=None)
         proposal.pop("needs_clarification", None)
         # A human edit is a new task, not the Manager-selected source task.
-        for field in ("project_task_id", "project_task_digest"):
+        for field in ("project_task_id", "project_task_digest", "source_event_id"):
             proposal.pop(field, None)
         proposal["source"] = "human_edited"
         session["proposed_task"] = proposal
@@ -152,7 +152,7 @@ def resolve_draft(store, request):
             proposal["source_message_ids"] = (([*proposal["source_message_ids"]] if choice == "append" else [])
                                               + change.get("source_message_ids", [change["message_id"]]))
             proposal.pop("needs_clarification", None)
-            for field in ("project_task_id", "project_task_digest"):
+            for field in ("project_task_id", "project_task_digest", "source_event_id"):
                 proposal.pop(field, None)
             proposal["source"] = "human_edited"
         proposal.update(revision=proposal["revision"] + 1, pending_change=None)
