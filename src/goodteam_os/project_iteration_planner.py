@@ -42,8 +42,7 @@ Return one JSON object only (no Markdown):
 {"selected_task_ids":["T-1","T-2"],
  "selected_task_id":"T-1",
  "compared_task_ids":["T-1","T-2","T-3"],
- "rationale":"The two tasks are independent in the provided evidence, with
-distinct declared write scopes; final runtime isolation remains unverified."}
+ "rationale":"Two tasks have disjoint declared paths; runtime isolation is not yet verified."}
 Keep selected_task_ids unique, ordered by preference, size 1-3;
 selected_task_id must equal its first element. Keep compared IDs unique,
 eligible, size 1-8, and include every selected ID. Rationale length 20-1600.
