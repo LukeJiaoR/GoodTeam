@@ -1,9 +1,7 @@
 name: Candidate automation
 
 on:
-  workflow_run:
-    workflows: [Candidate published, CI]
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,6 +12,7 @@ concurrency:
 
 jobs:
   reconcile:
+    if: ${{ false }} # CI automation is paused; retain historical implementation.
     runs-on: ubuntu-latest
     permissions:
       contents: read
