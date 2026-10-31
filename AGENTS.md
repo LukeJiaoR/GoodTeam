@@ -2,6 +2,20 @@
 
 ## Project-iteration-first task selection
 
+**One execution path for new Manager work (2026-11-01):** Manager recommendations
+are read-only until explicitly queued. Send chosen project task IDs to the
+existing Task Assistant queue, then reuse its select/confirm/start Workflow
+identity and existing Worker/Review boundaries. The original LocalTaskStore
+card owns the task; a confirmed Workflow owns its Run. A completed Workflow
+moves the task to delivery review, NOT automatically to done. Do not create
+a second Manager-specific dispatcher, task ledger or execution state machine.
+Goal continuation remains an authorized adapter to Workflow; historical
+Operator/direct-dispatch entries remain readable and functional until their
+real parallel behavior can be migrated without regression. The disconnected
+AI Onboarding runner was retired; existing project import/readiness/inventory
+are the product's project discovery path. Do not restore the fake-only
+parallel-plan projection as a substitute for real isolated concurrent Workers.
+
 The product target is **an autonomous, continuing AI engineering team for an
 entire project**, not just an issue executor. The only current two-class
 development scope is [#381](https://github.com/LukeJiaoR/GoodTeam/issues/381):
