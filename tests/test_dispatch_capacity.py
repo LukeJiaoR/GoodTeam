@@ -7,7 +7,7 @@ import pytest
 
 import goodteam_os.dispatch as dispatch_module
 from goodteam_os.dispatch import dispatch_tracks
-from goodteam_os.parallel_capacity import DEFAULT_MAX_CONCURRENT_WORKERS, dispatch_pool_size
+from goodteam_os.parallel_capacity import DEFAULT_MAX_CONCURRENT_WORKERS
 from test_dispatch_isolation import repository
 
 
