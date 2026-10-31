@@ -8,6 +8,8 @@ from goodteam_os.project_iteration import (
 )
 from goodteam_os.project_iteration_planner import plan_next_iteration
 from goodteam_os.assistant_queue import queue_manager_iteration_choice, require_queued_project_task, _apply
+from goodteam_os.assistant_drafts import archive_terminal_proposal
+from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
@@ -206,10 +208,11 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
 
     # Existing select->draft->confirm->start claims the original project task,
     # and a replay can only reuse its *same* run identity.
-    first_draft = _apply(persisted, {
+    session_store = TaskAssistantSessionStore(tmp_path, "DEMO")
+    first_draft = session_store._mutate(lambda original: _apply(original, {
         "action": "select_queued_task", "proposal_id": queue[0]["id"],
         "expected_revision": 1,
-    })["proposed_task"]
+    }))["proposed_task"]
     task_record = require_queued_project_task(project, "DEMO", first_draft)
     assert task_record["id"] == task_a["id"]
     run_id = f"task-{first_draft['id']}"
@@ -221,6 +224,22 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     with pytest.raises(ValueError, match="changed"):
         require_queued_project_task(project, "DEMO", first_draft)
     assert require_queued_project_task(project, "DEMO", queue[1])["id"] == task_b["id"]
+
+    # Actual Workflow completion is not identical to integrated delivery:
+    # reconciliation exposes review-required evidence and does NOT mark done.
+    session_store.confirm_task(first_draft["id"], expected_revision=1)
+    session_store.bind_workflow(first_draft["id"], run_id)
+    state = create_initial_state(run_id, "DEMO", first_draft["exact_request"])
+    state.current_node = "complete"
+    state.next_node = "complete"
+    StateStore(tmp_path).write_project_current(state)
+    assert archive_terminal_proposal(session_store, workspace=tmp_path, root=project) is True
+    assert archive_terminal_proposal(session_store, workspace=tmp_path, root=project) is False
+    task_after = ledger.get_task(task_a["id"])
+    assert task_after["status"] == "review"
+    assert task_after["observed_workflow_status"] == "complete"
+    assert task_after["delivery_verified"] is False
+    assert ledger.get_task(task_b["id"])["status"] == "todo"
 
 
 def test_full_planning_inventory_is_not_limited_by_ui_candidate_preview(tmp_path):
