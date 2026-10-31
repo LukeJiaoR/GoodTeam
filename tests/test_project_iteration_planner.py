@@ -216,6 +216,7 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     }))["proposed_task"]
     task_record = require_queued_project_task(project, "DEMO", first_draft)
     assert task_record["id"] == task_a["id"]
+    session_store.confirm_task(first_draft["id"], expected_revision=1)
     run_id = f"task-{first_draft['id']}"
     claimed = ledger.claim_project_workflow(task_a["id"],
         expected_digest=first_draft["project_task_digest"], run_id=run_id)
@@ -228,7 +229,6 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
 
     # Actual Workflow completion is not identical to integrated delivery:
     # reconciliation exposes review-required evidence and does NOT mark done.
-    session_store.confirm_task(first_draft["id"], expected_revision=1)
     session_store.bind_workflow(first_draft["id"], run_id)
     state = create_initial_state(run_id, "DEMO", first_draft["exact_request"])
     state.current_node = "complete"
