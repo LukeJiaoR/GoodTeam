@@ -107,3 +107,47 @@ def test_iteration_preview_never_creates_task_even_if_manager_misclassifies(tmp_
     assert result["proposed_task"] is None
     assert result["timeline"][-1]["event"] == "project_question_answered"
     assert executor.started == []
+
+
+
+def test_parallel_scope_paths_validate_without_trusting_globs_or_parent_traversal():
+    from goodteam_os.project_iteration import normalize_write_domains
+
+    assert normalize_write_domains(["src/api/", "frontend/src/"]) == ["src/api", "frontend/src"]
+    for invalid in ([], ["."], ["../secret"], ["/etc"], ["src//api"],
+                    ["src\\api"], ["src/*"], ["src/api", "SRC/API"],
+                    ["C:/repo"], ["src/./api"], ["src/../api"]):
+        assert normalize_write_domains(invalid) is None
+
+
+def test_task_creation_can_declare_parallel_write_scope_or_readonly_policy(tmp_path):
+    store = LocalTaskStore(tmp_path, "APP")
+    writer = store.create_task(
+        title="Independent API change", description="A scoped edit", role="implementation",
+        write_domains=["backend/api/"],
+    )
+    advisor = store.create_task(
+        title="Independent architecture review", description="Review only", role="architect",
+        execution_policy="read_only",
+    )
+    assert store.get_task(writer["id"])["write_domains"] == ["backend/api"]
+    assert store.get_task(advisor["id"])["execution_policy"] == "read_only"
+    projection = rank_project_backlog(store.list_tasks(), "APP")
+    assert next(row for row in projection["candidates"] if row["task_id"] == writer["id"])["write_domain_status"] == "declared"
+    assert next(row for row in projection["candidates"] if row["task_id"] == advisor["id"])["execution_policy"] == "read_only"
+
+
+def test_bad_write_scope_cannot_be_saved_or_treated_as_parallel_authority(tmp_path):
+    import pytest
+
+    store = LocalTaskStore(tmp_path, "APP")
+    with pytest.raises(ValueError, match="Write domains"):
+        store.create_task(
+            title="Unsafe", description="Invalid declared scope", role="implementation",
+            write_domains=["../../secret"],
+        )
+    record = store.create_task(title="Unknown scope", description="Still plannable", role="implementation")
+    projection = rank_project_backlog(store.list_tasks(), "APP")
+    candidate = projection["next_candidate"]
+    assert candidate["task_id"] == record["id"]
+    assert candidate["write_domain_status"] == "unknown"
