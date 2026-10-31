@@ -70,3 +70,26 @@ def test_bounded_candidate_list_has_separate_total():
     assert len(result["candidates"]) == 3
     assert result["candidate_count"] == 10
     assert result["truncated"] is True
+
+
+def test_manager_chat_receives_project_backlog_without_auto_dispatch(tmp_path):
+    from test_assistant_drafts import send, setup_service
+
+    service, root, executor, calls = setup_service(
+        tmp_path, turn={"intent": "project_question", "response": "I can evaluate the backlog."},
+    )
+    store = LocalTaskStore(root, "DEMO")
+    created = store.create_task(
+        title="Fix source issue", description="Cover empty request handling",
+        role="implementation", acceptance_criteria=["Empty input returns 400"],
+        priority="high",
+    )
+    session = send(service, root, "What should we tackle next?")
+    assert len(calls) == 1
+    context = calls[0]["context"]
+    assert "Project backlog snapshot" in context
+    assert created["id"] in context
+    assert "Empty input returns 400" in context
+    assert '"execution_authorized": false' in context
+    assert session["proposed_task"] is None
+    assert executor.started == []
