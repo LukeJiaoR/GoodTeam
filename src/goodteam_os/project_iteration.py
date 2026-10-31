@@ -84,14 +84,14 @@ def _validate_parallel_group(tasks: list[dict[str, Any]]) -> None:
             owners.append((task["task_id"], domain))
 
 
-def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit: int = 8) -> dict[str, Any]:
+def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit: int | None = 8) -> dict[str, Any]:
     """Rank real backlog entries without inventing work or authorizing execution.
 
     Eligible means *candidate for planning*, not ready to run. The Manager still
     needs to inspect source evidence and resolve missing acceptance criteria.
     """
-    if type(limit) is not int or not 1 <= limit <= 20:
-        raise ValueError("Backlog candidate limit must be between 1 and 20.")
+    if limit is not None and (type(limit) is not int or limit < 1):
+        raise ValueError("Backlog candidate view limit must be a positive integer or None.")
     if not isinstance(tasks, list):
         raise ValueError("Project backlog must be a task list.")
     relevant = [task for task in tasks if isinstance(task, dict) and not _internal(task)]
@@ -160,15 +160,15 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
         "version": version,
         "status": "candidate_ready" if ready else "blocked" if candidates else "empty",
         "next_candidate": ready,
-        "candidates": candidates[:limit],
+        "candidates": candidates if limit is None else candidates[:limit],
         "candidate_count": len(candidates),
-        "truncated": len(candidates) > limit,
+        "truncated": limit is not None and len(candidates) > limit,
         "source": "local_task_ledger",
         "execution_authorized": False,
     }
 
 
-def project_iteration_backlog(project_root: Path | None, project_key: str, *, limit: int = 8) -> dict[str, Any]:
+def project_iteration_backlog(project_root: Path | None, project_key: str, *, limit: int | None = 8) -> dict[str, Any]:
     """Use the existing durable ledger; never hide corruption as an empty plan."""
     if project_root is None:
         return {"schema_version": "project_iteration_backlog.v1", "project_key": project_key,
@@ -199,10 +199,10 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
     selected_ids = response.get("selected_task_ids")
     if selected_ids is None:
         selected_ids = [selected]
-    if (not isinstance(selected_ids, list) or not 1 <= len(selected_ids) <= 3
+    if (not isinstance(selected_ids, list) or not selected_ids
             or any(not isinstance(item, str) or not item or len(item) > 120 for item in selected_ids)
             or len(set(selected_ids)) != len(selected_ids)):
-        raise ValueError("Manager must select one to three distinct candidate IDs.")
+        raise ValueError("Manager must select distinct eligible candidate IDs.")
     if selected is not None and selected != selected_ids[0]:
         raise ValueError("Manager primary task ID differs from the selected batch.")
     selected = selected_ids[0]
@@ -210,12 +210,14 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
     compared = response.get("compared_task_ids")
     if not isinstance(reason, str) or not 20 <= len(reason.strip()) <= 1600:
         raise ValueError("Manager must explain the project-level priority choice.")
-    if (not isinstance(compared, list) or not 1 <= len(compared) <= 8
+    if (not isinstance(compared, list) or not compared
             or any(not isinstance(item, str) for item in compared)
             or len(compared) != len(set(compared))
             or any(item not in compared for item in selected_ids)):
         raise ValueError("Manager must name the candidate IDs it compared.")
     candidates = {item["task_id"]: item for item in snapshot.get("candidates", [])}
+    if len(selected_ids) > len(candidates) or len(compared) > len(candidates):
+        raise ValueError("Manager selection exceeds the supplied project candidate inventory.")
     if any(item not in candidates or not candidates[item]["eligible_to_plan"] for item in selected_ids):
         raise ValueError("Manager selected a missing, stale or blocked task.")
     if any(item not in candidates or not candidates[item]["eligible_to_plan"] for item in compared):
