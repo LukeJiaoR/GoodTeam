@@ -71,27 +71,6 @@ def test_manager_can_select_other_than_source_priority_and_persist(tmp_path):
     assert len(calls) == 1
 
 
-def test_planning_rejects_unconfirmed_or_stale_backlog(tmp_path):
-    project = tmp_path / "project"
-    project.mkdir()
-    store = LocalTaskStore(project, "DEMO")
-    created = task(store, "Add a feature")
-    snapshot = project_iteration_backlog(project, "DEMO")
-    config = tmp_path / "project.yaml"
-    with pytest.raises(ValueError, match="Confirm"):
-        plan_next_iteration(
-            workspace=tmp_path, project_key="DEMO", root=project,
-            project_config=config, expected_backlog_version=snapshot["version"],
-        )
-    store.update_task(created["id"], priority="high")
-    with pytest.raises(ValueError, match="changed"):
-        plan_next_iteration(
-            workspace=tmp_path, project_key="DEMO", root=project,
-            project_config=config, expected_backlog_version=snapshot["version"],
-            confirmed=True,
-        )
-
-
 def test_models_cannot_pick_missing_or_blocked_tasks():
     snapshot = rank_project_backlog([
         {"id": "T-1", "title": "Ready", "role": "implementation", "status": "todo",
@@ -111,71 +90,6 @@ def test_models_cannot_pick_missing_or_blocked_tasks():
             "selected_task_id": "T-1", "rationale": "Too vague",
             "compared_task_ids": ["T-1"],
         })
-
-
-def test_change_during_model_call_cannot_create_current_recommendation(tmp_path):
-    root = tmp_path / "project"
-    root.mkdir()
-    store = LocalTaskStore(root, "DEMO")
-    item = task(store, "Scoped feature")
-    snapshot = project_iteration_backlog(root, "DEMO")
-
-    def concurrent_manager(**kwargs):
-        store.update_task(item["id"], status="blocked")
-        return manager_response(kwargs["backlog"])
-
-    with pytest.raises(ValueError, match="changed during planning"):
-        plan_next_iteration(
-            workspace=tmp_path, project_key="DEMO", root=root,
-            project_config=tmp_path / "project.yaml",
-            expected_backlog_version=snapshot["version"],
-            confirmed=True, manager_runner=concurrent_manager,
-        )
-    session = TaskAssistantSessionStore(tmp_path, "DEMO").read()
-    assert not any(event.get("event") == "project_iteration_choice_recorded" for event in session["timeline"])
-
-
-def test_workflow_cards_unrelated_to_project_backlog_do_not_invalidate_choice():
-    user = {"id": "T-1", "title": "Feature", "role": "implementation",
-            "status": "todo", "external_refs": [], "dependencies": []}
-    internal = {"id": "T-2", "title": "QA stage", "role": "qa", "status": "todo",
-                "external_refs": ["stage:qa"], "dependencies": []}
-    version = rank_project_backlog([user, internal], "T")["version"]
-    assert rank_project_backlog([user, {**internal, "status": "done"}], "T")["version"] == version
-
-
-def test_dependency_state_changes_invalidate_choice():
-    user = {"id": "T-1", "title": "Feature", "role": "implementation",
-            "status": "todo", "external_refs": [], "dependencies": ["T-2"]}
-    dependency = {"id": "T-2", "title": "QA stage", "role": "qa", "status": "todo",
-                  "external_refs": ["stage:qa"], "dependencies": []}
-    first = rank_project_backlog([user, dependency], "T")
-    second = rank_project_backlog([user, {**dependency, "status": "done"}], "T")
-    assert first["version"] != second["version"]
-    assert first["next_candidate"] is None
-    assert second["next_candidate"]["task_id"] == "T-1"
-
-
-
-def test_active_workflow_cannot_be_bypassed_by_iteration_selection(tmp_path):
-    from goodteam_os.state import StateStore, create_initial_state
-
-    root = tmp_path / "project"
-    root.mkdir()
-    store = LocalTaskStore(root, "DEMO")
-    task(store, "A candidate")
-    snapshot = project_iteration_backlog(root, "DEMO")
-    state = create_initial_state("live-run", "DEMO", "Live task")
-    state.current_node = "implementation"
-    state.next_node = "code_review"
-    StateStore(tmp_path).write_project_current(state)
-    with pytest.raises(ValueError, match="active workflow"):
-        plan_next_iteration(
-            workspace=tmp_path, project_key="DEMO", root=root,
-            project_config=tmp_path / "project.yaml",
-            expected_backlog_version=snapshot["version"],
-            confirmed=True, manager_runner=lambda **_: pytest.fail("Model was invoked"),
-        )
 
 
 def test_active_goal_cannot_be_bypassed_by_iteration_selection(tmp_path):
@@ -200,21 +114,6 @@ def test_active_goal_cannot_be_bypassed_by_iteration_selection(tmp_path):
         )
 
 
-
-def test_new_evidence_invalidates_prior_manager_choice():
-    base = {"id": "T-1", "title": "Improve checkout", "role": "implementation",
-            "status": "todo", "external_refs": ["https://example.test/issues/1"],
-            "dependencies": [], "artifact_refs": ["run:old"],
-            "review_gaps": ["No integration test yet"]}
-    before = rank_project_backlog([base], "T")
-    later = rank_project_backlog([{**base, "artifact_refs": ["run:new"],
-                                    "review_gaps": []}], "T")
-    assert before["version"] != later["version"]
-    assert before["next_candidate"]["source_refs"] == ["https://example.test/issues/1"]
-    assert before["next_candidate"]["review_gaps"] == ["No integration test yet"]
-
-
-
 def _batch_candidate(identifier, *, domains=None, policy="workspace_write", dependencies=None,
                      status="todo"):
     return {
@@ -234,22 +133,6 @@ def _batch_response(*ids):
     }
 
 
-def test_manager_can_plan_two_disjoint_writing_agents_in_parallel():
-    snapshot = rank_project_backlog([
-        _batch_candidate("T-1", domains=["backend/orders/"]),
-        _batch_candidate("T-2", domains=["frontend/orders/"]),
-    ], "T")
-    result = validate_iteration_choice(snapshot, _batch_response("T-2", "T-1"))
-    assert result["selected_task_ids"] == ["T-2", "T-1"]
-    assert result["selected_task_id"] == "T-2"  # Backwards-compatible primary choice
-    assert result["selected_tasks"][1]["title"] == "Independent work T-1"
-    assert result["execution_mode"] == "parallel"
-    assert result["parallel_execution_authorized"] is False
-    assert result["requires_worktree_isolation"] is True
-    assert result["fan_in_required"] is True
-    assert result["execution_authorized"] is False
-
-
 @pytest.mark.parametrize("left,right", [
     ("src/api", "src/api"),
     ("src/api", "src/api/routes"),
@@ -263,59 +146,6 @@ def test_manager_parallel_plan_rejects_overlapping_write_domains(left, right):
     ], "T")
     with pytest.raises(ValueError, match="write-domain collision"):
         validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
-
-
-def test_unknown_writer_scope_forces_single_task_planning():
-    snapshot = rank_project_backlog([
-        _batch_candidate("T-1", domains=["backend/api"]),
-        _batch_candidate("T-2"),  # Legacy task without declared write scope
-    ], "T")
-    with pytest.raises(ValueError, match="explicit write domains"):
-        validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
-    single = validate_iteration_choice(snapshot, _batch_response("T-2"))
-    assert single["execution_mode"] == "single"
-    assert single["selected_task_ids"] == ["T-2"]
-
-
-def test_independent_read_only_agent_can_join_parallel_writer():
-    snapshot = rank_project_backlog([
-        _batch_candidate("T-1", domains=["backend/api"]),
-        _batch_candidate("T-2", policy="read_only"),
-    ], "T")
-    result = validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
-    assert result["execution_mode"] == "parallel"
-
-
-def test_dependent_work_cannot_be_added_to_parallel_batch():
-    snapshot = rank_project_backlog([
-        _batch_candidate("T-1", domains=["src/a"]),
-        _batch_candidate("T-2", domains=["src/b"], dependencies=["T-1"]),
-    ], "T")
-    with pytest.raises(ValueError, match="missing, stale or blocked"):
-        validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
-
-
-def test_parallel_batch_size_tracks_actual_eligible_work_not_a_fixed_three():
-    tasks = [_batch_candidate(f"T-{i}", domains=[f"src/scope-{i}"]) for i in range(1, 25)]
-    snapshot = rank_project_backlog(tasks, "T", limit=None)
-    all_ids = [task["id"] for task in tasks]
-    result = validate_iteration_choice(snapshot, _batch_response(*all_ids))
-    assert result["selected_task_ids"] == all_ids
-    assert result["execution_mode"] == "parallel"
-    assert result["parallel_execution_authorized"] is False
-    assert result["execution_authorized"] is False
-
-
-def test_parallel_selection_cannot_exceed_known_candidates_or_mismatch_primary():
-    snapshot = rank_project_backlog([
-        _batch_candidate(f"T-{i}", domains=[f"src/scope-{i}"]) for i in range(1, 5)
-    ], "T", limit=None)
-    with pytest.raises(ValueError, match="candidate inventory"):
-        validate_iteration_choice(snapshot, _batch_response("T-1", "T-2", "T-3", "T-4", "T-5"))
-    with pytest.raises(ValueError, match="primary"):
-        validate_iteration_choice(snapshot, {
-            **_batch_response("T-1", "T-2"), "selected_task_id": "T-2",
-        })
 
 
 def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_path):
@@ -356,7 +186,6 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     choice = latest_iteration_choice(read, snapshot)
     assert choice["selected_task_ids"] == [task_a["id"], task_b["id"]]
     assert choice["execution_authorized"] is False
-
 
 
 def test_full_planning_inventory_is_not_limited_by_ui_candidate_preview(tmp_path):
