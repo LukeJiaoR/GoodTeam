@@ -32,8 +32,9 @@ def test_real_dispatch_queues_the_eleventh_worker_without_losing_it(tmp_path, mo
     """
     source = repository(tmp_path / "source")
     roles = [
-        "research", "product_requirement", "architect", "review", "planner",
-        "ui", "implementation", "frontend", "backend", "qa", "code_review",
+        "project_intake", "research", "product_requirement", "architect",
+        "review", "planner", "ui", "implementation", "qa",
+        "release", "retro_memory",
     ]
     tracks = [{"role":role, "adapter":"fake", "task":"Do not change the checkout."}
               for role in roles]
