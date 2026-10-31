@@ -1,6 +1,8 @@
 """Explicit, exact-text future work intake. Selecting a draft never starts it."""
 
 from datetime import UTC, datetime
+from hashlib import sha256
+import json
 from uuid import uuid4
 
 from goodteam_os.assistant_drafts import archive_terminal_proposal
@@ -82,3 +84,155 @@ def _apply(session, request):
                                "discard_queued_task": "queued_task_discarded", "select_queued_task": "queued_task_selected"}[action],
                      "created_at": timestamp, "content": "", "details": {"proposal_id": proposal["id"]}})
     return session
+
+
+def _task_digest(task):
+    """Fingerprint one original task, not the entire changing project backlog."""
+    return "sha256:" + sha256(
+        json.dumps(task, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def require_queued_project_task(root, project_key, proposal):
+    """Revalidate an original Manager-selected task before the existing Workflow.
+
+    Ordinary human-typed drafts have no project_task_id and remain unchanged.
+    A model recommendation is never an independent execution authorization.
+    """
+    task_id = proposal.get("project_task_id")
+    if not task_id:
+        return None
+    from goodteam_os.tasks import LocalTaskStore
+    from goodteam_os.project_iteration import _internal
+
+    store = LocalTaskStore(root, project_key)
+    tasks = store.list_tasks()
+    matched = [task for task in tasks if task.get("id") == task_id]
+    if len(matched) != 1:
+        raise ValueError("The Manager-selected project task is no longer unique or available.")
+    task = matched[0]
+    if (_internal(task) or task.get("status") != "todo"
+            or task.get("run_id")
+            or _task_digest(task) != proposal.get("project_task_digest")):
+        raise ValueError("The Manager-selected task changed; obtain a new project recommendation.")
+    known = {item.get("id"): item for item in tasks}
+    if any(known.get(dep, {}).get("status") != "done" for dep in task.get("dependencies", [])):
+        raise ValueError("The Manager-selected task has unfinished dependencies.")
+    if task.get("execution_policy") == "read_only":
+        raise ValueError("Read-only Manager work cannot enter a code-writing Workflow.")
+    return task
+
+
+def _project_task_request(task):
+    """Carry exact existing backlog work into the normal human-reviewable draft."""
+    parts = [f"Project task {task['id']}: {task['title']}"]
+    if task.get("description"):
+        parts.append(str(task["description"]))
+    criteria = task.get("acceptance_criteria") or []
+    if criteria:
+        parts.append("Acceptance criteria:\n" + "\n".join(f"- {item}" for item in criteria))
+    domains = task.get("write_domains") or []
+    if domains:
+        parts.append("Declared write scope (must be independently enforced): " + ", ".join(domains))
+    result = "\n\n".join(parts)
+    if not 1 <= len(result) <= 8000:
+        raise ValueError("Project task exceeds the existing Task Assistant draft limit.")
+    return result
+
+
+def queue_manager_iteration_choice(*, workspace, project_key, root, expected_backlog_version):
+    """One adapter: saved Manager picks become ordinary Task Assistant queue items.
+
+    It creates NO Worker, Workflow, Goal, or second project-task ledger. Queued
+    work is not approved. Existing select -> confirm -> start handles authority.
+    """
+    from goodteam_os.project_iteration import (
+        latest_iteration_choice, rank_project_backlog, validate_iteration_choice,
+    )
+    from goodteam_os.tasks import LocalTaskStore
+
+    if (not isinstance(expected_backlog_version, str)
+            or not expected_backlog_version.startswith("sha256:")
+            or len(expected_backlog_version) != 71):
+        raise ValueError("The current Manager backlog revision is required.")
+    store = TaskAssistantSessionStore(workspace, project_key)
+    tasks = LocalTaskStore(root, project_key)
+    with conversation_lock(store):
+        # Follow the existing Assistant->Task lock order, pinning task facts
+        # until the atomic queue write completes. Other tasks may be queued
+        # meanwhile; per-task digests later survive unrelated ledger updates.
+        with tasks._lock():
+            items = tasks._read()["tasks"]
+            snapshot = rank_project_backlog(items, project_key, limit=None)
+            if snapshot["version"] != expected_backlog_version:
+                raise ValueError("The project backlog changed; refresh the Manager recommendation.")
+            session = store.read()
+            choice = latest_iteration_choice(session, snapshot)
+            if choice is None or choice.get("status") != "recommended":
+                raise ValueError("No current persisted Manager recommendation exists.")
+            validated = validate_iteration_choice(snapshot, choice)
+            known = {item["id"]: item for item in items}
+            selected = [known[task_id] for task_id in validated["selected_task_ids"]]
+            if any(task.get("execution_policy") == "read_only" for task in selected):
+                raise ValueError("Read-only work needs a read-only adapter, not a writing task queue.")
+            event_id = f"iteration-choice:{snapshot['version']}"
+            if not any(
+                item.get("message_id") == event_id and item.get("event") == "project_iteration_choice_recorded"
+                for item in session.get("timeline", []) if isinstance(item, dict)
+            ):
+                raise ValueError("The Manager recommendation does not have its original session event.")
+            prepared = []
+            for task in selected:
+                digest = _task_digest(task)
+                proposal_id = sha256(
+                    f"{project_key}:{snapshot['version']}:{task['id']}".encode("utf-8")
+                ).hexdigest()[:32]
+                prepared.append({
+                    "id": proposal_id,
+                    "exact_request": _project_task_request(task),
+                    "revision": 1,
+                    "source_message_ids": [event_id],
+                    "status": "queued",
+                    "confirmed": False,
+                    "run_id": "",
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "project_task_id": task["id"],
+                    "project_task_digest": digest,
+                    "source": "manager_project_iteration",
+                })
+
+            def append(session):
+                queue = session.setdefault("queued_task_proposals", [])
+                existing = {proposal.get("id"): proposal for proposal in queue}
+                for proposal in prepared:
+                    old = existing.get(proposal["id"])
+                    if old is None:
+                        queue.append(proposal)
+                    elif (old.get("project_task_id") != proposal["project_task_id"]
+                          or old.get("project_task_digest") != proposal["project_task_digest"]):
+                        raise ValueError("An existing queued task has conflicting Manager evidence.")
+                event_key = f"iteration-queued:{snapshot['version']}"
+                if not any(item.get("message_id") == event_key for item in session["timeline"]):
+                    session["timeline"].append({
+                        "message_id": event_key,
+                        "actor": "system",
+                        "event": "project_iteration_queued",
+                        "content": "",
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "details": {
+                            "backlog_version": snapshot["version"],
+                            "task_ids": validated["selected_task_ids"],
+                            "proposal_ids": [item["id"] for item in prepared],
+                            "execution_started": False,
+                        },
+                    })
+                return session
+
+            updated = store._mutate(append)
+    return {
+        "status": "queued_for_existing_task_workflow",
+        "queued_task_ids": validated["selected_task_ids"],
+        "queued_proposal_ids": [proposal["id"] for proposal in prepared],
+        "workflow_started": False,
+        "task_assistant_session": updated,
+    }
