@@ -198,3 +198,17 @@ def test_active_goal_cannot_be_bypassed_by_iteration_selection(tmp_path):
             expected_backlog_version=snapshot["version"],
             confirmed=True, manager_runner=lambda **_: pytest.fail("Model was invoked"),
         )
+
+
+
+def test_new_evidence_invalidates_prior_manager_choice():
+    base = {"id": "T-1", "title": "Improve checkout", "role": "implementation",
+            "status": "todo", "external_refs": ["https://example.test/issues/1"],
+            "dependencies": [], "artifact_refs": ["run:old"],
+            "review_gaps": ["No integration test yet"]}
+    before = rank_project_backlog([base], "T")
+    later = rank_project_backlog([{**base, "artifact_refs": ["run:new"],
+                                    "review_gaps": []}], "T")
+    assert before["version"] != later["version"]
+    assert before["next_candidate"]["source_refs"] == ["https://example.test/issues/1"]
+    assert before["next_candidate"]["review_gaps"] == ["No integration test yet"]
