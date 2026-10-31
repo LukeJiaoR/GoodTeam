@@ -44,7 +44,11 @@ def archive_terminal_proposal(store, *, workspace, root=None):
 def _terminal_run_status(state_store, project_key, run_id):
     current = state_store.read_project_current(project_key)
     if current is not None and current.run_id == run_id:
-        if current.current_node == "complete":
+        # A final node published before the approval transaction commits is
+        # not terminal evidence. Never archive or settle during that window.
+        if current.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
+            return ""
+        if current.current_node == "complete" and not current.blockers and current.next_node != "rejected":
             return "complete"
         if current.current_node == "rejected" or current.next_node == "rejected":
             return "rejected"
