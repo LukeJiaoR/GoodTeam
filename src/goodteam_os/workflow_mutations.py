@@ -134,7 +134,7 @@ def _reconcile_completed_manager_task(workspace, state):
             return
         _, _, root = _project_target_and_root(Path(workspace), state.project_key)
         archive_terminal_proposal(session, workspace=workspace, root=root)
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:
         # Workflow transition has already been durably recorded. Do not roll it
         # back or invent delivery success because an optional backlog projection
         # could not be reconciled.
