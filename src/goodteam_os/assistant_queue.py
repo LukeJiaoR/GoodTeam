@@ -74,7 +74,7 @@ def _apply(session, request):
                             source_message_ids=[*proposal["source_message_ids"], message_id])
             # Editing the Manager's exact task removes its source binding.
             # The result is ordinary human-authored work, not a prior decision.
-            for field in ("project_task_id", "project_task_digest"):
+            for field in ("project_task_id", "project_task_digest", "source_event_id"):
                 proposal.pop(field, None)
             proposal["source"] = "human_edited"
         elif action == "discard_queued_task":
@@ -207,7 +207,11 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
                     "id": proposal_id,
                     "exact_request": _project_task_request(task),
                     "revision": 1,
-                    "source_message_ids": [event_id],
+                    # Manager evidence is not a user-authored message.
+                    # Keep provenance separate so later human draft edits can
+                    # use the existing user-message validation unchanged.
+                    "source_message_ids": [],
+                    "source_event_id": event_id,
                     "status": "queued",
                     "confirmed": False,
                     "run_id": "",
