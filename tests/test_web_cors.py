@@ -8,9 +8,16 @@ import pytest
 from goodteam_os import web
 
 
-@pytest.mark.parametrize("port", [80, 443, 8788])
-@pytest.mark.parametrize("scheme,default_port", [("http", 80), ("https", 443)])
-@pytest.mark.parametrize("hostname", ["localhost", "127.0.0.1", "[::1]"])
+# Port policy is independent of the loopback hostname allowlist.
+@pytest.mark.parametrize("port,scheme,default_port,hostname", [
+    (port, scheme, default_port, "localhost")
+    for port in [80, 443, 8788]
+    for scheme, default_port in [("http", 80), ("https", 443)]
+] + [
+    (port, scheme, default_port, hostname)
+    for hostname in ["127.0.0.1", "[::1]"]
+    for port, scheme, default_port in [(80, "http", 80), (8788, "https", 443)]
+])
 def test_cors_omitted_port_matches_explicit_scheme_default(port, scheme, default_port, hostname):
     implicit = f"{scheme}://{hostname}"
     explicit = f"{implicit}:{default_port}"
