@@ -89,6 +89,12 @@ class TaskAssistantService:
         store = TaskAssistantSessionStore(self.workspace, project_key)
         assistant_requests.recover_interrupted(store)
         session = store.read()
+        from goodteam_os.project_iteration_recovery import project_batch_recovery_evidence
+
+        for run_id, batch in session.get("project_task_batches", {}).items():
+            if batch.get("confirmed") and batch.get("project_root") == str(Path(root).resolve()):
+                batch["recovery"] = project_batch_recovery_evidence(
+                    workspace=self.workspace, project_key=project_key, root=root, run_id=run_id)
         # Goal reads only project persisted snapshots; viewing Work never advances them.
         if goal_limit is not None and (type(goal_limit) is not int or not 1 <= goal_limit <= 50):
             raise ValueError("Goal page limit must be between 1 and 50.")

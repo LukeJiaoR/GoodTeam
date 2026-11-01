@@ -334,7 +334,8 @@ class DispatchWorkspace:
                                                             project_key=source_preview_scope[0], run_id=source_preview_scope[1])
         return result
 
-    def integrate(self, job_ids: list[str], *, expected_results: dict[str, str] | None = None) -> dict:
+    def integrate(self, job_ids: list[str], *, expected_results: dict[str, str] | None = None,
+                  retained_results: list[dict] | None = None) -> dict:
         if len(set(job_ids)) != len(job_ids):
             raise DispatchWorkspaceError("Integration job identities must be unique.")
         baseline_capture = self._baseline_capture()
@@ -343,6 +344,13 @@ class DispatchWorkspace:
             expected_results.get(result["job_id"]) != result["result_commit"] for result in results
         ):
             raise DispatchWorkspaceError("Dispatch result changed after verification; integration is blocked.")
+        for retained in retained_results or []:
+            verified = verify_dispatch_result(Path(self.metadata["project_root"]), retained)
+            if verified["baseline_commit"] != self.metadata["baseline_commit"]:
+                raise DispatchWorkspaceError("Retained result belongs to another frozen baseline.")
+            results.append(verified)
+        if len({item["job_id"] for item in results}) != len(results):
+            raise DispatchWorkspaceError("Integration result identities must be unique.")
         candidate = Path(tempfile.mkdtemp(prefix="integration-", dir=self.artifact_root)) / "candidate"
         _clone(self.artifact_root / "baseline", candidate)
         baseline = self.metadata["baseline_commit"]
@@ -371,7 +379,8 @@ class DispatchWorkspace:
 
 
 def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[str] | None, *,
-                               artifact_root: Path | None = None, limits: SnapshotLimits = SnapshotLimits()) -> DispatchWorkspace:
+                               artifact_root: Path | None = None, limits: SnapshotLimits = SnapshotLimits(),
+                               baseline_from: str | None = None) -> DispatchWorkspace:
     """Prepare or reopen one fixed task baseline; caller holds the task lock."""
     project_root = _absolute_root(project_root)
     _identifier(run_id)
@@ -380,12 +389,14 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
     if job_ids is not None and (len(set(job_ids)) != len(job_ids) or not job_ids):
         raise DispatchWorkspaceError("Dispatch needs unique nonempty job identities.")
     root = _artifact_root(project_root, run_id, artifact_root)
-    root.mkdir(parents=True, exist_ok=True)
+    if job_ids is not None:
+        root.mkdir(parents=True, exist_ok=True)
     manifest = root / "baseline.json"
     if manifest.exists():
         metadata = json.loads(read_bytes(manifest, maximum=32 * 1024 * 1024))
         if (metadata.get("schema") != "dispatch_workspace.v1" or metadata.get("run_id") != run_id
                 or metadata.get("project_root") != str(project_root)
+                or baseline_from is not None and metadata.get("baseline_from") != baseline_from
                 or (job_ids is not None and set(metadata.get("jobs", {})) != set(job_ids))):
             raise DispatchWorkspaceError("Dispatch replay does not match the retained task identity.")
         with AnchoredRepository(project_root, expected_identity=metadata["source_root_identity"]):
@@ -400,14 +411,25 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
     if (root / "baseline").exists() or (root / "jobs").exists():
         raise DispatchWorkspaceError(f"Incomplete dispatch preparation retained at {root}; use a new run identity.")
     identity = _expected_root_identity(project_root, None)
-    first = _capture(project_root, limits, expected_identity=identity, original=True)
     baseline = root / "baseline"
-    _clone(project_root, baseline)
-    second = _capture(project_root, limits, expected_identity=identity, original=True)
-    if _capture_identity(first) != _capture_identity(second):
-        raise DispatchWorkspaceError(f"Source changed during dispatch preparation; incomplete artifacts retained at {root}.")
+    if baseline_from is not None:
+        _identifier(baseline_from)
+        if baseline_from == run_id:
+            raise DispatchWorkspaceError("A retry cannot replace its original baseline.")
+        original = prepare_dispatch_workspace(project_root, baseline_from, None, limits=limits)
+        second = original._baseline_capture()
+        second.update(original_head=original.metadata["original_head"],
+                      original_index=read_bytes(original.artifact_root / "original.index", maximum=32 * 1024 * 1024))
+        _clone(original.artifact_root / "baseline", baseline)
+        baseline_commit = original.metadata["baseline_commit"]
+    else:
+        first = _capture(project_root, limits, expected_identity=identity, original=True)
+        _clone(project_root, baseline)
+        second = _capture(project_root, limits, expected_identity=identity, original=True)
+        if _capture_identity(first) != _capture_identity(second):
+            raise DispatchWorkspaceError(f"Source changed during dispatch preparation; incomplete artifacts retained at {root}.")
+        baseline_commit = _raw_commit(baseline, second, second["original_head"], root)
     _overlay(baseline, second)
-    baseline_commit = _raw_commit(baseline, second, second["original_head"], root)
     _git(baseline, ["update-ref", "HEAD", baseline_commit])
     _git(baseline, ["read-tree", baseline_commit])
     (root / "original.index").write_bytes(second["original_index"])
@@ -417,6 +439,7 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
                 "baseline_commit": baseline_commit, "files": _file_manifest(second), "jobs": {},
                 "baseline_root_identity": _expected_root_identity(baseline, None),
                 "baseline_git_identity": _git_identity(baseline),
+                **({"baseline_from": baseline_from} if baseline_from is not None else {}),
                 "exclusion_policy": ["Git ignored untracked files", ".goodteam metadata", "empty directories"]}
     (root / "jobs").mkdir()
     workspace = DispatchWorkspace(root, metadata, limits)
@@ -432,3 +455,71 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
                                      "git_identity": _git_identity(job_root)}
     _write_json(manifest, metadata)
     return workspace
+
+
+def verify_dispatch_result(project_root: Path, result: dict) -> dict:
+    """Read the retained receipt and compare bytes without creating Git objects."""
+    workspace = prepare_dispatch_workspace(project_root, result["dispatch_run_id"], None)
+    job_id = _identifier(result["job_id"])
+    root = workspace._verify_job(job_id)
+    raw = read_bytes(workspace.artifact_root / f"result-{hashlib.sha256(job_id.encode()).hexdigest()[:24]}.json",
+                     maximum=32 * 1024 * 1024)
+    retained = json.loads(raw) if raw is not None else {}
+    if (retained.get("job_id") != job_id or retained.get("workspace_path") != str(root)
+            or retained.get("baseline_commit") != workspace.metadata["baseline_commit"]
+            or retained.get("result_commit") != result.get("result_commit")):
+        raise DispatchWorkspaceError("Retained Worker receipt differs from its published result.")
+    first = _capture(root, workspace.limits, extra_paths=workspace.metadata["files"])
+    second = _capture(root, workspace.limits, extra_paths=workspace.metadata["files"])
+    if _capture_identity(first) != _capture_identity(second) or _file_manifest(second) != retained.get("files"):
+        raise DispatchWorkspaceError("Retained Worker result changed after publication.")
+    if (_read_git(root, ["rev-parse", "refs/goodteam/dispatch-result^{commit}"]).strip().decode("ascii")
+            != retained["result_commit"]):
+        raise DispatchWorkspaceError("Retained Worker result commit changed after publication.")
+    return {key: retained[key] for key in ("job_id", "workspace_path", "baseline_commit", "result_commit", "changed_files")}
+
+
+def dispatch_job_terminal(project_root: Path, result: dict) -> tuple[dict, str]:
+    """Original host return, never a stale-heartbeat or dispatch-error projection."""
+    job_id = _identifier(result["job_id"])
+    source_id = _identifier(result["dispatch_run_id"])
+    root = Path(project_root) / ".goodteam" / "workers" / "jobs" / job_id
+    raw = read_bytes(root / "status.json", maximum=1024 * 1024)
+    job_raw = read_bytes(root / "job.json", maximum=1024 * 1024)
+    if raw is None or job_raw is None:
+        raise DispatchWorkspaceError("Original Worker termination is unknown; preserve its attempt.")
+    status, job = json.loads(raw), json.loads(job_raw)
+    if (not isinstance(status, dict) or not isinstance(job, dict)
+            or job.get("id") != job_id or job.get("run_id") != source_id
+            or status.get("job_id") != job_id or status.get("run_id") != source_id
+            or any(status.get(key) != job.get(key) or job.get(key) != result.get(key) for key in ("role", "adapter"))
+            or status.get("status") not in {"completed", "failed"}
+            or job.get("status") != status["status"] or status.get("process_alive") is True):
+        raise DispatchWorkspaceError("Original Worker termination is unknown or still live.")
+    exit_code = status.get("exit_code")
+    if job["adapter"] not in {"fake", "noop"} and (
+            type(exit_code) is not int or (exit_code == 0) != (status["status"] == "completed")):
+        raise DispatchWorkspaceError("Original Worker has no observed process exit; timeout is not proof of termination.")
+    return status, hashlib.sha256(raw + b"\0" + job_raw).hexdigest()
+
+
+def read_dispatch_recovery(project_root: Path, source: dict) -> dict:
+    """Reopen the exact failed receipt selected by an explicit recovery action."""
+    raw = read_bytes(dispatch_artifact_root(project_root, source["run_id"]) / "report.json")
+    if raw is None or hashlib.sha256(raw).hexdigest() != source["report_digest"]:
+        raise DispatchWorkspaceError("The original dispatch recovery receipt changed.")
+    report = json.loads(raw)
+    if report.get("run_id") != source["run_id"] or report.get("project_root") != str(Path(project_root).resolve()):
+        raise DispatchWorkspaceError("The recovery receipt belongs to another project.")
+    selected = set(source["retry_task_ids"])
+    if not selected or not selected.issubset({job.get("project_task_id") for job in report["jobs"]}):
+        raise DispatchWorkspaceError("Recovery tasks do not belong to the original report.")
+    for job in report["jobs"]:
+        job.setdefault("dispatch_run_id", report["run_id"])
+        status, _proof = dispatch_job_terminal(project_root, job)
+        if job["project_task_id"] in selected:
+            if status["status"] != "failed" or job.get("outcome") == "ok":
+                raise DispatchWorkspaceError("Only an observed failed Worker can receive a new attempt.")
+        elif job.get("outcome") == "ok":
+            verify_dispatch_result(project_root, job)
+    return report

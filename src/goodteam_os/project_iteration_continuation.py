@@ -172,12 +172,16 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             pending = value.get("pending_batch")
             if pending and pending.get("run_id"):
                 batch_tasks = [known[identifier] for identifier in pending["task_ids"]]
+                saved_batch = store.read().get("project_task_batches", {}).get(pending["run_id"], {})
+                recovering = (saved_batch.get("status") in {"claimed", "running"}
+                              and bool(saved_batch.get("current_recovery_attempt")))
                 if any(task.get("run_id") not in {None, "", pending["run_id"]} for task in batch_tasks):
                     raise ValueError("The active project batch no longer owns its original tasks.")
                 if all(task["status"] == "done" and task.get("delivery_verified") is True for task in batch_tasks):
                     value = _save(store, {**value, "pending_batch": None, "reason": "delivery_verified"})
                     pending = None
-                elif any(task["status"] in {"blocked", "canceled"} for task in batch_tasks):
+                elif (any(task["status"] == "canceled" for task in batch_tasks)
+                      or not recovering and any(task["status"] == "blocked" for task in batch_tasks)):
                     raise ValueError("The current batch is blocked; inspect its retained execution result.")
                 elif all(task["status"] == "review" for task in batch_tasks):
                     return value
@@ -303,7 +307,7 @@ def _require_clean_checkout(root, label):
 
 def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_commit, landed_commit):
     from goodteam_os.dispatch_workspace import (
-        _git, _read_git, dispatch_artifact_root, prepare_dispatch_workspace,
+        _git, _read_git, dispatch_artifact_root, verify_dispatch_result,
     )
     from goodteam_os.project_iteration_execution import iteration_batch_report
     from goodteam_os.project_iteration_quality import accepted_batch_quality
@@ -317,9 +321,8 @@ def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_comm
     if not jobs or any(job.get("outcome") != "ok" for job in jobs):
         raise ValueError("Every task needs a successful retained Worker result before delivery review.")
     dispatch_id = report.get("run_id")
-    isolated = prepare_dispatch_workspace(root, dispatch_id, None)
     for job in jobs:
-        captured = isolated.collect(job["job_id"])
+        captured = verify_dispatch_result(root, {"dispatch_run_id": dispatch_id, **job})
         if captured.get("result_commit") != job.get("result_commit"):
             raise ValueError("A Worker result changed after candidate integration.")
     candidate = Path(str(integration.get("candidate_path") or "")).absolute()
@@ -385,10 +388,10 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
     tasks = LocalTaskStore(root, project_key)
     with goal_guard(workspace, project_key):
         batch = store.read().get("project_task_batches", {}).get(run_id)
-        if not batch or batch.get("project_root") != str(root.resolve()):
+        if not batch or batch.get("project_root") != str(root.resolve()) or batch.get("status") == "abandoned":
             raise ValueError("The delivery does not belong to this project batch.")
         receipt = {"producer": "human_confirmed_candidate_delivery", "run_id": run_id,
-                   "dispatch_run_id": batch["dispatch_run_id"], "candidate_commit": _commit(request.get("candidate_commit")),
+                   "dispatch_run_id": batch.get("current_dispatch_run_id", batch["dispatch_run_id"]), "candidate_commit": _commit(request.get("candidate_commit")),
                    "landed_commit": _commit(request.get("landed_commit")), "reviewed": True,
                    "verification": "landed_git_ancestor_and_content"}
         receipt["receipt_id"] = _digest(receipt)
@@ -432,7 +435,7 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
             if (not matched or len(matched) != len(jobs)
                     or {task.get("dispatch_job_id") for task in matched} != set(jobs)
                     or any(task.get("execution_origin") != "task_assistant_batch"
-                           or task.get("dispatch_run_id") != report["run_id"]
+                           or task.get("dispatch_run_id") != jobs[task["dispatch_job_id"]].get("dispatch_run_id", report["run_id"])
                            or jobs[task["dispatch_job_id"]].get("project_task_id") != task["id"]
                            or task_evidence_digest(task) != expected_tasks.get(task["id"])
                            or task["status"] not in {"review", "done"} for task in matched)):
