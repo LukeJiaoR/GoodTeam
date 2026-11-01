@@ -62,14 +62,18 @@ class TaskExecutionSnapshot:
                 raise TaskInputError("task_input_invalid")
             if (payload["schema_version"] != SNAPSHOT_SCHEMA or payload["context_policy"] != CONTEXT_POLICY
                     or type(payload["contract_revision"]) is not int or payload["contract_revision"] != 1
-                    or payload["source_trust"] != "captured_external_source"
+                    or payload["source_trust"] not in {"captured_external_source", "confirmed_project_batch"}
                     or not re.fullmatch(r"[a-f0-9]{64}", payload["scope"])):
                 raise TaskInputError("task_input_invalid")
             for key in ("execution_id", "operation_id", "source_revision", "role", "adapter"):
                 if not isinstance(payload[key], str) or not payload[key].strip():
                     raise TaskInputError("task_input_invalid")
             task = ExecutionTask.from_dict(payload["task"])
+            if task.source_type == "project_task_batch":
+                self._validate_batch(payload, task)
+                return
             if (task.task_contract is None or task.source_type != "github_issue"
+                    or payload["source_trust"] != "captured_external_source"
                     or task.task_id != task_id_from_github_issue(task.repo, task.issue_number)
                     or payload["execution_id"] != execution_id_from_task(task.task_id)
                     or payload["operation_id"] != "issue-input:" + payload["execution_id"]
@@ -88,6 +92,31 @@ class TaskExecutionSnapshot:
                 raise
             raise TaskInputError("task_input_invalid") from exc
 
+    @staticmethod
+    def _validate_batch(payload, task):
+        """Quality input for an existing confirmed batch, never a new Builder."""
+        if task.task_contract is None:
+            raise TaskInputError("task_input_contract_missing")
+        source, identity = task.task_contract.source_intent, task.task_contract.task_identity
+        selected = source.get("input", {})
+        if not isinstance(selected, dict):
+            raise TaskInputError("task_input_invalid")
+        input_digest = source.get("input_digest")
+        batch_id = selected.get("batch_run_id")
+        expected_id = f"{batch_id}-quality-{input_digest}"
+        if (payload["source_trust"] != "confirmed_project_batch"
+                or source.get("source_type") != "project_task_batch"
+                or not isinstance(batch_id, str) or not re.fullmatch(r"task-batch-[a-f0-9]{64}", batch_id)
+                or not isinstance(input_digest, str) or digest(canonical_bytes(selected)) != input_digest
+                or payload["source_revision"] != input_digest or source.get("source_revision") != input_digest
+                or payload["execution_id"] != expected_id or task.task_id != expected_id
+                or payload["operation_id"] != "batch-quality-input:" + expected_id
+                or task.issue_number != 0 or task.repo != selected.get("project_key")
+                or identity != {"task_id": expected_id, "batch_run_id": batch_id,
+                                "project_key": task.repo, "input_digest": input_digest}
+                or canonical_bytes(task.to_dict()) != canonical_bytes(payload["task"])):
+            raise TaskInputError("task_input_invalid")
+
     @classmethod
     def capture(cls, task: ExecutionTask, *, scope: str, role: str, adapter: str) -> TaskExecutionSnapshot:
         if task.task_contract is None:
@@ -98,6 +127,16 @@ class TaskExecutionSnapshot:
             "contract_revision": 1, "operation_id": "issue-input:" + execution_id,
             "context_policy": CONTEXT_POLICY, "source_trust": "captured_external_source",
             "source_revision": str(task.task_contract.source_intent.get("source_revision") or "unknown"),
+            "role": role, "adapter": adapter, "task": task.to_dict(),
+        }))
+
+    @classmethod
+    def capture_batch(cls, task: ExecutionTask, *, scope: str, role: str, adapter: str) -> TaskExecutionSnapshot:
+        return cls(canonical_bytes({
+            "schema_version": SNAPSHOT_SCHEMA, "scope": scope, "execution_id": task.task_id,
+            "contract_revision": 1, "operation_id": "batch-quality-input:" + task.task_id,
+            "context_policy": CONTEXT_POLICY, "source_trust": "confirmed_project_batch",
+            "source_revision": task.task_contract.source_intent["input_digest"],
             "role": role, "adapter": adapter, "task": task.to_dict(),
         }))
 

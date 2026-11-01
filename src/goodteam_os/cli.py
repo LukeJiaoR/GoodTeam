@@ -78,6 +78,30 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--local-codex-policy", type=Path, help="Explicit task-bound local Reviewer exposure policy.")
     serve_command.add_argument("--trusted-codex-review-policy", type=Path,
                                help="Private permission to reuse native Codex for one trusted, method-free review task.")
+    serve_command.add_argument("--trusted-codex-correction-policy", type=Path,
+                               help="Existing exact-attempt correction policy for a prepared project batch; no grant is inferred from HTTP.")
+
+    batch_quality = subparsers.add_parser("batch-quality", help="Configure and advance checks/review for an existing confirmed project batch")
+    quality_commands = batch_quality.add_subparsers(dest="quality_command", required=True)
+    for name in ("prepare", "status", "advance"):
+        command = quality_commands.add_parser(name)
+        command.add_argument("--workspace", type=Path, default=Path("."))
+        command.add_argument("--project-key", required=True)
+        command.add_argument("--run-id", required=True)
+        if name == "prepare":
+            command.add_argument("--reviewer-model", required=True)
+            command.add_argument("--fix-model", required=True)
+            command.add_argument("--criterion", type=int, action="append", required=True)
+            command.add_argument("--seconds", type=int, default=30)
+            command.add_argument("--wall-seconds", type=int, default=900)
+            command.add_argument("--fix-seconds", type=int, default=120)
+            command.add_argument("argv", nargs=argparse.REMAINDER)
+        elif name == "advance":
+            command.add_argument("--expected-input-digest", required=True)
+            command.add_argument("--acknowledge-external-cost", action="store_true")
+            command.add_argument("--local-codex-policy", type=Path)
+            command.add_argument("--trusted-codex-review-policy", type=Path)
+            command.add_argument("--trusted-codex-correction-policy", type=Path)
 
     restart = subparsers.add_parser("restart", help="Restart the background GoodTeam server")
     restart.add_argument("--host", default="127.0.0.1")
@@ -307,11 +331,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAdmission | None = None,
          codex_correction_admission: TrustedCodexCorrectionAdmission | None = None) -> int:
     args = build_parser().parse_args(argv)
-    correction_entry = args.command == "execution" and args.execution_command in {
-        "run-correction-worker", "continue-automatic-review"}
+    batch_quality_entry = args.command == "batch-quality" and args.quality_command == "advance"
+    correction_entry = (args.command == "execution" and args.execution_command in {
+        "run-correction-worker", "continue-automatic-review"}) or batch_quality_entry or args.command == "serve"
     correction_policy = getattr(args, "trusted_codex_correction_policy", None)
     if codex_correction_admission is not None and not correction_entry:
-        raise ValueError("Codex correction composition is supported only by run-correction-worker and continue-automatic-review.")
+        raise ValueError("Codex correction composition requires an explicit correction, batch-quality advance, or server startup entry.")
     if correction_policy is not None and codex_correction_admission is not None:
         raise ValueError("Choose one correction startup authority.")
     if correction_policy is not None:
@@ -359,8 +384,8 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         from goodteam_os.skills.codex_local import LocalCodexReviewAdmission
 
         codex_review_admission = LocalCodexReviewAdmission(local_policy)
-    automatic_entry = args.command == "execution" and args.execution_command in {
-        "run", "validate-candidate", "continue-automatic-review"}
+    automatic_entry = (args.command == "execution" and args.execution_command in {
+        "run", "validate-candidate", "continue-automatic-review"}) or batch_quality_entry
     if codex_review_admission is not None and args.command not in {"dispatch", "serve"} and not automatic_entry and not operator_entry:
         raise ValueError("This Codex Reviewer composition is supported only by direct dispatch and serve, plus automatic review entry points.")
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
@@ -409,6 +434,7 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             ready_token=args.ready_token,
             heartbeat_callback=heartbeat,
             **runtime_kwargs,
+            **correction_runtime_kwargs,
         )
         return 0
     if args.command == "supervise":
@@ -631,6 +657,31 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         return 0
     if args.command == "tg-poll":
         payload = poll_telegram_approvals(workspace=args.workspace, project_key=args.project_key, once=args.once)
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "batch-quality":
+        from goodteam_os.project_iteration_quality import (
+            advance_project_batch_quality, prepare_project_batch_quality, project_batch_quality_evidence,
+        )
+        from goodteam_os.web import _project_target_and_root
+
+        try:
+            key, _target, root = _project_target_and_root(args.workspace, args.project_key)
+            selected = dict(workspace=args.workspace, project_key=key, root=root, run_id=args.run_id)
+            if args.quality_command == "prepare":
+                command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+                payload = prepare_project_batch_quality(**selected, argv=command, criteria=args.criterion,
+                    reviewer_model=args.reviewer_model, fix_model=args.fix_model, seconds=args.seconds,
+                    wall_seconds=args.wall_seconds, fix_seconds=args.fix_seconds)
+            elif args.quality_command == "advance":
+                payload = advance_project_batch_quality(**selected, expected_input_digest=args.expected_input_digest,
+                    confirmed=True, billing_acknowledged=args.acknowledge_external_cost,
+                    **runtime_kwargs, **correction_runtime_kwargs)
+            else:
+                payload = project_batch_quality_evidence(**selected)
+        except (ValueError, OSError) as exc:
+            print(f"batch-quality: {exc}", file=sys.stderr)
+            return 2
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "execution":

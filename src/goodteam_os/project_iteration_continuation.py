@@ -306,12 +306,12 @@ def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_comm
         _git, _read_git, dispatch_artifact_root, prepare_dispatch_workspace,
     )
     from goodteam_os.project_iteration_execution import iteration_batch_report
+    from goodteam_os.project_iteration_quality import accepted_batch_quality
 
     candidate_commit, landed_commit = _commit(candidate_commit), _commit(landed_commit)
     report = iteration_batch_report(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
     integration = report.get("integration") or {}
-    if (report.get("all_ok") is not True or integration.get("status") != "succeeded"
-            or integration.get("candidate_commit") != candidate_commit):
+    if report.get("all_ok") is not True or integration.get("status") != "succeeded":
         raise ValueError("The exact integrated candidate is not available for delivery acceptance.")
     jobs = report.get("jobs") or []
     if not jobs or any(job.get("outcome") != "ok" for job in jobs):
@@ -328,9 +328,19 @@ def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_comm
         raise ValueError("The candidate is outside the retained dispatch workspace.")
     if json.loads((candidate.parent / "integration.json").read_text()) != integration:
         raise ValueError("The integration receipt changed.")
-    if _read_git(candidate, ["rev-parse", "HEAD"]).strip().decode() != candidate_commit:
+    if _read_git(candidate, ["rev-parse", "HEAD"]).strip().decode() != integration["candidate_commit"]:
         raise ValueError("The candidate revision changed after review.")
     _require_clean_checkout(candidate, "candidate")
+    quality = accepted_batch_quality(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
+    effective_commit = quality["candidate_commit"] if quality else integration["candidate_commit"]
+    if candidate_commit != effective_commit:
+        raise ValueError("Delivery requires the exact independently reviewed candidate.")
+    if quality:
+        # The quality resolver verifies the correction's original input,
+        # protected host seal, ancestry and write scope. Never rewrite the
+        # initial dispatch integration receipt to impersonate this new result.
+        candidate = Path(quality["candidate_path"])
+        _require_clean_checkout(candidate, "reviewed candidate")
     if _read_git(root, ["rev-parse", "HEAD"]).strip().decode() != landed_commit:
         raise ValueError("The project is not at the exact confirmed landed commit.")
     if _git(root, ["merge-base", "--is-ancestor", candidate_commit, landed_commit], check=False).returncode != 0:
@@ -341,7 +351,7 @@ def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_comm
     expected, actual = _tree(candidate, candidate_commit), _tree(root, landed_commit)
     if any(expected.get(path) != actual.get(path) for path in changed if path):
         raise ValueError("The landed project content differs from the reviewed candidate.")
-    return report
+    return report, quality
 
 
 def _record_delivery(store, run_id, receipt, task_ids):
@@ -384,6 +394,12 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
         receipt["receipt_id"] = _digest(receipt)
         with tasks._lock():
             before = [task for task in tasks._read()["tasks"] if task.get("run_id") == run_id]
+            # A historical quality receipt remains the same receipt after a
+            # later batch advances HEAD, without re-running old quality work.
+            previous_quality = (before[0].get("delivery_receipt") or {}).get("quality") if before else None
+            if previous_quality:
+                receipt["quality"] = previous_quality
+                receipt["receipt_id"] = _digest({key: value for key, value in receipt.items() if key != "receipt_id"})
             replay = (before and len(before) == len(batch["task_ids"])
                       and all(task["status"] == "done" and task.get("delivery_verified") is True
                               and task.get("delivery_receipt") == receipt for task in before))
@@ -397,10 +413,14 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
             # Finish a potentially interrupted session projection without
             # requiring HEAD to remain at a historical accepted revision.
             return {**_record_delivery(store, run_id, receipt, [task["id"] for task in before]), "reused": True}
-        report = _verify_landed_batch(
+        report, quality = _verify_landed_batch(
             workspace=workspace, project_key=project_key, root=root, run_id=run_id,
             candidate_commit=request.get("candidate_commit"), landed_commit=request.get("landed_commit"),
         )
+        if quality:
+            receipt["quality"] = {key: quality[key] for key in (
+                "input_digest", "execution_id", "validation_receipt_id", "review_receipt_id", "candidate_commit")}
+            receipt["receipt_id"] = _digest({key: value for key, value in receipt.items() if key != "receipt_id"})
         with tasks._lock():
             from goodteam_os.dispatch_workspace import _read_git
 

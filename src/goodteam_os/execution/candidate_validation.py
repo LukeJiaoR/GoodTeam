@@ -81,6 +81,11 @@ class CandidateValidationService:
         return self.store.root / execution_key(execution_id)
 
     def source_root(self, snapshot, request):
+        if snapshot.task.source_type == "project_task_batch":
+            from goodteam_os.project_iteration_quality import batch_candidate_source
+            return batch_candidate_source(self.project_root, snapshot, request)
+        if "batch_source" in request:
+            raise TaskInputError("validation_source_conflict")
         if request.get("builder_worker"):
             from .candidate_builder import builder_source
             if request.get("correction_worker"):
@@ -116,6 +121,10 @@ class CandidateValidationService:
         request = {"schema_version": "candidate_validation_plan.v1", "snapshot": snapshot.reference,
                    "operation_id": operation_id, "head_sha": head_sha, "argv": command, "cwd": ".",
                    "criteria": contract["criteria"], "seconds": seconds, "producer": "explicit_operator_cli"}
+        if snapshot.task.source_type == "project_task_batch":
+            from goodteam_os.project_iteration_quality import batch_quality_binding
+            request["batch_source"] = batch_quality_binding(self.project_root, snapshot)["receipt_id"]
+            request["producer"] = "confirmed_project_batch_quality"
         if correction_worker:
             request["correction_worker"] = correction_worker
         if builder_worker:

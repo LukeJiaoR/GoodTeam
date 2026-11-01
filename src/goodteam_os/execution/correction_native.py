@@ -139,13 +139,11 @@ class TrustedCodexCorrectionAdmission:
                 or str(authority.workspace(value)) != self.policy["workspace"]
                 or self.policy["max_seconds"] > value.to_dict()["max_seconds"]):
             raise TaskInputError("correction_native_task_mismatch")
-        from .candidate_validation import _read
-        ready = _read(authority.execution_root / "job-ready.json")
-        if ready is None or ready.get("snapshot") != value.original.reference:
-            raise TaskInputError("task_input_job_not_ready")
-        if ready["request"].get("execution_policy", "standard") != "standard":
+        from .task_snapshot_store import original_runtime_request
+        request = original_runtime_request(authority.project_root, value.original)
+        if request.get("execution_policy", "standard") != "standard":
             raise TaskInputError("correction_native_execution_policy_unsupported")
-        model = ready["request"].get("model") or ""
+        model = request.get("model") or ""
         if model.startswith("codex:"):
             model = model[6:]
         if model and model != self.policy["model"]:
