@@ -25,7 +25,9 @@ def handle_queue_action(service, *, project_key, root, request):
         raise ValueError("Unknown task queue action")
     with conversation_lock(store):
         if action == "select_queued_task":
-            if active_project_run(service.workspace, project_key):
+            from goodteam_os.project_iteration_execution import active_project_batch
+
+            if active_project_run(service.workspace, project_key) or active_project_batch(service.workspace, project_key):
                 raise ValueError("Finish or cancel the active task before preparing another task.")
             queued = next(
                 (item for item in store.read().get("queued_task_proposals", [])
@@ -189,8 +191,8 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
             validated = validate_iteration_choice(snapshot, choice)
             known = {item["id"]: item for item in items}
             selected = [known[task_id] for task_id in validated["selected_task_ids"]]
-            if any(task.get("execution_policy") == "read_only" for task in selected):
-                raise ValueError("Read-only work needs a read-only adapter, not a writing task queue.")
+            # Batch dispatch preserves read-only policy. The ordinary writing
+            # Workflow adapter still rejects it at selection/confirmation.
             event_id = f"iteration-choice:{snapshot['version']}"
             if not any(
                 item.get("message_id") == event_id and item.get("event") == "project_iteration_choice_recorded"

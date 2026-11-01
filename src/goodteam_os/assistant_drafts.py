@@ -206,6 +206,10 @@ def confirm_and_prepare(service, *, project_key, root, request):
         if type(revision) is not int:
             raise ValueError("Confirm the latest task revision.")
         from goodteam_os.assistant_queue import active_project_run
+        from goodteam_os.project_iteration_execution import active_project_batch
+
+        if active_project_batch(service.workspace, project_key):
+            raise ValueError("Finish or reconcile the active task batch before confirming another task.")
 
         current = active_project_run(service.workspace, project_key)
         proposal = store.read().get("proposed_task") or {}

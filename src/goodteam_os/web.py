@@ -3736,6 +3736,11 @@ def start_workflow(
         raise ValueError("Workflow goal is required.")
     key = normalize_project_key(project_key)
     requested_run_id = str(run_id).strip()
+    if not dry_run:
+        from goodteam_os.project_iteration_execution import active_project_batch
+
+        if active_project_batch(workspace, key):
+            raise ValueError("A queued task batch owns the project execution slot; finish or reconcile it first.")
     if not dry_run and is_active_run(resolve_dashboard_state(workspace, project_key=key)):
         raise ValueError("An active run already exists. Finish, archive, or resume it before starting another run.")
 
@@ -6395,6 +6400,19 @@ def handle_project_api_post(
             except ValueError as exc:
                 raise ProjectApiError("iteration_queue_unavailable", str(exc), 409,
                                       recovery=["reload_project"]) from exc
+        if action == "start_queued_task_batch":
+            from goodteam_os.project_iteration_execution import run_queued_iteration_batch
+
+            try:
+                result = run_queued_iteration_batch(
+                    workspace=workspace, project_key=key, root=root,
+                    project_config=_project_config_for_key(workspace, key),
+                    proposal_ids=request.get("proposal_ids"), expected_revisions=request.get("expected_revisions"),
+                    confirmed=request.get("confirmed") is True, background=True,
+                )
+                return 202, result
+            except ValueError as exc:
+                raise ProjectApiError("task_batch_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
         if action in {"create_goal", "decide_goal_gate", "retry_goal_assessment"}:
             from goodteam_os.goal_continuation import handle_goal_action
 

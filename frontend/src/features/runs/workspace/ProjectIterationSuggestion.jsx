@@ -1,4 +1,4 @@
-/** Project-level advice only; this component never dispatches a Worker. */
+/** Project advice enters the existing queue; starting requires explicit confirmation. */
 function iterationPlanningRequest(snapshot, language = 'en') {
   if (snapshot?.schema_version !== 'project_iteration_backlog.v1') return '';
   const zh = String(language).startsWith('zh');
@@ -23,6 +23,11 @@ export default function ProjectIterationSuggestion({
   const selectedIds = current ? (chosen.selected_task_ids || [chosen.selected_task_id]) : [];
   const queuedCount = selectedIds.filter(id => queued.has(id)).length;
   const fullyQueued = Boolean(current && selectedIds.length && queuedCount === selectedIds.length);
+  const selectedQueue = selectedIds.map(id => (queuedTasks || []).find(item => item.project_task_id === id && item.status === 'queued'));
+  const canStartBatch = fullyQueued && selectedQueue.every(Boolean);
+  const activeBatch = (queuedTasks || []).some(item => item.batch_run_id && item.status === 'running');
+  const activeQueue = (queuedTasks || []).filter(item => item.batch_run_id && item.status === 'running');
+  const batchProgress = (queuedTasks || []).filter(item => item.batch_run_id && ['running', 'review', 'blocked'].includes(item.status));
   const unavailable = snapshot.status === 'unavailable';
   const label = zh ? '下一轮项目迭代' : 'Next project iteration';
   const hint = unavailable
@@ -70,8 +75,8 @@ export default function ProjectIterationSuggestion({
           : (zh ? '仅供规划；尚未执行' : 'Advisory only; no execution started')}</small>
         {batch && Number.isInteger(chosen.max_simultaneous_workers_per_dispatch) ? (
           <small>{zh
-            ? `直接派发上限：同时运行 ${chosen.max_simultaneous_workers_per_dispatch} 个 Worker；超出的待接入排队执行`
-            : `Direct-dispatch cap: ${chosen.max_simultaneous_workers_per_dispatch} concurrent Workers; excess work requires queueing after integration`}</small>
+            ? `确认后最多同时运行 ${chosen.max_simultaneous_workers_per_dispatch} 个 Worker；超出部分排队`
+            : `After confirmation, up to ${chosen.max_simultaneous_workers_per_dispatch} Workers run concurrently; excess tasks wait in the pool`}</small>
         ) : null}
       </div>
     ) : candidate ? (
@@ -79,8 +84,29 @@ export default function ProjectIterationSuggestion({
         {candidate.description ? <span> — {candidate.description.slice(0, 220)}</span> : null}</p>
     ) : null}
     {chosen && !current ? <small>{zh ? '旧建议已过期，请重新评估。' : 'Previous recommendation is stale; re-evaluate.'}</small> : null}
+    {batchProgress.length > 0 && <div aria-label={zh ? '批次执行结果' : 'Batch execution progress'}>
+      <strong>{zh ? '已确认的项目任务' : 'Confirmed project tasks'}</strong>
+      <ul>{batchProgress.map(item => <li key={item.id}>{item.project_task_id} — {
+        item.status === 'running' ? (zh ? '执行中' : 'Running')
+          : item.status === 'review' ? (zh ? '待独立审查与交付确认' : 'Awaiting independent review and delivery')
+            : (zh ? '已阻塞，请检查执行证据' : 'Blocked; inspect execution evidence')
+      }</li>)}</ul>
+      {activeQueue.length > 0 && <button type="button" disabled={disabled} onClick={() => onQueue?.({
+        action: 'start_queued_task_batch', proposal_ids: activeQueue.map(item => item.id),
+        expected_revisions: Object.fromEntries(activeQueue.map(item => [item.id, item.revision])), confirmed: true,
+      })}>{zh ? '检查或恢复已确认批次' : 'Check or resume confirmed batch'}</button>}
+    </div>}
     {current && (fullyQueued ? (
-      <small>{zh ? '已进入普通任务队列；通过现有任务确认流程执行' : 'In the existing task queue; the normal confirmation flow applies'}</small>
+      <div>
+        <small>{zh ? '已进入普通任务队列；确认后使用隔离工作区执行，结果需审查与交付确认'
+          : 'Queued tasks run in isolated workspaces after confirmation; results need review and delivery confirmation'}</small>
+        {canStartBatch && <button type="button" disabled={disabled || activeBatch} onClick={() => onQueue?.({
+          action: 'start_queued_task_batch',
+          proposal_ids: selectedQueue.map(item => item.id),
+          expected_revisions: Object.fromEntries(selectedQueue.map(item => [item.id, item.revision])),
+          confirmed: true,
+        })}>{zh ? '确认并执行所选任务（可能消耗模型额度）' : 'Confirm and run selected tasks (uses model)'}</button>}
+      </div>
     ) : (
       <button type="button" disabled={disabled} onClick={() => onQueue?.({
         action: 'queue_iteration_choice',
@@ -89,7 +115,7 @@ export default function ProjectIterationSuggestion({
       })}>{zh ? '将 Manager 选择加入现有任务队列' : 'Add selected tasks to existing queue'}</button>
     ))}
     {!current && <button
-      type="button" disabled={disabled || unavailable} onClick={submit}>
+      type="button" disabled={disabled || unavailable || activeBatch} onClick={submit}>
       {candidate
         ? (zh ? '请 Manager 比较并选择（可能消耗模型额度）' : 'Ask Manager to choose (uses model)')
         : (zh ? '请 Manager 分析项目' : 'Ask Manager to inspect the project')}

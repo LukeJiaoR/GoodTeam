@@ -132,6 +132,7 @@ def dispatch_tracks(
     allow_unsafe: bool = False,
     logical_task_id: str = "",
     codex_review_admission: CodexReviewAdmission | None = None,
+    require_isolation: bool = False,
 ) -> dict[str, object]:
     # Exact-source reviews own a separate immutable source protocol. Ordinary
     # writing tracks must retain one baseline and workspace across replay.
@@ -139,7 +140,7 @@ def dispatch_tracks(
                      constraints_file=constraints_file, research_report_file=research_report_file,
                      projects_dir=projects_dir, allow_unsafe=allow_unsafe,
                      logical_task_id=logical_task_id or str(uuid4()),
-                     codex_review_admission=codex_review_admission)
+                     codex_review_admission=codex_review_admission, require_isolation=require_isolation)
     if any(track.get("review_target") is not None for track in tracks):
         return _dispatch_tracks(**arguments)
     from goodteam_os.skills.task_start import registered_project_scope
@@ -157,7 +158,8 @@ def dispatch_tracks(
                "constraints_source": str(constraints_file) if constraints_file else "",
                "research_report_source": str(research_report_file) if research_report_file else "",
                "research_digest": hashlib.sha256(research_report_file.read_bytes()).hexdigest()
-               if research_report_file else ""}
+               if research_report_file else "",
+               **({"require_isolation": True} if require_isolation else {})}
     def dispatch_locked():
         saved = read_bytes(artifact_root / "request.json")
         encoded = canonical_json(request).encode("utf-8")
@@ -208,16 +210,21 @@ def _dispatch_tracks(
     research_report_file: Path | None = None, projects_dir: Path | None = None,
     allow_unsafe: bool = False, logical_task_id: str = "",
     codex_review_admission: CodexReviewAdmission | None = None,
+    require_isolation: bool = False,
 ) -> dict[str, object]:
     safety_kwargs: dict[str, object] = {"allow_unsafe": allow_unsafe}
     if projects_dir is not None:
         safety_kwargs["projects_dir"] = projects_dir
     safety = ensure_dispatch_project_root_is_safe(project_root, **safety_kwargs)
-    if not safety["safe"]:
+    # Project batches may read their configured source only when ordinary
+    # dispatch is required to provision a retained isolated Git copy for EACH
+    # Worker. The source never becomes a worker cwd or an integration target.
+    if not safety["safe"] and not require_isolation:
         raise ValueError(str(safety["reason"]))
     roles = [str(track.get("role", "")) for track in tracks]
-    if not roles or len(set(roles)) != len(roles):
-        raise ValueError("Dispatch requires at least one track and distinct roles.")
+    track_ids = [str(track.get("track_id") or track.get("role", "")) for track in tracks]
+    if not roles or any(not role for role in roles) or any(not key for key in track_ids) or len(set(track_ids)) != len(track_ids):
+        raise ValueError("Dispatch requires at least one track and distinct track identities (or roles).")
     if any(track.get("review_target") is not None for track in tracks) and (
         len(tracks) != 1 or tracks[0].get("role") != "code_review"
     ):
@@ -261,6 +268,8 @@ def _dispatch_tracks(
         )
     if local_review and not context:
         raise ValueError("Local execution requires a registered project and its captured task protocol.")
+    if require_isolation and (context or any(track.get("review_target") is not None for track in tracks)):
+        raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
     jobs_by_role = [
         _create_track_job(
             store,
@@ -279,7 +288,9 @@ def _dispatch_tracks(
         from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
 
         isolated = prepare_dispatch_workspace(project_root, run_id, [str(job["id"]) for job in jobs_by_role])
-    results_by_role: dict[str, dict[str, object]] = {}
+    if require_isolation and isolated is None:
+        raise ValueError("Project batch isolation was not established; no Worker was started.")
+    results_by_id: dict[str, dict[str, object]] = {}
     # Extra jobs wait in ThreadPoolExecutor's queue; planned work is not
     # discarded just because it exceeds the simultaneous Worker capacity.
     max_workers = dispatch_pool_size(len(jobs_by_role))
@@ -289,18 +300,22 @@ def _dispatch_tracks(
                             **({"dispatch_context": {"available": True, "mode": "dispatch_isolated",
                                 "workspace_path": str(isolated.workspace(str(job["id"]))),
                                 "execution_id": run_id, "sandbox_id": str(job["id"])}} if isolated else {}),
-                            **_review_runtime_kwargs(codex_review_admission)): str(job["role"])
+                            **_review_runtime_kwargs(codex_review_admission)): job
             for job in jobs_by_role
         }
         for future in as_completed(futures):
-            role = futures[future]
+            job = futures[future]
             try:
-                results_by_role[role] = future.result()
+                results_by_id[str(job["id"])] = future.result()
             except Exception as exc:
-                results_by_role[role] = {**_exception_report(role=role, error=exc),
-                                        "job_id": next(str(job["id"]) for job in jobs_by_role if job["role"] == role)}
+                results_by_id[str(job["id"])] = {**_exception_report(role=str(job["role"]), error=exc),
+                                                "job_id": str(job["id"])}
 
-    jobs = [results_by_role.get(str(job["role"]), _exception_report(role=str(job["role"]), error=RuntimeError("missing result"))) for job in jobs_by_role]
+    jobs = [results_by_id.get(str(job["id"]), _exception_report(role=str(job["role"]), error=RuntimeError("missing result"))) for job in jobs_by_role]
+    for result, track_id, track in zip(jobs, track_ids, tracks):
+        result["track_id"] = track_id
+        if track.get("project_task_id"):
+            result["project_task_id"] = str(track["project_task_id"])
     if isolated:
         for job in jobs:
             try:
@@ -311,12 +326,27 @@ def _dispatch_tracks(
             except Exception as exc:
                 job.update(changed_files=None, attribution_status="unknown", attribution_error=str(exc),
                            outcome="needs_human")
+        for job, track in zip(jobs, tracks):
+            domains = track.get("write_domains")
+            if domains is None and track.get("execution_policy") != "read_only":
+                continue
+            from goodteam_os.project_iteration import normalize_write_domains
+
+            allowed = normalize_write_domains(domains)
+            changed = job.get("changed_files")
+            valid = isinstance(changed, list) and (
+                not changed if track.get("execution_policy") == "read_only" else
+                allowed is not None and all(any(path == domain or path.startswith(domain + "/")
+                                               for domain in allowed) for path in changed))
+            job["write_scope_verified"] = bool(valid)
+            if not valid:
+                job.update(outcome="needs_human", scope_error="Worker changed files outside its approved write scope.")
     ok = [job for job in jobs if job.get("outcome") == "ok"]
     reviews = [job for job in jobs if job.get("outcome") == "review_received"]
     needs_human = [job for job in jobs if job.get("outcome") == "needs_human"]
     file_to_roles: dict[str, set[str]] = defaultdict(set)
     for job in jobs:
-        role = str(job.get("role", ""))
+        role = str(job.get("track_id", job.get("role", "")))
         for path in job.get("changed_files") or []:
             if role and isinstance(path, str):
                 file_to_roles[path].add(role)
@@ -328,6 +358,7 @@ def _dispatch_tracks(
     integration = {"status": "not_applicable"}
     if isolated:
         integration = ({"status": "blocked", "reason": "worker_or_evidence_failed"} if needs_human
+                       else {"status": "blocked", "reason": "file_collisions"} if file_collisions
                        else isolated.integrate([str(job["job_id"]) for job in jobs],
                             expected_results={str(job["job_id"]): str(job["result_commit"]) for job in jobs}))
     execution_ok = not needs_human
@@ -397,6 +428,9 @@ def _create_track_job(
         research_report_source=research_report_source,
         constraints=[*constraints, *[str(item) for item in track.get("constraints", [])]],
         expected_artifacts=[str(item) for item in track.get("expected_artifacts", [])],
+        execution_policy=str(track.get("execution_policy", "standard")),
+        **{key: track[key] for key in ("reasoning_depth", "additional_prompt", "pi_thinking_level",
+                                      "worker_id", "worker_name") if key in track},
     )
     return job
 
