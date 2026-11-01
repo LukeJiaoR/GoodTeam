@@ -55,21 +55,17 @@ def test_artifact_sanitizer_preserves_ordinary_report_and_existing_secret_assign
 
 @pytest.mark.parametrize("artifact_key", ["implementation_handoff", "qa_report"])
 @pytest.mark.parametrize("status", ["completed", "failed"])
-@pytest.mark.parametrize("report_credential", [
-    "Authorization: Bearer SYNTHETIC_REPORT_CREDENTIAL",
-    'headers["Authorization"] = "Bearer SYNTHETIC_REPORT_CREDENTIAL"',
-    'headers.set("Authorization", "Bearer SYNTHETIC_REPORT_CREDENTIAL")',
-    "| Authorization | Bearer SYNTHETIC_REPORT_CREDENTIAL |",
-])
-def test_worker_credentials_are_absent_from_artifact_and_docs_mirror(tmp_path, artifact_key, status, report_credential):
+def test_worker_credentials_are_absent_from_artifact_and_docs_mirror(tmp_path, artifact_key, status):
     project = tmp_path / "product"
     project.mkdir()
     config = tmp_path / "project.local.yaml"
     config.write_text(f"name: Synthetic Product\nkey: SYNTHETIC\nrepos:\n  root: {project}\n")
     report = tmp_path / "worker-result.md"
+    # The sanitizer matrix above owns credential syntax; this test protects
+    # its use in both artifact writers and their completed/failed paths.
     report_text = (
         "# Worker report\nChanged src/example.py.\n"
-        f"{report_credential}\n"
+        'headers.set("Authorization", "Bearer SYNTHETIC_REPORT_CREDENTIAL")\n'
         "Verification: synthetic checks passed.\n"
     )
     report.write_text(report_text)
