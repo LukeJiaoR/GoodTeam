@@ -3,7 +3,9 @@
 The Work page now has **Automatic project iteration** beside the Manager's
 iteration suggestion. Select the displayed existing task scope, set a maximum
 number of batches, and confirm the configured provider charges. The same limit
-also bounds Manager planning calls. One batch uses the existing isolated pool,
+also bounds Manager planning calls in the default fixed-task mode. An optional
+[outcome discovery grant](project-outcome-discovery.md) has its own explicit total
+Manager-call limit and can add bounded follow-ups. One batch uses the existing isolated pool,
 with up to ten concurrent Workers; each authorized task can be claimed once.
 
 The authorization is retained in the existing Task Assistant session. The
@@ -49,12 +51,16 @@ Stop is durable even while a Manager call or Worker is running. A Manager call
 already admitted may finish, but its late result cannot reactivate continuation
 or admit a new batch after revocation.
 
-The service stops when the approved tasks are delivered, the batch/model-call
+Without outcome discovery, the service stops when the approved tasks are delivered, the batch/model-call
 budget is used, scope/configuration changes, an execution is blocked, or no
-approved task is ready. It does not create new backlog tasks or expand the
-approved inventory. Uncertain outcomes retain exact queue/dispatch identities
+approved task is ready. That default mode does not create new backlog tasks or expand the
+approved inventory. The explicit discovery mode freezes its original seed list
+separately and records each new task admitted within the additional grant.
+Uncertain outcomes retain exact queue/dispatch identities
 and are not replaced with a newly launched batch. Repeated delivery requests
 return the same historical receipt even after a later batch advances HEAD.
+For a blocked batch, use [failed-task recovery or abandonment](project-batch-recovery.md);
+recovery never resets the continuation's original budgets or revives Stop.
 
 ## Existing API
 
@@ -63,6 +69,8 @@ Use `POST /api/projects/{key}/task-assistant/actions` with:
 - `start_project_continuation`: `task_ids`, `max_batches` (1–50), stable
   `idempotency_key`, the displayed `expected_backlog_version`, `confirmed: true`,
   `billing_acknowledged: true`.
+  The optional `discovery` object is documented in [outcome discovery](project-outcome-discovery.md);
+  omitting it retains the fixed-task contract.
 - `stop_project_continuation`: the current `continuation_id`. This remains
   available even when the target directory/configuration cannot be read.
 - `accept_project_batch_delivery`: `run_id`, `candidate_commit`, `landed_commit`,

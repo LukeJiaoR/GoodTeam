@@ -107,3 +107,8 @@ The same scenario checks live/unknown refusal, idempotent retry, immutable
 successful-sibling evidence and that replay after Stop does not revive the
 continuation. The Manager and native model responses are protocol fixtures;
 this is not a paid-provider acceptance run. Automatic GitHub CI stays paused.
+
+After a recovered candidate is genuinely accepted, optional
+[outcome discovery](project-outcome-discovery.md) can propose the next bounded
+task using its effective per-job and delivery evidence. It grants no permission
+to replace uncertain executions or reset the current authorization.

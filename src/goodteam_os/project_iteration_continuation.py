@@ -56,12 +56,14 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     from goodteam_os.project_import import read_bound_project_readiness
     from goodteam_os.project_readiness import build_capabilities
     from goodteam_os.team_control_plane import ensure_team_state
+    from goodteam_os.project_outcome_discovery import authorization_digest, normalize_discovery
 
     if request.get("confirmed") is not True or request.get("billing_acknowledged") is not True:
         raise ValueError("Confirm automatic project continuation and configured provider charges.")
     key = request.get("idempotency_key")
     ids = request.get("task_ids")
     maximum = request.get("max_batches")
+    discovery = normalize_discovery(request.get("discovery"))
     if not isinstance(key, str) or not 1 <= len(key) <= 256:
         raise ValueError("A stable continuation command identity is required.")
     if (not isinstance(ids, list) or not 1 <= len(ids) <= 128
@@ -75,7 +77,8 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     with goal_guard(workspace, project_key):
         current = store.read().get(_FIELD) or {}
         if current.get("id") == identity:
-            if (current.get("task_ids") != ids or current.get("max_batches") != maximum
+            if (current.get("seed_task_ids", current.get("task_ids")) != ids or current.get("max_batches") != maximum
+                    or current.get("discovery") != discovery
                     or current.get("approved_backlog_version") != request.get("expected_backlog_version")):
                 raise ValueError("Continuation command was already used with different scope or limits.")
             return current
@@ -114,6 +117,11 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
         if any(identifier not in tasks or _internal(tasks[identifier])
                or tasks[identifier]["status"] not in {"todo", "done"} for identifier in ids):
             raise ValueError("Continuation scope must contain available project backlog tasks.")
+        if discovery and not any(tasks[identifier]["status"] == "todo" for identifier in ids):
+            raise ValueError("Begin outcome discovery with at least one existing seed task to deliver.")
+        if discovery and any(tasks[identifier]["status"] == "done" and tasks[identifier].get("delivery_verified") is not True
+                             for identifier in ids):
+            raise ValueError("Discovery seed dependencies marked done need verified delivery evidence.")
         value = {
             "schema_version": "project_continuation.v1", "id": identity, "status": "active",
             "task_ids": ids, "task_intents": {identifier: _intent(tasks[identifier]) for identifier in ids},
@@ -124,9 +132,15 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
             "authority": authority_snapshot(workspace, project_key, project_config, root),
             "created_at": datetime.now(UTC).isoformat(),
         }
+        if discovery:
+            value.update(discovery=discovery, seed_task_ids=list(ids), discovered_task_ids=[], new_tasks_created=0,
+                         seed_task_intents={identifier: value["task_intents"][identifier] for identifier in ids},
+                         discovery_pending=None, discovery_consumed=[], max_manager_calls=discovery["max_planning_calls"])
+            value["authorization_digest"] = authorization_digest(value)
         _save(store, value)
         _event(store, f"project-continuation:{identity}", "project_continuation_authorized",
-               {"task_ids": ids, "max_batches": maximum, "max_manager_calls": maximum})
+               {"task_ids": ids, "max_batches": maximum, "max_manager_calls": value["max_manager_calls"],
+                **({"discovery": discovery, "authorization_digest": value["authorization_digest"]} if discovery else {})})
         return value
 
 
@@ -155,6 +169,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                               manager_runner=None, batch_runner=None):
     """One bounded automatic step; retries retain the same queued batch identity."""
     from goodteam_os.project_iteration_execution import run_queued_iteration_batch
+    from goodteam_os.project_outcome_discovery import DiscoveryPublicationPending, discover_next_iteration
 
     workspace, root, project_config = Path(workspace), Path(root), Path(project_config)
     store = TaskAssistantSessionStore(workspace, project_key)
@@ -185,7 +200,14 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                     raise ValueError("The current batch is blocked; inspect its retained execution result.")
                 elif all(task["status"] == "review" for task in batch_tasks):
                     return value
-            if all(task["status"] == "done" for task in selected):
+            if (value.get("discovery") and pending is None and (value.get("discovery_pending")
+                    or all(task["status"] == "done" and task.get("delivery_verified") is True for task in selected))):
+                value = discover_next_iteration(workspace=workspace, project_key=project_key, root=root,
+                    project_config=project_config, value=value, manager_runner=manager_runner)
+                pending = value.get("pending_batch")
+                if value["status"] != "active" or pending is None:
+                    return value
+            if pending is None and all(task["status"] == "done" for task in selected):
                 return _save(store, {**value, "status": "completed", "reason": "authorized_tasks_delivered"})
             if pending is None:
                 if (value["batches_started"] >= value["max_batches"]
@@ -252,9 +274,18 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             _event(store, f"project-continuation-batch:{value['id']}:{value['batches_started']}",
                    "project_continuation_batch_started", {"run_id": result["run_id"], "task_ids": pending["task_ids"]})
             return value
+        except DiscoveryPublicationPending:
+            # The response and creation identity are already durable. Replaying
+            # this outbox does not spend another planning call or reset a card.
+            current = store.read().get(_FIELD) or value
+            return _save(store, {**current, "reason": "discovery_publication_pending"})
         except (OSError, ValueError, ManagerExecutionError) as exc:
             # An uncertain outcome is inspectable and cannot silently spend a
             # second attempt or choose another task under the same reservation.
+            if value.get("discovery"):
+                current = store.read().get(_FIELD) or {}
+                if current.get("id") == value["id"]:
+                    value = current
             return _save(store, {**value, "status": "blocked", "reason": str(exc)})
 
 

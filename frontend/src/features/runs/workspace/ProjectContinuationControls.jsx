@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 
 function qualityAccepted(quality) {
   return quality?.status === 'reviewed' && quality.check_status === 'passed'
@@ -134,10 +134,81 @@ function DeliveryConfirmation({ batch, projectKey, onAction, disabled, zh }) {
   </details>;
 }
 
-export default function ProjectContinuationControls({ snapshot, session, projectKey, onAction, disabled, canStart, language = 'en' }) {
+function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, canStart, zh }) {
   const [maximum, setMaximum] = useState(3);
-  const [confirmed, setConfirmed] = useState(false);
+  const [discover, setDiscover] = useState(false);
+  const [objective, setObjective] = useState('');
+  const [paths, setPaths] = useState('');
+  const [newTaskLimit, setNewTaskLimit] = useState(3);
+  const [planningLimit, setPlanningLimit] = useState(6);
+  const [confirmedInput, setConfirmedInput] = useState('');
   const [command] = useState(() => globalThis.crypto?.randomUUID?.() || `continuation-${Date.now()}`);
+  const lastSubmission = useRef({ input: '', revision: 0 });
+  const domains = paths.split(/\r?\n/).map(path => path.trim()).filter(Boolean).map(path => path.replace(/\/$/, ''));
+  const validDomains = domains.length >= 1 && domains.length <= 12
+    && new Set(domains.map(path => path.toLowerCase())).size === domains.length
+    && domains.every(path => path.length <= 160 && !path.split('/').some(part => ['', '.', '..'].includes(part))
+      && ![...path].some(character => character.charCodeAt(0) < 32 || '\\:*?[]'.includes(character)));
+  const discovery = discover ? { objective: objective.trim(), allowed_write_domains: domains,
+    max_new_tasks: newTaskLimit, max_planning_calls: planningLimit } : undefined;
+  const input = { action: 'start_project_continuation', expected_backlog_version: snapshot.version,
+    task_ids: tasks.map(task => task.task_id), max_batches: maximum, confirmed: true, billing_acknowledged: true,
+    ...(discovery ? { discovery } : {}) };
+  const inputIdentity = JSON.stringify([value?.id || 'new', input]);
+  const valid = Number.isInteger(maximum) && maximum >= 1 && maximum <= 50
+    && (!discover || objective.trim().length >= 20 && objective.trim().length <= 2000 && validDomains
+      && Number.isInteger(newTaskLimit) && newTaskLimit >= 1 && newTaskLimit <= 50
+      && Number.isInteger(planningLimit) && planningLimit >= 1 && planningLimit <= 100);
+  const start = () => {
+    if (lastSubmission.current.input !== inputIdentity) {
+      lastSubmission.current = { input: inputIdentity, revision: lastSubmission.current.revision + 1 };
+    }
+    onAction({ ...input, idempotency_key: `${command}:${lastSubmission.current.revision}` });
+  };
+  return <>
+    <p>{discover ? (zh ? '授权下方初始任务，并让 Manager 根据已核实交付的结果，在指定目标与路径范围内发现后续任务。'
+      : 'Authorize the initial tasks below and let Manager discover follow-up tasks from verified delivered outcomes within the specified objective and paths.')
+      : (zh ? '仅授权下方列出的现有任务自动规划和执行。' : 'Authorize planning and execution of only the existing tasks listed below.')}
+      {' '}{zh ? '交付仍需审查并核实已落地的版本；每批最多同时运行 10 个 Worker，按当前配置产生模型费用。'
+        : 'Delivery still requires review and a verified landed version. Up to 10 Workers run concurrently per batch and configured model charges apply.'}</p>
+    <ul>{tasks.map(task => <li key={task.task_id}>{task.task_id}: {task.title}</li>)}</ul>
+    <label><input type="checkbox" checked={discover} onChange={event => setDiscover(event.target.checked)} disabled={disabled} />
+      {zh ? '根据已核实的交付结果发现后续任务' : 'Discover follow-up tasks from verified delivered outcomes'}</label>
+    {discover ? <fieldset disabled={disabled} style={{ display: 'grid', gap: '.5rem', minWidth: 0 }}>
+      <legend>{zh ? '后续任务的授权范围' : 'Follow-up task authorization'}</legend>
+      <label style={{ display: 'grid', gap: '.25rem' }}>{zh ? '项目目标（20–2000 字符）' : 'Project objective (20–2000 characters)'}
+        <textarea value={objective} onChange={event => setObjective(event.target.value)} rows={3} maxLength={2000} />
+      </label>
+      <label style={{ display: 'grid', gap: '.25rem' }}>{zh ? '允许写入的项目路径（每行一个）' : 'Allowed project paths (one per line)'}
+        <textarea value={paths} onChange={event => setPaths(event.target.value)} rows={3} spellCheck={false}
+          placeholder={'src\ntests'} />
+      </label>
+      <p>{zh ? '填写 1–12 个项目相对目录或文件路径。每次已核实的交付最多产生一个后续任务；现有任务仍可并行执行。'
+        : 'Enter 1–12 project-relative directories or files. Each verified delivery can produce at most one follow-up task; existing tasks can still run in parallel.'}</p>
+      <label>{zh ? '新任务总量上限' : 'Maximum new tasks in total'}
+        <input type="number" min="1" max="50" value={newTaskLimit} onChange={event => setNewTaskLimit(Number(event.target.value))} />
+      </label>
+      <label>{zh ? 'Manager 调用总量上限（含后续任务发现）' : 'Total Manager calls (including follow-up discovery)'}
+        <input type="number" min="1" max="100" value={planningLimit} onChange={event => setPlanningLimit(Number(event.target.value))} />
+      </label>
+    </fieldset> : null}
+    <label>{discover ? (zh ? '最多执行批次' : 'Maximum batches')
+      : (zh ? '最多执行批次（同时限制 Manager 调用次数）' : 'Maximum batches (also limits Manager calls)')}
+      <input type="number" min="1" max="50" value={maximum} disabled={disabled}
+        onChange={event => setMaximum(Number(event.target.value))} />
+    </label>
+    <label><input type="checkbox" checked={confirmedInput === inputIdentity}
+      onChange={event => setConfirmedInput(event.target.checked ? inputIdentity : '')} disabled={disabled} />
+      {discover ? (zh ? '我确认初始任务、项目目标、允许路径、批次与新任务及规划调用上限，并承担已配置模型的调用费用。'
+        : 'I confirm the initial tasks, objective, allowed paths, batch, new-task and planning-call limits, and configured model charges.')
+        : (zh ? '我确认上述任务范围、迭代次数和模型费用。' : 'I confirm this task scope, iteration limit and model charges.')}</label>
+    <button type="button" disabled={disabled || !canStart || !valid || confirmedInput !== inputIdentity} onClick={start}>
+      {zh ? '授权并开始自动迭代' : 'Authorize and start continuation'}
+    </button>
+  </>;
+}
+
+export default function ProjectContinuationControls({ snapshot, session, projectKey, onAction, disabled, canStart, language = 'en' }) {
   const zh = String(language).startsWith('zh');
   const value = session?.project_continuation;
   const tasks = (snapshot?.candidates || []).filter(item => item.status === 'todo');
@@ -145,37 +216,39 @@ export default function ProjectContinuationControls({ snapshot, session, project
     ['review', 'blocked', 'abandoned'].includes(item.status) || item.quality?.required && item.status !== 'delivered');
   if (!onAction || (!value && !tasks.length && !batches.length)) return null;
   const active = value?.status === 'active';
-  const labels = zh ? { active: '自动推进中', stopped: '已停止', blocked: '需要处理阻塞', exhausted: '授权批次已用完', completed: '授权任务已交付' }
+  const labels = zh ? { active: '自动推进中', stopped: '已停止', blocked: '需要处理阻塞', exhausted: '授权额度已用完', completed: '授权任务已交付' }
     : { active: 'Running automatically', stopped: 'Stopped', blocked: 'Needs attention', exhausted: 'Approved budget used', completed: 'Approved tasks delivered' };
+  const reasons = zh ? { discovery_no_followup: '本次未发现授权范围内的后续任务。', discovery_task_budget_used: '已用完授权的新任务额度。',
+    approved_iteration_budget_used: '已达到授权批次或规划调用上限。', owner_stopped: '所有者已停止后续迭代。' }
+    : { discovery_no_followup: 'No follow-up task was proposed within the approved scope.', discovery_task_budget_used: 'Approved new-task budget used.',
+      approved_iteration_budget_used: 'Approved batch or planning-call limit reached.', owner_stopped: 'Future iterations were stopped by the owner.' };
+  const statusLabel = value?.discovery && value.reason === 'discovery_no_followup'
+    ? (zh ? '本次未发现后续任务' : 'No follow-up proposed') : labels[value?.status] || value?.status;
 
   return <section aria-label={zh ? '项目自动迭代' : 'Automatic project iteration'}>
     <details className="project-iteration-suggestion" open={Boolean(value)}>
-      <summary>{zh ? '项目自动迭代' : 'Automatic project iteration'}{value ? ` · ${labels[value.status] || value.status}` : ''}</summary>
+      <summary>{zh ? '项目自动迭代' : 'Automatic project iteration'}{value ? ` · ${statusLabel}` : ''}</summary>
       {value ? <>
         <p>{zh ? '已预留批次' : 'Batch reservations'}: {value.batches_started} / {value.max_batches} · {zh ? '已预留规划次数' : 'Planning reservations'}: {value.manager_calls} / {value.max_manager_calls}</p>
-        {value.status === 'blocked' ? <p role="status">{value.reason}</p> : null}
+        {value.discovery ? <>
+          <p>{zh ? '项目目标' : 'Project objective'}: {value.discovery.objective}</p>
+          <p>{zh ? '允许写入的路径' : 'Allowed write paths'}: {value.discovery.allowed_write_domains.join(', ')}</p>
+          <p>{zh ? '已创建新任务' : 'New tasks created'}: {value.new_tasks_created ?? 0} / {value.discovery.max_new_tasks}</p>
+          {value.seed_task_ids?.length ? <p>{zh ? '初始任务' : 'Initial tasks'}: {value.seed_task_ids.join(', ')}</p> : null}
+          {value.discovered_task_ids?.length ? <p>{zh ? '已发现的任务' : 'Discovered tasks'}: {value.discovered_task_ids.join(', ')}</p> : null}
+          {value.discovery_last ? <>
+            {value.discovery_last.task_id ? <p>{zh ? '最近创建的任务' : 'Latest created task'}: {value.discovery_last.task_id}</p> : null}
+            <p>{zh ? '来源交付凭据' : 'Source delivery receipt'}: <code>{value.discovery_last.outcome_receipt_id}</code></p>
+            {value.discovery_last.rationale ? <p>{zh ? '发现依据' : 'Discovery rationale'}: {value.discovery_last.rationale}</p> : null}
+          </> : null}
+        </> : null}
+        {value.status !== 'active' && value.reason ? <p role="status">{reasons[value.reason] || value.reason}</p> : null}
         {active ? <button type="button" disabled={disabled} onClick={() => onAction({
           action: 'stop_project_continuation', continuation_id: value.id,
         })}>{zh ? '停止后续迭代' : 'Stop future iterations'}</button> : null}
       </> : null}
-      {!active && tasks.length > 0 ? <>
-        <p>{zh ? '仅授权下方列出的现有任务自动规划和执行。交付仍需审查并核实已落地的版本；每批最多同时运行 10 个 Worker，按当前配置产生模型费用。'
-          : 'Authorize planning and execution of only the existing tasks listed below. Delivery still requires review and a verified landed version. Up to 10 Workers run concurrently per batch and configured model charges apply.'}</p>
-        <ul>{tasks.map(task => <li key={task.task_id}>{task.task_id}: {task.title}</li>)}</ul>
-        <label>{zh ? '最多执行批次（同时限制 Manager 调用次数）' : 'Maximum batches (also limits Manager calls)'}
-          <input type="number" min="1" max="50" value={maximum} disabled={disabled}
-            onChange={event => setMaximum(Number(event.target.value))} />
-        </label>
-        <label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={disabled} />
-          {zh ? '我确认上述任务范围、迭代次数和模型费用。' : 'I confirm this task scope, iteration limit and model charges.'}</label>
-        <button type="button" disabled={disabled || !canStart || !confirmed || !Number.isInteger(maximum) || maximum < 1 || maximum > 50}
-          onClick={() => onAction({ action: 'start_project_continuation',
-            idempotency_key: `${command}:${value?.id || 'new'}:${snapshot.version}:${maximum}`,
-            expected_backlog_version: snapshot.version,
-            task_ids: tasks.map(task => task.task_id), max_batches: maximum, confirmed: true, billing_acknowledged: true })}>
-          {zh ? '授权并开始自动迭代' : 'Authorize and start continuation'}
-        </button>
-      </> : null}
+      {!active && tasks.length > 0 ? <ContinuationStartForm tasks={tasks} snapshot={snapshot} value={value}
+        onAction={onAction} disabled={disabled} canStart={canStart} zh={zh} /> : null}
     </details>
     {batches.map(batch => <Fragment key={batch.run_id}>
       {['blocked', 'abandoned'].includes(batch.status) || batch.recovery?.can_abandon === true ? <BatchRecoveryControls

@@ -18,6 +18,8 @@ For the short current-state summary, start with [`status.md`](status.md).
 | Run live smoke safely | [`live-smoke-playbook.md`](live-smoke-playbook.md) |
 | Configure a project | [`config-reference.md`](config-reference.md) |
 | Understand worker dispatch | [`worker-backends.md`](worker-backends.md) |
+| Continue across project iterations | [`project-continuation.md`](project-continuation.md), [`project-outcome-discovery.md`](project-outcome-discovery.md) |
+| Check, review or recover a project batch | [`project-batch-quality.md`](project-batch-quality.md), [`project-batch-recovery.md`](project-batch-recovery.md) |
 | Understand bounded existing-project onboarding | [`repository-context-provider.md`](repository-context-provider.md), [`project-onboarding-runner.md`](project-onboarding-runner.md) |
 | Understand execution identity | [`execution-identity.md`](execution-identity.md) |
 | Understand memory and provenance | [`memory-model.md`](memory-model.md), [`provenance-ledger.md`](provenance-ledger.md) |
@@ -55,6 +57,10 @@ A historical document can explain *why* a decision was made, but it must not sil
 - [`operator-guide.md`](operator-guide.md): day-to-day GoodTeam operating loop.
 - [`review-and-approval-guide.md`](review-and-approval-guide.md): approval-gate semantics, evidence quality, and reviewer provenance.
 - [`live-smoke-playbook.md`](live-smoke-playbook.md): Tier 4 live-smoke scope, isolation, evidence, and failure handling.
+- [`project-continuation.md`](project-continuation.md): fixed-task authorization, automatic queue execution and verified landed delivery.
+- [`project-outcome-discovery.md`](project-outcome-discovery.md): optional bounded follow-ups from actual accepted outcomes and existing memory provenance.
+- [`project-batch-quality.md`](project-batch-quality.md): explicit candidate checks, independent review and bounded correction.
+- [`project-batch-recovery.md`](project-batch-recovery.md): exact failed-task retry, retained successful siblings and safe abandonment.
 
 ### Reference manuals
 
