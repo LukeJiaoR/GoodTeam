@@ -96,13 +96,29 @@ def verify_completed_assessment(project_root, goal, work, attempt, job_id, evide
         raise ValueError("Assessment completion and read-only identity cannot be proven; retry is blocked.")
 
 
-def run_evidence(workspace, state):
-    """Read only artifact paths already owned by this exact completed run."""
+def run_evidence(workspace, state, *, project_root=None):
+    """Read this completed run's artifacts and independently bound review reports.
+
+    Goal callers supply their already-authorized Worker root. Historical callers
+    without a root retain artifact-only reads; no current-config fallback is
+    allowed to select another project's Reviewer files.
+    """
     if state.current_node != "complete" or state.next_node == "rejected" or state.blockers:
         raise ValueError("Only a completed, unblocked workflow can be assessed.")
     root = (Path(workspace) / "artifacts" / "runs" / state.run_id).resolve()
     evidence = {}
     size = 0
+
+    def retain(ref, full_text):
+        nonlocal size
+        if len(full_text.encode("utf-8")) > 1_000_000:
+            raise ValueError("Run evidence exceeds the bounded assessment size; inspect it manually.")
+        text = full_text[-32_000:]
+        size += len(text)
+        if size > 160_000:
+            raise ValueError("Run evidence exceeds the bounded assessment size; inspect it manually.")
+        evidence[ref] = text
+
     for key, value in sorted(state.artifacts.items()):
         if key not in {"qa", "qa_report", "code_review"}:
             continue
@@ -115,12 +131,13 @@ def run_evidence(workspace, state):
         # QA/review summaries are appended after captured context. Feed a
         # contiguous trailing window, not recursively repeated prior artifacts.
         # Citations still hash the full artifact and quote literal source text.
-        text = full_text[-32_000:]
-        size += len(text)
-        if size > 160_000:
-            raise ValueError("Run evidence exceeds the bounded assessment size; inspect it manually.")
         ref = f"run:{state.run_id}:artifact:{key}:sha256:{hashlib.sha256(full_text.encode()).hexdigest()}"
-        evidence[ref] = text
+        retain(ref, full_text)
+    if project_root is not None:
+        from goodteam_os.goal_review_evidence import reviewer_evidence
+
+        for ref, full_text in reviewer_evidence(workspace, state, project_root):
+            retain(ref, full_text)
     if not evidence:
         raise ValueError("The completed run has no readable run-bound evidence.")
     return evidence

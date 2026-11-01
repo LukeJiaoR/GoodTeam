@@ -37,12 +37,21 @@ cost cap or granting new provider/account permissions.
 - StateStore remains the authoritative workflow fact source. Goal work IDs bind
   deterministic run IDs. Current run identity and exact input must match before
   a result can advance the Goal.
-- Only QA/code-review artifacts registered on that completed run and located
-  under its run artifact directory enter the bounded evidence packet. The packet
-  contains a trailing 32,000-character excerpt per artifact (full artifact digest);
+- QA/code-review artifacts must be registered on that completed run and located
+  under its run artifact directory. The packet also includes original Release
+  Reviewer reports from the authorized Worker root, positively bound to the same
+  project/run, exact release artifact and a separate read-only/new-session review.
+  Protected Skill review reports use their existing immutable receipt validator
+  and must match the run's exact artifact or retained Git candidate; mutable Skill
+  `result.md` files never substitute for those receipts. These are advisory reports,
+  not approval or proof that the review judgment is correct.
+- The packet contains a trailing 32,000-character excerpt per artifact/report (full source digest);
   omitted content must not be treated as evidence of success. References
-  include the run ID, artifact key and content digest. Foreign paths, oversized
-  evidence and unavailable evidence fail closed.
+  include the run ID, artifact key and content digest; Reviewer references also
+  bind the original job and reviewed target version. Missing, stale, unrelated or
+  corrupt reports add no evidence. A changed report changes the assessment digest,
+  preventing a retry from silently using a different evidence packet. Foreign
+  paths, oversized evidence and unavailable evidence fail closed.
 - Each Manager check names an original criterion and a current evidence reference
   with a literal quote. All original criteria must be addressed, including those
   previously met. The complete assessment is retained for inspection.

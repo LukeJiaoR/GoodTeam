@@ -3,6 +3,9 @@
 The synthetic assessor is deliberately separate from real model validation.
 """
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
+import json
+from pathlib import Path
 
 import pytest
 
@@ -151,6 +154,77 @@ def test_current_run_refs_and_literal_quotes_required(tmp_path):
     result["requires_new_scope"] = True
     with pytest.raises(ValueError, match="beyond"):
         validate_assessment(result, goal, {})
+
+
+def test_goal_assesses_original_release_review_without_repeating_qa_pending_work(setup):
+    """Stored offline reports exercise the real reader and Goal completion path."""
+    from goodteam_os.goal_assessment import evidence_digest
+    from goodteam_os.reviewer_dispatch import reviewer_job_specs_for_gate
+    from goodteam_os.resources import register_markdown_artifact
+    from goodteam_os.roles import approval_artifact_for_gate
+    from goodteam_os.workers import WorkerJobStore
+
+    workspace, root, config, store, _create = setup
+    goal = store.create_goal(objective="Deliver and independently review the bounded feature",
+        acceptance_criteria=["Feature works", "Independent release review is complete"],
+        allowed_scope=["Only this isolated fixture"], max_work_units=2, confirmed=True,
+        idempotency_key="release-evidence", authority_snapshot=authority_snapshot(workspace, "DEMO", config, root))
+    tick_goal(workspace, "DEMO", goal["id"], starter=finished_run)
+    state = StateStore(workspace).read_project_current("DEMO")
+    qa = "Feature works. Independent release review remains pending downstream."
+    Path(state.artifacts["qa"]).write_text(qa)
+    artifact = workspace / "artifacts/runs" / state.run_id / "release-notes.md"
+    artifact.write_text("# Candidate\nThe feature and its verification are ready for independent review.\n")
+    key = approval_artifact_for_gate("release")
+    register_markdown_artifact(state, key, artifact)
+    StateStore(workspace).write_project_current(state)
+    target = {"reviewer_profiles": {"release": ["product-operator"]}, "reviewer_dispatch": {
+        "mode": "parallel", "phases": {"release": "parallel"},
+        "rollout": {"enabled": True, "acknowledge": "parallel-reviewer-dispatch-is-advisory"}}}
+    spec = reviewer_job_specs_for_gate(state=state, target=target, approval="release", artifact_key=key,
+                                      artifact_path=str(artifact), context="Review this exact candidate.")[0]
+    workers = WorkerJobStore(root)
+    job = workers.create_job(**{**spec, "adapter": "fake", "project_key": state.project_key})
+    workers.run_job(job["id"])  # Explicit simulation; no provider or reviewer quality is claimed.
+    job_root = workers.root / job["id"]
+    report = job_root / "result.md"
+    content = "Independent Release Reviewer: I checked the candidate and its verification. No unresolved findings."
+    report.write_text(content)
+
+    evidence = run_evidence(workspace, state, project_root=root)
+    ref = next(ref for ref in evidence if ":reviewer:" in ref)
+    assert job["id"] in ref and spec["artifact_version"] in ref
+    assert ref.endswith("report:sha256:" + sha256(content.encode()).hexdigest())
+    assert evidence[ref] == content and qa in evidence.values()
+    assert run_evidence(workspace, state) == {name: text for name, text in evidence.items() if name != ref}
+
+    # A same-role author, another project/run and a stale target cannot supply
+    # this criterion. Metadata is read from the original bound job, not flags.
+    original = (job_root / "job.json").read_text()
+    for changed in ({"execution_policy": "standard"}, {"session_policy": None}, {"project_key": "OTHER"},
+                    {"run_id": "another-run"}, {"artifact_version": "sha256:" + "0" * 64}):
+        (job_root / "job.json").write_text(json.dumps({**json.loads(original), **changed}))
+        assert ref not in run_evidence(workspace, state, project_root=root)
+    (job_root / "job.json").write_text(original)
+    report.write_bytes(b"\xffcorrupt report")
+    assert ref not in run_evidence(workspace, state, project_root=root)
+    report.write_text(content + " Changed after assessment capture.")
+    changed = run_evidence(workspace, state, project_root=root)
+    assert ref not in changed and evidence_digest(changed) != evidence_digest(evidence)
+    report.write_text(content)
+
+    def assessed(**kwargs):
+        assert kwargs["evidence"] == evidence
+        qa_ref = next(name for name in evidence if ":artifact:qa:" in name)
+        return validate_assessment({"requires_new_scope": False, "checks": [
+            {"criterion": 0, "status": "met", "evidence_ref": qa_ref, "quote": "Feature works."},
+            {"criterion": 1, "status": "met", "evidence_ref": ref, "quote": content},
+        ]}, kwargs["goal"], kwargs["evidence"])
+
+    completed = tick_goal(workspace, "DEMO", goal["id"], assessor=assessed,
+                          starter=lambda **_: pytest.fail("No redundant follow-up delivery is justified"))
+    assert completed["status"] == "complete" and len(completed["work_units"]) == 1, completed
+    assert ref in completed["work_units"][0]["evidence_refs"]
 
 
 def test_goal_uses_real_workflow_and_retains_existing_gates(setup):

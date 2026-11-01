@@ -143,7 +143,7 @@ def handle_goal_action(workspace, project_key, root, request):
                         or current.current_node != "complete"
                         or current.pending_transition.get("status") in {"recording", "executing", "interrupted"}):
                     raise ValueError("The same completed workflow cannot be proven; retry is blocked.")
-                evidence = run_evidence(workspace, current)
+                evidence = run_evidence(workspace, current, project_root=root)
                 if evidence_digest(evidence) != failure["evidence_digest"]:
                     raise ValueError("The original assessment evidence changed; retry is blocked.")
                 verify_completed_assessment(root, goal, work, failure["attempt"], failure["job_id"], evidence)
@@ -304,7 +304,7 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
                                               idempotency_key=f"running:{goal_id}:{work['id']}", work_id=work["id"], run_id=work["run_id"])
                 if current.current_node == "complete":
                     try:
-                        evidence = run_evidence(workspace, current)
+                        evidence = run_evidence(workspace, current, project_root=root)
                         failures = work.get("assessment_failures", [])
                         digest = evidence_digest(evidence)
                         if failures and digest != failures[0]["evidence_digest"]:
