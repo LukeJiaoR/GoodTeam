@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from goodteam_os import repository_inventory
 from goodteam_os.repository_inventory import build_repository_inventory
 from goodteam_os.repository_snapshot import (
     RepositorySnapshotError,

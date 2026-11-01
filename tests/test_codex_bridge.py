@@ -4,11 +4,9 @@ The upstream is a loopback model-free server. No native Codex, external provider
 host login, paid model, containment or effective managed-route proof is used.
 """
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, replace
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import subprocess
-import sys
 import threading
 import time
 from uuid import uuid4
@@ -158,40 +156,4 @@ def test_concurrent_contexts_share_one_real_upstream_slot(tmp_path, upstream):
         results = list(executor.map(run, targets))
     assert results.count("ok") == 1 and results.count("bridge_budget_exhausted") == 7
     assert len(upstream.requests) == 1
-
-
-import json,sys
-from pathlib import Path
-from goodteam_os.skills.codex_bridge import BridgeScope, TaskProviderBridge
-from goodteam_os.skills.task_locks import TaskSkillIdentity
-from goodteam_os.skills.models import SkillError
-from test_codex_bridge import FixtureAuthority, request
-value=json.loads(sys.argv[1]);value['task']=TaskSkillIdentity(**value['task'])
-target=TaskProviderBridge(BridgeScope(**value),state_root=Path(sys.argv[2]),authority=FixtureAuthority(sys.argv[3]))
-try:
- target.forward('POST','/v1/responses',request());print('ok')
-except SkillError as error:
- print(error.code)
-"""
-    processes = []
-    endpoint = f"http://127.0.0.1:{upstream.server_port}/v1/responses"
-    try:
-        for _ in range(4):
-            value = asdict(replace(selected, context_id="review-" + uuid4().hex))
-            processes.append(subprocess.Popen([sys.executable, "-c", script, json.dumps(value),
-                             str(tmp_path.resolve() / "operator"), endpoint], stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "PYTHONPATH": "src:tests",
-                             "PYTHONDONTWRITEBYTECODE": "1", "GOODTEAM_DISABLE_TG_NETWORK": "1"}))
-        results = []
-        for child in processes:
-            out, _ = child.communicate(timeout=10)
-            assert child.returncode == 0
-            results.append(out.decode().strip())
-        assert results.count("ok") == 1 and results.count("bridge_budget_exhausted") == 3
-        assert len(upstream.requests) == 1
-    finally:
-        for child in processes:
-            if child.poll() is None:
-                child.kill()
-                child.wait(3)
 
