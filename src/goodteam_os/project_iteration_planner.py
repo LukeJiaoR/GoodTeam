@@ -7,6 +7,7 @@ confirmation and authorization paths.
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
 
@@ -74,7 +75,8 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
     adapter = resolve_role_adapter(target, "orchestrator")
     model = _model_name(_configured_manager_model(target))
     settings = _manager_settings(target)
-    identity = "project-iteration:" + backlog["version"].split(":", 1)[-1]
+    scope = str(backlog.get("planning_scope") or "")
+    identity = "project-iteration:" + backlog["version"].split(":", 1)[-1] + (":" + scope if scope else "")
     packet = json.dumps(context, ensure_ascii=False, sort_keys=True)
     with _manager_turn_lock(root, identity):
         store = WorkerJobStore(root)
@@ -90,7 +92,7 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
                 ],
                 expected_artifacts=[], project_key=project_key,
                 phase="project_iteration_choice", execution_policy="read_only",
-                idempotency_key=f"project-iteration-choice:{project_key}:{backlog['version']}",
+                idempotency_key=f"project-iteration-choice:{project_key}:{backlog['version']}" + (":" + scope if scope else ""),
                 **settings,
             ),
         )
@@ -185,7 +187,7 @@ def _require_planning_idle(workspace: Path, project_key: str) -> None:
 def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                         project_config: Path, expected_backlog_version: str,
                         manager_runner: Callable[..., dict[str, Any]] = run_manager_iteration_choice,
-                        confirmed: bool = False) -> dict[str, Any]:
+                        confirmed: bool = False, allowed_task_ids: list[str] | None = None) -> dict[str, Any]:
     """Persist a version-bound read-only recommendation; do not start a run."""
     if confirmed is not True:
         raise ValueError("Confirm the potentially billable Manager planning call first.")
@@ -199,9 +201,23 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             raise ValueError("No eligible local project task exists for the Manager to rank.")
         if snapshot["version"] != expected_backlog_version:
             raise ValueError("The project backlog changed; refresh before planning.")
+        source_snapshot = snapshot
+        scope = ""
+        if allowed_task_ids is not None:
+            if (not isinstance(allowed_task_ids, list) or not allowed_task_ids
+                    or any(not isinstance(item, str) for item in allowed_task_ids)):
+                raise ValueError("A valid approved task inventory is required.")
+            allowed = set(allowed_task_ids)
+            scope = sha256(json.dumps(sorted(allowed)).encode()).hexdigest()
+            snapshot = {**snapshot, "planning_scope": scope,
+                        "candidates": [item for item in snapshot["candidates"] if item["task_id"] in allowed]}
+            if not any(item["eligible_to_plan"] for item in snapshot["candidates"]):
+                raise ValueError("No approved project task is ready for planning.")
+            snapshot["next_candidate"] = next(item for item in snapshot["candidates"] if item["eligible_to_plan"])
+            snapshot["candidate_count"] = len(snapshot["candidates"])
         session = store.read()
         previous = latest_iteration_choice(session, snapshot)
-        if previous and previous["status"] == "recommended":
+        if previous and previous["status"] == "recommended" and previous.get("planning_scope", "") == scope:
             return {"iteration_choice": previous, "workflow_started": False, "reused": True}
         proposed = session.get("proposed_task")
         if isinstance(proposed, dict) and proposed.get("status") != "cancelled":
@@ -213,17 +229,21 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             "backlog": snapshot,
             "repository_understanding": _project_evidence(workspace, project_key, root),
             "conversation": conversation_context(session, query="next project iteration"),
+            **({"authorized_task_ids": sorted(allowed), "project_backlog_context": source_snapshot} if scope else {}),
         }
         result = manager_runner(project_config=project_config, project_key=project_key,
                                 backlog=snapshot, context=context)
         choice = validate_iteration_choice(snapshot, result.get("selection"))
+        event_id = f"iteration-choice:{snapshot['version']}" + (":" + scope if scope else "")
+        if scope:
+            choice.update(planning_scope=scope, source_event_id=event_id)
         # Project tasks can change while the model is running. A stale result is
         # not a new authority and may not be shown as a current recommendation.
         if project_iteration_backlog(root, project_key)["version"] != snapshot["version"]:
             raise ValueError("The project backlog changed during planning; refresh.")
         _require_planning_idle(workspace, project_key)
         store.append_event(
-            f"iteration-choice:{snapshot['version']}",
+            event_id,
             "project_iteration_choice_recorded",
             content=("Suggested parallel iterations: " if choice["execution_mode"] == "parallel"
                      else "Suggested next iteration: ")

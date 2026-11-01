@@ -157,7 +157,8 @@ def _project_task_request(task):
     return result
 
 
-def queue_manager_iteration_choice(*, workspace, project_key, root, expected_backlog_version):
+def queue_manager_iteration_choice(*, workspace, project_key, root, expected_backlog_version,
+                                   expected_choice_event_id=None, expected_task_ids=None):
     """One adapter: saved Manager picks become ordinary Task Assistant queue items.
 
     It creates NO Worker, Workflow, Goal, or second project-task ledger. Queued
@@ -193,7 +194,10 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
             selected = [known[task_id] for task_id in validated["selected_task_ids"]]
             # Batch dispatch preserves read-only policy. The ordinary writing
             # Workflow adapter still rejects it at selection/confirmation.
-            event_id = f"iteration-choice:{snapshot['version']}"
+            event_id = choice.get("source_event_id") or f"iteration-choice:{snapshot['version']}"
+            if (expected_choice_event_id is not None and event_id != expected_choice_event_id
+                    or expected_task_ids is not None and validated["selected_task_ids"] != expected_task_ids):
+                raise ValueError("The Manager recommendation changed before its queue handoff.")
             if not any(
                 item.get("message_id") == event_id and item.get("event") == "project_iteration_choice_recorded"
                 for item in session.get("timeline", []) if isinstance(item, dict)

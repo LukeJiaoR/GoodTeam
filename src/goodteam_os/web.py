@@ -6180,6 +6180,16 @@ def handle_project_api_get(
         key = _decode_project_api_key(runs_match.group(1))
         _project_config_for_key(workspace, key)
         return 200, build_project_run_history(workspace, key)
+    batch_match = re.fullmatch(r"/api/projects/([^/]+)/iteration-batches/(task-batch-[0-9a-f]{64})", path)
+    if batch_match:
+        from goodteam_os.project_iteration_execution import iteration_batch_report
+
+        key, _target, root = _project_target_and_root(workspace, _decode_project_api_key(batch_match.group(1)))
+        try:
+            return 200, iteration_batch_report(workspace=workspace, project_key=key, root=root,
+                                                run_id=batch_match.group(2))
+        except (OSError, ValueError) as exc:
+            raise ProjectApiError("iteration_batch_report_unavailable", str(exc), 409) from exc
     run_match = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)", path)
     if run_match:
         key = _decode_project_api_key(run_match.group(1))
@@ -6343,6 +6353,16 @@ def handle_project_api_post(
     if task_assistant_action_match:
         key = _decode_project_api_key(task_assistant_action_match.group(1))
         action = str(request.get("action", ""))
+        if action == "stop_project_continuation":
+            from goodteam_os.project_iteration_continuation import stop_project_continuation
+
+            try:
+                value = stop_project_continuation(workspace=workspace, project_key=key,
+                                                  continuation_id=request.get("continuation_id"))
+                return 200, {"project_continuation": value,
+                             "task_assistant_session": TaskAssistantSessionStore(workspace, key).read()}
+            except ValueError as exc:
+                raise ProjectApiError("project_continuation_unavailable", str(exc), 409) from exc
         if action == "stop_goal":
             from goodteam_os.goal_continuation import stop_goal_action
 
@@ -6364,6 +6384,27 @@ def handle_project_api_post(
                 result["projection_unavailable"] = True
             return 200, result
         key, target, root = _project_target_and_root(workspace, key)
+        if action in {"start_project_continuation", "accept_project_batch_delivery"}:
+            from goodteam_os.project_iteration_continuation import (
+                accept_project_batch_delivery, configure_project_continuation,
+            )
+
+            try:
+                if action == "start_project_continuation":
+                    result = {"project_continuation": configure_project_continuation(
+                        workspace=workspace, project_key=key, root=root,
+                        project_config=_project_config_for_key(workspace, key), request=request,
+                    )}
+                else:
+                    result = accept_project_batch_delivery(workspace=workspace, project_key=key,
+                                                           root=root, request=request)
+                result["task_assistant_session"] = TaskAssistantService(
+                    workspace, project_config=_project_config_for_key(workspace, key),
+                ).session(key, root)
+                return 200, result
+            except (ValueError, OSError) as exc:
+                raise ProjectApiError("project_continuation_unavailable", str(exc), 409,
+                                      recovery=["reload_project"]) from exc
         if action == "plan_next_iteration":
             from goodteam_os.project_iteration_planner import plan_next_iteration
 
