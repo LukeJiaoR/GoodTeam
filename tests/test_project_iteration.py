@@ -1,6 +1,9 @@
 """First-vertical-slice checks for project-level next-iteration facts."""
 
+from unittest.mock import Mock
+
 from goodteam_os.project_iteration import rank_project_backlog, project_iteration_backlog
+from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.tasks import LocalTaskStore
 
 
@@ -44,10 +47,19 @@ def test_unreadable_ledger_is_not_presented_as_empty(tmp_path):
 
 
 def test_manager_chat_receives_project_backlog_without_auto_dispatch(tmp_path):
-    from test_assistant_drafts import send, setup_service
-
-    service, root, executor, calls = setup_service(
-        tmp_path, turn={"intent": "project_question", "response": "I can evaluate the backlog."},
+    root = tmp_path / "target"
+    root.mkdir()
+    (root / "README.md").write_text("# Demo\n")
+    config = tmp_path / "demo.yaml"
+    config.write_text("key: DEMO\n")
+    executor = Mock(spec=["status", "start"])
+    executor.status.return_value = {
+        "project_mode": "existing_project", "lifecycle": "preparing",
+        "schema_version": 2, "steps": [],
+    }
+    manager = Mock(return_value={"intent": "project_question", "response": "I can evaluate the backlog."})
+    service = TaskAssistantService(
+        tmp_path, project_config=config, readiness_executor=executor, manager_turn=manager,
     )
     store = LocalTaskStore(root, "DEMO")
     created = store.create_task(
@@ -55,15 +67,17 @@ def test_manager_chat_receives_project_backlog_without_auto_dispatch(tmp_path):
         role="implementation", acceptance_criteria=["Empty input returns 400"],
         priority="high",
     )
-    session = send(service, root, "What should we tackle next?")
-    assert len(calls) == 1
-    context = calls[0]["context"]
+    session = service.send_message(
+        project_key="DEMO", root=root, text="What should we tackle next?", message_id="m1",
+    )["session"]
+    manager.assert_called_once()
+    context = manager.call_args.kwargs["context"]
     assert "Project backlog snapshot" in context
     assert created["id"] in context
     assert "Empty input returns 400" in context
     assert '"execution_authorized": false' in context
     assert session["proposed_task"] is None
-    assert executor.started == []
+    executor.start.assert_not_called()
 
 
 def test_task_creation_can_declare_parallel_write_scope_or_readonly_policy(tmp_path):
