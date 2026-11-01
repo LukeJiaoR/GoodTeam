@@ -6183,11 +6183,13 @@ def handle_project_api_get(
     batch_match = re.fullmatch(r"/api/projects/([^/]+)/iteration-batches/(task-batch-[0-9a-f]{64})", path)
     if batch_match:
         from goodteam_os.project_iteration_execution import iteration_batch_report
+        from goodteam_os.project_iteration_quality import project_batch_quality_evidence
 
         key, _target, root = _project_target_and_root(workspace, _decode_project_api_key(batch_match.group(1)))
         try:
-            return 200, iteration_batch_report(workspace=workspace, project_key=key, root=root,
-                                                run_id=batch_match.group(2))
+            report = iteration_batch_report(workspace=workspace, project_key=key, root=root, run_id=batch_match.group(2))
+            quality = project_batch_quality_evidence(workspace=workspace, project_key=key, root=root, run_id=batch_match.group(2))
+            return 200, {**report, **({"quality": quality} if quality["required"] else {})}
         except (OSError, ValueError) as exc:
             raise ProjectApiError("iteration_batch_report_unavailable", str(exc), 409) from exc
     run_match = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)", path)
@@ -6289,6 +6291,7 @@ def handle_project_api_post(
     request: dict[str, object],
     *,
     codex_review_admission: "CodexReviewAdmission | None" = None,
+    codex_correction_admission=None,
 ) -> tuple[int, dict[str, object]] | None:
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
     from goodteam_os.skills.review_api import handle_review_post
@@ -6384,6 +6387,25 @@ def handle_project_api_post(
                 result["projection_unavailable"] = True
             return 200, result
         key, target, root = _project_target_and_root(workspace, key)
+        if action == "advance_project_batch_quality":
+            from goodteam_os.project_iteration_quality import advance_project_batch_quality
+
+            allowed = {"action", "run_id", "expected_input_digest", "confirmed", "billing_acknowledged"}
+            if set(request) - allowed:
+                raise ProjectApiError("batch_quality_input_invalid",
+                                      "This action accepts only the existing batch and its frozen input identity.", 409)
+            try:
+                return 200, advance_project_batch_quality(
+                    workspace=workspace, project_key=key, root=root, run_id=request.get("run_id"),
+                    expected_input_digest=request.get("expected_input_digest"),
+                    confirmed=request.get("confirmed") is True,
+                    billing_acknowledged=request.get("billing_acknowledged") is True,
+                    codex_review_admission=codex_review_admission,
+                    codex_correction_admission=codex_correction_admission,
+                )
+            except (ValueError, OSError) as exc:
+                raise ProjectApiError("batch_quality_unavailable", str(exc), 409,
+                                      recovery=["inspect_project_batch_evidence"]) from exc
         if action in {"start_project_continuation", "accept_project_batch_delivery"}:
             from goodteam_os.project_iteration_continuation import (
                 accept_project_batch_delivery, configure_project_continuation,
@@ -7196,10 +7218,13 @@ def _persist_context_sources(project_config: Path, sources: list[dict[str, str]]
     project_config.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
 
 
-def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexReviewAdmission | None" = None):
+def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexReviewAdmission | None" = None,
+                            codex_correction_admission=None):
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
+    from goodteam_os.execution.correction_native import correction_worker_kwargs
 
     runtime_kwargs = review_worker_kwargs(codex_review_admission)
+    correction_kwargs = correction_worker_kwargs(codex_correction_admission)
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -7264,7 +7289,7 @@ def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexRe
                 if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
                     response = (
-                        handle_project_api_post(workspace, project_path, request, **runtime_kwargs)
+                        handle_project_api_post(workspace, project_path, request, **runtime_kwargs, **correction_kwargs)
                         if is_project_path
                         else handle_skill_api_post(workspace, project_path, request)
                     )
@@ -8015,10 +8040,13 @@ def serve(
     heartbeat_callback: Callable[[], None] | None = None,
     *,
     codex_review_admission: "CodexReviewAdmission | None" = None,
+    codex_correction_admission=None,
 ) -> None:
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
+    from goodteam_os.execution.correction_native import correction_worker_kwargs
 
     runtime_kwargs = review_worker_kwargs(codex_review_admission)
+    correction_kwargs = correction_worker_kwargs(codex_correction_admission)
     if frontend_dist is not None:
         dist_dir = resolve_frontend_dist(environ={"GOODTEAM_FRONTEND_DIST": str(frontend_dist)})
         frontend_error: FrontendAssetsNotFound | None = None
@@ -8462,7 +8490,7 @@ def serve(
                 if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
                     project_response = (
-                        handle_project_api_post(workspace, project_path, request, **runtime_kwargs)
+                        handle_project_api_post(workspace, project_path, request, **runtime_kwargs, **correction_kwargs)
                         if is_project_path
                         else handle_skill_api_post(workspace, project_path, request)
                     )

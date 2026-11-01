@@ -313,3 +313,16 @@ def store_for_project(project_root: Path, *, existing_only: bool = False) -> Tas
         return None
     workspace, key = scope
     return TaskSnapshotStore(workspace=workspace, project_key=key, worker_root=project_root)
+
+
+def original_runtime_request(project_root, snapshot):
+    """Resolve the original captured runtime without inventing a Builder handoff."""
+    if snapshot.task.source_type == "project_task_batch":
+        from goodteam_os.project_iteration_quality import batch_quality_runtime
+        return batch_quality_runtime(project_root, snapshot)
+    from .candidate_validation import _read
+    store = store_for_project(project_root, existing_only=True)
+    ready = _read(store.root / execution_key(snapshot.execution_id) / "job-ready.json") if store else None
+    if ready is None or ready.get("snapshot") != snapshot.reference:
+        raise TaskInputError("task_input_job_not_ready")
+    return ready["request"]

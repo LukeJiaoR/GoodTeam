@@ -440,7 +440,7 @@ class AutomaticCandidateReviewService:
         None means this execution has no automatic start. Existing correction
         details are retained with the automatic coordinator's actual next step.
         No automatic clock, task lock, job, outcome or cancellation record is
-        written. The existing correction projection retains its clock observation.
+        written, including the existing correction clock/halt projection.
         """
         fallback = {"available": False, "automatic": True, "status": "needs_human",
                     "reason": "automatic_review_binding_missing", "loop_id": "",
@@ -519,7 +519,7 @@ class AutomaticCandidateReviewService:
                     "reason": getattr(cause, "code", "automatic_review_store_unavailable")}
 
     def _loop_projection(self, snapshot, state):
-        value = CorrectionLoopService(self.project_root)._project(snapshot, state)
+        value = CorrectionLoopService(self.project_root)._project(snapshot, state, observe=False)
         value["automatic"] = True
         phase = value["status"]
         if phase in {"awaiting_fix", "awaiting_worker"} and not value["runtime_admission"]["available"]:

@@ -159,15 +159,17 @@ class CorrectionLoopService:
     def _save(self, snapshot, state):
         _write(self.validation._root(snapshot.execution_id) / "correction-loop.json", _bound(state))
 
-    def _halt(self, snapshot, state, reason):
+    def _halt(self, snapshot, state, reason, *, persist=True):
         if not state["stop_reason"]:
-            _write(self.validation._root(snapshot.execution_id) / "correction-halt.json",
-                   _bound({"loop_id": state["loop_id"], "snapshot": snapshot.reference, "reason": reason}))
+            if persist:
+                _write(self.validation._root(snapshot.execution_id) / "correction-halt.json",
+                       _bound({"loop_id": state["loop_id"], "snapshot": snapshot.reference, "reason": reason}))
             state["stop_reason"] = reason
-            self._save(snapshot, state)
+            if persist:
+                self._save(snapshot, state)
         return "needs_human", state["stop_reason"]
 
-    def _observe_clock(self, snapshot, state):
+    def _observe_clock(self, snapshot, state, *, observe=True):
         path = self.validation._root(snapshot.execution_id) / "correction-clock.json"
         recorded = _read(path)
         if (recorded is None or recorded != _bound(recorded) or recorded.get("loop_id") != state["loop_id"]
@@ -180,8 +182,8 @@ class CorrectionLoopService:
         if (type(current) not in {int, float} or not math.isfinite(current)
                 or current < recorded["observed_at"]
                 or current >= state["initial"]["started_at"] + state["initial"]["wall_seconds"]):
-            self._halt(snapshot, state, "correction_time_budget_exhausted")
-        elif current > recorded["observed_at"]:
+            self._halt(snapshot, state, "correction_time_budget_exhausted", persist=observe)
+        elif observe and current > recorded["observed_at"]:
             _write(path, _bound({**recorded, "observed_at": current}))
         return current
 
@@ -285,7 +287,7 @@ class CorrectionLoopService:
                 raise TaskInputError("correction_worker_already_checked")
             return state["initial"]["started_at"] + state["initial"]["wall_seconds"] - current
 
-    def _phase(self, snapshot, state, history):
+    def _phase(self, snapshot, state, history, *, observe=True):
         if state["stop_reason"]:
             return "needs_human", state["stop_reason"]
         # A completed review is durable; budgets limit future work, not the
@@ -299,7 +301,7 @@ class CorrectionLoopService:
             self._automatic_guard(snapshot, observe=False)
         except TaskInputError as exc:
             return "needs_human", exc.code
-        self._observe_clock(snapshot, state)
+        self._observe_clock(snapshot, state, observe=observe)
         if state["stop_reason"]:
             return "needs_human", state["stop_reason"]
         if state["rounds"] and "worker_job_id" in state["rounds"][-1]:
@@ -310,21 +312,21 @@ class CorrectionLoopService:
                     return ("awaiting_worker_result", "correction_worker_outcome_unknown") if started else (
                         "awaiting_worker", "correction_worker_prepared")
                 if outcome["status"] != "completed":
-                    return self._halt(snapshot, state, "correction_worker_failed")
+                    return self._halt(snapshot, state, "correction_worker_failed", persist=observe)
                 return "awaiting_recheck", "correction_worker_returned"
         _plan, started, result, review = history[-1]
         if result is None:
-            return self._halt(snapshot, state, "correction_attempt_indeterminate") if started else ("awaiting_recheck", "correction_check_prepared")
+            return self._halt(snapshot, state, "correction_attempt_indeterminate", persist=observe) if started else ("awaiting_recheck", "correction_check_prepared")
         if result["observation"]["status"] == "unknown":
-            return self._halt(snapshot, state, "correction_check_unknown")
+            return self._halt(snapshot, state, "correction_check_unknown", persist=observe)
         signatures = [_failure_signature(plan, row) for plan, _, row, _ in history if row]
         if len(signatures) >= 3 and signatures[-1] and len(set(signatures[-3:])) == 1:
-            return self._halt(snapshot, state, "correction_no_progress")
+            return self._halt(snapshot, state, "correction_no_progress", persist=observe)
         if review and review.get("decision") == "reject":
-            return self._halt(snapshot, state, "correction_rejected")
+            return self._halt(snapshot, state, "correction_rejected", persist=observe)
         if review and review.get("decision") == "approve":
             if result["observation"]["status"] != "passed":
-                return self._halt(snapshot, state, "correction_check_unknown")
+                return self._halt(snapshot, state, "correction_check_unknown", persist=observe)
             return "reviewed", ("candidate_review_policy_satisfied" if review.get("schema_version") == "candidate_machine_review.v1"
                                 else "candidate_human_review_recorded")
         if review and review.get("decision") == "inconclusive":
@@ -332,7 +334,7 @@ class CorrectionLoopService:
         if review is None:
             return "awaiting_review", "correction_review_required"
         if len(state["rounds"]) >= state["initial"]["max_rounds"]:
-            return self._halt(snapshot, state, "correction_round_budget_exhausted")
+            return self._halt(snapshot, state, "correction_round_budget_exhausted", persist=observe)
         return "awaiting_fix", "correction_changes_requested"
 
     def admit_validation(self, snapshot, plan, expected):
@@ -398,9 +400,9 @@ class CorrectionLoopService:
             self._halt(snapshot, state, "correction_stopped_by_operator")
             return self._project(snapshot, state)
 
-    def _project(self, snapshot, state):
+    def _project(self, snapshot, state, *, observe=True):
         history = self._history(snapshot, state)
-        phase, reason = self._phase(snapshot, state, history)
+        phase, reason = self._phase(snapshot, state, history, observe=observe)
         if phase in {"awaiting_review", "reviewed"}:
             try:
                 probe_candidate(self.validation.source_root(snapshot, history[-1][0]["request"]),

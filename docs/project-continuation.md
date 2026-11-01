@@ -22,10 +22,15 @@ the execution evidence. Viewing the Work page or report never starts a Worker.
    execution and verification records** to inspect the actual jobs, verification
    results, changed paths and integrated candidate. A successful process is not
    an independent review; `verify.skipped` remains visible when no command ran.
+   A batch explicitly configured for [candidate quality](project-batch-quality.md)
+   additionally requires a passed real check and exact-candidate independent
+   review; its original result report and any bounded correction stay inspectable.
 4. Independently review the candidate and acceptance evidence. Integrate the
    reviewed candidate commit from the displayed candidate directory into the
    project repository using the normal authorized Git workflow. This feature
    does not merge or deploy on the user's behalf.
+   For a quality-enabled batch, use its final reviewed candidate, which can be a
+   separately recorded correction of the initial integration.
 5. In **Confirm landed delivery**, enter the full current project HEAD and
    confirm the review. GoodTeam verifies the retained candidate and Worker
    identities, candidate ancestry in current HEAD, clean non-metadata project

@@ -12,6 +12,10 @@ confirmation binds its Workflow or dispatch Run. Worker output and fan-in
 produce review evidence, NOT automatically done. Manual and authorized
 automatic batches use the same queue adapter. Do not create
 a second Manager-specific dispatcher, task ledger or execution state machine.
+Explicit local batch-quality configuration reuses the existing candidate check,
+independent review and bounded correction services. Keep its protected input and
+final candidate receipts bound to the original batch. HTTP may advance configured
+work, but must never choose a command or mint Reviewer/correction authority.
 Goal continuation remains an authorized adapter to Workflow; historical
 Operator/direct-dispatch entries remain readable and functional. The disconnected
 AI Onboarding runner was retired; existing project import/readiness/inventory

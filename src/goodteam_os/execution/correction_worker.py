@@ -92,10 +92,8 @@ class CorrectionWorkerService:
                 ownership = worktree_identity(self.project_root, workspace, value.job_id)
                 _write(authority.root / "workspace-ready.json", _bound({**expected, "ownership": ownership}))
             workspace = authority.workspace(value)
-            original_ready = _read(authority.execution_root / "job-ready.json")
-            if original_ready is None or original_ready.get("snapshot") != value.original.reference:
-                raise TaskInputError("task_input_job_not_ready")
-            original_request = original_ready["request"]
+            from .task_snapshot_store import original_runtime_request
+            original_request = original_runtime_request(self.project_root, value.original)
         authority.check_job_projection(value, create=True)
         job, _created = self.workers.create_or_reuse_job(run_id=value.execution_id, execution_id=value.execution_id,
             role=value.original.to_dict()["role"], adapter=value.original.to_dict()["adapter"],
