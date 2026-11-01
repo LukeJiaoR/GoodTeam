@@ -85,7 +85,22 @@ def _input(workspace, project_key, root, batch):
 
 
 def _requirement(store, run_id):
-    value = _read(store.root / execution_key(run_id) / "batch-quality-required.json") if store else None
+    if store is None:
+        return None
+    from goodteam_os.skills.filesystem import directory
+
+    parent = store.root / execution_key(run_id)
+    entered = False
+    try:
+        with directory(parent):
+            entered = True
+            value = _read(parent / "batch-quality-required.json")
+    except SkillError as exc:
+        if not entered and isinstance(exc.__cause__, FileNotFoundError):
+            # A project store can exist before this batch has any quality
+            # configuration. Missing parent is distinct from corrupt evidence.
+            return None
+        raise TaskInputError("batch_quality_binding_invalid") from exc
     if value is not None and (value != _bound(value) or value.get("schema_version") != _SCHEMA
                               or value.get("batch_run_id") != run_id):
         raise TaskInputError("batch_quality_binding_invalid")
@@ -174,6 +189,8 @@ def prepare_project_batch_quality(*, workspace, project_key, root, run_id, argv,
     with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
         _require_execution_slot(workspace, project_key, run_id)
         batch = _batch(workspace, project_key, root, run_id)
+        if batch.get("status") == "abandoned":
+            raise TaskInputError("batch_quality_abandoned")
         if batch.get("status") == "delivered":
             raise TaskInputError("batch_quality_already_delivered")
         selected, source = _input(workspace, project_key, root, batch)
@@ -328,6 +345,8 @@ def advance_project_batch_quality(*, workspace, project_key, root, run_id, expec
     workspace, root = Path(workspace).resolve(), Path(root).resolve()
     with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
         batch = _batch(workspace, project_key, root, run_id)
+        if batch.get("status") == "abandoned":
+            raise TaskInputError("batch_quality_abandoned")
         quality = project_batch_quality_evidence(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
         if not quality.get("required") or quality.get("input_digest") != expected_input_digest:
             raise TaskInputError("batch_quality_input_changed")

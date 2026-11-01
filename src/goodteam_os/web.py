@@ -6184,12 +6184,20 @@ def handle_project_api_get(
     if batch_match:
         from goodteam_os.project_iteration_execution import iteration_batch_report
         from goodteam_os.project_iteration_quality import project_batch_quality_evidence
+        from goodteam_os.project_iteration_recovery import _batch, effective_dispatch_id, project_batch_recovery_evidence
+        from goodteam_os.dispatch_workspace import dispatch_artifact_root
 
         key, _target, root = _project_target_and_root(workspace, _decode_project_api_key(batch_match.group(1)))
         try:
-            report = iteration_batch_report(workspace=workspace, project_key=key, root=root, run_id=batch_match.group(2))
+            run_id = batch_match.group(2)
+            _store, batch = _batch(workspace, key, root, run_id)
+            recovery = project_batch_recovery_evidence(workspace=workspace, project_key=key, root=root, run_id=run_id)
+            report = {"run_id": effective_dispatch_id(batch), "batch_run_id": run_id,
+                      "project_root": str(Path(root).resolve()), "status": batch["status"]}
+            if (dispatch_artifact_root(root, effective_dispatch_id(batch)) / "report.json").exists():
+                report = iteration_batch_report(workspace=workspace, project_key=key, root=root, run_id=run_id)
             quality = project_batch_quality_evidence(workspace=workspace, project_key=key, root=root, run_id=batch_match.group(2))
-            return 200, {**report, **({"quality": quality} if quality["required"] else {})}
+            return 200, {**report, "recovery": recovery, **({"quality": quality} if quality["required"] else {})}
         except (OSError, ValueError) as exc:
             raise ProjectApiError("iteration_batch_report_unavailable", str(exc), 409) from exc
     run_match = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)", path)
@@ -6387,6 +6395,22 @@ def handle_project_api_post(
                 result["projection_unavailable"] = True
             return 200, result
         key, target, root = _project_target_and_root(workspace, key)
+        if action in {"retry_project_batch", "abandon_project_batch"}:
+            from goodteam_os.project_iteration_recovery import recover_project_batch
+
+            allowed = {"action", "run_id", "expected_recovery_version", "idempotency_key", "confirmed"}
+            if action == "retry_project_batch":
+                allowed |= {"billing_acknowledged", "retry_task_ids", "resume_continuation", "continuation_id"}
+            if set(request) - allowed:
+                raise ProjectApiError("batch_recovery_input_invalid", "Recovery accepts only the displayed original batch and task scope.", 409)
+            try:
+                result = recover_project_batch(workspace=workspace, project_key=key, root=root, request=request)
+                result["task_assistant_session"] = TaskAssistantService(
+                    workspace, project_config=_project_config_for_key(workspace, key)).session(key, root)
+                return 202 if action == "retry_project_batch" else 200, result
+            except (ValueError, OSError) as exc:
+                raise ProjectApiError("batch_recovery_unavailable", str(exc), 409,
+                                      recovery=["inspect_project_batch_evidence"]) from exc
         if action == "advance_project_batch_quality":
             from goodteam_os.project_iteration_quality import advance_project_batch_quality
 

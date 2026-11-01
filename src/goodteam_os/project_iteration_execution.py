@@ -30,7 +30,20 @@ _BACKGROUND_LOCK = threading.Lock()
 
 def active_project_batch(workspace, project_key):
     batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
-    return next((batch for batch in batches.values() if batch.get("status") in {"claimed", "running"}), None)
+    for batch in batches.values():
+        if batch.get("status") in {"claimed", "running"}:
+            return batch
+        if batch.get("status") in {"blocked", "review"}:
+            from goodteam_os.project_iteration_recovery import project_batch_recovery_evidence
+
+            try:
+                value = project_batch_recovery_evidence(workspace=workspace, project_key=project_key,
+                    root=Path(batch["project_root"]), run_id=batch["run_id"])
+                if value["unknown_task_ids"]:
+                    return batch
+            except (OSError, ValueError, KeyError, TypeError):
+                return batch
+    return None
 
 
 def _require_execution_slot(workspace, project_key, run_id):
@@ -154,13 +167,19 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                 raise ValueError("The batch was confirmed under different automatic execution authority.")
             if expected_continuation_id is not None and batch.get("expected_continuation_id") != expected_continuation_id:
                 raise ValueError("The batch belongs to a different automatic continuation.")
-            report_path = dispatch_artifact_root(root, batch["dispatch_run_id"]) / "report.json"
-            if batch.get("status") != "delivered" and not report_path.exists():
+            from goodteam_os.project_iteration_recovery import effective_dispatch_id, reconcile_recovery_tasks
+
+            report_path = dispatch_artifact_root(root, effective_dispatch_id(batch)) / "report.json"
+            if batch.get("status") not in {"delivered", "abandoned"} and not report_path.exists():
                 # A blocked attempt may have released its slot before a report
                 # existed. Resuming is execution, so re-admit against current
                 # Workflow/Goal/batch authority, then reserve the same slot.
                 _require_execution_slot(workspace, project_key, run_id)
                 _require_authority(workspace, project_key, root, project_config, batch.get("expected_authority"))
+                if batch.get("current_recovery_attempt"):
+                    command = batch["recovery_commands"][batch["current_recovery_attempt"]]
+                    if not command["started"]:
+                        reconcile_recovery_tasks(root, project_key, batch, command)
                 batch = {**batch, "status": "claimed"}
                 def reclaim(current):
                     _require_continuation(current, expected_continuation_id)
@@ -226,22 +245,27 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
 
 
 def iteration_batch_report(*, workspace, project_key, root, run_id):
+    from goodteam_os.project_iteration_recovery import effective_dispatch_id
+
     batch = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {}).get(run_id)
     if not batch or batch.get("project_root") != str(Path(root).resolve()):
         raise ValueError("The project batch is unavailable.")
     from goodteam_os.memory_storage import read_bytes
 
-    raw = read_bytes(dispatch_artifact_root(root, batch["dispatch_run_id"]) / "report.json")
+    dispatch_id = effective_dispatch_id(batch)
+    raw = read_bytes(dispatch_artifact_root(root, dispatch_id) / "report.json")
     if raw is None:
         raise ValueError("The existing dispatch has not published a terminal result.")
     report = json.loads(raw)
-    if report.get("run_id") != batch["dispatch_run_id"] or report.get("project_root") != str(Path(root).resolve()):
+    if report.get("run_id") != dispatch_id or report.get("project_root") != str(Path(root).resolve()):
         raise ValueError("Dispatch report belongs to another batch.")
-    prepare_dispatch_workspace(root, batch["dispatch_run_id"], None)
+    prepare_dispatch_workspace(root, dispatch_id, None)
     return report
 
 
 def _settle_batch(workspace, project_key, root, batch, report=None, error=""):
+    from goodteam_os.project_iteration_recovery import effective_dispatch_id
+
     tasks = LocalTaskStore(root, project_key)
     jobs = {item.get("project_task_id"): item for item in (report or {}).get("jobs", [])}
     bindings = {binding["task_id"]: binding for binding in batch["task_bindings"]}
@@ -255,11 +279,17 @@ def _settle_batch(workspace, project_key, root, batch, report=None, error=""):
                 task_statuses[task["id"]] = "done"
                 continue
             job = jobs.get(task["id"], {})
+            if not job and batch.get("current_recovery_attempt"):
+                selected = batch["recovery_commands"][batch["current_recovery_attempt"]]["request"]["retry_task_ids"]
+                if task["id"] not in selected:
+                    task_statuses[task["id"]] = task["status"]
+                    continue
             # Successful isolated task output can be reviewed even when a
             # sibling failed. The batch's blocked fan-in still prevents delivery.
             intent_matches = {key: task.get(key) for key in TASK_INTENT_FIELDS} == bindings[task["id"]]["task_intent"]
             reviewable = intent_matches and job.get("outcome") == "ok" and job.get("attribution_status") == "captured"
             task.update(status="review" if reviewable else "blocked", dispatch_job_id=job.get("job_id", ""),
+                        dispatch_run_id=job.get("dispatch_run_id", effective_dispatch_id(batch)),
                         observed_workflow_status="complete" if reviewable else "rejected", delivery_verified=False,
                         execution_error=error if intent_matches else "Project task intent changed during execution.",
                         updated_at=datetime.now(UTC).isoformat())
@@ -270,9 +300,9 @@ def _settle_batch(workspace, project_key, root, batch, report=None, error=""):
 
     def persist(session):
         saved = session["project_task_batches"][batch["run_id"]]
-        if saved.get("status") == "delivered":
+        if saved.get("status") in {"delivered", "abandoned"}:
             return session
-        saved.update(status=status, error=error, report_path=str(dispatch_artifact_root(root, batch["dispatch_run_id"]) / "report.json"),
+        saved.update(status=status, error=error, report_path=str(dispatch_artifact_root(root, effective_dispatch_id(batch)) / "report.json"),
                      integration=(report or {}).get("integration", {}), updated_at=datetime.now(UTC).isoformat())
         for item in session["queued_task_proposals"]:
             if item.get("run_id") == batch["run_id"]:
@@ -280,7 +310,7 @@ def _settle_batch(workspace, project_key, root, batch, report=None, error=""):
         return session
 
     TaskAssistantSessionStore(workspace, project_key)._mutate(persist)
-    return {"run_id": batch["run_id"], "dispatch_run_id": batch["dispatch_run_id"], "status": status,
+    return {"run_id": batch["run_id"], "dispatch_run_id": effective_dispatch_id(batch), "status": status,
             "workflow_started": False, "execution_started": True, "report": report,
             "task_assistant_session": TaskAssistantSessionStore(workspace, project_key).read()}
 
@@ -288,9 +318,13 @@ def _settle_batch(workspace, project_key, root, batch, report=None, error=""):
 def _execute_batch(*, workspace, project_key, root, batch):
     with workflow_guard(workspace, project_key):
         batch = TaskAssistantSessionStore(workspace, project_key).read()["project_task_batches"][batch["run_id"]]
-        if batch.get("status") == "delivered":
-            return {"run_id": batch["run_id"], "status": "delivered", "execution_started": False}
+        if batch.get("status") in {"delivered", "abandoned"}:
+            return {"run_id": batch["run_id"], "status": batch["status"], "execution_started": False}
         try:
+            if batch.get("current_recovery_attempt"):
+                from goodteam_os.project_iteration_recovery import execute_recovery
+
+                return execute_recovery(workspace=workspace, project_key=project_key, root=root, batch=batch)
             report_path = dispatch_artifact_root(root, batch["dispatch_run_id"]) / "report.json"
             if report_path.exists():
                 report = iteration_batch_report(workspace=workspace, project_key=project_key, root=root,
@@ -346,8 +380,8 @@ def run_queued_iteration_batch(*, workspace, project_key, root, project_config, 
                 thread = threading.Thread(target=run, daemon=True)
                 _BACKGROUND_THREADS[identity] = thread
                 thread.start()
-            return {"run_id": batch["run_id"], "dispatch_run_id": batch["dispatch_run_id"],
-                    "status": batch["status"], "execution_started": batch.get("status") != "delivered",
+            return {"run_id": batch["run_id"], "dispatch_run_id": batch.get("current_dispatch_run_id", batch["dispatch_run_id"]),
+                    "status": batch["status"], "execution_started": batch.get("status") not in {"delivered", "abandoned"},
                     "workflow_started": False,
                     "task_assistant_session": TaskAssistantSessionStore(workspace, project_key).read()}
     batch = _claim_batch(workspace=workspace, project_key=project_key, root=root, project_config=project_config,
