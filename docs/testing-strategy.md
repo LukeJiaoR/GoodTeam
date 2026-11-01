@@ -34,9 +34,10 @@ cd frontend && npm run test:unit && npm run lint && npm run build
 cd frontend && npm run test:e2e
 ```
 
-These commands have **not** been executed against the pruned branch in this
-conversation. Browser, real-provider, live Git, crash recovery, external
-costs and production deployment require their own explicitly scoped evidence.
+These are available local commands; each PR must report what actually ran on
+its current source revision. Offline subprocess/Git fixtures are distinct from
+real-provider and deployed-browser evidence. External costs and production
+deployment require their own explicitly scoped authorization and evidence.
 
 ## Representative feature checks
 
@@ -46,6 +47,9 @@ costs and production deployment require their own explicitly scoped evidence.
 | Repository trust and inventory | `tests/test_repository_access.py`, `test_repository_inventory.py` |
 | Manager and task history | `tests/test_manager_execution.py`, `test_task_assistant_session.py` |
 | Whole-project iteration and parallel planning | `tests/test_project_iteration.py`, `test_project_iteration_planner.py` |
+| Authorized project batches and continuation | `tests/test_project_iteration_execution.py`, `test_project_iteration_continuation.py` |
+| Project candidate quality and failed-task recovery | `tests/test_project_iteration_quality.py`, `test_project_iteration_recovery.py` |
+| Bounded outcome discovery through the real planner interface | `tests/test_project_outcome_discovery.py` |
 | Real Worker dispatch and isolation | `tests/test_dispatch_isolation.py`, `test_dispatch_capacity.py` |
 | Workflow graph and gates | `tests/test_workflow_table.py`, `test_review_gate.py` |
 | Goal continuation and HTTP recovery | `tests/test_goal_continuation.py`, `test_workflow_http_recovery.py` |

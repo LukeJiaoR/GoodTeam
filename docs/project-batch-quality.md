@@ -128,6 +128,12 @@ own explicit configuration and runtime admission. The existing continuation
 service still starts the next authorized batch after delivery; no scheduler or
 unbounded correction loop is added. Automatic GitHub CI remains paused.
 
+Optional [outcome discovery](project-outcome-discovery.md) can use these exact
+accepted check/review/delivery receipts to propose the following task. It cannot
+copy command or correction authority to that later batch. For a failed ordinary
+Worker, use [batch recovery](project-batch-recovery.md); a quality finding remains
+on the existing correction/review path.
+
 ## Local evidence
 
 `tests/test_project_iteration_quality.py` keeps one representative two-task

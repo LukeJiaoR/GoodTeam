@@ -173,6 +173,48 @@ class LocalTaskStore:
         raise ValueError(f"Unknown task id: {task_id}")
 
     @_locked
+    def create_task_once(self, *, creation_ref: str, intent: dict[str, Any]) -> dict[str, Any]:
+        """Publish one confirmed discovery intent; replay never resets progress."""
+        required = {"title", "description", "role", "priority", "dependencies", "acceptance_criteria",
+                    "write_domains", "execution_policy", "external_refs", "artifact_refs"}
+        from goodteam_os.project_iteration import normalize_write_domains
+
+        if (not isinstance(creation_ref, str) or not creation_ref.startswith("project-discovery:")
+                or len(creation_ref) > 256 or not isinstance(intent, dict) or set(intent) != required
+                or intent["role"] != "implementation" or intent["priority"] != "medium"
+                or intent["execution_policy"] != "workspace_write"
+                or normalize_write_domains(intent["write_domains"]) != intent["write_domains"]
+                or creation_ref not in intent["external_refs"]):
+            raise ValueError("A fixed project discovery task intent is required.")
+        ledger = self._read()
+        matches = [task for task in ledger["tasks"] if creation_ref in task.get("external_refs", [])]
+        if matches:
+            if len(matches) != 1 or any(matches[0].get(key) != value for key, value in intent.items()):
+                raise ValueError("The discovered task identity already owns a different intent.")
+            return dict(matches[0])
+        def fingerprint(task):
+            def words(value):
+                return " ".join(str(value or "").split()).casefold()
+            return {"title": words(task.get("title")), "description": words(task.get("description")),
+                    "role": task.get("role"), "execution_policy": task.get("execution_policy", "workspace_write"),
+                    "write_domains": sorted(normalize_write_domains(task.get("write_domains")) or []),
+                    "dependencies": sorted(task.get("dependencies") or []),
+                    "acceptance_criteria": sorted(words(item) for item in task.get("acceptance_criteria") or [])}
+        if any(fingerprint(task) == fingerprint(intent) for task in ledger["tasks"]):
+            raise ValueError("An equivalent project task already exists; discovery cannot duplicate or authorize it.")
+        prefix = str(self.project_key or ledger.get("prefix", "GT")).strip().upper()
+        next_id = ledger["next_id"]
+        existing = {task["id"] for task in ledger["tasks"]}
+        while f"{prefix}-{next_id}" in existing:
+            next_id += 1
+        now = self._now()
+        task = {**intent, "id": f"{prefix}-{next_id}", "status": "todo", "created_at": now, "updated_at": now}
+        ledger["tasks"].append(task)
+        ledger["next_id"] = next_id + 1
+        self._write(ledger)
+        return dict(task)
+
+    @_locked
     def claim_project_workflow(self, task_id: str, *, expected_digest: str, run_id: str) -> dict[str, Any]:
         """Claim a Manager-selected task for the EXISTING Workflow, not a new engine.
 

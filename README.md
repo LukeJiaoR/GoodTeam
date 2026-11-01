@@ -25,6 +25,12 @@ with persistent state, reviewable evidence, and explicit human decisions.
 
 GoodTeam coordinates AI-assisted engineering around an owned delivery protocol: understand the repository, agree on a bounded task, dispatch Workers, collect verification and review evidence, and preserve the human decision trail.
 
+Project iteration uses one execution path: Manager selection enters the existing
+Task Assistant queue and isolated Worker pool. Owners can approve a fixed task
+list, or additionally opt into bounded follow-up discovery from verified landed
+results. Checks, independent review, failure recovery and delivery retain their
+own evidence; a Worker completion does not mark the project task delivered.
+
 **GoodTeam owns the control plane; coding agents and external tools are adapters.** A Worker can produce a patch, a test result, or a recommendation. It cannot turn its own output into approval.
 
 **Open repo → Describe task → Confirm plan → Follow execution → Review result**
@@ -49,10 +55,21 @@ The desktop Web experience stays centered on one project conversation:
 | **Configurable engineering team** | **Role → TeamRole → Worker** separates capabilities, project membership, and runtime identity. Codex, Claude/Anthropic, Pi, `fake`, `human`, and `noop` adapters serve different execution needs. |
 | **Persistent Pi runtime** | Pi RPC sessions support explicit resume, steering, follow-up, abort, and incremental event replay. Session metadata and JSONL protocol/event records remain tied to the originating job. |
 | **Traceable delivery** | Tasks, attempts, Workers, worktrees, PRs, commit SHAs, CI, artifacts, and reviewer evidence connect through execution identity and a durable ledger. |
+| **Bounded project iteration** | Continue across approved batches, with optional outcome-based discovery inside an explicit objective, path scope and finite task/planning budgets. Existing batch execution supports up to 10 concurrent Workers. |
+| **Candidate quality and recovery** | Explicit batch checks and independent review can request one authorized correction. Retry only proven failed tasks while retaining successful siblings, or explicitly abandon stopped, undelivered work. |
 | **Explicit human decisions** | Workflow starts, task changes, and approvals are bound to server-owned state. Model interpretation and Worker output provide advice and evidence, not authority. |
 | **Local-first records** | Conversations, workflow state, checkpoints, task ledgers, artifacts, and memory persist in local workspace/project storage, with optional external integrations. |
 
 Explore [Worker backends and Pi controls](docs/worker-backends.md), [execution identity](docs/execution-identity.md), and the [review and approval guide](docs/review-and-approval-guide.md).
+
+For the project loop, read [continuation](docs/project-continuation.md),
+[candidate quality](docs/project-batch-quality.md), [failed-batch recovery](docs/project-batch-recovery.md)
+and [outcome-based task discovery](docs/project-outcome-discovery.md). Discovery
+currently proposes at most one new follow-up per accepted delivery. Quality is
+configured per successful batch, and landing/release remain explicit owner
+actions. These implemented boundaries do not claim complete real-model project
+autonomy acceptance; that evidence remains tracked in #419. Automatic GitHub CI
+remains paused by the owner.
 
 Local-first describes ownership of state, not offline model execution. External providers still require configured access; Pi itself is not a sandbox. GoodTeam retains runtime/worktree policy and approval responsibility.
 

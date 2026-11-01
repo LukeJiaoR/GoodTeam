@@ -8,16 +8,19 @@ it('binds explicit scoped continuation and reviewed landed delivery to visible e
   const view = render(<ProjectContinuationControls snapshot={snapshot} projectKey="APP" onAction={action} canStart />);
   const start = screen.getByRole('button', { name: 'Authorize and start continuation' });
   expect(start).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
   fireEvent.click(start);
   const initial = action.mock.calls[0][0];
   expect(initial).toMatchObject({ action: 'start_project_continuation', task_ids: ['APP-1'], max_batches: 3,
     confirmed: true, billing_acknowledged: true });
+  expect(initial).not.toHaveProperty('discovery');
   const batch = { run_id: `task-batch-${'a'.repeat(64)}`, status: 'review', task_ids: ['APP-1'],
     integration: { candidate_commit: 'b'.repeat(40), candidate_path: '/isolated/candidate' } };
   view.rerender(<ProjectContinuationControls snapshot={snapshot} projectKey="APP" onAction={action} canStart
     session={{ project_continuation: { id: 'approved-1', status: 'stopped', batches_started: 1, max_batches: 3,
       manager_calls: 1, max_manager_calls: 3 }, project_task_batches: { [batch.run_id]: batch } }} />);
+  expect(screen.getByRole('button', { name: 'Authorize and start continuation' })).toBeDisabled();
+  fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
   fireEvent.click(screen.getByRole('button', { name: 'Authorize and start continuation' }));
   expect(action.mock.calls[1][0].idempotency_key).not.toBe(initial.idempotency_key);
   expect(screen.getByRole('link', { name: /Inspect execution/ })).toHaveAttribute('href', `/api/projects/APP/iteration-batches/${batch.run_id}`);
@@ -29,6 +32,67 @@ it('binds explicit scoped continuation and reviewed landed delivery to visible e
   fireEvent.click(accept);
   expect(action.mock.calls[2][0]).toEqual({ action: 'accept_project_batch_delivery', run_id: batch.run_id,
     candidate_commit: 'b'.repeat(40), landed_commit: 'c'.repeat(40), reviewed: true, confirmed: true });
+});
+
+it('opts into bounded outcome discovery with exact consent and shows the observed task origin', () => {
+  const action = vi.fn();
+  const snapshot = { version: 'sha256:scope', candidates: [{ task_id: 'APP-1', title: 'Initial task', status: 'todo' }] };
+  const props = { snapshot, projectKey: 'APP', onAction: action, canStart: true };
+  const view = render(<ProjectContinuationControls {...props} />);
+  const toggle = screen.getByLabelText('Discover follow-up tasks from verified delivered outcomes');
+  expect(toggle).not.toBeChecked();
+  expect(screen.queryByLabelText(/Project objective/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
+  fireEvent.click(toggle);
+  const start = screen.getByRole('button', { name: 'Authorize and start continuation' });
+  const consent = screen.getByLabelText(/I confirm the initial tasks/);
+  expect(consent).not.toBeChecked();
+  expect(start).toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/Project objective/), { target: { value: 'Improve the import flow using verified delivery outcomes.' } });
+  fireEvent.change(screen.getByLabelText(/Allowed project paths/), { target: { value: '/outside-project' } });
+  fireEvent.click(consent);
+  expect(start).toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/Allowed project paths/), { target: { value: 'src/import/\ntests/import' } });
+  fireEvent.change(screen.getByLabelText(/Maximum new tasks/), { target: { value: '2' } });
+  fireEvent.change(screen.getByLabelText(/Total Manager calls/), { target: { value: '5' } });
+  expect(consent).not.toBeChecked();
+  fireEvent.click(consent);
+  fireEvent.click(start);
+  const first = action.mock.lastCall[0];
+  expect(first).toMatchObject({ action: 'start_project_continuation', expected_backlog_version: snapshot.version,
+    task_ids: ['APP-1'], max_batches: 3, confirmed: true, billing_acknowledged: true,
+    discovery: { objective: 'Improve the import flow using verified delivery outcomes.',
+      allowed_write_domains: ['src/import', 'tests/import'], max_new_tasks: 2, max_planning_calls: 5 } });
+  expect(first.idempotency_key.length).toBeLessThanOrEqual(256);
+  fireEvent.click(start);
+  expect(action.mock.lastCall[0]).toEqual(first);
+  fireEvent.change(screen.getByLabelText(/Project objective/), { target: { value: 'Improve import error recovery after verified deliveries.' } });
+  expect(consent).not.toBeChecked();
+  expect(start).toBeDisabled();
+  fireEvent.click(consent);
+  fireEvent.click(start);
+  expect(action.mock.lastCall[0].idempotency_key).not.toBe(first.idempotency_key);
+  const discovery = action.mock.lastCall[0].discovery;
+
+  const value = { id: 'approved-discovery', status: 'active', reason: 'awaiting_verified_delivery',
+    task_ids: ['APP-1', 'APP-2'], seed_task_ids: ['APP-1'], discovered_task_ids: ['APP-2'],
+    batches_started: 2, max_batches: 3, manager_calls: 3, max_manager_calls: 5, discovery, new_tasks_created: 1,
+    discovery_last: { outcome_receipt_id: 'delivery-receipt-1', task_id: 'APP-2', status: 'task_created',
+      rationale: 'The delivered import path exposes a recoverable validation gap.' } };
+  view.rerender(<ProjectContinuationControls {...props} session={{ project_continuation: value }} />);
+  expect(screen.queryByLabelText('Discover follow-up tasks from verified delivered outcomes')).not.toBeInTheDocument();
+  expect(screen.getByText('New tasks created: 1 / 2')).toBeInTheDocument();
+  expect(screen.getByText('Initial tasks: APP-1')).toBeInTheDocument();
+  expect(screen.getByText('Discovered tasks: APP-2')).toBeInTheDocument();
+  expect(screen.getByText('delivery-receipt-1')).toBeInTheDocument();
+  expect(screen.getByText(/The delivered import path exposes/)).toBeInTheDocument();
+  view.rerender(<ProjectContinuationControls {...props} snapshot={{ version: 'sha256:after', candidates: [] }}
+    session={{ project_continuation: { ...value, status: 'completed', reason: 'discovery_no_followup',
+      discovery_last: { outcome_receipt_id: 'delivery-receipt-2', task_id: '', status: 'no_followup',
+        rationale: 'No additional task is justified by this outcome within the approved paths.' } } }} />);
+  expect(screen.getByRole('status')).toHaveTextContent('No follow-up task was proposed within the approved scope.');
+  expect(screen.getByText('delivery-receipt-2')).toBeInTheDocument();
+  expect(screen.queryByText(/Approved tasks delivered/)).not.toBeInTheDocument();
 });
 
 it('keeps quality failures visible and delivers only the checked and reviewed correction candidate', () => {
