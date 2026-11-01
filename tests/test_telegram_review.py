@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, UTC, timedelta
 
 from goodteam_os.telegram import (

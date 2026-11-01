@@ -9,7 +9,7 @@ from goodteam_os.project_iteration import (
 from goodteam_os.project_iteration_planner import plan_next_iteration
 from goodteam_os.assistant_queue import queue_manager_iteration_choice, require_queued_project_task, _apply
 from goodteam_os.assistant_drafts import archive_terminal_proposal
-from goodteam_os.state import create_initial_state
+from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.workflow_mutations import persist_transition
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
@@ -248,10 +248,23 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     persist_transition(tmp_path, state)
     assert ledger.get_task(task_a["id"])["status"] == "in_progress"
     assert session_store.read()["proposed_task"]["run_id"] == run_id
-    state.pending_transition = {"status": "completed"}
-    persist_transition(tmp_path, state)
-    # The existing Workflow terminal transition itself reconciles the Manager
-    # task; no parallel status poller or manual handoff is required.
+    # Exercise the actual final approval path. It must publish the terminal
+    # transition through the same reconciliation hook, not direct state writes.
+    from goodteam_os.web import decide_approval
+
+    release = tmp_path / "release-notes.md"
+    release.write_text("# Release\nLocal fixture awaiting delivery review.\n", encoding="utf-8")
+    state.current_node = "release_review_gate"
+    state.next_node = "await_release_approval"
+    state.pending_transition = {}
+    state.artifacts["release_notes"] = str(release)
+    StateStore(tmp_path).write_project_current(state)
+    completed = decide_approval(
+        workspace=tmp_path, project_key="DEMO", approval="release", decision="approved",
+        note="Model-free fixture verifies the final approval and task projection.",
+    )
+    assert completed["current_node"] == "complete"
+    assert completed["pending_transition"]["status"] == "completed"
     assert archive_terminal_proposal(session_store, workspace=tmp_path, root=project) is False
     task_after = ledger.get_task(task_a["id"])
     assert task_after["status"] == "review"

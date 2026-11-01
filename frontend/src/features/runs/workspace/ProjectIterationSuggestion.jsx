@@ -1,5 +1,5 @@
 /** Project-level advice only; this component never dispatches a Worker. */
-export function iterationPlanningRequest(snapshot, language = 'en') {
+function iterationPlanningRequest(snapshot, language = 'en') {
   if (snapshot?.schema_version !== 'project_iteration_backlog.v1') return '';
   const zh = String(language).startsWith('zh');
   return 'GoodTeam project iteration preview (read-only).\n' + (zh

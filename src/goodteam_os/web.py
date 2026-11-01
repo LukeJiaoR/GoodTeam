@@ -158,7 +158,7 @@ from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACK
 from goodteam_os.cross_project_memory import retrieve_report as retrieve_cross_project_memory
 from goodteam_os.workflow_mutations import (
     WorkflowBusyError, begin_transition, finish_transition, interrupt_transition,
-    recover_transition, replay_approval, serialized_workflow, workflow_guard,
+    persist_transition, recover_transition, replay_approval, serialized_workflow, workflow_guard,
 )
 
 if TYPE_CHECKING:
@@ -4218,8 +4218,7 @@ def decide_approval(
         except ValueError:
             project_config_for_sync = None
     sync_project_stage_tasks(state, project_config_for_sync)
-    state_store.write_project_current(state, key)
-    state_store.write_project_checkpoint(state, key)
+    persist_transition(workspace, state)
     notify_current_approval_gate(state, workspace=workspace)
 
     try:
