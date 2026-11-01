@@ -158,7 +158,7 @@ from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACK
 from goodteam_os.cross_project_memory import retrieve_report as retrieve_cross_project_memory
 from goodteam_os.workflow_mutations import (
     WorkflowBusyError, begin_transition, finish_transition, interrupt_transition,
-    recover_transition, replay_approval, serialized_workflow, workflow_guard,
+    persist_transition, recover_transition, replay_approval, serialized_workflow, workflow_guard,
 )
 
 if TYPE_CHECKING:
@@ -4218,8 +4218,7 @@ def decide_approval(
         except ValueError:
             project_config_for_sync = None
     sync_project_stage_tasks(state, project_config_for_sync)
-    state_store.write_project_current(state, key)
-    state_store.write_project_checkpoint(state, key)
+    persist_transition(workspace, state)
     notify_current_approval_gate(state, workspace=workspace)
 
     try:
@@ -6378,6 +6377,24 @@ def handle_project_api_post(
                 raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
             except ValueError as exc:
                 raise ProjectApiError("iteration_plan_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
+        if action == "queue_iteration_choice":
+            from goodteam_os.assistant_queue import queue_manager_iteration_choice
+
+            if request.get("confirmed") is not True:
+                raise ProjectApiError("iteration_queue_unavailable",
+                                      "Confirm handing the Manager selection to the ordinary task queue.", 409)
+            try:
+                result = queue_manager_iteration_choice(
+                    workspace=workspace, project_key=key, root=root,
+                    expected_backlog_version=request.get("expected_backlog_version"),
+                )
+                result["task_assistant_session"] = TaskAssistantService(
+                    workspace, project_config=_project_config_for_key(workspace, key),
+                ).session(key, root)
+                return 200, result
+            except ValueError as exc:
+                raise ProjectApiError("iteration_queue_unavailable", str(exc), 409,
+                                      recovery=["reload_project"]) from exc
         if action in {"create_goal", "decide_goal_gate", "retry_goal_assessment"}:
             from goodteam_os.goal_continuation import handle_goal_action
 
@@ -6540,6 +6557,26 @@ def handle_project_api_post(
                 "run_id": "",
             }
         project_config = _project_config_for_key(workspace, key)
+        if proposal.get("project_task_id"):
+            # The Manager's queue item is the SAME task the existing Workflow
+            # will run. Claim its ledger identity BEFORE any Worker side effect.
+            from goodteam_os.assistant_queue import require_no_active_project_goal, require_queued_project_task
+
+            try:
+                require_no_active_project_goal(workspace, key)
+                require_queued_project_task(root, key, proposal)
+                existing = StateStore(workspace).read_project_current(key)
+                if existing and is_active_run(existing) and existing.run_id != start_run_id:
+                    raise ValueError("Another project Workflow owns the execution slot.")
+                LocalTaskStore(root, key).claim_project_workflow(
+                    str(proposal["project_task_id"]),
+                    expected_digest=str(proposal["project_task_digest"]),
+                    run_id=start_run_id,
+                )
+            except ValueError as exc:
+                store.release_workflow_start(proposal_id, claim_id)
+                raise ProjectApiError("iteration_task_changed", str(exc), 409,
+                                      recovery=["reload_project"]) from exc
         try:
             result = start_workflow(
                 workspace=workspace,

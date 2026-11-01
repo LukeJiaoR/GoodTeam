@@ -595,6 +595,7 @@ function TeamWorkspace({
           proposedTask={assistant.proposed_task || null}
           iterationBacklog={data.iteration_backlog || null}
           iterationChoice={data.iteration_choice || null}
+          queuedTasks={data.task_assistant_session?.queued_task_proposals || []}
           canPlanIteration={!readOnly && !data.active_run && (!assistant.proposed_task || assistant.proposed_task.status === 'cancelled')}
           onQueueTask={onQueueTask}
           contextTitle={contextTitle}

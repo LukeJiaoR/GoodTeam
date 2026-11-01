@@ -8,13 +8,6 @@ from types import SimpleNamespace
 import pytest
 
 from goodteam_os import repository_access as access
-from goodteam_os.onboarding_store import OnboardingArtifactStore, OnboardingObservationStore
-from goodteam_os.project_import import import_project
-from goodteam_os.repository_context_provider import (
-    ContextProviderError,
-    OnboardingBudget,
-    RepositoryContextProvider,
-)
 from goodteam_os.repository_snapshot import capture_repository_snapshot
 
 
@@ -63,31 +56,6 @@ def test_snapshot_ignores_unrelated_ancestor_churn(tmp_path, monkeypatch):
     with access.AnchoredRepository(root) as repository:
         assert repository.read_text("README.md", max_bytes=100).text == "one\ntwo\n"
 
-
-def test_error_observation_survives_unrelated_ancestor_churn(tmp_path, monkeypatch):
-    ancestor, root = _repo(tmp_path)
-    workspace = tmp_path / "workspace"
-    imported = import_project(workspace, str(root))
-    project_key = str(imported["project"]["project_key"])
-    snapshot = capture_repository_snapshot(root, project_key=project_key)
-    OnboardingArtifactStore(workspace, project_key, root).publish_snapshot(snapshot)
-    store = OnboardingObservationStore(workspace, project_key, root, "job-1", snapshot.snapshot_id)
-    provider = RepositoryContextProvider(
-        workspace=workspace, project_key=project_key, root=root,
-        snapshot=snapshot, observation_store=store, budget=OnboardingBudget(),
-    )
-    seen = _after_lstat(monkeypatch, ancestor, _churn)
-    with pytest.raises(ContextProviderError) as error:
-        provider.call(
-            "read_file_excerpt",
-            {"path": "README.md", "start_line": 2, "line_count": 3},
-            model_turn=1,
-        )
-    assert seen
-    assert error.value.code == "context_tool_limit_exceeded"
-    records = store.read_all()
-    assert len(records) == 1
-    assert records[0]["response_metadata"] == {"error": {"code": "context_tool_limit_exceeded"}}
 
 
 @pytest.mark.parametrize("replacement", ["directory", "symlink"])

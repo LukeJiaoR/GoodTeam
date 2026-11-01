@@ -7,6 +7,10 @@ from goodteam_os.project_iteration import (
     validate_iteration_choice,
 )
 from goodteam_os.project_iteration_planner import plan_next_iteration
+from goodteam_os.assistant_queue import queue_manager_iteration_choice, require_queued_project_task, _apply
+from goodteam_os.assistant_drafts import archive_terminal_proposal
+from goodteam_os.state import StateStore, create_initial_state
+from goodteam_os.workflow_mutations import persist_transition
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
@@ -148,7 +152,7 @@ def test_manager_parallel_plan_rejects_overlapping_write_domains(left, right):
         validate_iteration_choice(snapshot, _batch_response("T-1", "T-2"))
 
 
-def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_path):
+def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_path, monkeypatch):
     project = tmp_path / "project"
     project.mkdir()
     ledger = LocalTaskStore(project, "DEMO")
@@ -186,6 +190,87 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     choice = latest_iteration_choice(read, snapshot)
     assert choice["selected_task_ids"] == [task_a["id"], task_b["id"]]
     assert choice["execution_authorized"] is False
+
+    # A Manager recommendation enters the SAME durable queue used by a human
+    # request. No special Manager dispatcher, duplicate task or provider call.
+    handoff = dict(workspace=tmp_path, project_key="DEMO", root=project,
+                   expected_backlog_version=snapshot["version"])
+    first_queue = queue_manager_iteration_choice(**handoff)
+    again = queue_manager_iteration_choice(**handoff)
+    assert first_queue["workflow_started"] is False
+    assert first_queue["queued_proposal_ids"] == again["queued_proposal_ids"]
+    persisted = TaskAssistantSessionStore(tmp_path, "DEMO").read()
+    queue = persisted["queued_task_proposals"]
+    assert len(queue) == 2
+    assert [item["project_task_id"] for item in queue] == [task_a["id"], task_b["id"]]
+    assert all(item["confirmed"] is False and item["status"] == "queued" for item in queue)
+    assert all(item["source_message_ids"] == [] for item in queue)
+    assert all(item["source_event_id"] == f"iteration-choice:{snapshot['version']}" for item in queue)
+    assert all(item["run_id"] == "" for item in queue)
+    assert ledger.get_task(task_a["id"])["status"] == "todo"
+
+    # Existing select->draft->confirm->start claims the original project task,
+    # and a replay can only reuse its *same* run identity.
+    session_store = TaskAssistantSessionStore(tmp_path, "DEMO")
+    first_draft = session_store._mutate(lambda original: _apply(original, {
+        "action": "select_queued_task", "proposal_id": queue[0]["id"],
+        "expected_revision": 1,
+    }))["proposed_task"]
+    task_record = require_queued_project_task(project, "DEMO", first_draft)
+    assert task_record["id"] == task_a["id"]
+    session_store.confirm_task(first_draft["id"], expected_revision=1)
+    run_id = f"task-{first_draft['id']}"
+    claimed = ledger.claim_project_workflow(task_a["id"],
+        expected_digest=first_draft["project_task_digest"], run_id=run_id)
+    assert claimed["run_id"] == run_id and claimed["status"] == "in_progress"
+    assert ledger.claim_project_workflow(task_a["id"],
+        expected_digest=first_draft["project_task_digest"], run_id=run_id) == claimed
+    with pytest.raises(ValueError, match="changed"):
+        require_queued_project_task(project, "DEMO", first_draft)
+    assert require_queued_project_task(project, "DEMO", queue[1])["id"] == task_b["id"]
+    edited = session_store._mutate(lambda original: _apply(original, {
+        "action": "edit_queued_task", "proposal_id": queue[1]["id"],
+        "expected_revision": 1, "text": "Human-edited scope", "message_id": "human-edit-1",
+    }))["queued_task_proposals"][1]
+    assert edited["source"] == "human_edited"
+    assert "project_task_id" not in edited and "source_event_id" not in edited
+    assert edited["source_message_ids"] == ["human-edit-1"]
+    assert ledger.get_task(task_b["id"])["status"] == "todo"
+
+    # Actual Workflow completion is not identical to integrated delivery:
+    # reconciliation exposes review-required evidence and does NOT mark done.
+    session_store.bind_workflow(first_draft["id"], run_id)
+    state = create_initial_state(run_id, "DEMO", first_draft["exact_request"])
+    state.current_node = "complete"
+    state.next_node = "complete"
+    monkeypatch.setattr("goodteam_os.web._project_target_and_root", lambda workspace, key: (key, {}, project))
+    state.pending_transition = {"status": "executing"}
+    persist_transition(tmp_path, state)
+    assert ledger.get_task(task_a["id"])["status"] == "in_progress"
+    assert session_store.read()["proposed_task"]["run_id"] == run_id
+    # Exercise the actual final approval path. It must publish the terminal
+    # transition through the same reconciliation hook, not direct state writes.
+    from goodteam_os.web import decide_approval
+
+    release = tmp_path / "release-notes.md"
+    release.write_text("# Release\nLocal fixture awaiting delivery review.\n", encoding="utf-8")
+    state.current_node = "release_review_gate"
+    state.next_node = "await_release_approval"
+    state.pending_transition = {}
+    state.artifacts["release_notes"] = str(release)
+    StateStore(tmp_path).write_project_current(state)
+    completed = decide_approval(
+        workspace=tmp_path, project_key="DEMO", approval="release", decision="approved",
+        note="Model-free fixture verifies the final approval and task projection.",
+    )
+    assert completed["current_node"] == "complete"
+    assert completed["pending_transition"]["status"] == "completed"
+    assert archive_terminal_proposal(session_store, workspace=tmp_path, root=project) is False
+    task_after = ledger.get_task(task_a["id"])
+    assert task_after["status"] == "review"
+    assert task_after["observed_workflow_status"] == "complete"
+    assert task_after["delivery_verified"] is False
+    assert ledger.get_task(task_b["id"])["status"] == "todo"
 
 
 def test_full_planning_inventory_is_not_limited_by_ui_candidate_preview(tmp_path):

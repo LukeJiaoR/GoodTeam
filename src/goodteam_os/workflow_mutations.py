@@ -2,6 +2,7 @@
 
 import fcntl
 import json
+import logging
 import threading
 from contextlib import contextmanager
 from functools import wraps
@@ -11,6 +12,7 @@ from uuid import uuid4
 from goodteam_os.state import StateStore, normalize_project_key
 
 
+_LOG = logging.getLogger(__name__)
 _LOCKS = {}
 _LOCKS_GUARD = threading.Lock()
 INTERRUPTED_TRANSITION = "Workflow execution interrupted; inspect the evidence and retry to continue."
@@ -105,6 +107,38 @@ def persist_transition(workspace, state):
     store = StateStore(workspace)
     store.write_project_current(state)
     store.write_project_checkpoint(state)
+    _reconcile_completed_manager_task(workspace, state)
+
+
+def _reconcile_completed_manager_task(workspace, state):
+    """One terminal hook; no second service loop or read-side mutation.
+
+    Existing Workflow evidence drives the task queue's original project card.
+    An unknown result leaves that card unverified; it never grants approval,
+    retries a Worker or marks repository integration complete.
+    """
+    if state.pending_transition.get("status") in ACTIVE_TRANSITIONS | {"interrupted"}:
+        return
+    if state.current_node not in {"complete", "rejected"} and state.next_node != "rejected":
+        return
+    try:
+        from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+        from goodteam_os.assistant_drafts import archive_terminal_proposal
+        from goodteam_os.web import _project_target_and_root
+
+        session = TaskAssistantSessionStore(workspace, state.project_key)
+        if not session.path.is_file():
+            return
+        task = (session.read().get("proposed_task") or {})
+        if task.get("run_id") != state.run_id or not task.get("project_task_id"):
+            return
+        _, _, root = _project_target_and_root(Path(workspace), state.project_key)
+        archive_terminal_proposal(session, workspace=workspace, root=root)
+    except Exception as exc:
+        # Workflow transition has already been durably recorded. Do not roll it
+        # back or invent delivery success because an optional backlog projection
+        # could not be reconciled.
+        _LOG.warning("Manager task projection remains unverified: %s", exc)
 
 
 def finish_transition(state):

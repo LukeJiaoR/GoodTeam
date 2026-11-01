@@ -280,6 +280,10 @@ class TaskAssistantSessionStore:
                 proposal["source_message_ids"] = list(source_message_ids)
             proposal["exact_request"] = request
             proposal.pop("needs_clarification", None)
+            for field in ("project_task_id", "project_task_digest", "source_event_id"):
+                proposal.pop(field, None)
+            if proposal.get("source") == "manager_project_iteration":
+                proposal["source"] = "human_edited"
             proposal["revision"] = int(proposal.get("revision", 0)) + 1
             session["proposed_task"] = proposal
             return session

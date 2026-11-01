@@ -20,7 +20,7 @@ def is_conversation_only(text):
     return bool(_CANCEL.search(text) or _DISCUSSION.search(text))
 
 
-def archive_terminal_proposal(store, *, workspace):
+def archive_terminal_proposal(store, *, workspace, root=None):
     proposal = dict(store.read().get("proposed_task") or {})
     run_id = str(proposal.get("run_id", "")).strip()
     if not proposal or not run_id:
@@ -29,6 +29,14 @@ def archive_terminal_proposal(store, *, workspace):
     terminal_status = _terminal_run_status(StateStore(workspace), store.project_key, run_id)
     if not terminal_status:
         return False
+    if proposal.get("project_task_id"):
+        if root is None:
+            raise ValueError("Cannot reconcile a Manager task without its original project root.")
+        from goodteam_os.tasks import LocalTaskStore
+
+        LocalTaskStore(root, store.project_key).settle_project_workflow(
+            str(proposal["project_task_id"]), run_id=run_id, terminal_status=terminal_status,
+        )
     store.archive_task_proposal(proposal["id"], run_id, terminal_status)
     return True
 
@@ -36,7 +44,11 @@ def archive_terminal_proposal(store, *, workspace):
 def _terminal_run_status(state_store, project_key, run_id):
     current = state_store.read_project_current(project_key)
     if current is not None and current.run_id == run_id:
-        if current.current_node == "complete":
+        # A final node published before the approval transaction commits is
+        # not terminal evidence. Never archive or settle during that window.
+        if current.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
+            return ""
+        if current.current_node == "complete" and not current.blockers and current.next_node != "rejected":
             return "complete"
         if current.current_node == "rejected" or current.next_node == "rejected":
             return "rejected"
@@ -113,6 +125,10 @@ def edit_draft(store, request):
         proposal.update(exact_request=text, revision=proposal["revision"] + 1,
                         source_message_ids=[*proposal["source_message_ids"], message_id], pending_change=None)
         proposal.pop("needs_clarification", None)
+        # A human edit is a new task, not the Manager-selected source task.
+        for field in ("project_task_id", "project_task_digest", "source_event_id"):
+            proposal.pop(field, None)
+        proposal["source"] = "human_edited"
         session["proposed_task"] = proposal
         return session
     return store._mutate(mutate)
@@ -136,6 +152,9 @@ def resolve_draft(store, request):
             proposal["source_message_ids"] = (([*proposal["source_message_ids"]] if choice == "append" else [])
                                               + change.get("source_message_ids", [change["message_id"]]))
             proposal.pop("needs_clarification", None)
+            for field in ("project_task_id", "project_task_digest", "source_event_id"):
+                proposal.pop(field, None)
+            proposal["source"] = "human_edited"
         proposal.update(revision=proposal["revision"] + 1, pending_change=None)
         session["proposed_task"] = proposal
         session["timeline"].append({"message_id": f"draft:{proposal['id']}:{proposal['revision']}", "actor": "system",
@@ -210,6 +229,10 @@ def confirm_and_prepare(service, *, project_key, root, request):
 
                 reject_missing_task_context(TaskSkillIdentity("workflow_run", project_key, f"task-{proposal_id}"))
         else:
+            from goodteam_os.assistant_queue import require_no_active_project_goal, require_queued_project_task
+            if proposal.get("project_task_id"):
+                require_no_active_project_goal(service.workspace, project_key)
+            require_queued_project_task(root, project_key, proposal)
             from goodteam_os.skills.task_locks import TaskSkillIdentity
             from goodteam_os.skills.task_start import capture_task_start
 
