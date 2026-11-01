@@ -24,6 +24,8 @@ from goodteam_os.workflow_mutations import workflow_guard
 
 TASK_INTENT_FIELDS = ("id", "title", "description", "role", "dependencies", "acceptance_criteria",
                       "write_domains", "execution_policy", "external_refs")
+_BACKGROUND_THREADS = {}
+_BACKGROUND_LOCK = threading.Lock()
 
 
 def active_project_batch(workspace, project_key):
@@ -36,6 +38,23 @@ def _require_execution_slot(workspace, project_key, run_id):
     active = active_project_batch(workspace, project_key)
     if active_project_run(workspace, project_key) or (active and active["run_id"] != run_id):
         raise ValueError("Finish or reconcile the active project execution before starting another batch.")
+
+
+def _require_authority(workspace, project_key, root, project_config, expected):
+    if expected is None:
+        return
+    from goodteam_os.goal_continuation import authority_snapshot
+
+    if expected != authority_snapshot(workspace, project_key, Path(project_config), root):
+        raise ValueError("Project configuration, Team or model settings changed after automatic execution was authorized.")
+
+
+def _require_continuation(session, expected_id):
+    if expected_id is None:
+        return
+    current = session.get("project_continuation") or {}
+    if current.get("id") != expected_id or current.get("status") != "active":
+        raise ValueError("Automatic project continuation was stopped or replaced before batch admission.")
 
 
 def _identity(proposal_ids, expected_revisions):
@@ -119,7 +138,8 @@ def _claim_tasks(root, project_key, batch):
             store._write(ledger)
 
 
-def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, expected_revisions, confirmed):
+def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, expected_revisions, confirmed,
+                 expected_authority=None, expected_continuation_id=None):
     if confirmed is not True:
         raise ValueError("Confirm starting these queued tasks; configured Workers may use model credits.")
     run_id, dispatch_id = _identity(proposal_ids, expected_revisions)
@@ -130,17 +150,27 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
         if batch:
             if batch["project_root"] != str(Path(root).resolve()) or batch["project_config"] != str(Path(project_config).resolve()):
                 raise ValueError("A batch cannot be replayed against another project source.")
+            if expected_authority is not None and batch.get("expected_authority") != expected_authority:
+                raise ValueError("The batch was confirmed under different automatic execution authority.")
+            if expected_continuation_id is not None and batch.get("expected_continuation_id") != expected_continuation_id:
+                raise ValueError("The batch belongs to a different automatic continuation.")
             report_path = dispatch_artifact_root(root, batch["dispatch_run_id"]) / "report.json"
             if batch.get("status") != "delivered" and not report_path.exists():
                 # A blocked attempt may have released its slot before a report
                 # existed. Resuming is execution, so re-admit against current
                 # Workflow/Goal/batch authority, then reserve the same slot.
                 _require_execution_slot(workspace, project_key, run_id)
+                _require_authority(workspace, project_key, root, project_config, batch.get("expected_authority"))
                 batch = {**batch, "status": "claimed"}
-                session_store._mutate(lambda current: {**current, "project_task_batches": {
-                    **current.get("project_task_batches", {}), run_id: batch}})
+                def reclaim(current):
+                    _require_continuation(current, expected_continuation_id)
+                    return {**current, "project_task_batches": {
+                        **current.get("project_task_batches", {}), run_id: batch}}
+                session_store._mutate(reclaim)
             return batch
         _require_execution_slot(workspace, project_key, run_id)
+        _require_authority(workspace, project_key, root, project_config, expected_authority)
+        _require_continuation(session, expected_continuation_id)
         proposal = session.get("proposed_task")
         if proposal and proposal.get("status") != "cancelled":
             raise ValueError("Resolve the current task draft before starting a batch.")
@@ -163,16 +193,22 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
         if len(tasks) > 1:
             _validate_parallel_group([candidates[task["id"]] for task in tasks])
         tracks = _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals)
+        _require_authority(workspace, project_key, root, project_config, expected_authority)
         batch = {"run_id": run_id, "dispatch_run_id": dispatch_id, "proposal_ids": list(proposal_ids),
             "task_ids": [task["id"] for task in tasks], "expected_revisions": expected_revisions,
             "task_bindings": [{"task_id": task["id"], "digest": item["project_task_digest"],
                                "task_intent": {key: task.get(key) for key in TASK_INTENT_FIELDS}}
                               for task, item in zip(tasks, proposals)],
             "project_root": str(Path(root).resolve()), "project_config": str(Path(project_config).resolve()),
+            "expected_authority": expected_authority,
+            "expected_continuation_id": expected_continuation_id,
             "tracks": tracks, "status": "claimed", "confirmed": True,
             "created_at": datetime.now(UTC).isoformat()}
 
         def persist(current):
+            # Stop and admission share this short session mutation lock. A
+            # stopped authorization cannot launch work after a slow preview.
+            _require_continuation(current, expected_continuation_id)
             current.setdefault("project_task_batches", {})[run_id] = batch
             for item in current["queued_task_proposals"]:
                 if item["id"] in proposal_ids:
@@ -261,6 +297,7 @@ def _execute_batch(*, workspace, project_key, root, batch):
                                                 run_id=batch["run_id"])
                 return _settle_batch(workspace, project_key, root, batch, report=report)
             _require_execution_slot(workspace, project_key, batch["run_id"])
+            _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
             _claim_tasks(root, project_key, batch)
             report = dispatch_tracks(project_root=Path(root).resolve(), tracks=batch["tracks"],
                 projects_dir=Path(workspace) / "projects", logical_task_id=batch["run_id"], require_isolation=True)
@@ -271,24 +308,49 @@ def _execute_batch(*, workspace, project_key, root, batch):
 
 
 def run_queued_iteration_batch(*, workspace, project_key, root, project_config, proposal_ids,
-                               expected_revisions, confirmed=False, background=False):
+                               expected_revisions, confirmed=False, background=False, expected_authority=None,
+                               expected_continuation_id=None):
     """Confirm exact queued work once and reuse the existing real Worker pool.
 
-    The synchronous entry is also used by authorized project continuation;
-    HTTP requests may ask for background execution after durable confirmation.
+    Manual requests and authorized project continuation share this entry;
+    background execution releases the caller after durable confirmation.
     """
     root, workspace = Path(root).resolve(), Path(workspace).resolve()
-    batch = _claim_batch(workspace=workspace, project_key=project_key, root=root, project_config=project_config,
-        proposal_ids=proposal_ids, expected_revisions=expected_revisions, confirmed=confirmed)
     if background:
-        def run():
-            try:
-                _execute_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)
-            except Exception:
-                # Existing queue/card projections retain failure; no hidden retry.
-                pass
-        threading.Thread(target=run, daemon=True).start()
-        return {"run_id": batch["run_id"], "dispatch_run_id": batch["dispatch_run_id"],
-                "status": batch["status"], "execution_started": True, "workflow_started": False,
-                "task_assistant_session": TaskAssistantSessionStore(workspace, project_key).read()}
+        identity = (str(workspace), project_key, _identity(proposal_ids, expected_revisions)[0])
+        with _BACKGROUND_LOCK:
+            active = _BACKGROUND_THREADS.get(identity)
+            if active is not None and active.is_alive():
+                # The same process still owns execution. Merely observe it;
+                # do not contend with its workflow_guard or create poll threads.
+                batch = TaskAssistantSessionStore(workspace, project_key).read()["project_task_batches"][identity[2]]
+                if (confirmed is not True or batch["project_root"] != str(root)
+                        or batch["project_config"] != str(Path(project_config).resolve())
+                        or expected_authority is not None and batch.get("expected_authority") != expected_authority
+                        or expected_continuation_id is not None and batch.get("expected_continuation_id") != expected_continuation_id):
+                    raise ValueError("The running batch belongs to different confirmed inputs or authority.")
+            else:
+                batch = _claim_batch(workspace=workspace, project_key=project_key, root=root, project_config=project_config,
+                    proposal_ids=proposal_ids, expected_revisions=expected_revisions, confirmed=confirmed,
+                    expected_authority=expected_authority, expected_continuation_id=expected_continuation_id)
+                def run():
+                    try:
+                        _execute_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)
+                    except Exception:
+                        # Existing queue/card projections retain failure; no hidden retry.
+                        pass
+                    finally:
+                        with _BACKGROUND_LOCK:
+                            if _BACKGROUND_THREADS.get(identity) is threading.current_thread():
+                                _BACKGROUND_THREADS.pop(identity, None)
+                thread = threading.Thread(target=run, daemon=True)
+                _BACKGROUND_THREADS[identity] = thread
+                thread.start()
+            return {"run_id": batch["run_id"], "dispatch_run_id": batch["dispatch_run_id"],
+                    "status": batch["status"], "execution_started": batch.get("status") != "delivered",
+                    "workflow_started": False,
+                    "task_assistant_session": TaskAssistantSessionStore(workspace, project_key).read()}
+    batch = _claim_batch(workspace=workspace, project_key=project_key, root=root, project_config=project_config,
+        proposal_ids=proposal_ids, expected_revisions=expected_revisions, confirmed=confirmed,
+        expected_authority=expected_authority, expected_continuation_id=expected_continuation_id)
     return _execute_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)

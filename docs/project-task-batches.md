@@ -31,7 +31,7 @@ The API action is `start_queued_task_batch` on the existing project Task
 Assistant actions endpoint. It takes `proposal_ids`, an `expected_revisions`
 object mapping each proposal ID to its revision, and `confirmed: true`. HTTP
 execution runs in the background. Authorized project continuation calls the
-same `run_queued_iteration_batch` service synchronously. The session's batch
+same `run_queued_iteration_batch` service in the background so Stop stays responsive. The session's batch
 metadata is a confirmation/result projection; the existing task ledger and
 dispatch receipts remain authoritative for work and execution respectively.
 

@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
@@ -68,19 +69,49 @@ event('end')
         proposal_ids=queued["queued_proposal_ids"], expected_revisions={key: 1 for key in queued["queued_proposal_ids"]})
     with pytest.raises(ValueError, match="Confirm"):
         run_queued_iteration_batch(**request)
+    with pytest.raises(ValueError, match="settings changed"):
+        run_queued_iteration_batch(**request, confirmed=True, expected_authority={})
+    # Revocation during runtime capture shares admission's session lock; the
+    # final atomic confirmation must refuse it before any task/Worker claim.
+    from goodteam_os import project_iteration_execution as execution
+    from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+
+    session = TaskAssistantSessionStore(tmp_path, "DEMO")
+    session._mutate(lambda current: {**current, "project_continuation": {"id": "permit", "status": "active"}})
+    preview = execution._runtime_tracks
+    def revoke_during_preview(*args):
+        tracks = preview(*args)
+        session._mutate(lambda current: {**current, "project_continuation": {"id": "permit", "status": "stopped"}})
+        return tracks
+    with monkeypatch.context() as patch:
+        patch.setattr(execution, "_runtime_tracks", revoke_during_preview)
+        with pytest.raises(ValueError, match="stopped or replaced"):
+            run_queued_iteration_batch(**request, confirmed=True, expected_continuation_id="permit")
+    assert not session.read().get("project_task_batches")
+    session._mutate(lambda current: {**current, "project_continuation": None})
     assert not (signals / "calls.jsonl").exists()
 
     callers = Barrier(2)
     def start_once():
         callers.wait()
         try:
-            return run_queued_iteration_batch(**request, confirmed=True)
+            return run_queued_iteration_batch(**request, confirmed=True, background=True)
         except ValueError as exc:
             assert "busy" in str(exc), str(exc)
             return None
     with ThreadPoolExecutor(max_workers=2) as pool:
         responses = list(pool.map(lambda _: start_once(), range(2)))
     first = next(item for item in responses if item is not None)
+    deadline = time.monotonic() + 30
+    while any(task["status"] in {"todo", "in_progress"} for task in ledger.list_tasks()):
+        assert time.monotonic() < deadline, "The background batch did not settle."
+        # Repeated service ticks observe the same live thread and do not
+        # incorrectly block on its workflow lock or accumulate new attempts.
+        observed = run_queued_iteration_batch(**request, confirmed=True, background=True)
+        assert observed["run_id"] == first["run_id"]
+        time.sleep(.02)
+    report = iteration_batch_report(workspace=tmp_path, project_key="DEMO", root=source, run_id=first["run_id"])
+    first = {**first, "status": "review" if report["all_ok"] else "blocked", "report": report}
     assert first["status"] == "review", first
     report = first["report"]
     assert report["worker_capacity"]["pool_size"] == 10
@@ -111,7 +142,6 @@ event('end')
     # Workflow. Existing Worker receipts remain, but no new execution starts.
     from goodteam_os.dispatch_workspace import dispatch_artifact_root
     from goodteam_os.state import StateStore, create_initial_state
-    from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
     report_path = dispatch_artifact_root(source, first["dispatch_run_id"]) / "report.json"
     retained_report = report_path.read_bytes()
