@@ -42,7 +42,7 @@ describe('project iteration recommendation', () => {
     const view = render(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} onQueue={onQueue} />);
     fireEvent.click(screen.getByText('View candidate tasks (16)'));
     expect(screen.getByText('DEMO-16 — Task 16')).toBeInTheDocument();
-    expect(screen.getByText(/Direct-dispatch cap: 10 concurrent Workers/)).toBeInTheDocument();
+    expect(screen.getByText(/up to 10 Workers run concurrently/)).toBeInTheDocument();
     expect(screen.getByText(/no workers launched, isolation or merge verified/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Add selected tasks to existing queue' }));
     expect(onQueue).toHaveBeenCalledExactlyOnceWith({
@@ -51,9 +51,14 @@ describe('project iteration recommendation', () => {
       confirmed: true,
     });
     view.rerender(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} onQueue={onQueue}
-      queuedTasks={tasks.map(item => ({ project_task_id: item.task_id, status: 'queued' }))} />);
-    expect(screen.getByText(/In the existing task queue/)).toBeInTheDocument();
+      queuedTasks={tasks.map(item => ({ id: `proposal-${item.task_id}`, revision: 1, project_task_id: item.task_id, status: 'queued' }))} />);
+    expect(screen.getByText(/Queued tasks run in isolated workspaces/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add selected tasks to existing queue' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and run selected tasks (uses model)' }));
+    expect(onQueue).toHaveBeenLastCalledWith({
+      action: 'start_queued_task_batch', proposal_ids: tasks.map(item => `proposal-${item.task_id}`),
+      expected_revisions: Object.fromEntries(tasks.map(item => [`proposal-${item.task_id}`, 1])), confirmed: true,
+    });
   });
 
   it('marks an old recommendation stale after the backlog changes', () => {

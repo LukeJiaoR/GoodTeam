@@ -166,6 +166,10 @@ def _project_evidence(workspace: Path, project_key: str, root: Path) -> dict[str
 
 
 def _require_planning_idle(workspace: Path, project_key: str) -> None:
+    from goodteam_os.project_iteration_execution import active_project_batch
+
+    if active_project_batch(workspace, project_key):
+        raise ValueError("Finish or reconcile the active task batch before selecting another iteration.")
     current = StateStore(workspace).read_project_current(project_key)
     if (current is not None and current.current_node not in {"complete", "rejected"}
             and current.next_node != "rejected"):

@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from goodteam_os.goal_assessment import (
@@ -91,10 +91,18 @@ def handle_goal_action(workspace, project_key, root, request):
     command = request.get("idempotency_key")
     if not isinstance(command, str) or not command.strip() or len(command) > 256:
         raise ValueError("A stable Goal command identity is required.")
-    with goal_guard(workspace, project_key):
+    from goodteam_os.workflow_mutations import workflow_guard
+
+    with goal_guard(workspace, project_key), (
+        workflow_guard(workspace, project_key) if request.get("action") == "create_goal" else nullcontext()
+    ):
         store = GoalStore(workspace, project_key)
         action = request.get("action")
         if action == "create_goal":
+            from goodteam_os.project_iteration_execution import active_project_batch
+
+            if active_project_batch(workspace, project_key):
+                raise ValueError("Finish or reconcile the active project batch before creating a Goal.")
             if request.get("confirmed") is not True or request.get("billing_acknowledged") is not True:
                 raise ValueError("Confirm the exact Goal, automatic continuation and configured provider charges first.")
             replay = store.replay_goal_creation(idempotency_key=command, objective=request.get("objective"),
