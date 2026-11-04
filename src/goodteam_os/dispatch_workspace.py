@@ -165,8 +165,13 @@ def _capture(root: Path, limits: SnapshotLimits, *, expected_identity=None, extr
             if record["stage"] != 0 or record["mode"] not in {"100644", "100755"}:
                 raise DispatchWorkspaceError("Dispatch requires a merged index containing only regular files.")
         paths = {str(record["path"]) for record in records} | set(extra_paths)
-        paths.update(canonical_relative_path(os.fsdecode(path)) for path in
-                     _read_git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split(b"\0") if path)
+        # pnpm can put its content-addressed dependency store in a new project.
+        # It is generated cache, even before the Worker adds a Git ignore rule.
+        # Keep tracked and retained-baseline paths above; only omit new cache.
+        paths.update(name for path in
+                     _read_git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split(b"\0") if path
+                     for name in [canonical_relative_path(os.fsdecode(path))]
+                     if ".pnpm-store" not in Path(name).parts[:-1])
         source = {}
         if original:
             head = os.fsdecode(_read_git(root, ["rev-parse", "--verify", "HEAD^{commit}"]).strip())
@@ -440,7 +445,8 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
                 "baseline_root_identity": _expected_root_identity(baseline, None),
                 "baseline_git_identity": _git_identity(baseline),
                 **({"baseline_from": baseline_from} if baseline_from is not None else {}),
-                "exclusion_policy": ["Git ignored untracked files", ".goodteam metadata", "empty directories"]}
+                "exclusion_policy": ["Git ignored untracked files", "untracked .pnpm-store cache",
+                                     ".goodteam metadata", "empty directories"]}
     (root / "jobs").mkdir()
     workspace = DispatchWorkspace(root, metadata, limits)
     for job_id in job_ids:

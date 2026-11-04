@@ -10,7 +10,9 @@ import sys
 import pytest
 
 from goodteam_os.dispatch import dispatch_tracks
+from goodteam_os.dispatch_workspace import DispatchWorkspaceError, prepare_dispatch_workspace
 from goodteam_os.project_registry import ProjectRegistry
+from goodteam_os.repository_snapshot import SnapshotLimits
 from goodteam_os.skills.models import SkillConflict
 from goodteam_os.workers import WorkerJobStore
 
@@ -81,6 +83,32 @@ if os.environ.get('DISPATCH_FIXTURE_FAIL') == '1':
 
 def track():
     return {"role": "implementation", "adapter": "codex", "task": "Write the assigned worker output."}
+
+
+def test_collection_omits_only_untracked_pnpm_cache_and_keeps_source_limits(tmp_path):
+    source = repository(tmp_path / "source")
+    tracked = source / ".pnpm-store/intentional-source.txt"
+    tracked.parent.mkdir()
+    tracked.write_text("original tracked source\n")
+    git(source, "add", str(tracked))
+    git(source, "commit", "-qm", "Tracked file remains source regardless of directory")
+    limits = SnapshotLimits(max_file_bytes=1024)
+    prepared = prepare_dispatch_workspace(source, "pnpm-cache", ["worker"], limits=limits)
+    root = prepared.workspace("worker")
+    cache = root / ".pnpm-store/v10/files/generated-cache"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"x" * 2048)
+    (root / ".pnpm-store/intentional-source.txt").write_text("updated tracked source\n")
+    (root / "worker.txt").write_text("business change\n")
+
+    result = prepared.collect("worker")
+
+    assert result["changed_files"] == [".pnpm-store/intentional-source.txt", "worker.txt"]
+    assert cache.read_bytes() == b"x" * 2048
+    assert tracked.read_text() == "original tracked source\n"
+    (root / "large-source.ts").write_bytes(b"y" * 2048)
+    with pytest.raises(DispatchWorkspaceError, match="large-source.ts"):
+        prepared.collect("worker")
 
 
 def test_codex_dispatch_preserves_a_config_relative_model_catalog(tmp_path, cli_fixture):

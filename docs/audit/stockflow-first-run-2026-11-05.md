@@ -156,3 +156,17 @@ This proves live input handoff, not StockFlow implementation acceptance.
 The cross-process regression failed on the original code and passed after the
 repair; it also checks unrelated-run exclusion and unchanged state/audit/queued
 inputs. Original failure and interruption evidence remains in run003.
+
+After that UI job completed, host result collection failed before the next
+Implementation Worker could start. A read-only diagnostic reproduced the
+failure: the untracked project-local `.pnpm-store` contained a dependency blob
+larger than the 8 MiB source-file capture limit. The cache had not been ignored
+by Git. The process completed, while the workflow remained interrupted; this
+was not an implementation failure or a successful end-to-end recovery.
+
+Collection now excludes newly untracked `.pnpm-store` directory contents.
+Tracked files and retained-baseline paths keep their original exact capture,
+and actual source files retain all size and identity checks. No cache is
+deleted, no business Git ignore is hand-edited, and the original baseline is
+not rewritten. Current result evidence names the additional exclusion even
+when resuming a baseline prepared by an older GoodTeam version.
