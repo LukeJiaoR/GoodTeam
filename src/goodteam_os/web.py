@@ -3110,6 +3110,13 @@ def initialize_project_git_for_request(workspace: Path, request: dict[str, objec
     root_path = resolve_project_runtime_root(dict(target.get("repos", {})))
     if root_path is None:
         raise ValueError(f"No runtime root found for project: {normalize_project_key(project_key)}")
+    scaffold = request.get("scaffold_new_project") is True
+    if scaffold:
+        readiness = read_bound_project_readiness(workspace, normalize_project_key(project_key), root_path)
+        if readiness.get("project_mode") != "new_project" or any(
+            entry.name not in {".git", ".goodteam"} for entry in root_path.iterdir()
+        ):
+            raise ValueError("Scaffolding requires an empty imported new project. Select existing files explicitly instead.")
     project_name = str(target.get("name", "") or target.get("key", "") or project_key)
     return _initialize_project_git(
         root_path=root_path,
@@ -3119,6 +3126,7 @@ def initialize_project_git_for_request(workspace: Path, request: dict[str, objec
         create_remote=_request_bool(request.get("create_remote"), False),
         remote_private=_request_bool(request.get("remote_private"), True),
         initial_files=_initial_git_files(request.get("initial_files")),
+        scaffold_new_project=scaffold,
     )
 
 
@@ -3713,6 +3721,20 @@ def resolve_runtime_model_config(model_config: Path) -> Path:
     return repository_default.resolve() if repository_default.is_file() else candidate
 
 
+def _workflow_requires_repository(target, *, source_type, project_config):
+    from goodteam_os.reviewer_profiles import get_reviewer_profile
+    from goodteam_os.staging import staging_backend_enabled
+    from goodteam_os.workflow_workspace import adapter_requires_workflow_workspace
+
+    roles = ("project_intake", "product_requirement", "architect", "ui", "implementation", "qa", "release")
+    return (
+        any(adapter_requires_workflow_workspace(resolve_role_adapter(target, role)) for role in roles)
+        or any(adapter_requires_workflow_workspace(get_reviewer_profile(profile_id).adapter)
+               for profiles in normalize_reviewer_profile_config(target).values() for profile_id in profiles)
+        or staging_backend_enabled(source_type=source_type, project_config=project_config)
+    )
+
+
 @serialized_workflow
 def start_workflow(
     *,
@@ -3792,21 +3814,10 @@ def start_workflow(
         if team_state is not None:
             state.team_snapshot = build_team_execution_snapshot(team_state)
     if not dry_run and target:
-        from goodteam_os.workflow_workspace import adapter_requires_workflow_workspace, prepare_workflow_workspace
+        from goodteam_os.workflow_workspace import prepare_workflow_workspace
 
         runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
-        from goodteam_os.reviewer_profiles import get_reviewer_profile
-
-        roles = ("project_intake", "product_requirement", "architect", "ui", "implementation", "qa", "release")
-        needs_repository = any(adapter_requires_workflow_workspace(resolve_role_adapter(target, role)) for role in roles)
-        needs_repository = needs_repository or any(
-            adapter_requires_workflow_workspace(get_reviewer_profile(profile_id).adapter)
-            for profiles in normalize_reviewer_profile_config(target).values() for profile_id in profiles
-        )
-        from goodteam_os.staging import staging_backend_enabled
-
-        needs_repository = needs_repository or staging_backend_enabled(source_type=source_type, project_config=project_config)
-        if needs_repository:
+        if _workflow_requires_repository(target, source_type=source_type, project_config=project_config):
             if runtime_root is None:
                 raise ValueError("A real workflow requires its configured Git repository baseline.")
             state.repository_baseline = prepare_workflow_workspace(runtime_root, project_key=key, run_id=state.run_id)
@@ -6609,6 +6620,17 @@ def handle_project_api_post(
                 "status": "ready_for_request",
             }
         proposal_id = str(proposal.get("id", ""))
+        project_config = _project_config_for_key(workspace, key)
+        # A known missing prerequisite has no execution ambiguity. Check before
+        # claiming the start so the same confirmed draft remains resumable.
+        if not proposal.get("run_id") and not proposal.get("start_claim_id") and _workflow_requires_repository(
+            target, source_type=str(readiness.get("project_mode") or "existing_project"),
+            project_config=project_config,
+        ):
+            baseline = _project_git_baseline(root)
+            if baseline["baseline_required"]:
+                raise ProjectApiError("git_baseline_required", str(baseline["error"]), 409,
+                                      recovery=["initialize_project_git", "retry_request"])
         claim_id = uuid4().hex
         start_run_id = f"task-{proposal_id}"
         session = store.claim_workflow_start(proposal_id, claim_id, start_run_id)

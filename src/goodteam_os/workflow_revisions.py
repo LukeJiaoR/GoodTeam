@@ -99,7 +99,10 @@ def retry_legacy_revision(state, workspace):
     from goodteam_os import web
 
     approval = state.next_node.removeprefix("revise_")
-    if not state.change_requests.get(approval):
+    generation_retry = (approval == "prd" and state.current_node == "product_requirement"
+                        and "prd" not in state.artifacts
+                        and any(item.startswith("product_requirement worker failed:") for item in state.blockers))
+    if not generation_retry and not state.change_requests.get(approval):
         action = next((item for item in web.build_action_items(workspace, state.project_key)
                        if item.get("run_id") == state.run_id and item.get("gate") == approval
                        and item.get("decision") == "changes_requested"), {})

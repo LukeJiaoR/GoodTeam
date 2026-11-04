@@ -71,3 +71,27 @@ def test_full_review_content_carries_same_bytes_version(tmp_path):
     assert "sha256:" + sha256(raw).hexdigest() == result["artifact_version"]
     review = next(item for item in web.build_approval_reviews(state, workspace=tmp_path) if item["approval"] == "prd")
     assert True is review["content_truncated"]
+
+
+def test_approval_brief_preserves_nested_chinese_scope_and_exclusions_beyond_preview(tmp_path):
+    from goodteam_os.team_workspace import build_team_workspace
+
+    state = create_initial_state("stockflow", "DEMO", "Build StockFlow")
+    state.current_node, state.next_node = "prd_review_gate", "await_prd_approval"
+    path = tmp_path / "prd.md"
+    path.write_text("# Risk Management Scope PRD\n## 1. 产品意图\n" + "背景说明。" * 1800
+                    + "\n\n## 4. V1 产品范围\n### 4.1 包含范围\n- 订单确认原子占用库存。\n"
+                    + "## 12. 非目标\n### 12.1 本期排除\n- 不实现多仓库。\n")
+    state.artifacts["prd"] = str(path)
+    reviews = web.build_approval_reviews(state, workspace=tmp_path)
+    projection = build_team_workspace(state=state, workflow_active=True, project_root=None, approval_reviews=reviews)
+    brief = projection["attention_request"]["approval_brief"]
+    assert reviews[0]["content_truncated"] is True
+    assert brief["scope"]["included"][0]["items"] == ["订单确认原子占用库存。"]
+    assert brief["scope"]["excluded"][0]["items"] == ["不实现多仓库。"]
+    assert brief["approval_target"]["artifact_version"] == reviews[0]["artifact_version"]
+    assert not any(risk["kind"] == "artifact" for risk in brief["risks"])
+    assert "artifact_sections" not in reviews[0]
+    path.write_text("# Another version\n## Scope\n- Changed scope.\n")
+    stale = build_team_workspace(state=state, workflow_active=True, project_root=None, approval_reviews=reviews)
+    assert stale["attention_request"]["approval_brief"]["scope"]["included"] == []

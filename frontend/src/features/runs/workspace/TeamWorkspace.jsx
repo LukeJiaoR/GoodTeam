@@ -115,7 +115,7 @@ function ExecutionPane({ actors, blocker, controls, context, task, onInspectAtte
           </span>
         </summary>
         <div className="team-execution-body">
-      {task?.objective && task.objective !== task.title ? <p className="project-task-identity">{task.objective}</p> : null}
+      {task?.objective && task.objective !== task.title ? <p className="project-task-identity" title={task.objective}>{task.objective}</p> : null}
       {blocker}
       {actors.length ? (
         <ol className="team-actor-list">

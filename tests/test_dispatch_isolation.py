@@ -39,7 +39,7 @@ def cli_fixture(tmp_path, monkeypatch):
     binary_dir = tmp_path / "bin"
     binary_dir.mkdir()
     binary = binary_dir / "codex"
-    binary.write_text(f"#!{sys.executable}\n" + """import json, os, sys
+    binary.write_text(f"#!{sys.executable}\n" + """import json, os, sys, tomllib
 from pathlib import Path
 if '--version' in sys.argv:
     print('offline dispatch fixture 1')
@@ -49,6 +49,17 @@ assert prompt
 cwd = Path.cwd()
 assert Path(sys.argv[sys.argv.index('--cd') + 1]) == cwd
 assert (cwd / '.git').is_dir()
+config = Path(os.environ['CODEX_HOME']) / 'config.toml'
+if config.is_file():
+    catalog = tomllib.loads(config.read_text()).get('model_catalog_json')
+    overrides = [arg for arg in sys.argv if arg.startswith('model_catalog_json=')]
+    if overrides:
+        catalog = tomllib.loads(overrides[-1])['model_catalog_json']
+    if catalog:
+        path = Path(catalog)
+        if not path.is_absolute():
+            path = config.parent / path
+        assert path.is_file(), 'Configured catalog is missing from isolated CODEX_HOME'
 with Path(os.environ['DISPATCH_FIXTURE_CALLS']).open('a') as calls:
     calls.write(json.dumps({'cwd': str(cwd), 'argv': sys.argv[1:]}) + '\\n')
 Path('worker.txt').write_text('worker output\\n')
@@ -70,6 +81,20 @@ if os.environ.get('DISPATCH_FIXTURE_FAIL') == '1':
 
 def track():
     return {"role": "implementation", "adapter": "codex", "task": "Write the assigned worker output."}
+
+
+def test_codex_dispatch_preserves_a_config_relative_model_catalog(tmp_path, cli_fixture):
+    source = repository(tmp_path / "source")
+    home = tmp_path / "empty-codex-home"
+    (home / "catalog.json").write_text('{"models": []}')
+    original = 'model_catalog_json = "catalog.json"\n'
+    (home / "config.toml").write_text(original)
+
+    result = dispatch_tracks(project_root=source, tracks=[track()], logical_task_id="relative-catalog")
+
+    assert result["all_ok"] is True, result
+    assert len(cli_fixture.read_text().splitlines()) == 1
+    assert (home / "config.toml").read_text() == original
 
 
 def test_public_dispatch_replays_exact_result_without_worker_or_verify_reexecution(tmp_path, cli_fixture):

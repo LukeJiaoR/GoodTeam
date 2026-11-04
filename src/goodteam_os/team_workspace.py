@@ -145,6 +145,8 @@ _SCOPE_HEADINGS_BY_TYPE = {
         "minimal change plan",
         "acceptance criteria",
         "v1 范围",
+        "产品范围",
+        "包含范围",
         "本次范围",
         "最小变更计划",
         "验收标准",
@@ -1069,6 +1071,18 @@ def _manager_approval_brief(
     gate = _text(review.get("approval"))
     approval_type = _APPROVAL_TYPE_BY_GATE.get(gate, "general")
     content = _text(review.get("content"))
+    if review.get("content_truncated"):
+        # Only the private brief projection needs text beyond the short API
+        # preview. Recheck the exact bytes so a concurrent edit cannot mix versions.
+        from hashlib import sha256
+
+        try:
+            with Path(_text(review.get("artifact_path"))).open("rb") as handle:
+                raw = handle.read(128_001)
+            if len(raw) <= 128_000 and f"sha256:{sha256(raw).hexdigest()}" == review.get("artifact_version"):
+                content = raw.decode("utf-8")
+        except (OSError, UnicodeError):
+            pass
     sections = _markdown_sections(content)
     outcome = next((item for item in outcomes if _text(item.get("id")) == task_id), None)
     artifact_path = _text(review.get("artifact_path"))
@@ -1129,6 +1143,7 @@ def _manager_approval_brief(
 def _markdown_sections(content: str) -> list[dict[str, object]]:
     sections: list[dict[str, object]] = []
     heading = ""
+    parents: list[tuple[int, str]] = []
     items: list[str] = []
     paragraph: list[str] = []
     in_fence = False
@@ -1144,7 +1159,7 @@ def _markdown_sections(content: str) -> list[dict[str, object]]:
     def flush_section() -> None:
         flush_paragraph()
         if heading or items:
-            sections.append({"heading": heading, "items": list(items)})
+            sections.append({"heading": heading, "context": [title for level, title in parents if level > 1], "items": list(items)})
         items.clear()
 
     for raw_line in content.splitlines():
@@ -1159,6 +1174,10 @@ def _markdown_sections(content: str) -> list[dict[str, object]]:
         if heading_match:
             flush_section()
             heading = _clean_markdown_fact(heading_match.group(1), limit=120)
+            level = len(raw_line.lstrip().split(" ", 1)[0])
+            while parents and parents[-1][0] >= level:
+                parents.pop()
+            parents.append((level, heading))
             continue
         if not stripped:
             flush_paragraph()
@@ -1221,7 +1240,7 @@ def _section_groups(
     groups: list[dict[str, object]] = []
     remaining = item_limit
     for section in sections:
-        normalized = _normalized_heading(section.get("heading"))
+        normalized = _normalized_heading(" ".join(_list(section.get("context"))) or section.get("heading"))
         if not normalized or not any(term in normalized for term in normalized_terms):
             continue
         if any(term in normalized for term in normalized_exclusions):

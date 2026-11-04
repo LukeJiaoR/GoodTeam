@@ -10,6 +10,7 @@ const copy = {
     files: 'Select exact relative file paths, one per line',
     help: 'Only these files will enter the initial commit. Review their contents first. Existing unrelated staged files are preserved. No remote is created.',
     review: 'Review selected files', confirm: 'Confirm initial commit', cancel: 'Cancel',
+    scaffold: 'Initialize an empty project', scaffoldHelp: 'Create README.md and .gitignore, then commit only these starter files. No remote is created.',
     invalidFiles: 'Enter regular relative file paths. Absolute paths, parent traversal, Git metadata and GoodTeam state are not allowed.',
     pending: 'Checking Git status…', checkFailed: 'Could not read current Git status. Refresh before trying again.',
     outcome: 'Recovery response', changed: 'Check the current Git state below. A successful request alone does not prove a valid baseline.',
@@ -22,6 +23,7 @@ const copy = {
     files: '明确选择相对文件路径，每行一个',
     help: '只有这些文件会进入初始提交，请先核对内容。其他已暂存文件保持不变，不创建远端仓库。',
     review: '核对所选文件', confirm: '确认创建初始提交', cancel: '取消',
+    scaffold: '初始化空项目', scaffoldHelp: '创建 README.md 和 .gitignore，初始提交只包含这两个文件，不创建远端仓库。',
     invalidFiles: '请输入普通相对文件路径，不允许绝对路径、上级目录、Git 元数据或 GoodTeam 状态目录。',
     pending: '正在检查 Git 状态…', checkFailed: '无法读取当前 Git 状态，请刷新后再试。',
     outcome: '恢复响应', changed: '请核对下方当前 Git 状态，请求成功不代表基线已有效。',
@@ -51,6 +53,8 @@ function GitRecoverySession({ projectKey, language = 'en', api = gitRecoveryApi 
   const [notice, setNotice] = useState('');
   const [value, setValue] = useState('');
   const [selection, setSelection] = useState(null);
+  const [scaffold, setScaffold] = useState(false);
+  const [newProject, setNewProject] = useState(false);
   const alive = useRef(true);
   const locked = useRef(false);
   useEffect(() => {
@@ -67,7 +71,10 @@ function GitRecoverySession({ projectKey, language = 'en', api = gitRecoveryApi 
     setBaseline(null);
     try {
       const payload = await api.read(projectKey);
-      if (alive.current) setBaseline(payload?.git_baseline || null);
+      if (alive.current) {
+        setBaseline(payload?.git_baseline || null);
+        setNewProject(payload?.readiness?.project_mode === 'new_project');
+      }
     } catch (caught) {
       if (alive.current) setError(caught.message || t.checkFailed);
     } finally {
@@ -88,7 +95,7 @@ function GitRecoverySession({ projectKey, language = 'en', api = gitRecoveryApi 
     const files = [...selection];
     setSelection(null);
     try {
-      const result = await api.recover(projectKey, files);
+      const result = await api.recover(projectKey, files, scaffold);
       if (!alive.current) return;
       setNotice([t.changed, result?.error, ...(Array.isArray(result?.warnings) ? result.warnings : [])].filter(Boolean).join(' '));
     } catch (caught) {
@@ -125,18 +132,22 @@ function GitRecoverySession({ projectKey, language = 'en', api = gitRecoveryApi 
       <Button variant="secondary" disabled={busy} onClick={inspect}>{t.refresh}</Button>
       {recoverable && !busy && <div>
         <label>{t.files}<textarea value={value} onChange={(event) => {
-          setValue(event.target.value); setSelection(null); setError('');
+          setValue(event.target.value); setSelection(null); setScaffold(false); setError('');
         }} /></label>
         <p>{t.help}</p>
         {!selection ? <Button onClick={() => {
           const paths = selectedPaths(value);
           if (!paths) setError(t.invalidFiles);
-          else { setError(''); setSelection(paths); }
+          else { setError(''); setScaffold(false); setSelection(paths); }
         }}>{t.review}</Button> : <div>
+          {scaffold && <p>{t.scaffoldHelp}</p>}
           <ul>{selection.map((path) => <li key={path}>{path}</li>)}</ul>
           <Button onClick={recover}>{t.confirm}</Button>
           <Button variant="secondary" onClick={() => setSelection(null)}>{t.cancel}</Button>
         </div>}
+        {!selection && newProject && <Button variant="secondary" onClick={() => {
+          setError(''); setScaffold(true); setSelection(['README.md', '.gitignore']);
+        }}>{t.scaffold}</Button>}
       </div>}
     </div>}
   </section>;
