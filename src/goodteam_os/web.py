@@ -453,7 +453,8 @@ def _run_queued_reviewer_jobs_for_current_run(
                 return 409, {"error": "trusted_codex_task_mismatch", "message": "Native self-use is limited to Code Review."}
             try:
                 specs = reviewer_job_specs_for_gate(state=state, target=target, approval=current_gate,
-                    artifact_key=artifact_key, artifact_path=artifact_path, context=worker_context(state))
+                    artifact_key=artifact_key, artifact_path=artifact_path,
+                    context=worker_context(state, recipient_role="code_review", workspace=workspace))
                 if len(specs) == 1 and specs[0].get("adapter") == "codex" and specs[0].get("model"):
                     # Skill publication preserves the request verbatim. Validate
                     # and publish the same canonical model, not a prefix alias.

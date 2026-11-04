@@ -11,7 +11,7 @@ from typing import Any
 
 from goodteam_os.intent_commit import IntentCommitStore
 from goodteam_os.state import StateStore
-from goodteam_os.context_continuity import conversation_context, task_state_context
+from goodteam_os.context_continuity import approval_decisions_context, conversation_context, task_state_context
 
 
 def conversation_scope(store, context_run_id="", *, root=None) -> dict[str, Any] | None:
@@ -59,6 +59,7 @@ def _run_snapshot(state, *, store, root=None):
             "artifacts": dict(state.artifacts), "change_requests": dict(state.change_requests),
             "transition_status": state.pending_transition.get("status", "")}
     snapshot["task_state"] = task_state_context(state)
+    snapshot["approval_decisions"] = approval_decisions_context(state, workspace=store.workspace)
     if root is not None:
         from goodteam_os.task_input_context import task_input_context_for_state
 
