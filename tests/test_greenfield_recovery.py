@@ -46,6 +46,7 @@ def test_empty_project_can_prepare_git_and_resume_the_same_confirmed_draft(tmp_p
     assert blocked["confirmed"] is True and not blocked.get("start_claim_id") and not calls
     assert StateStore(workspace).read_project_current(key) is None
 
+    (root / ".DS_Store").write_bytes(b"ignored Finder metadata")
     recovered = web.initialize_project_git_for_request(workspace, {"project_key": key, "scaffold_new_project": True})
     assert recovered["state"] == "valid_head" and recovered["remote_created"] is False
     assert (root / "README.md").is_file() and (root / ".gitignore").is_file()
@@ -69,7 +70,7 @@ def test_failed_real_prd_generation_blocks_and_retries_without_a_template_or_fak
 
     def generate(**request):
         calls.append(request)
-        if len(calls) == 1:
+        if len(calls) % 2 == 1:
             request["failure_status"].update(summary="Codex CLI exited with code 1.")
             return None
         return "# StockFlow PRD\n\n## Acceptance Criteria\n- Orders reserve inventory atomically.\n"
@@ -86,3 +87,16 @@ def test_failed_real_prd_generation_blocks_and_retries_without_a_template_or_fak
     assert recovered["next_node"] == "await_prd_approval" and not recovered["blockers"]
     assert recovered["approvals"]["prd"] == "pending" and len(calls) == 2
     assert Path(recovered["artifacts"]["prd"]).read_text().startswith("# StockFlow PRD")
+
+    # Reject a real existing PRD, fail regeneration, then retry the same run.
+    # Historical references remain readable without becoming ready events.
+    old_path = recovered["artifacts"]["prd"]
+    rejected = web.decide_approval(workspace=tmp_path, project_key="STOCKFLOW", approval="prd",
+                                   decision="rejected", note="Regenerate this PRD")
+    assert rejected["next_node"] == "revise_prd" and rejected["artifacts"]["prd"] == old_path
+    assert not any(item["action"] == "prd_regenerated" for item in web.build_action_items(tmp_path, "STOCKFLOW"))
+    blocked = StateStore(tmp_path).read_project_current("STOCKFLOW")
+    assert blocked.change_requests == {} and build_retry_target(blocked)["available"] is True
+    recovered = retry_legacy_revision(blocked, tmp_path)
+    assert recovered["next_node"] == "await_prd_approval" and not recovered["blockers"]
+    assert recovered["artifacts"]["prd"] != old_path and Path(old_path).is_file() and len(calls) == 4

@@ -100,7 +100,6 @@ def retry_legacy_revision(state, workspace):
 
     approval = state.next_node.removeprefix("revise_")
     generation_retry = (approval == "prd" and state.current_node == "product_requirement"
-                        and "prd" not in state.artifacts
                         and any(item.startswith("product_requirement worker failed:") for item in state.blockers))
     if not generation_retry and not state.change_requests.get(approval):
         action = next((item for item in web.build_action_items(workspace, state.project_key)

@@ -85,7 +85,7 @@ from goodteam_os.project_import import (
     read_bound_project_readiness,
 )
 from goodteam_os.project_registry import ProjectRegistry
-from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities  # noqa: F401
+from goodteam_os.project_readiness import IGNORED_NAMES, ProjectReadinessStore, build_capabilities  # noqa: F401
 from goodteam_os.project_readiness_executor import (
     ProjectReadinessExecutor,
     ReadinessExecutionError,
@@ -3114,7 +3114,7 @@ def initialize_project_git_for_request(workspace: Path, request: dict[str, objec
     if scaffold:
         readiness = read_bound_project_readiness(workspace, normalize_project_key(project_key), root_path)
         if readiness.get("project_mode") != "new_project" or any(
-            entry.name not in {".git", ".goodteam"} for entry in root_path.iterdir()
+            entry.name not in {".git", ".goodteam", *IGNORED_NAMES} for entry in root_path.iterdir()
         ):
             raise ValueError("Scaffolding requires an empty imported new project. Select existing files explicitly instead.")
     project_name = str(target.get("name", "") or target.get("key", "") or project_key)
@@ -4106,18 +4106,19 @@ def decide_approval(
         state_store.write_project_checkpoint(state, key)
         project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
         state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        append_action(
-            workspace,
-            run_id=state.run_id,
-            actor="system",
-            action="prd_generated",
-            project_key=key,
-            gate="prd",
-            before_node=regenerate_before_node,
-            after_node=state.next_node,
-            artifact="prd",
-            artifact_path=state.artifacts.get("prd", ""),
-        )
+        if state.current_node == "prd_review_gate":
+            append_action(
+                workspace,
+                run_id=state.run_id,
+                actor="system",
+                action="prd_generated",
+                project_key=key,
+                gate="prd",
+                before_node=regenerate_before_node,
+                after_node=state.next_node,
+                artifact="prd",
+                artifact_path=state.artifacts.get("prd", ""),
+            )
     elif approval_decision == ApprovalDecision.APPROVED:
         generated_before = set(state.artifacts)
         project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
@@ -4153,18 +4154,19 @@ def decide_approval(
             state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
         else:
             state = regenerate_rfc_review_gate(state=state, workspace=workspace, project_config=project_config)
-        append_action(
-            workspace,
-            run_id=state.run_id,
-            actor="system",
-            action=f"{approval}_regenerated",
-            project_key=key,
-            gate=approval,
-            before_node=regenerate_before_node,
-            after_node=state.next_node,
-            artifact=approval_artifact_map().get(approval, approval),
-            artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
-        )
+        if approval != "prd" or state.current_node == "prd_review_gate":
+            append_action(
+                workspace,
+                run_id=state.run_id,
+                actor="system",
+                action=f"{approval}_regenerated",
+                project_key=key,
+                gate=approval,
+                before_node=regenerate_before_node,
+                after_node=state.next_node,
+                artifact=approval_artifact_map().get(approval, approval),
+                artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
+            )
     elif approval == "takeover" and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
         revision_note = note if decision_origin == "manager_intent_commit" else note.strip()
         regenerate_before_node = state.next_node
@@ -4209,19 +4211,20 @@ def decide_approval(
             state = regenerate_rfc_review_gate(state=state, workspace=workspace, project_config=project_config)
         if not uses_worker_revision:
             state.change_requests.pop(approval, None)
-        append_action(
-            workspace,
-            run_id=state.run_id,
-            actor="system",
-            action=f"{approval}_revised",
-            project_key=key,
-            gate=approval,
-            before_node=regenerate_before_node,
-            after_node=state.next_node,
-            artifact=approval_artifact_map().get(approval, approval),
-            artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
-            note=revision_note,
-        )
+        if approval != "prd" or state.current_node == "prd_review_gate":
+            append_action(
+                workspace,
+                run_id=state.run_id,
+                actor="system",
+                action=f"{approval}_revised",
+                project_key=key,
+                gate=approval,
+                before_node=regenerate_before_node,
+                after_node=state.next_node,
+                artifact=approval_artifact_map().get(approval, approval),
+                artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
+                note=revision_note,
+            )
     elif approval_decision == ApprovalDecision.CHANGES_REQUESTED:
         from goodteam_os.workflow_revisions import revise_workflow_gate
 
