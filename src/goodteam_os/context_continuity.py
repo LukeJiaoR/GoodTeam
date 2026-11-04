@@ -244,11 +244,64 @@ def task_state_context(state):
     }
 
 
-def task_handoff_context(state, *, recipient_role=""):
+def approval_decisions_context(state, *, workspace=None):
+    """Read recorded gate decisions; never reconstruct or grant authority.
+
+    The action log retains earlier gates after pending_transition is replaced.
+    The pending action also covers recovery before its audit append completes.
+    Neither source rewrites already materialized Worker inputs.
+    """
+    actions = []
+    if workspace is not None:
+        from goodteam_os.web import build_action_items
+
+        actions = build_action_items(workspace, state.project_key)
+    transition = state.pending_transition if isinstance(state.pending_transition, dict) else {}
+    pending = transition.get("action")
+    if isinstance(pending, dict):
+        actions.insert(0, pending)
+    decisions = {}
+    for action in actions:
+        gate = action.get("gate")
+        if (action.get("action") != "approval_decided"
+                or action.get("run_id") != state.run_id
+                or action.get("project_key") != state.project_key
+                or gate not in state.approvals or gate in decisions):
+            continue
+        note = str(action.get("note") or "")
+        decisions[gate] = {
+            "gate": gate,
+            "decision": str(action.get("decision") or ""),
+            "current_gate_status": str(state.approvals[gate]),
+            "note": _text(note, 8000),
+            "note_truncated": len(note) > 8000,
+            "artifact": _text(action.get("artifact"), 128),
+            "artifact_version": _text(action.get("artifact_version"), 160),
+            "actor_ref": _text(action.get("actor_ref"), 160),
+            "workflow_operation_id": _text(action.get("workflow_operation_id"), 160),
+            "source": "pending_transition.action" if action is pending else "action-log.jsonl",
+        }
+    return {
+        "source": "existing_workflow_decisions",
+        "project_key": state.project_key,
+        "run_id": state.run_id,
+        "authority": "read_only_projection",
+        "decisions": list(decisions.values()),
+        "history_available": workspace is not None,
+        "notice": "Preserve the restrictions in recorded approval notes. An approved label alone does not "
+                  "authorize broader actions. Decisions remain bound to their recorded artifact versions; "
+                  "historical decisions do not revive a reset gate or approve a changed artifact. "
+                  "If a note is truncated, read its full original source before acting. "
+                  "This projection grants no new permission and is not proof of implementation or review.",
+    }
+
+
+def task_handoff_context(state, *, recipient_role="", workspace=None):
     return "\n".join([
         "## Task continuity handoff (read-only)",
         "This is a source-bound snapshot at input preparation, not a new assignment or permission. "
         "Keep the task, original input, later feedback and approval evidence distinct. "
         "An already prepared Worker input is not updated by later state changes.",
-        _json({"recipient_role": _text(recipient_role, 80), "task_state": task_state_context(state)}),
+        _json({"recipient_role": _text(recipient_role, 80), "task_state": task_state_context(state),
+               "approval_decisions": approval_decisions_context(state, workspace=workspace)}),
     ])

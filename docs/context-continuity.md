@@ -63,6 +63,16 @@ captures it in the attempt's context. Later state changes do not rewrite an
 already prepared attempt or claim to interrupt/replan a running Worker. Existing
 memory retrieval, correction invalidation and memory writeback are unchanged.
 
+New role inputs and Manager run snapshots also read the original workflow
+approval decisions. The latest logged decision per gate is scoped to the same
+project and run; the saved pending action covers an interrupted audit append.
+Notes, artifact versions, operation IDs and current gate status travel together.
+Earlier gates remain readable after the pending transition is replaced, so an
+"approved" label cannot silently drop a restriction such as local-only Docker.
+This read-only projection creates no permission and cannot revive an old approval
+after a gate reset or artifact change. Truncated notes are labelled and require
+reading the full original decision before acting. Prepared inputs stay immutable.
+
 ## Verification boundary
 
 This is Tier 3 control-plane plus Tier 4 browser-visible work. Deterministic

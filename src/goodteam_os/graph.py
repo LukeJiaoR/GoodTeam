@@ -1738,6 +1738,7 @@ def run_staging_until_gate(
     state.next_node = gate_next_node(state, gate="staging", approved_next="release")
     dispatch_gate_reviewer_jobs(
         state=state,
+        workspace=workspace,
         project_config=project_config,
         approval="staging",
         artifact_key="staging_report",
@@ -1787,6 +1788,7 @@ def run_release_until_gate(
     state.next_node = gate_next_node(state, gate="release", approved_next="retro_memory")
     dispatch_gate_reviewer_jobs(
         state=state,
+        workspace=workspace,
         project_config=project_config,
         approval="release",
         artifact_key="release_notes",
@@ -1967,6 +1969,7 @@ def run_implementation_workers(
 def dispatch_gate_reviewer_jobs(
     *,
     state: AgileDevState,
+    workspace: Path,
     project_config: Path | None,
     approval: str,
     artifact_key: str,
@@ -1985,7 +1988,7 @@ def dispatch_gate_reviewer_jobs(
         approval=approval,
         artifact_key=artifact_key,
         artifact_path=str(artifact_path),
-        context=worker_context(state),
+        context=worker_context(state, recipient_role="review", workspace=workspace),
     )
 
 
@@ -2604,7 +2607,7 @@ def implementation_task(state: AgileDevState, delivery_mode: str = "init_project
     )
 
 
-def worker_context(state: AgileDevState, *, recipient_role: str = "") -> str:
+def worker_context(state: AgileDevState, *, recipient_role: str = "", workspace: Path | None = None) -> str:
     from goodteam_os.context_continuity import task_handoff_context
 
     artifacts = "\n".join(f"- {name}: {path}" for name, path in sorted(state.artifacts.items()))
@@ -2629,7 +2632,7 @@ def worker_context(state: AgileDevState, *, recipient_role: str = "") -> str:
     if state.change_requests:
         changes = "\n".join(f"- {gate}: {note}" for gate, note in state.change_requests.items())
         context += f"\nRequested changes:\n{changes}"
-    context += "\n\n" + task_handoff_context(state, recipient_role=recipient_role)
+    context += "\n\n" + task_handoff_context(state, recipient_role=recipient_role, workspace=workspace)
     return context
 
 
@@ -2640,7 +2643,7 @@ def worker_context_for_role(
     workspace: Path | None = None,
     gate: str | None = None,
 ) -> str:
-    base_context = worker_context(state, recipient_role=role_key)
+    base_context = worker_context(state, recipient_role=role_key, workspace=workspace)
     advisory = role_messages_advisory_section(
         workspace=workspace,
         project_key=state.project_key,
@@ -3048,6 +3051,7 @@ def run_fix_implementation(
     state.next_node = gate_next_node(state, gate="code_review", approved_next="fix_qa")
     dispatch_gate_reviewer_jobs(
         state=state,
+        workspace=workspace,
         project_config=project_config,
         approval="code_review",
         artifact_key="implementation_handoff",
@@ -3078,6 +3082,7 @@ def run_fix_qa(
     state.next_node = gate_next_node(state, gate="qa", approved_next="fix_close")
     dispatch_gate_reviewer_jobs(
         state=state,
+        workspace=workspace,
         project_config=project_config,
         approval="qa",
         artifact_key="qa_report",

@@ -2,6 +2,7 @@
 
 Contract: [#630](https://github.com/LukeJiaoR/GoodTeam/issues/630).
 Recovery defects: [#631](https://github.com/LukeJiaoR/GoodTeam/issues/631).
+Approval-scope handoff: [#633](https://github.com/LukeJiaoR/GoodTeam/issues/633).
 Project-autonomy acceptance remains [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419).
 
 This is a record of real-provider trials and their interventions. It is not
@@ -113,3 +114,45 @@ Original input, state snapshots, current artifact paths, Worker transcripts,
 failure diagnostics, intervention records and per-run reports remain in the
 operator's separate `goodteam-evaluations/stockflow/2026-11-05-run-00{1,2,3}`
 directories. Authentication and environment configuration are not uploaded.
+
+## Same-run continuation after the first repair
+
+PR #632 merged as `c033ed03011ce6f86cd0c7a7229cd3d7883b9e3b`.
+The first UI attempt hit its 1800-second deadline with sandbox network access
+disabled. Dependency registry access worked on the host. The operator prepared
+a separate Codex HOME with workspace-write network access; no business code or
+execution state was edited.
+
+The isolated service had unintentionally inherited Telegram settings and sent
+three design-gate notifications. The operator stopped it and its active
+Implementation process, then restarted the same run with Telegram credentials,
+gate notifications and Telegram network access explicitly disabled. This is an
+operator environment error and an intervention, not an autonomous recovery PASS.
+
+The normal resume action retained the PRD, RFC, approvals and isolated business
+workspace. UI build and two amount-format unit tests passed after the Worker
+corrected an unavailable icon export. Local Playwright launch remained blocked.
+The Worker then probed public-tunnel tools; the operator interrupted it before
+any tunnel was observed, because the security approval allowed only isolated
+local Docker and loopback ports. Docker endpoint, unique project/volume/network
+overrides and a loopback application port were prepared for later Workers.
+Actual application-container deployment and browser business acceptance remained
+unverified at that checkpoint.
+
+The recorded approval note contained the local-only restriction, but the
+materialized Worker context contained only the `approved` label. Issue #633
+repairs this loss by projecting the existing action log and pending approval
+action into fresh Worker, gate Reviewer, native Code Review and Manager inputs.
+Notes retain their run/project, artifact version, operation ID and current gate
+status; the projection does not grant new authority or rewrite queued inputs.
+Independent review caught missing workspace propagation in the Reviewer entry
+points, which was corrected and added to the same input regression.
+
+On 2026-11-05 at 04:00:20 UTC+08, the same workflow resumed through the normal
+version-bound `/api/retry` route. Real UI job
+`job-c8c34d0a-1c7a-4b46-b33a-1eb62aa684bd` received the local-only note, bound RFC
+version, earlier gate notes and an explicit environment-update role message.
+This proves live input handoff, not StockFlow implementation acceptance.
+The cross-process regression failed on the original code and passed after the
+repair; it also checks unrelated-run exclusion and unchanged state/audit/queued
+inputs. Original failure and interruption evidence remains in run003.
