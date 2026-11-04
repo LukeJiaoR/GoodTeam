@@ -28,13 +28,19 @@ does not bound provider request count or monetary cost; both are unknown.
 | --- | --- | --- | --- |
 | 001 | Empty non-Git project, original source | Manager draft and preparation completed; start failed, then original task remained `workflow_start_indeterminate` | Added an empty Git root commit after product recovery offered no files; no business code or state edits |
 | 002 | Empty Git project, original source | Initial PRD Worker failed ENOENT but template was offered as ready; later real PRD and RFC completed; stopped at pending RFC review | Separate environment-only absolute catalog configuration; normal change discussion and scoped manual PRD approval |
-| 003 | Empty non-Git project, fix candidate | Baseline failure left no start claim/Workflow; product-created initial commit allowed the same confirmed task to start; real PRD completed with original Codex HOME; architecture started | Explicit Git initial-commit confirmation and product-scope approval; source updates only at idle review gates |
+| 003 | Empty non-Git project, fix candidate | Baseline failure left no start claim/Workflow; product-created initial commit allowed the same confirmed task to start; real PRD/RFC completed with original Codex HOME; UI implementation started | Explicit Git initial-commit confirmation and scoped PRD/RFC/security decisions; source updates only at idle review gates |
 
 run002 stopped with no active Worker to avoid duplicate project development.
 run003 began at `6916f60c5239f7c7863033cb3ea05d3851875a8d`; continuation
 at the PRD gate used `4f78f5544f58b56adba858efa09137ad18e5dcbb` after review
 corrections. It used the original relative-catalog configuration, without
 run002's environment workaround.
+At the RFC gate it continued on `62dc3af94e1d1e3dd5387ae35ee4e8941d217dcc`.
+The RFC hash was `60acc1c159ccde948d0029296780f990786300b1c02400beb506a1020277075e`.
+The operator approved its design and security posture for an isolated local
+Stage A environment, preserving missing independent-review evidence. The
+real UI Worker started after that decision. No business code or internal
+execution state was edited by the operator.
 
 ## Defects and changes
 
@@ -57,6 +63,13 @@ run002's environment workaround.
    events after recovery, public polling-payload growth, and H1 category
    pollution. Corrections preserve both failure and successful-retry evidence;
    publish retry success after durable state and retain the revision reason.
+   Reuse the existing pending transition and operation-ID decision deduplication
+   to recover a publication interrupted after append without rerunning the
+   producer or publishing twice. There is no second outbox or execution ledger.
+8. Actual RFC headings combined scope and non-goals in a parent. The nearest
+   explicit child heading now owns classification. A further independent review
+   caught generic scope terms suppressing explicit `Out of scope` / `范围外`;
+   explicit excluded-scope matches take precedence in that projection.
 
 ## Verification and evidence limits
 
@@ -71,21 +84,25 @@ npm run lint
 npm run build
 ```
 
-The backend run at `4f78f55` passed 389 tests with eight existing fork warnings.
+The backend runs at `62dc3af` and final code revision `e8d7fea` passed 390
+tests with eight existing fork warnings. Independent review of the final
+scope-precedence correction found no actionable regressions.
 Frontend passed 312 tests in 37 files; lint and build passed. The first Node
 25 test run failed because experimental global localStorage shadows jsdom;
 its failure log is preserved alongside the successful option-based run.
 Final-source results and independent review are recorded in the linked PR.
 
 Controlled CLI fault injection is explicitly fixture evidence, not model
-inference: fail first PRD, retry, reject old PRD, fail regeneration, retry.
-The four Worker outcomes are failed/completed/failed/completed; no template or
+inference: fail first PRD, retry, reject old PRD, fail regeneration, retry,
+request changes, fail revision, retry. The six Worker outcomes are
+failed/completed/failed/completed/failed/completed; no template or
 false ready event is published, successful retries identify the replacement
 artifact, and the final PRD approval remains pending.
 
-Independent PRD Reviewer invocation was absent in the default live workflow.
-The manual decision approved product scope only and retained that advisory
-gap; it is not independent-review PASS or authority for later gates.
+Independent PRD and security Reviewer invocation was absent in the default
+live workflow. The RFC author invocation also does not establish an independent
+design review. Scoped manual decisions retained these gaps; they are not
+independent-review PASS or authority for later gates.
 No full StockFlow implementation, two-way implementation parallelism, hosted
 delivery, Docker acceptance, or Manager pick/execute/learn/pick-again result
 has been demonstrated at this checkpoint.
