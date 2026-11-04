@@ -150,7 +150,8 @@ def collect_workflow_workspace(source_root: Path, binding: object, *, project_ke
         result = workspace.collect(SLOT, include_source_preview=True, source_preview_scope=(project_key, run_id)) if include_source_preview else workspace.collect(SLOT)
         result.update(schema=SCHEMA, project_key=project_key, run_id=run_id,
                       original_head=workspace.metadata["original_head"],
-                      attribution_scope="workflow_task", exclusion_policy=workspace.metadata["exclusion_policy"])
+                      attribution_scope="workflow_task", exclusion_policy=list(dict.fromkeys([
+                          *workspace.metadata["exclusion_policy"], "untracked .pnpm-store cache"])))
         if candidate:
             result["integration"] = workspace.integrate([SLOT], expected_results={SLOT: result["result_commit"]})
         return result
