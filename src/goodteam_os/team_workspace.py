@@ -154,6 +154,7 @@ _SCOPE_HEADINGS_BY_TYPE = {
     ),
     "architecture": (
         "scope",
+        "本 rfc 覆盖",
         "data model",
         "api contract",
         "frontend and ux contract",
@@ -218,6 +219,7 @@ _EXCLUDED_SCOPE_HEADINGS = (
     "不在范围",
     "范围外",
     "排除",
+    "不覆盖",
 )
 _RISK_HEADINGS = (
     "risk",
@@ -1131,7 +1133,10 @@ def _manager_approval_brief(
         },
         "scope": {
             "included": included,
-            "excluded": _section_groups(sections, _EXCLUDED_SCOPE_HEADINGS),
+            "excluded": _section_groups(
+                sections, _EXCLUDED_SCOPE_HEADINGS,
+                exclude_terms=_SCOPE_HEADINGS_BY_TYPE.get(approval_type, _SCOPE_HEADINGS_BY_TYPE["general"]),
+            ),
         },
         "evidence": _approval_brief_evidence(review, approval_type),
         "mission_blockers": _approval_brief_mission_blockers(state),
@@ -1241,10 +1246,18 @@ def _section_groups(
     groups: list[dict[str, object]] = []
     remaining = item_limit
     for section in sections:
-        normalized = _normalized_heading(" ".join(_list(section.get("context"))) or section.get("heading"))
-        if not normalized or not any(term in normalized for term in normalized_terms):
-            continue
-        if any(term in normalized for term in normalized_exclusions):
+        # The nearest explicit heading owns the category. A combined parent
+        # such as "Scope and non-goals" must not relabel an in-scope child.
+        headings = _list(section.get("context")) or [section.get("heading")]
+        matches = False
+        for heading in reversed(headings):
+            normalized = _normalized_heading(heading)
+            if any(term in normalized for term in normalized_exclusions):
+                break
+            if any(term in normalized for term in normalized_terms):
+                matches = True
+                break
+        if not matches:
             continue
         facts = []
         for raw_item in _list(section.get("items")):

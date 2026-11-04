@@ -95,3 +95,19 @@ def test_approval_brief_preserves_nested_chinese_scope_and_exclusions_beyond_pre
     path.write_text("# Another version\n## Scope\n- Changed scope.\n")
     stale = build_team_workspace(state=state, workflow_active=True, project_root=None, approval_reviews=reviews)
     assert stale["attention_request"]["approval_brief"]["scope"]["included"] == []
+
+
+def test_rfc_brief_distinguishes_children_of_combined_scope_and_non_goals(tmp_path):
+    from goodteam_os.team_workspace import build_team_workspace
+
+    state = create_initial_state("stockflow", "DEMO", "Build StockFlow")
+    state.current_node, state.next_node = "rfc_review_gate", "await_rfc_approval"
+    path = tmp_path / "rfc.md"
+    path.write_text("# StockFlow RFC\n## 2. 范围与非目标\n### 2.1 本 RFC 覆盖\n- 商品、库存、订单。\n"
+                    "### 2.2 明确不覆盖\n- 多仓库和物流。\n")
+    state.artifacts["rfc"] = str(path)
+    projection = build_team_workspace(state=state, workflow_active=True, project_root=None,
+                                      approval_reviews=web.build_approval_reviews(state, workspace=tmp_path))
+    scope = projection["attention_request"]["approval_brief"]["scope"]
+    assert scope["included"][0]["items"] == ["商品、库存、订单。"]
+    assert scope["excluded"][0]["items"] == ["多仓库和物流。"]
