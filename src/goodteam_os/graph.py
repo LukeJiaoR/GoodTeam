@@ -2850,6 +2850,7 @@ def run_until_next_gate(
                           revision_tokens=state.artifact_generations)
     content = render_prd_markdown(state, project_config)
     if state.task_skill_context or should_generate_artifact_with_worker(project_config, "product_requirement"):
+        failure_status: dict[str, object] = {}
         worker_content = generate_artifact_via_worker(
             state=state,
             workspace=workspace,
@@ -2857,10 +2858,18 @@ def run_until_next_gate(
             role="product_requirement",
             artifact_key="prd",
             task_text=prd_worker_task(state),
+            failure_status=failure_status,
         )
-        if worker_content is not None:
-            state.change_requests.pop("prd", None)
-            content = worker_content
+        state.blockers = [item for item in state.blockers if not item.startswith("product_requirement worker failed:")]
+        if worker_content is None:
+            summary = str(failure_status.get("summary") or "No owned PRD artifact was returned.")
+            state.blockers.append(f"product_requirement worker failed: {summary}")
+            state.current_node = "product_requirement"
+            state.next_node = "revise_prd"
+            sync_project_stage_tasks(state, project_config)
+            return state
+        state.change_requests.pop("prd", None)
+        content = worker_content
     prd_path = store.write_markdown(
         state.run_id,
         "prd",

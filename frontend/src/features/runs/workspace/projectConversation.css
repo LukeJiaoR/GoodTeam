@@ -42,7 +42,7 @@
 .work-workspace-shell .project-assistant-activity { margin: 0.75rem 0; font-size: 0.75rem; overflow-wrap: anywhere; }
 .work-workspace-shell .project-assistant-activity ul { padding-inline-start: 1rem; }
 
-.work-workspace-shell .project-task-identity { display: grid; gap: 0.35rem; padding: 1rem; font-size: 0.8rem; overflow-wrap: anywhere; }
+.work-workspace-shell .project-task-identity { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; padding: 0 1rem; margin: 1rem 0; font-size: 0.8rem; overflow-wrap: anywhere; }
 .work-workspace-shell .project-task-identity small { opacity: 0.7; }
 
 /* Keep project scope and entry modes visible without consuming the conversation. */

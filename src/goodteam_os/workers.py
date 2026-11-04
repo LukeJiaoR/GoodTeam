@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -2430,6 +2431,18 @@ class WorkerJobStore:
             adapter=adapter,
             reasoning_depth=str(job.get("reasoning_depth", "") or ""),
         )
+        if adapter == "codex" and "--ignore-user-config" not in command:
+            # Codex resolves this path against CODEX_HOME, which is isolated
+            # per job. Keep the trusted local catalog bound to its source home.
+            source_home = Path(os.environ.get("CODEX_HOME") or "~/.codex").expanduser()
+            config = source_home / "config.toml"
+            if config.is_file():
+                with config.open("rb") as handle:
+                    catalog = tomllib.load(handle).get("model_catalog_json")
+                if isinstance(catalog, str) and catalog and not Path(catalog).is_absolute():
+                    catalog_path = str((source_home / catalog).resolve())
+                    index = command.index("-")
+                    command[index:index] = ["-c", f"model_catalog_json={json.dumps(catalog_path)}"]
         sandbox_mode = os.environ.get("GOODTEAM_CODEX_SANDBOX_MODE", "")
         if adapter == "codex" and sandbox_mode:
             if sandbox_mode not in {"workspace-write", "read-only"}:

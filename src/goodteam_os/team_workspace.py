@@ -145,12 +145,16 @@ _SCOPE_HEADINGS_BY_TYPE = {
         "minimal change plan",
         "acceptance criteria",
         "v1 范围",
+        "产品范围",
+        "功能范围",
+        "包含范围",
         "本次范围",
         "最小变更计划",
         "验收标准",
     ),
     "architecture": (
         "scope",
+        "本 rfc 覆盖",
         "data model",
         "api contract",
         "frontend and ux contract",
@@ -215,6 +219,7 @@ _EXCLUDED_SCOPE_HEADINGS = (
     "不在范围",
     "范围外",
     "排除",
+    "不覆盖",
 )
 _RISK_HEADINGS = (
     "risk",
@@ -1069,6 +1074,18 @@ def _manager_approval_brief(
     gate = _text(review.get("approval"))
     approval_type = _APPROVAL_TYPE_BY_GATE.get(gate, "general")
     content = _text(review.get("content"))
+    if review.get("content_truncated"):
+        # Only the private brief projection needs text beyond the short API
+        # preview. Recheck the exact bytes so a concurrent edit cannot mix versions.
+        from hashlib import sha256
+
+        try:
+            with Path(_text(review.get("artifact_path"))).open("rb") as handle:
+                raw = handle.read(128_001)
+            if len(raw) <= 128_000 and f"sha256:{sha256(raw).hexdigest()}" == review.get("artifact_version"):
+                content = raw.decode("utf-8")
+        except (OSError, UnicodeError):
+            pass
     sections = _markdown_sections(content)
     outcome = next((item for item in outcomes if _text(item.get("id")) == task_id), None)
     artifact_path = _text(review.get("artifact_path"))
@@ -1116,7 +1133,11 @@ def _manager_approval_brief(
         },
         "scope": {
             "included": included,
-            "excluded": _section_groups(sections, _EXCLUDED_SCOPE_HEADINGS),
+            "excluded": _section_groups(
+                sections, _EXCLUDED_SCOPE_HEADINGS,
+                exclude_terms=_SCOPE_HEADINGS_BY_TYPE.get(approval_type, _SCOPE_HEADINGS_BY_TYPE["general"]),
+                prefer_match=True,
+            ),
         },
         "evidence": _approval_brief_evidence(review, approval_type),
         "mission_blockers": _approval_brief_mission_blockers(state),
@@ -1129,6 +1150,7 @@ def _manager_approval_brief(
 def _markdown_sections(content: str) -> list[dict[str, object]]:
     sections: list[dict[str, object]] = []
     heading = ""
+    parents: list[tuple[int, str]] = []
     items: list[str] = []
     paragraph: list[str] = []
     in_fence = False
@@ -1144,7 +1166,7 @@ def _markdown_sections(content: str) -> list[dict[str, object]]:
     def flush_section() -> None:
         flush_paragraph()
         if heading or items:
-            sections.append({"heading": heading, "items": list(items)})
+            sections.append({"heading": heading, "context": [title for level, title in parents if level > 1], "items": list(items)})
         items.clear()
 
     for raw_line in content.splitlines():
@@ -1159,6 +1181,10 @@ def _markdown_sections(content: str) -> list[dict[str, object]]:
         if heading_match:
             flush_section()
             heading = _clean_markdown_fact(heading_match.group(1), limit=120)
+            level = len(raw_line.lstrip().split(" ", 1)[0])
+            while parents and parents[-1][0] >= level:
+                parents.pop()
+            parents.append((level, heading))
             continue
         if not stripped:
             flush_paragraph()
@@ -1213,6 +1239,7 @@ def _section_groups(
     terms: Sequence[str],
     *,
     exclude_terms: Sequence[str] = (),
+    prefer_match: bool = False,
     group_limit: int = 2,
     item_limit: int = 4,
 ) -> list[dict[str, object]]:
@@ -1221,10 +1248,23 @@ def _section_groups(
     groups: list[dict[str, object]] = []
     remaining = item_limit
     for section in sections:
-        normalized = _normalized_heading(section.get("heading"))
-        if not normalized or not any(term in normalized for term in normalized_terms):
-            continue
-        if any(term in normalized for term in normalized_exclusions):
+        # The nearest explicit heading owns the category. A combined parent
+        # such as "Scope and non-goals" must not relabel an in-scope child.
+        headings = _list(section.get("context")) or [section.get("heading")]
+        matches = False
+        for heading in reversed(headings):
+            normalized = _normalized_heading(heading)
+            # Explicit non-goals such as "Out of scope" also contain the
+            # generic included-scope term. Preserve the explicit category.
+            if prefer_match and any(term in normalized for term in normalized_terms):
+                matches = True
+                break
+            if any(term in normalized for term in normalized_exclusions):
+                break
+            if any(term in normalized for term in normalized_terms):
+                matches = True
+                break
+        if not matches:
             continue
         facts = []
         for raw_item in _list(section.get("items")):
