@@ -1136,6 +1136,7 @@ def _manager_approval_brief(
             "excluded": _section_groups(
                 sections, _EXCLUDED_SCOPE_HEADINGS,
                 exclude_terms=_SCOPE_HEADINGS_BY_TYPE.get(approval_type, _SCOPE_HEADINGS_BY_TYPE["general"]),
+                prefer_match=True,
             ),
         },
         "evidence": _approval_brief_evidence(review, approval_type),
@@ -1238,6 +1239,7 @@ def _section_groups(
     terms: Sequence[str],
     *,
     exclude_terms: Sequence[str] = (),
+    prefer_match: bool = False,
     group_limit: int = 2,
     item_limit: int = 4,
 ) -> list[dict[str, object]]:
@@ -1252,6 +1254,11 @@ def _section_groups(
         matches = False
         for heading in reversed(headings):
             normalized = _normalized_heading(heading)
+            # Explicit non-goals such as "Out of scope" also contain the
+            # generic included-scope term. Preserve the explicit category.
+            if prefer_match and any(term in normalized for term in normalized_terms):
+                matches = True
+                break
             if any(term in normalized for term in normalized_exclusions):
                 break
             if any(term in normalized for term in normalized_terms):

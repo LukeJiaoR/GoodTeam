@@ -104,10 +104,13 @@ def test_rfc_brief_distinguishes_children_of_combined_scope_and_non_goals(tmp_pa
     state.current_node, state.next_node = "rfc_review_gate", "await_rfc_approval"
     path = tmp_path / "rfc.md"
     path.write_text("# StockFlow RFC\n## 2. 范围与非目标\n### 2.1 本 RFC 覆盖\n- 商品、库存、订单。\n"
-                    "### 2.2 明确不覆盖\n- 多仓库和物流。\n")
+                    "### 2.2 明确不覆盖\n- 多仓库和物流。\n"
+                    "### 2.3 Out of scope / 范围外\n- 在线支付。\n")
     state.artifacts["rfc"] = str(path)
     projection = build_team_workspace(state=state, workflow_active=True, project_root=None,
                                       approval_reviews=web.build_approval_reviews(state, workspace=tmp_path))
     scope = projection["attention_request"]["approval_brief"]["scope"]
     assert scope["included"][0]["items"] == ["商品、库存、订单。"]
     assert scope["excluded"][0]["items"] == ["多仓库和物流。"]
+    assert scope["excluded"][1]["items"] == ["在线支付。"]
+    assert len(scope["included"]) == 1
