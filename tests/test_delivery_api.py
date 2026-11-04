@@ -80,7 +80,7 @@ def test_approval_brief_preserves_nested_chinese_scope_and_exclusions_beyond_pre
     state.current_node, state.next_node = "prd_review_gate", "await_prd_approval"
     path = tmp_path / "prd.md"
     path.write_text("# Risk Management Scope PRD\n## 1. 产品意图\n" + "背景说明。" * 1800
-                    + "\n\n## 4. V1 产品范围\n### 4.1 包含范围\n- 订单确认原子占用库存。\n"
+                    + "\n\n## 4. V1 功能范围\n### 4.1 订单\n- 订单确认原子占用库存。\n"
                     + "## 12. 非目标\n### 12.1 本期排除\n- 不实现多仓库。\n")
     state.artifacts["prd"] = str(path)
     reviews = web.build_approval_reviews(state, workspace=tmp_path)

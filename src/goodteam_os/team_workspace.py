@@ -146,6 +146,7 @@ _SCOPE_HEADINGS_BY_TYPE = {
         "acceptance criteria",
         "v1 范围",
         "产品范围",
+        "功能范围",
         "包含范围",
         "本次范围",
         "最小变更计划",

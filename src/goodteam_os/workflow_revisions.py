@@ -98,6 +98,8 @@ def retry_fix_workflow(state, workspace):
 def retry_legacy_revision(state, workspace):
     from goodteam_os import web
 
+    before_node = state.next_node
+    had_prd = "prd" in state.artifacts
     approval = state.next_node.removeprefix("revise_")
     generation_retry = (approval == "prd" and state.current_node == "product_requirement"
                         and any(item.startswith("product_requirement worker failed:") for item in state.blockers))
@@ -109,4 +111,11 @@ def retry_legacy_revision(state, workspace):
             raise ValueError("The revision needs its original change request before it can resume.")
         state.change_requests[approval] = action["note"]
     state = revise_workflow_gate(state, workspace, approval=approval)
+    if generation_retry and state.current_node == "prd_review_gate":
+        web.append_action(
+            workspace, run_id=state.run_id, project_key=state.project_key, actor="system",
+            action="prd_regenerated" if had_prd else "prd_generated", gate="prd",
+            before_node=before_node, after_node=state.next_node,
+            artifact="prd", artifact_path=state.artifacts["prd"],
+        )
     return _persist_result(state, workspace)
