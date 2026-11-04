@@ -66,6 +66,7 @@ def test_failed_real_prd_generation_blocks_and_retries_without_a_template_or_fak
     state = create_initial_state("stockflow-run", "STOCKFLOW", "Build inventory and orders")
     state.source_ref = str(config)
     monkeypatch.setattr(graph, "should_generate_artifact_with_worker", lambda *_: True)
+    monkeypatch.setattr(web, "should_generate_artifact_with_worker", lambda *_: True)
     calls = []
 
     def generate(**request):
@@ -83,6 +84,16 @@ def test_failed_real_prd_generation_blocks_and_retries_without_a_template_or_fak
     assert not list((tmp_path / "artifacts").rglob("prd.md"))
     assert blocked.change_requests == {} and build_retry_target(blocked)["available"] is True
     StateStore(tmp_path).write_project_current(blocked)
+    append = web.append_action
+
+    def record_ready(*args, **kwargs):
+        if kwargs.get("action") in {"prd_generated", "prd_regenerated", "prd_revised"}:
+            durable = StateStore(tmp_path).read_project_current("STOCKFLOW")
+            assert durable.next_node == "await_prd_approval"
+            assert durable.artifacts["prd"] == kwargs["artifact_path"]
+        return append(*args, **kwargs)
+
+    monkeypatch.setattr(web, "append_action", record_ready)
     recovered = retry_legacy_revision(blocked, tmp_path)
     assert recovered["next_node"] == "await_prd_approval" and not recovered["blockers"]
     assert recovered["approvals"]["prd"] == "pending" and len(calls) == 2
@@ -104,3 +115,9 @@ def test_failed_real_prd_generation_blocks_and_retries_without_a_template_or_fak
               if item["action"] in {"prd_generated", "prd_regenerated"}]
     assert {item["action"] for item in events} == {"prd_generated", "prd_regenerated"}
     assert next(item for item in events if item["action"] == "prd_regenerated")["artifact_path"] == recovered["artifacts"]["prd"]
+    changed = web.decide_approval(workspace=tmp_path, project_key="STOCKFLOW", approval="prd",
+                                  decision="changes_requested", note="Clarify stock reservation")
+    assert changed["next_node"] == "revise_prd"
+    retry_legacy_revision(StateStore(tmp_path).read_project_current("STOCKFLOW"), tmp_path)
+    revised = [item for item in web.build_action_items(tmp_path, "STOCKFLOW") if item["action"] == "prd_revised"]
+    assert len(revised) == 1 and revised[0]["note"] == "Clarify stock reservation"

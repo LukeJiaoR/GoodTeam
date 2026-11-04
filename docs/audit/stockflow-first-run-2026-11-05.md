@@ -55,7 +55,8 @@ run002's environment workaround.
 7. Independent review identified misleading success events after failure,
    rejected-PRD retry failure with a stale artifact reference, missing success
    events after recovery, public polling-payload growth, and H1 category
-   pollution. Corrections preserve both failure and successful-retry evidence.
+   pollution. Corrections preserve both failure and successful-retry evidence;
+   publish retry success after durable state and retain the revision reason.
 
 ## Verification and evidence limits
 
