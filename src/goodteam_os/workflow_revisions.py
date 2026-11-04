@@ -5,7 +5,7 @@ from pathlib import Path
 
 from goodteam_os.state import ApprovalDecision
 from goodteam_os.workflow_mutations import (
-    INTERRUPTED_TRANSITION, finish_transition, persist_transition, publish_decision,
+    INTERRUPTED_TRANSITION, begin_transition, finish_transition, persist_transition, publish_decision,
 )
 
 
@@ -68,6 +68,14 @@ def resume_transition(state, workspace):
 
     transition = state.pending_transition
     action = transition["action"]
+    if action.get("action") in {"prd_generated", "prd_regenerated", "prd_revised"}:
+        # The Worker already completed. Resume only the original publication;
+        # the existing operation ID prevents duplicate audit events.
+        state.current_node, state.next_node = transition["current_node"], transition["next_node"]
+        transition["status"] = "recording"
+        persist_transition(workspace, state)
+        publish_decision(workspace, state)
+        return _persist_result(state, workspace)
     approval, decision = action["gate"], action["decision"]
     publish_decision(workspace, state)
     state.current_node = transition["current_node"]
@@ -112,12 +120,11 @@ def retry_legacy_revision(state, workspace):
             raise ValueError("The revision needs its original change request before it can resume.")
         state.change_requests[approval] = action["note"]
     state = revise_workflow_gate(state, workspace, approval=approval)
-    result = _persist_result(state, workspace)
     if generation_retry and state.current_node == "prd_review_gate":
-        web.append_action(
-            workspace, run_id=state.run_id, project_key=state.project_key, actor="system",
+        begin_transition(workspace, state, dict(
+            run_id=state.run_id, project_key=state.project_key, actor="system",
             action="prd_revised" if revision_note else "prd_regenerated" if had_prd else "prd_generated", gate="prd",
             before_node=before_node, after_node=state.next_node,
             artifact="prd", artifact_path=state.artifacts["prd"], note=revision_note,
-        )
-    return result
+        ))
+    return _persist_result(state, workspace)

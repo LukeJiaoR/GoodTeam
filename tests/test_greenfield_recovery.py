@@ -85,16 +85,27 @@ def test_failed_real_prd_generation_blocks_and_retries_without_a_template_or_fak
     assert blocked.change_requests == {} and build_retry_target(blocked)["available"] is True
     StateStore(tmp_path).write_project_current(blocked)
     append = web.append_action
+    interrupted_once = False
 
     def record_ready(*args, **kwargs):
+        nonlocal interrupted_once
         if kwargs.get("action") in {"prd_generated", "prd_regenerated", "prd_revised"}:
             durable = StateStore(tmp_path).read_project_current("STOCKFLOW")
             assert durable.next_node == "await_prd_approval"
             assert durable.artifacts["prd"] == kwargs["artifact_path"]
+            if not interrupted_once:
+                interrupted_once = True
+                append(*args, **kwargs)
+                raise OSError("Interrupted after append, before publication receipt")
         return append(*args, **kwargs)
 
     monkeypatch.setattr(web, "append_action", record_ready)
-    recovered = retry_legacy_revision(blocked, tmp_path)
+    with pytest.raises(OSError, match="Interrupted after append"):
+        retry_legacy_revision(blocked, tmp_path)
+    interrupted = web.resolve_dashboard_state(tmp_path, "STOCKFLOW")
+    binding = web.workflow_retry_target(tmp_path, interrupted)
+    recovered = web.retry_blocked_workflow(workspace=tmp_path, project_key="STOCKFLOW",
+                                           expected_run_id=interrupted.run_id, expected_retry_version=binding["version"])
     assert recovered["next_node"] == "await_prd_approval" and not recovered["blockers"]
     assert recovered["approvals"]["prd"] == "pending" and len(calls) == 2
     assert Path(recovered["artifacts"]["prd"]).read_text().startswith("# StockFlow PRD")
@@ -113,7 +124,7 @@ def test_failed_real_prd_generation_blocks_and_retries_without_a_template_or_fak
     assert recovered["artifacts"]["prd"] != old_path and Path(old_path).is_file() and len(calls) == 4
     events = [item for item in web.build_action_items(tmp_path, "STOCKFLOW")
               if item["action"] in {"prd_generated", "prd_regenerated"}]
-    assert {item["action"] for item in events} == {"prd_generated", "prd_regenerated"}
+    assert len(events) == 2 and {item["action"] for item in events} == {"prd_generated", "prd_regenerated"}
     assert next(item for item in events if item["action"] == "prd_regenerated")["artifact_path"] == recovered["artifacts"]["prd"]
     changed = web.decide_approval(workspace=tmp_path, project_key="STOCKFLOW", approval="prd",
                                   decision="changes_requested", note="Clarify stock reservation")
