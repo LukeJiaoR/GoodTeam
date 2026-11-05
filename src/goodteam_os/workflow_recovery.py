@@ -29,10 +29,32 @@ def _report_version(root, job):
         return ""
 
 
-def _inputs(state):
+def _qa_report(state, jobs):
+    from goodteam_os.legacy_reviewer_reports import _report_bytes
+    from goodteam_os.repository_access import RepositoryAccessError
+    from goodteam_os.workers import WorkerJobStore
+
+    attempts = [job for job in jobs if job.get("run_id") == state.run_id
+                and job.get("project_key") in (None, "", state.project_key) and job.get("role") == "qa"]
+    if not attempts:
+        return {}
+    job = max(attempts, key=lambda item: (str(item.get("created_at", "")), item["id"]))
+    store = WorkerJobStore(Path(state.repository_baseline["source_root"]))
+    report = {"job_id": job["id"], "status": job.get("status", "unknown"),
+              "report_path": str(store.root / job["id"] / "result.md"), "report_version": "", "content": ""}
+    try:
+        raw = _report_bytes(store, job["id"])
+        report["content"] = raw.decode("utf-8")
+        report["report_version"] = "sha256:" + sha256(raw).hexdigest()
+    except (OSError, ValueError, RepositoryAccessError):
+        report["report_unavailable"] = True
+    return report
+
+
+def _inputs(state, jobs):
     return {"idea": state.idea, "baseline": state.repository_baseline,
             "artifacts": {key: artifact_version_for_path(state.artifacts.get(key, ""))
-                          for key in ("prd", "rfc")}}
+                          for key in ("prd", "rfc")}, "qa_report": _qa_report(state, jobs)}
 
 
 def _idle(workspace, state):
@@ -56,7 +78,7 @@ def candidate(workspace, state, *, reviewed=False):
     """Revalidate the parent and its unchanged task bytes, never recapture source."""
     _config, jobs = _idle(workspace, state)
     record = state.release_candidate.get(ARTIFACT) or {}
-    if (record.get("run_id") != state.run_id or record.get("inputs") != _inputs(state)
+    if (record.get("run_id") != state.run_id or record.get("inputs") != _inputs(state, jobs)
             or record.get("version") != artifact_version_for_path(state.artifacts.get(ARTIFACT, ""))):
         raise ValueError("The failed Workflow recovery candidate changed; prepare it again.")
     root = Path(state.repository_baseline["source_root"])
@@ -98,13 +120,13 @@ def prepare(workspace, project_key, request):
         target = workflow_retry_target(workspace, state)
         if request.get("expected_retry_version") != target["version"] or not target["available"]:
             raise ValueError("Refresh the exact idle failed Workflow attempt before preparing recovery.")
-        config, _jobs = _idle(workspace, state)
+        config, jobs = _idle(workspace, state)
         root = Path(state.repository_baseline["source_root"])
         result = collect_workflow_workspace(root, state.repository_baseline,
                                            project_key=project_key, run_id=state.run_id, candidate=True)
         if result["integration"]["status"] != "succeeded":
             raise ValueError("The retained failed Workflow cannot form a reviewable candidate.")
-        record = {"run_id": state.run_id, "inputs": _inputs(state), "repository_result": result}
+        record = {"run_id": state.run_id, "inputs": _inputs(state, jobs), "repository_result": result}
         if ARTIFACT in state.artifacts:
             invalidate_artifact(state, ARTIFACT)
         path = ArtifactStore(Path(workspace), revision_tokens=state.artifact_generations).write_markdown(state.run_id, ARTIFACT, "candidate.md",

@@ -1993,7 +1993,7 @@ def dispatch_gate_reviewer_jobs(
         approval=approval,
         artifact_key=artifact_key,
         artifact_path=str(artifact_path),
-        context=worker_context(state, recipient_role="review", workspace=workspace),
+        context=worker_context_for_role(state, "review", workspace=workspace),
     )
 
 
