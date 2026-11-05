@@ -2118,6 +2118,9 @@ def run_worker_job_with_retry(
         job_id = str(job["id"])
         attempt_job_ids.append(job_id)
         result = store.run_job(job_id)
+        # Builtin adapters also write this host-owned file, but older receipts
+        # omit its path. Validate their actual verdict rather than process exit.
+        result.setdefault("result_path", str(store.root / job_id / "result.md"))
         if fields.get("workflow_workspace"):
             from goodteam_os.workflow_workspace import collect_workflow_workspace
 
