@@ -91,11 +91,20 @@ def capture_final_turn(stdout: bytes, *, returncode: int, forbid_tools: bool = F
                 raise SkillError("review_capture_incomplete", "A native command has no terminal event.")
             completed = True
         elif kind in {"item.started", "item.updated", "item.completed"}:
-            if not started:
-                raise SkillError("review_capture_order", "Reviewer items must belong to its started turn.")
             item = event.get("item")
             if not isinstance(item, dict) or not isinstance(item.get("type"), str):
                 raise SkillError("review_capture_json", "The Reviewer emitted an invalid item.")
+            if not started:
+                # Native 0.160.0 emits non-fatal configuration warnings after
+                # thread.started but before turn.started. They are diagnostics,
+                # not model output or command/resource-read evidence. Keep them
+                # in the transcript digest/count without relaxing turn ordering.
+                if (thread_id is not None and kind == "item.completed" and item["type"] == "error"
+                        and set(item) == {"id", "type", "message"}
+                        and isinstance(item["id"], str) and 0 < len(item["id"]) <= 128
+                        and isinstance(item["message"], str) and item["message"]):
+                    continue
+                raise SkillError("review_capture_order", "Reviewer items must belong to its started turn.")
             if forbid_tools and item["type"] not in {"agent_message", "reasoning"}:
                 raise SkillError("local_codex_tool_observed", "A tool event violates the local text-only execution contract.")
             if item["type"] == "command_execution":

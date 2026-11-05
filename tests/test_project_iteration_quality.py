@@ -73,6 +73,9 @@ def event(kind, **details):
 def final_turn(report):
     for item in [
         {'type': 'thread.started', 'thread_id': 'offline-' + uuid4().hex},
+        *([{'type': 'item.completed', 'item': {'id': 'startup-warning', 'type': 'error',
+                                            'message': 'Offline native configuration warning.'}}]
+          if mode == 'review' else []),
         {'type': 'turn.started'},
         {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': json.dumps(report)}},
         {'type': 'turn.completed'},
