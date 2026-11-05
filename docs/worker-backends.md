@@ -238,6 +238,13 @@ is designed so those adapters can bind to an explicit job later.
 
 A worker result should be treated as evidence, not as approval.
 
+Sequential Workflow delivery refreshes each role's context immediately before
+creating its job. Implementation and QA therefore receive run-scoped operator
+messages recorded while an earlier role was running. These messages remain
+advisory: they do not change confirmed scope, approval decisions or evidence
+requirements. A job's materialized input is not rewritten after creation, and
+this is not live steering of an active CLI session.
+
 Result files can answer:
 
 - what the worker attempted,

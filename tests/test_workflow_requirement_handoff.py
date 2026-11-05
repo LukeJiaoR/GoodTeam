@@ -182,3 +182,53 @@ def test_materialized_job_input_is_not_rewritten_when_workflow_state_changes(tmp
     assert 'ORIGINAL_QUEUED_STANDARD' in prompt and 'LATER_STATE_STANDARD' not in prompt
     assert 'ORIGINAL_APPROVAL_SCOPE' in prompt and 'LATER_APPROVAL_SCOPE' not in prompt
     assert (root / 'context.md').read_bytes() == before
+
+
+def test_sequential_delivery_materializes_current_role_messages_before_each_dispatch(tmp_path, monkeypatch):
+    from goodteam_os.graph import run_implementation_workers
+    from goodteam_os.messages import append_message
+
+    workspace, repo = tmp_path / 'workspace', tmp_path / 'repo'
+    repo.mkdir()
+    config = write_project_config(workspace / 'projects', 'DEMO', 'Demo', repo_path=str(repo), worker_mode='human')
+    state = create_initial_state('run-1', 'DEMO', 'Deliver the current project iteration')
+    state.delivery_mode = 'custom'
+    state.delivery_standards = ['SAVED_ACCEPTANCE_SCOPE']
+    observed = {}
+
+    def message(body, to, run_id='run-1'):
+        return append_message(workspace, 'DEMO', run_id, from_role='human',
+                              to=to, kind='assert', body=body)
+
+    message('INITIAL_UI_CONTEXT', ['ui'])
+    message('UNRELATED_RUN_CONTEXT', ['implementation', 'qa'], run_id='other-run')
+
+    def capture_input(self, job_id):
+        root = self.root / job_id
+        job = json.loads((root / 'job.json').read_text())
+        role = job['role']
+        observed[role] = {'root': root, 'bytes': (root / 'context.md').read_bytes(),
+                          'prompt': self._worker_prompt(root, job)}
+        # Arrive while the preceding role is running, after all initial specs
+        # were built. Only future jobs should receive these advisory messages.
+        if role == 'ui':
+            message('UI_FINISHED_REUSE_CANONICAL_DEPLOYMENT', ['implementation', 'qa'])
+        elif role == 'implementation':
+            message('IMPLEMENTATION_FINISHED_VERIFY_NEW_CANDIDATE', ['qa'])
+        (root / 'result.md').write_text('Status: passed\nControlled offline input probe.\n')
+        return {'job_id': job_id, 'role': role, 'status': 'completed', 'summary': 'Controlled offline input probe'}
+
+    monkeypatch.setattr(WorkerJobStore, 'run_job', capture_input)
+    results = run_implementation_workers(state, config, workspace=workspace)
+    assert [result['role'] for result in results] == ['ui', 'implementation', 'qa']
+    assert 'INITIAL_UI_CONTEXT' in observed['ui']['prompt']
+    assert 'UI_FINISHED_REUSE_CANONICAL_DEPLOYMENT' not in observed['ui']['prompt']
+    assert 'UI_FINISHED_REUSE_CANONICAL_DEPLOYMENT' in observed['implementation']['prompt']
+    assert 'IMPLEMENTATION_FINISHED_VERIFY_NEW_CANDIDATE' not in observed['implementation']['prompt']
+    for marker in ('UI_FINISHED_REUSE_CANONICAL_DEPLOYMENT', 'IMPLEMENTATION_FINISHED_VERIFY_NEW_CANDIDATE'):
+        assert marker in observed['qa']['prompt']
+    for record in observed.values():
+        assert 'SAVED_ACCEPTANCE_SCOPE' in record['prompt']
+        assert 'UNRELATED_RUN_CONTEXT' not in record['prompt']
+        assert 'they do not override the task' in record['prompt']
+        assert (record['root'] / 'context.md').read_bytes() == record['bytes']
