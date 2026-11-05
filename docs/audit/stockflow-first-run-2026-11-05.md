@@ -170,3 +170,34 @@ and actual source files retain all size and identity checks. No cache is
 deleted, no business Git ignore is hand-edited, and the original baseline is
 not rewritten. Current result evidence names the additional exclusion even
 when resuming a baseline prepared by an older GoodTeam version.
+
+## Provider failure and same-run retry checkpoint
+
+The cache repair merged in PR #636 as
+`dd3ffb1156df9817a3d2263a3b3fe8923eb816d6`. The resumed UI job
+`job-80af442a-fdf8-4acb-b9f1-69aaaf326610` ended at 2026-11-05 04:30:28 UTC+08
+with a terminal provider HTTP 429. The subsequent Implementation job
+`job-d9a5a2ca-7b98-47fb-a727-9574f0128404` and QA job
+`job-7b0a97c2-5bc1-46fe-8072-46015630eb60` ended with HTTP 503. These are
+provider failures, not evidence of successful business implementation. The
+next Implementation invocation establishes that cache collection no longer
+blocked role handoff; browser, database, Git and Docker acceptance remain open.
+
+All three failures were classified as `auth`: the classifier searched the
+entire stderr, including source excerpts about authentication and a digest
+containing `403`. Prefer the last terminal CLI `ERROR:` line over incidental
+transcript text, while preserving the authoritative host timeout and the
+existing fallback, retry bounds and approval policies. A representative offline
+CLI process checks the archived failure class, bounded retry and preserved
+evidence. Read-only replay of the original logs yields `rate_limit`, `network`
+and `network`; historical statuses are retained without rewriting them.
+
+At 11:03:02 UTC+08, normal version-bound `/api/retry` started UI job
+`job-8a1efa4b-46ce-4238-bb1d-3c2aa4dbc7d1` in the same run and isolated
+workspace. Before restarting, the operator confirmed that the service and old
+Workers were absent; the earlier service exit cause is unknown. The existing
+restart script retains the isolated state and explicitly disables Telegram.
+The ordinary Workflow repeats its UI role during implementation recovery;
+this is recorded, not claimed as no-duplicate recovery. No business code,
+database or internal execution state was edited by the operator. This remains
+a mixed-version fix-and-continue run, not a clean comparison run of final main.

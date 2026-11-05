@@ -125,7 +125,10 @@ def classify_worker_failure(summary: str, exit_code: int | None, stderr: str = "
     if _is_host_cli_timeout(summary, exit_code):
         return "timeout"
     del exit_code  # phase-1 classifier is text-pattern based.
-    text = f"{summary}\n{stderr}".lower()
+    # Codex stderr includes source excerpts and tool output. Its terminal
+    # ERROR describes the failed invocation; earlier text is not its cause.
+    terminal_errors = re.findall(r"(?im)^[ \t]*ERROR:[ \t]*(?!Reconnecting\b)(\S.*)$", stderr)
+    text = (terminal_errors[-1] if terminal_errors else f"{summary}\n{stderr}").lower()
     if any(
         token in text
         for token in (
