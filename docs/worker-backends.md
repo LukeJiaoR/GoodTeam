@@ -290,6 +290,17 @@ This caps automatic CLI invocations per job, not provider requests or manual
 retries/new jobs. Session backends and native admitted protocols retain their
 own limits. Do not use this setting as a monetary or provider-request cap.
 
+For longer approved work, the local service can set
+`GOODTEAM_CLI_WORKER_TIMEOUT_SECONDS` to an integer from 1 to 3600 seconds.
+The default remains 1800 seconds. Each new ordinary CLI job captures this
+per-attempt deadline in `cli_timeout_seconds`; later environment changes cannot
+extend that job or its retries. Jobs created before this setting retain the
+1800-second default. Invalid configuration fails before creating a job.
+The runtime status records the actual `timeout_seconds`. This setting does not
+change protected task/Skill/native correction budgets, session backends,
+invocation counts, approval or Stop controls. Configure it locally before a
+new authorized attempt; never rewrite a timed-out job as completed.
+
 A host CLI timeout stops for human attention without an automatic retry,
 regardless of auth/network text in partial logs. This requires both the host's
 deadline summary and no process exit code. A normal nonzero CLI exit reporting a
