@@ -59,6 +59,14 @@ def install_fake_worker_fault(control):
         return run_job(store, job_id, **kwargs)
 
     def timeout_once(store, job_root, job):
+        qa_result = control / "qa-result"
+        if job["role"] == "qa" and qa_result.is_file():
+            return store._run_cli_worker(
+                job_root, job,
+                command=[sys.executable, "-c", "from pathlib import Path; import sys; print(Path(sys.argv[1]).read_text())", str(qa_result)],
+                model="fake", preflight={}, label="Acceptance QA", capture="stdout",
+                summarize=lambda code, stderr: f"QA fixture exited: {code}", timeout_seconds=WORKER_TIMEOUT,
+            )
         fault_path = control / "worker-timeout"
         if job["role"] != "implementation" or not fault_path.exists():
             return complete(store, job_root, job)

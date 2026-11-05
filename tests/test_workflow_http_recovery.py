@@ -125,3 +125,30 @@ def test_worker_timeout_requires_explicit_retry_and_retains_decision(recovery):
     status, _error = server.request("/api/retry", retry_body(server.state()))
     assert 409 == status and _error["code"] == "retry_not_available"
     assert_unchanged_execution(server, recovered)
+
+
+def test_completed_qa_requires_explicit_pass_before_release_and_recovers(recovery):
+    server, binding = recovery
+    verdict = server.control / "qa-result"
+    verdict.write_text("QA 已完成，整体状态为 **failed**。\n")
+    failed = server.ok("/api/approve", binding)
+    assert failed["current_node"] == "implementation"
+    assert any("qa worker reported" in item for item in failed["blockers"])
+    blocked = server.state()
+    qa = next(job for job in blocked["worker_jobs"] if job["role"] == "qa")
+    assert qa["status"] == "completed"  # Successful process, unsuccessful verification.
+    original = security_decisions(server)
+    assert_unchanged_execution(server, blocked)
+
+    verdict.write_text("Status: unknown\nBrowser verification could not run.\n")
+    unknown = server.ok("/api/retry", retry_body(blocked))
+    assert unknown["current_node"] == "implementation"
+    assert any("qa worker reported" in item for item in unknown["blockers"])
+    assert original == security_decisions(server)
+
+    verdict.write_text("Status: passed\nTask-relevant verification passed.\n")
+    passed = server.ok("/api/retry", retry_body(server.state()))
+    assert passed["next_node"] == "await_release_approval"
+    assert passed["blockers"] == []
+    assert original == security_decisions(server)
+    assert any(job["id"] == qa["id"] for job in server.state()["worker_jobs"])

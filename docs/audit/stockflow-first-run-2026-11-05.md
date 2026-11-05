@@ -201,3 +201,43 @@ The ordinary Workflow repeats its UI role during implementation recovery;
 this is recorded, not claimed as no-duplicate recovery. No business code,
 database or internal execution state was edited by the operator. This remains
 a mixed-version fix-and-continue run, not a clean comparison run of final main.
+
+## Real business flow and QA verdict checkpoint
+
+By 2026-11-05 12:03 UTC+08, the operator had exercised the existing loopback
+Compose instance through real browser actions: product, receipt of 10, draft of
+3, confirmation (10/3/7), shipment (7/0/7), and a second confirmed order of 2
+followed by cancellation (7/2/5 to 7/0/7). Refreshed browser/API and read-only
+PostgreSQL agree. A 390px browser also created/confirmed another order of 1,
+retained as pending with balance 7/1/6. The running build still identifies as
+`uncommitted`; these checks do not establish exact-SHA delivery.
+
+The Implementation Worker timed out after 1800 seconds. Its completed code and
+partial validation remain, but its failed status is not rewritten. The next QA
+Worker passed real PostgreSQL concurrency, atomicity, retry, RBAC and history
+checks and Compose smoke/restart persistence. Its initial separate Compose
+project accidentally inherited the active test data volume and changed database
+credentials. This affected this run's temporary data; it did not touch another
+project or production volume. QA subsequently isolated and cleaned up its own
+stack. The user confirmed that temporary phase-A data needs no rescue and that
+future work should reuse the existing deployment. The operator made no manual
+database repairs; the failed shipment and subsequent normal UI actions are
+retained separately.
+
+QA reported failed delivery because source was untracked and hosted Git delivery
+was missing. Its final response omitted `Status:` even though its separate
+repository report began `Status: failed`. The controller read the host's final
+response and failed to recognize the failed QA outcome. Implementation timeout
+still blocked this run; no release was approved. Issue #639 makes missing or
+unknown QA verdicts block delivery and explicitly asks for the verdict in the
+final assistant response. A completed process remains distinct from passing QA;
+old job status/evidence and approval/retry authority remain unchanged.
+
+The isolated HTTP/process regression demonstrates missing verdict -> blocked,
+unknown on exact-bound retry -> still blocked, then explicit pass -> existing
+release gate, retaining the original security approval and job history. This is
+offline/model-free recovery evidence, not proof of real-provider success or
+Manager project autonomy. StockFlow's independent review, exact Git/build
+delivery, phase B, real Manager-selected parallel work and two autonomous
+iterations remain open. The empty private hosting repository is infrastructure
+only; the operator did not copy or commit the application's source.
