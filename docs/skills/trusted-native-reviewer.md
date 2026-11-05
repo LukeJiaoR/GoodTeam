@@ -15,6 +15,13 @@ and `--sandbox read-only`. Native-managed tools remain available under their
 existing permissions. Task/source text is review evidence and cannot authorize
 extra actions. This route rejects third-party GoodTeam methods and scripts.
 
+The pinned 0.160.0 CLI can emit non-fatal configuration warnings as
+`item.completed/error` after `thread.started` and before `turn.started`.
+Capture retains those events in its transcript digest and count. They do not
+count as model output or command/resource-read evidence, nor prove that an
+ignored setting took effect. Other pre-turn items, fatal events and events after
+the terminal turn remain rejected. Existing native configuration is not edited.
+
 The private policy is mode 0600, outside Worker storage, with exactly these
 fields (placeholder paths/model must be replaced by the operator):
 
