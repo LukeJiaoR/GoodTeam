@@ -1931,6 +1931,11 @@ def run_implementation_workers(
     retry_max, retry_on_classes = retry_policy_for_node(workflow_node_name)
     results = []
     for job_spec in job_specs:
+        # Earlier roles can take minutes; materialize later-role context only
+        # when dispatching it, including newly recorded run-scoped messages.
+        job_spec = {**job_spec, "context": worker_context_for_role(
+            state, str(job_spec["role"]), workspace=workspace,
+        )}
         result = run_worker_job_with_retry(
             store=store, job_spec=job_spec, retry_max=retry_max,
             retry_on_classes=retry_on_classes, state=state, workspace=workspace,
