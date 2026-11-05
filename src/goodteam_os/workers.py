@@ -129,12 +129,11 @@ def classify_worker_failure(summary: str, exit_code: int | None, stderr: str = "
     # ERROR describes the failed invocation; earlier text is not its cause.
     terminal_errors = re.findall(r"(?im)^[ \t]*ERROR:[ \t]*(?!Reconnecting\b)(\S.*)$", stderr)
     text = (terminal_errors[-1] if terminal_errors else f"{summary}\n{stderr}").lower()
-    if any(
+    if re.search(r"\b(?:401|403)\b", text) or any(
         token in text
         for token in (
             "invalid api key",
-            "401",
-            "403",
+            "invalid_api_key",
             "unauthorized",
             "forbidden",
             "refresh token",
@@ -143,15 +142,12 @@ def classify_worker_failure(summary: str, exit_code: int | None, stderr: str = "
         )
     ):
         return "auth"
-    if any(token in text for token in ("rate limit", "429", "too many requests")):
+    if re.search(r"\b429\b", text) or any(token in text for token in ("rate limit", "too many requests")):
         return "rate_limit"
-    if any(
+    if re.search(r"\b50[234]\b", text) or any(
         token in text
         for token in (
             "5xx",
-            "502",
-            "503",
-            "504",
             "econn",
             "network",
             "registry",

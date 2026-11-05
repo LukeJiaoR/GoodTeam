@@ -8,7 +8,17 @@ import pytest
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.graph import render_downstream_artifact_markdown
 from goodteam_os.state import create_initial_state
-from goodteam_os.workers import WorkerJobStore
+from goodteam_os.workers import WorkerJobStore, classify_worker_failure
+
+
+def test_terminal_provider_error_preserves_auth_and_status_semantics():
+    noise = "Source excerpt: authentication; 401 Unauthorized; 403 Forbidden\n"
+    for error, expected in (
+        ('{"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}', "auth"),
+        ("exceeded retry limit, last status: 429 Too Many Requests", "rate_limit"),
+        ("unexpected status 503 Service Unavailable, request id: ce824bd81efe2535116403728f3ca436d", "network"),
+    ):
+        assert classify_worker_failure("Codex CLI exited with code 1.", 1, noise + "ERROR: " + error) == expected
 
 
 @pytest.mark.parametrize("host_timeout", [False, True])
