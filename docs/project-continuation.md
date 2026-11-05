@@ -93,6 +93,11 @@ to unlock the queue.
    `expected_run_id` and `expected_retry_version`. This captures an exact retained
    candidate and queues the configured release Reviewer profiles against the
    read-only `workflow_recovery` artifact. Protected Skill Workflows are excluded.
+   The artifact retains the latest QA attempt's exact report content, path and
+   hash (or explicitly records an unavailable report). New Reviewer inputs also
+   include run-scoped advisory messages addressed to Review. A new QA attempt or
+   changed QA report requires preparing and reviewing a new recovery artifact;
+   older recovery artifacts must be prepared again to acquire this binding.
 2. Run those jobs through `POST /api/reviewer-jobs/run`, supplying `project_key`,
    `run_id`, `approval: "release"`, `artifact_key: "workflow_recovery"` and the
    returned artifact version. Failed Reviewer invocations use the existing

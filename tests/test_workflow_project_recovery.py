@@ -1,6 +1,7 @@
 """A failed parent keeps its identity while its confirmed recovery uses the pool."""
 import json
 import os
+from hashlib import sha256
 from pathlib import Path
 import sys
 import time
@@ -8,6 +9,7 @@ import time
 import pytest
 
 from goodteam_os import project_iteration_continuation as continuation, web
+from goodteam_os.messages import append_message
 from goodteam_os.project_iteration import project_iteration_backlog
 from goodteam_os.project_iteration_execution import iteration_batch_report
 from goodteam_os.project_iteration_planner import plan_next_iteration
@@ -103,6 +105,9 @@ event('end')
         context="Original task", project_key="DEMO", workflow_workspace=state.repository_baseline)
     assert workers.run_job(qa["id"])["status"] == "completed"
     qa_bytes = (workers.root / qa["id"] / "result.md").read_bytes()
+    feedback = "Reproduce the retained SF09 failure before choosing recovery work."
+    append_message(tmp_path, "DEMO", state.run_id, from_role="human", to=["review"],
+                   kind="reject", body=feedback)
     endpoint = "/api/projects/DEMO/task-assistant/actions"
 
     def action(request, expected=200):
@@ -117,6 +122,12 @@ event('end')
     with pytest.raises(web.ProjectApiError, match="current failed"):
         action({**selected, "expected_run_id": "another-parent"})
     record = prepared["workflow_recovery"]
+    qa_report = record["inputs"]["qa_report"]
+    assert qa_report["job_id"] == qa["id"]
+    assert qa_report["report_version"] == "sha256:" + sha256(qa_bytes).hexdigest()
+    assert qa_report["content"] == qa_bytes.decode()
+    reviewer_context = workers.root / prepared["reviewer_jobs"][0]["id"] / "context.md"
+    assert feedback in reviewer_context.read_text()
     assert prepared["approval_unchanged"] and not (source / "app.txt").exists()
     reference = {"run_id": state.run_id, "version": record["version"]}
     ledger = LocalTaskStore(source, "DEMO")
@@ -146,6 +157,9 @@ event('end')
     (slot / "app.txt").write_text("changed after review preparation\n")
     assert web.run_queued_reviewer_jobs_action(tmp_path, review_request)[0] == 409
     (slot / "app.txt").write_bytes(original_app)
+    (workers.root / qa["id"] / "result.md").write_bytes(qa_bytes + b"\nChanged finding.\n")
+    assert web.run_queued_reviewer_jobs_action(tmp_path, review_request)[0] == 409
+    (workers.root / qa["id"] / "result.md").write_bytes(qa_bytes)
     code, reviewed = web.run_queued_reviewer_jobs_action(tmp_path, review_request)
     assert code == 200 and reviewed["ran_count"] == 1 and reviewed["approval_unchanged"], reviewed
     with pytest.raises(web.ProjectApiError, match="Land the exact"):
