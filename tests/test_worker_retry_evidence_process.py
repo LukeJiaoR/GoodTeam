@@ -1,5 +1,6 @@
 """Actual offline CLI boundaries: retry evidence, host timeout, and artifact copy."""
 import json
+from dataclasses import replace
 from pathlib import Path
 import sys
 
@@ -8,7 +9,48 @@ import pytest
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.graph import render_downstream_artifact_markdown
 from goodteam_os.state import create_initial_state
-from goodteam_os.workers import WorkerJobStore, classify_worker_failure
+from goodteam_os.workers import CLI_BACKENDS, WorkerJobStore, classify_worker_failure
+
+
+def test_configured_cli_deadline_is_captured_before_process_execution(tmp_path, monkeypatch):
+    monkeypatch.setattr("goodteam_os.workers.default_embedder", lambda: None)
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "1")
+    monkeypatch.delenv("GOODTEAM_CLI_WORKER_TIMEOUT_SECONDS", raising=False)
+    script = "import sys,time; sys.stdin.read(); time.sleep(1.25); print('Synthetic bounded delivery')"
+    monkeypatch.setitem(CLI_BACKENDS, "claude", replace(
+        CLI_BACKENDS["claude"], build_command=lambda *_args: [sys.executable, "-c", script],
+    ))
+    monkeypatch.setattr("goodteam_os.workers.which", lambda _name: sys.executable)
+    workers = WorkerJobStore(tmp_path)
+
+    def create():
+        return workers.create_job(run_id="bounded", role="implementation", adapter="claude",
+                                  task="Offline bounded delivery", context="Synthetic process only")
+
+    legacy = create()
+    assert legacy["cli_timeout_seconds"] == 1800
+    legacy_path = workers.root / legacy["id"] / "job.json"
+    legacy.pop("cli_timeout_seconds")
+    legacy_path.write_text(json.dumps(legacy))
+    monkeypatch.setenv("GOODTEAM_CLI_WORKER_TIMEOUT_SECONDS", "1")
+    short = create()
+    monkeypatch.setenv("GOODTEAM_CLI_WORKER_TIMEOUT_SECONDS", "3")
+    longer = create()
+
+    failed = workers.run_job(short["id"])
+    assert failed["status"] == "failed" and failed["failure_class"] == "timeout"
+    assert failed["timeout_seconds"] == 1 and failed["attempts"] == 1
+    failed_bytes = (workers.root / short["id"] / "status.json").read_bytes()
+    completed = workers.run_job(longer["id"])
+    assert completed["status"] == "completed" and completed["timeout_seconds"] == 3
+    assert (workers.root / short["id"] / "status.json").read_bytes() == failed_bytes
+    assert workers.run_job(legacy["id"])["timeout_seconds"] == 1800
+
+    before = set(workers.root.iterdir())
+    monkeypatch.setenv("GOODTEAM_CLI_WORKER_TIMEOUT_SECONDS", "3601")
+    with pytest.raises(ValueError, match="timeout"):
+        create()
+    assert set(workers.root.iterdir()) == before
 
 
 def test_terminal_provider_error_preserves_auth_and_status_semantics():

@@ -85,6 +85,8 @@ WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
 WORKER_MAX_ATTEMPTS = 3
 WORKER_RETRY_BACKOFF_SECONDS = (2, 8, 30)
+CLI_WORKER_TIMEOUT_SECONDS = 1800
+CLI_WORKER_MAX_TIMEOUT_SECONDS = 3600
 PI_OVERALL_TIMEOUT_SECONDS = 1800
 WORKER_JOB_IDENTITY_FIELDS = (
     "profile_id",
@@ -177,6 +179,21 @@ def _worker_attempt_limit(job: dict[str, Any]) -> int:
     if type(captured) is not int or not 1 <= captured <= WORKER_MAX_ATTEMPTS:
         raise ValueError("Worker max_attempts is invalid.")
     return min(int(raw_limit), captured)
+
+
+def _cli_worker_timeout_seconds(value: object) -> int:
+    if type(value) is not int or not 1 <= value <= CLI_WORKER_MAX_TIMEOUT_SECONDS:
+        raise ValueError("CLI Worker timeout must be an integer between 1 and 3600 seconds.")
+    return value
+
+
+def _configured_cli_worker_timeout_seconds() -> int:
+    raw = os.environ.get("GOODTEAM_CLI_WORKER_TIMEOUT_SECONDS", str(CLI_WORKER_TIMEOUT_SECONDS))
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError("GOODTEAM_CLI_WORKER_TIMEOUT_SECONDS must be an integer between 1 and 3600.") from None
+    return _cli_worker_timeout_seconds(value)
 
 
 def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -1108,7 +1125,9 @@ class WorkerJobStore:
             if {"task": task, "context": context, "constraints": constraints or [],
                     "expected_artifacts": expected_artifacts or []} != task_worker_fields(task_input):
                 raise TaskInputError("task_input_operation_conflict")
-        max_attempts = _worker_attempt_limit({}) if adapter in CLI_BACKENDS and task_input is None else None
+        ordinary_cli = adapter in CLI_BACKENDS and task_input is None
+        max_attempts = _worker_attempt_limit({}) if ordinary_cli else None
+        cli_timeout = _configured_cli_worker_timeout_seconds() if ordinary_cli else None
         job_id = task_input.job_id if task_input is not None else f"job-{uuid4()}"
         job_root = self.root / job_id
         if task_input is not None and isinstance(task_input, CorrectionAttemptInput):
@@ -1140,6 +1159,7 @@ class WorkerJobStore:
         }
         if max_attempts is not None:
             job["max_attempts"] = max_attempts
+            job["cli_timeout_seconds"] = cli_timeout
         if workflow_workspace is not None:
             from goodteam_os.workflow_workspace import context_for_job
 
@@ -2410,7 +2430,7 @@ class WorkerJobStore:
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
         reject_unverified_runtime_entry(job_root, job)
-        self._admit_input_dispatch(job_root, job)
+        task_input = self._admit_input_dispatch(job_root, job)
         binary = which(spec.which_name) or spec.default_path()
         raw = str(job.get("model", ""))
         bare = raw.split(":", 1)[1].strip() if ":" in raw else raw.strip()
@@ -2495,6 +2515,8 @@ class WorkerJobStore:
             runtime_context=runtime_context,
             runtime_evidence=runtime_evidence,
             use_pty=spec.needs_pty,
+            timeout_seconds=(CLI_WORKER_TIMEOUT_SECONDS if task_input is not None else
+                             _cli_worker_timeout_seconds(job.get("cli_timeout_seconds", CLI_WORKER_TIMEOUT_SECONDS))),
         )
 
     def _run_native_correction(self, job_root, job):
@@ -2692,6 +2714,7 @@ class WorkerJobStore:
                 timeout_seconds = min(timeout_seconds, int(authority.assert_dispatchable(task_input)))
                 if timeout_seconds < 1:
                     raise ValueError("correction_time_budget_exhausted")
+            base_extra["timeout_seconds"] = timeout_seconds
             self._input_receipt(job_root, job, prompt, stage="transport_attempt")
             if use_pty:
                 # The PTY path manages its own child process internally; we don't
