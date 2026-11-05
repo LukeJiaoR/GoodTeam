@@ -37,8 +37,18 @@ def block_release_candidate(state, error):
 
 def _blocked():
     return ReleaseCandidateError('Release correction is missing or stale. Retry delivery and review it again; '
-                        'the current implementation job must return job-local release-notes.md. '
+                        'the current implementation job must return the complete release document in its final response '
+                        'or an exact job-local release-notes.md. '
                         'The rejected template was not substituted.')
+
+
+def _complete_release_result(content):
+    if not content:
+        return False
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    return (lines[0] == '# Release Notes' and all(heading in lines for heading in (
+        '## Release Identity', '## Verification', '## Risks and Limitations', '## Rollback',
+    )))
 
 
 def capture_release_candidate(state, workspace, project_config, results):
@@ -78,9 +88,15 @@ def capture_release_candidate(state, workspace, project_config, results):
         if job.get('workflow_workspace') != baseline:
             raise _blocked()
         validate_workflow_job_context(runtime, job)
-    source = job_root / 'release-notes.md'
+    source = job_root / 'result.md'
     content = current_job_artifact(job_root, {'result_path': str(source)},
-                                   artifact_key='release_notes', filename='release-notes.md')
+                                   artifact_key='release_notes', filename='result.md')
+    if not _complete_release_result(content):
+        # Legacy file-producing adapters still have to supply this exact file
+        # under the current job. Shared workspace documents are never inputs.
+        source = job_root / 'release-notes.md'
+        content = current_job_artifact(job_root, {'result_path': str(source)},
+                                       artifact_key='release_notes', filename='release-notes.md')
     if content is None:
         raise _blocked()
     path = Path(workspace) / 'artifacts' / 'runs' / state.run_id / 'release_candidates' / f'{uuid4().hex}.md'

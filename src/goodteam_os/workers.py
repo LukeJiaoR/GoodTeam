@@ -1581,6 +1581,9 @@ class WorkerJobStore:
                 copy2(source, target)
                 copied_paths[str(source)] = str(target)
                 retained_status[f"{name}_path"] = str(target)
+        release_notes = job_root / "release-notes.md"
+        if release_notes.is_file() and release_notes.resolve().is_relative_to(job_root.resolve()):
+            copy2(release_notes, retained / release_notes.name)
         # Output aliases must refer to the retained bytes, without changing the
         # live outcome's nested evidence or its private prompt/transport identity.
         evidence = status.get("invocation_evidence")
@@ -2706,6 +2709,11 @@ class WorkerJobStore:
         stdout_path.write_text("", encoding="utf-8")
         stderr_path.write_text("", encoding="utf-8")
         process: subprocess.Popen[str] | None = None
+        if job.get("role") == "implementation" and "release-notes.md" in job.get("expected_artifacts", []):
+            # The final-response transport owns this file, outside the Worker
+            # workspace. Never reuse an earlier attempt's release document.
+            result_path.write_text("", encoding="utf-8")
+            (job_root / "release-notes.md").unlink(missing_ok=True)
         stop_heartbeat = threading.Event()
         returncode = 1
         transport_ref = None
@@ -2887,10 +2895,13 @@ class WorkerJobStore:
             if markdown_artifact else "At the end, summarize changed files, verification commands, and unresolved risks."
         )
         if job.get("role") == "implementation" and "release-notes.md" in job.get("expected_artifacts", []):
-            final_output_instruction += (
-                f" The release change request requires a complete corrected release document at {job_root / 'release-notes.md'}."
-                " Write it in this exact job-local path, not only in shared docs. Preserve verified corrections,"
-                " unresolved risks and skipped checks; do not invent rollback instructions or evidence."
+            final_output_instruction = (
+                "Return the complete corrected release document as your final assistant response, starting with "
+                "'# Release Notes' and including '## Release Identity', '## Verification', "
+                "'## Risks and Limitations', and '## Rollback'. The adapter saves this response as the current "
+                "job result; do not write into controller job directories or return a changed-files summary. "
+                "A workspace copy is optional and cannot substitute for the final response. Preserve verified "
+                "corrections, unresolved risks and skipped checks; do not invent rollback instructions or evidence."
                 " QA and staging after this job are not yet verified; describe those checks as pending."
                 " The controller will retain these bytes for release review; missing output blocks release."
             )
