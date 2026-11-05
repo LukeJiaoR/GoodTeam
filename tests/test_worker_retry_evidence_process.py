@@ -8,7 +8,17 @@ import pytest
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.graph import render_downstream_artifact_markdown
 from goodteam_os.state import create_initial_state
-from goodteam_os.workers import WorkerJobStore
+from goodteam_os.workers import WorkerJobStore, classify_worker_failure
+
+
+def test_terminal_provider_error_preserves_auth_and_status_semantics():
+    noise = "Source excerpt: authentication; 401 Unauthorized; 403 Forbidden\n"
+    for error, expected in (
+        ('{"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}', "auth"),
+        ("exceeded retry limit, last status: 429 Too Many Requests", "rate_limit"),
+        ("unexpected status 503 Service Unavailable, request id: ce824bd81efe2535116403728f3ca436d", "network"),
+    ):
+        assert classify_worker_failure("Codex CLI exited with code 1.", 1, noise + "ERROR: " + error) == expected
 
 
 @pytest.mark.parametrize("host_timeout", [False, True])
@@ -30,7 +40,9 @@ if sys.argv[2]=='host':
     time.sleep(5)
 if attempt==1:
     print('first synthetic output',flush=True)
-    sys.stderr.write('Provider request timeout')
+    sys.stderr.write('Source excerpt: authentication; 401 Unauthorized; 403 Forbidden\\n'
+                     'artifact_sha256=ce824bd81efe2535116403728f3ca436dc6b9413de8f7a959c18\\n'
+                     'ERROR: unexpected status 503 Service Unavailable')
     sys.exit(1)
 print('# Synthetic report')
 print('Changed src/example.py.')
@@ -59,7 +71,7 @@ print('Verification: isolated checks passed.')
     assert status["disposition"] == ("human_handoff" if host_timeout else "recovered")
     archives = [json.loads(Path(item["status_path"]).read_text()) for item in status["attempt_history"]]
     assert archives[0]["attempts"] == 1
-    assert archives[0]["failure_class"] == "timeout"
+    assert archives[0]["failure_class"] == ("timeout" if host_timeout else "network")
     assert archives[0]["disposition"] == ("human_handoff" if host_timeout else "retrying")
     for archive, entry in zip(archives, status["attempt_history"]):
         for field in ("stdout_path", "stderr_path", "result_path"):
@@ -68,7 +80,7 @@ print('Verification: isolated checks passed.')
     if host_timeout:
         return
     assert Path(archives[0]["stdout_path"]).read_text().strip() == "first synthetic output"
-    assert Path(archives[0]["stderr_path"]).read_text() == "Provider request timeout"
+    assert Path(archives[0]["stderr_path"]).read_text().endswith("ERROR: unexpected status 503 Service Unavailable")
     assert archives[1]["disposition"] == "completed"
     assert "failure_class" not in archives[1]
     state = create_initial_state("run-synthetic", "SYNTHETIC", "Validate synthetic evidence")
