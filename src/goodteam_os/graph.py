@@ -2085,7 +2085,7 @@ def implementation_worker_job_specs(
                 "Report QA status for this verification stage. Controller-owned release evidence sealing/binding, an independent release Reviewer, and final human approval happen after QA; list them as pending downstream work, not QA blockers solely because they have not happened yet. Actual implementation failures, missing required verification evidence, and environment blockers must still be reported as failed, blocked, or unknown. A QA pass does not mean release approval or complete workflow acceptance.",
                 "Do not require external network services.",
                 "Do not leave long-running dev servers in the foreground; use bounded smoke checks and clean up background processes.",
-                "Begin result.md with one explicit Status: passed, Status: failed, Status: blocked, or Status: unknown line.",
+                "Begin your final assistant response with one explicit Status: passed, Status: failed, Status: blocked, or Status: unknown line. The controller saves that response as the job's result.md; writing a separate repository result.md does not supply the controller's QA verdict.",
                 "Record each exact verification command, exit code, tests executed, and any environment blocker. Agent completion is not tests passing; missing evidence is unknown.",
             ],
             "expected_artifacts": qa_expected_artifacts(delivery_mode),
@@ -2118,6 +2118,9 @@ def run_worker_job_with_retry(
         job_id = str(job["id"])
         attempt_job_ids.append(job_id)
         result = store.run_job(job_id)
+        # Builtin adapters also write this host-owned file, but older receipts
+        # omit its path. Validate their actual verdict rather than process exit.
+        result.setdefault("result_path", str(store.root / job_id / "result.md"))
         if fields.get("workflow_workspace"):
             from goodteam_os.workflow_workspace import collect_workflow_workspace
 
@@ -2427,16 +2430,18 @@ def qa_result_reports_failure(result: dict[str, object]) -> bool:
         return False
     result_path = result.get("result_path")
     if not result_path:
-        return False
+        return True
     path = Path(str(result_path))
     if not path.is_file():
-        return False
+        return True
     content = path.read_text(encoding="utf-8").lower()
     status_line = next(
         (line.strip() for line in content.splitlines() if line.strip().startswith("status:")),
         "",
     )
-    if status_line and any(marker in status_line for marker in ["fail", "blocked", "not ready"]):
+    # Process completion is not QA success. Missing, unknown, or malformed
+    # verdicts must block delivery just like an explicit failed verdict.
+    if status_line not in {"status: passed", "status: pass"}:
         return True
     return "release-blocking" in content and any(marker in content for marker in ["fail", "blocked"])
 
