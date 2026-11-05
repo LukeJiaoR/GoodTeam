@@ -1,6 +1,7 @@
 """Release corrections travel through the current CLI result, not shared files."""
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -86,6 +87,88 @@ def test_release_correction_captures_cli_result_and_preserves_qa_binding(release
     qa.write_text("Status: failed\n")
     with pytest.raises(ReleaseCandidateError):
         validated_release_candidate(state, tmp_path / "workspace")
+
+
+def test_collection_failure_retains_worker_and_retries_before_downstream_qa(tmp_path, monkeypatch):
+    from goodteam_os import graph
+    from goodteam_os.workflow_workspace import prepare_workflow_workspace, workspace_for_workflow
+
+    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(tmp_path / "operator"))
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "1")
+    monkeypatch.setattr("goodteam_os.workers.default_embedder", lambda: None)
+    root = tmp_path / "project"
+    root.mkdir()
+    for args in [("init", "-q"), ("config", "user.name", "Collection fixture"),
+                 ("config", "user.email", "collection@example.invalid")]:
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    (root / "README.md").write_text("Original source\n")
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "-c", "commit.gpgSign=false", "commit", "-qm", "Baseline"], check=True)
+    config = tmp_path / "project.yaml"
+    config.write_text(f"name: Collection\nkey: COLLECTION\nrepos:\n  root: {root}\n")
+    state = create_initial_state("collection-run", "COLLECTION", "Deliver a reviewed project iteration")
+    state.change_requests["release"] = "Complete the delivery evidence."
+    state.repository_baseline = prepare_workflow_workspace(root, project_key=state.project_key, run_id=state.run_id)
+    state.pending_transition = {"id": "first-delivery"}
+    specs = [{"run_id": state.run_id, "role": role, "adapter": "claude", "model": "synthetic", "task": "Offline collection fixture",
+              "context": "", "expected_artifacts": ["release-notes.md"] if role == "implementation" else []}
+             for role in ("implementation", "qa")]
+    monkeypatch.setattr(graph, "implementation_worker_job_specs", lambda *_args, **_kwargs: specs)
+    calls = tmp_path / "calls"
+    script = """import pathlib,shutil,subprocess,sys
+sys.stdin.read()
+role=sys.argv[1]
+calls=pathlib.Path(sys.argv[2])
+previous=calls.read_text() if calls.exists() else ''
+calls.write_text(previous+role+'\\n')
+if role=='implementation':
+    nested=pathlib.Path('.release-checkout')
+    if not previous:
+        nested.mkdir()
+        subprocess.run(['git','init','-q',str(nested)],check=True)
+        pathlib.Path('worker.txt').write_text('Retained first output\\n')
+    else:
+        assert pathlib.Path('worker.txt').read_text()=='Retained first output\\n'
+        shutil.rmtree(nested)
+pathlib.Path(sys.argv[3]).write_text(sys.argv[4])
+"""
+
+    def offline(self, job_root, current, _spec):
+        return self._run_cli_worker(job_root, current,
+            command=[sys.executable, "-c", script, current["role"], str(calls), str(job_root / "result.md"),
+                     DOCUMENT if current["role"] == "implementation" else "Status: passed\nOffline checks passed.\n"],
+            model="synthetic", preflight={}, label="Offline collection", capture="output_file",
+            summarize=lambda code, _stderr: f"Offline collection exit {code}", timeout_seconds=10)
+
+    monkeypatch.setattr(WorkerJobStore, "_run_cli_backend", offline)
+    graph.run_delivery_until_release_gate(state, tmp_path / "workspace", config)
+
+    assert state.current_node == "implementation"
+    assert any(".release-checkout/" in blocker for blocker in state.blockers)
+    assert state.release_candidate == {}
+    assert calls.read_text() == "implementation\n"
+    store = WorkerJobStore(root)
+    first = store.list_jobs()[0]
+    assert first["status"] == "completed"
+    result_path = store.root / first["id"] / "result.md"
+    status_path = store.root / first["id"] / "status.json"
+    original = (result_path.read_bytes(), status_path.read_bytes())
+    execution_root = workspace_for_workflow(root, state.repository_baseline,
+                                           project_key=state.project_key, run_id=state.run_id)
+    assert (execution_root / ".release-checkout/.git").is_dir()
+    assert not (root / "worker.txt").exists()
+
+    state.pending_transition = {"id": "explicit-retry"}
+    state.blockers = []
+    graph.run_delivery_until_release_gate(state, tmp_path / "workspace", config)
+
+    assert state.next_node == "await_release_approval"
+    assert state.blockers == []
+    assert calls.read_text() == "implementation\nimplementation\nqa\n"
+    assert original == (result_path.read_bytes(), status_path.read_bytes())
+    assert len(store.list_jobs()) == 3
+    assert (execution_root / "worker.txt").read_text() == "Retained first output\n"
+    assert not (root / "worker.txt").exists()
 
 
 @pytest.mark.parametrize("output", ["Changed files: shared release-notes.md", "NO_OUTPUT"])

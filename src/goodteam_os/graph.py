@@ -1941,6 +1941,8 @@ def run_implementation_workers(
             retry_on_classes=retry_on_classes, state=state, workspace=workspace,
         )
         results.append(result)
+        if result.get("failure_class") == "artifact_validation" and worker_result_reports_failure(result):
+            break
         if (job_spec["role"] == "implementation" and result.get("status") == "completed"
                 and state.change_requests.get("release", "").strip()):
             from goodteam_os.release_artifacts import ReleaseCandidateError, capture_release_candidate
@@ -2127,13 +2129,21 @@ def run_worker_job_with_retry(
         # omit its path. Validate their actual verdict rather than process exit.
         result.setdefault("result_path", str(store.root / job_id / "result.md"))
         if fields.get("workflow_workspace"):
-            from goodteam_os.workflow_workspace import collect_workflow_workspace
+            from goodteam_os.workflow_workspace import WorkflowWorkspaceError, collect_workflow_workspace
 
-            result["repository_result"] = collect_workflow_workspace(
-                store.project_root, fields["workflow_workspace"],
-                project_key=state.project_key, run_id=state.run_id,
-            )
-            if workspace is not None and job_spec["role"] in {"ui", "implementation", "qa"}:
+            try:
+                result["repository_result"] = collect_workflow_workspace(
+                    store.project_root, fields["workflow_workspace"],
+                    project_key=state.project_key, run_id=state.run_id,
+                )
+            except WorkflowWorkspaceError as exc:
+                # Keep the CLI receipt unchanged; collection owns a separate
+                # failure that must settle before a fresh explicit attempt.
+                result = {**result, "status": "failed", "failure_class": "artifact_validation",
+                          "summary": f"Workflow result collection failed: {exc}"}
+                result.pop("repository_result", None)
+            if ("repository_result" in result and workspace is not None
+                    and job_spec["role"] in {"ui", "implementation", "qa"}):
                 from goodteam_os.delivery_changes import retain_delivery_changes
 
                 retain_delivery_changes(workspace, state, result["repository_result"],
