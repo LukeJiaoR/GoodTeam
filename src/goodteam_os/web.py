@@ -408,11 +408,20 @@ def _run_queued_reviewer_jobs_for_current_run(
         return 409, {"error": "run_id does not match the active project run"}
 
     current_gate = current_approval_gate(state)
+    recovery_review = not current_gate and request.get("artifact_key") == "workflow_recovery"
+    if recovery_review:
+        from goodteam_os.workflow_recovery import candidate
+
+        try:
+            candidate(workspace, state)
+        except ValueError as exc:
+            return 409, {"error": str(exc)}
+        current_gate = "release"
     requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
     if not current_gate or requested_gate != current_gate:
         return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
 
-    artifact_key = _approval_artifact_for_gate(current_gate)
+    artifact_key = "workflow_recovery" if recovery_review else _approval_artifact_for_gate(current_gate)
     requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
     if requested_artifact_key and requested_artifact_key != artifact_key:
         return 409, {"error": "artifact_key does not match the current approval gate"}
@@ -529,11 +538,20 @@ def _retry_failed_reviewer_jobs_for_current_run(
         return 409, {"error": "run_id does not match the active project run"}
 
     current_gate = current_approval_gate(state)
+    recovery_review = not current_gate and request.get("artifact_key") == "workflow_recovery"
+    if recovery_review:
+        from goodteam_os.workflow_recovery import candidate
+
+        try:
+            candidate(workspace, state)
+        except ValueError as exc:
+            return 409, {"error": str(exc)}
+        current_gate = "release"
     requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
     if not current_gate or requested_gate != current_gate:
         return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
 
-    artifact_key = _approval_artifact_for_gate(current_gate)
+    artifact_key = "workflow_recovery" if recovery_review else _approval_artifact_for_gate(current_gate)
     requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
     if requested_artifact_key and requested_artifact_key != artifact_key:
         return 409, {"error": "artifact_key does not match the current approval gate"}
@@ -4976,6 +4994,14 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str,
             code = {"active_attempt": "retry_attempt_active", "attempt_unknown": "retry_attempt_unknown"}.get(target["reason"], "retry_not_available")
             raise ProjectApiError(code, "This task cannot be retried from the displayed attempt. Refresh to inspect its current state.", 409,
                                   recovery=["refresh"])
+        from goodteam_os.project_iteration_continuation import pending_project_batch
+
+        session = TaskAssistantSessionStore(workspace, key).read()
+        continuation = session.get("project_continuation") or {}
+        if ((continuation.get("workflow_recovery") or {}).get("run_id") == state.run_id
+                and (continuation.get("status") == "active"
+                     or pending_project_batch(session, Path(context["root"]), key))):
+            raise ProjectApiError("workflow_recovery_pending", "Stop future recovery work and settle its admitted batch before retrying the parent.", 409)
         append_action(workspace, run_id=state.run_id, project_key=key, actor="human",
                       action="blocked_workflow_retry_started", before_node=state.next_node,
                       workflow_operation_id=uuid4().hex,
@@ -6410,6 +6436,15 @@ def handle_project_api_post(
                 result["projection_unavailable"] = True
             return 200, result
         key, target, root = _project_target_and_root(workspace, key)
+        if action == "prepare_workflow_recovery":
+            from goodteam_os.workflow_recovery import prepare
+
+            if set(request) - {"action", "expected_run_id", "expected_retry_version"}:
+                raise ProjectApiError("workflow_recovery_input_invalid", "Select only the displayed failed task attempt.", 409)
+            try:
+                return 200, prepare(workspace, key, request)
+            except (ValueError, OSError) as exc:
+                raise ProjectApiError("workflow_recovery_unavailable", str(exc), 409) from exc
         if action in {"retry_project_batch", "abandon_project_batch"}:
             from goodteam_os.project_iteration_recovery import recover_project_batch
 

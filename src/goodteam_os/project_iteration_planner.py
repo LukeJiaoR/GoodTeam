@@ -208,7 +208,11 @@ def _require_planning_idle(workspace: Path, project_key: str) -> None:
     current = StateStore(workspace).read_project_current(project_key)
     if (current is not None and current.current_node not in {"complete", "rejected"}
             and current.next_node != "rejected"):
-        raise ValueError("Finish or stop the active workflow before selecting another iteration.")
+        from goodteam_os.workflow_recovery import linked_parent
+
+        continuation = TaskAssistantSessionStore(workspace, project_key).read().get("project_continuation") or {}
+        if linked_parent(workspace, project_key, continuation_id=continuation.get("id")) is None:
+            raise ValueError("Finish or stop the active workflow before selecting another iteration.")
     goal_db = workspace / "state" / "goals.sqlite3"
     if goal_db.is_file():
         from goodteam_os.goals import GoalStore
@@ -254,7 +258,11 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             return {"iteration_choice": previous, "workflow_started": False, "reused": True}
         proposed = session.get("proposed_task")
         if isinstance(proposed, dict) and proposed.get("status") != "cancelled":
-            raise ValueError("Resolve the current task proposal before planning another iteration.")
+            from goodteam_os.workflow_recovery import linked_parent
+
+            continuation = session.get("project_continuation") or {}
+            if linked_parent(workspace, project_key, continuation_id=continuation.get("id")) is None:
+                raise ValueError("Resolve the current task proposal before planning another iteration.")
         _require_planning_idle(workspace, project_key)
         context = {
             "schema_version": "project_iteration_choice_packet.v1",

@@ -51,6 +51,22 @@ def _event(store, identifier, event, details):
     store.append_event(identifier, event, actor="system", details=details)
 
 
+def pending_project_batch(session, root, project_key):
+    """Keep uncertain/admitted work; release only settled or unclaimed intent."""
+    pending = (session.get(_FIELD) or {}).get("pending_batch")
+    if not pending:
+        return None
+    known = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
+    settled = all(known.get(identifier, {}).get("status") == "done"
+                  and known[identifier].get("delivery_verified") for identifier in pending["task_ids"])
+    admitted = any(set(batch.get("proposal_ids", [])) & set(pending["proposal_ids"])
+                   for batch in session.get("project_task_batches", {}).values())
+    unclaimed = (not pending.get("run_id") and not admitted
+                 and all(known.get(identifier, {}).get("status") == "todo"
+                         and not known[identifier].get("run_id") for identifier in pending["task_ids"]))
+    return None if settled or unclaimed else pending
+
+
 def configure_project_continuation(*, workspace, project_key, root, project_config, request):
     """Confirm existing task identities and finite iteration/model-call limits."""
     from goodteam_os.project_import import read_bound_project_readiness
@@ -64,6 +80,9 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     ids = request.get("task_ids")
     maximum = request.get("max_batches")
     discovery = normalize_discovery(request.get("discovery"))
+    recovery = request.get("workflow_recovery")
+    if recovery is not None and (not isinstance(recovery, dict) or set(recovery) != {"run_id", "version"} or discovery):
+        raise ValueError("Recovery binds one failed Workflow and a fixed finite task inventory.")
     if not isinstance(key, str) or not 1 <= len(key) <= 256:
         raise ValueError("A stable continuation command identity is required.")
     if (not isinstance(ids, list) or not 1 <= len(ids) <= 128
@@ -74,29 +93,25 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     workspace, root, project_config = Path(workspace), Path(root), Path(project_config)
     store = TaskAssistantSessionStore(workspace, project_key)
     identity = sha256(key.encode()).hexdigest()[:32]
-    with goal_guard(workspace, project_key):
+    from goodteam_os.workflow_mutations import workflow_guard
+    from goodteam_os.workflow_recovery import confirm_parent
+
+    with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
         current = store.read().get(_FIELD) or {}
         if current.get("id") == identity:
             if (current.get("seed_task_ids", current.get("task_ids")) != ids or current.get("max_batches") != maximum
                     or current.get("discovery") != discovery
-                    or current.get("approved_backlog_version") != request.get("expected_backlog_version")):
+                    or current.get("approved_backlog_version") != request.get("expected_backlog_version")
+                    or ({key: current["workflow_recovery"].get(key) for key in ("run_id", "version")}
+                        if current.get("workflow_recovery") else None) != recovery):
                 raise ValueError("Continuation command was already used with different scope or limits.")
             return current
-        pending = current.get("pending_batch")
-        if pending:
-            known = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
-            settled = all(known.get(identifier, {}).get("status") == "done"
-                          and known[identifier].get("delivery_verified") for identifier in pending["task_ids"])
-            admitted = any(set(batch.get("proposal_ids", [])) & set(pending["proposal_ids"])
-                           for batch in store.read().get("project_task_batches", {}).values())
-            unclaimed = (not pending.get("run_id") and not admitted
-                         and all(known.get(identifier, {}).get("status") == "todo"
-                                 and not known[identifier].get("run_id") for identifier in pending["task_ids"]))
-            if settled or unclaimed:
-                pending = None
+        pending = pending_project_batch(store.read(), root, project_key)
         if current.get("status") == "active" or pending:
             raise ValueError("Stop the existing continuation and settle its current batch first.")
-        if active_project_run(workspace, project_key):
+        if recovery is not None:
+            recovery = confirm_parent(workspace, project_key, root, recovery)
+        if active_project_run(workspace, project_key) and recovery is None:
             raise ValueError("Finish the active workflow before starting project continuation.")
         require_no_active_project_goal(workspace, project_key)
         try:
@@ -131,6 +146,7 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
             "planning_backlog_version": "", "reason": "authorized",
             "authority": authority_snapshot(workspace, project_key, project_config, root),
             "created_at": datetime.now(UTC).isoformat(),
+            **({"workflow_recovery": recovery} if recovery is not None else {}),
         }
         if discovery:
             value.update(discovery=discovery, seed_task_ids=list(ids), discovered_task_ids=[], new_tasks_created=0,
@@ -181,7 +197,10 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             if value["authority"] != authority_snapshot(workspace, project_key, project_config, root):
                 raise ValueError("Project configuration, Team or model settings changed; authorization is stale.")
             require_no_active_project_goal(workspace, project_key)
-            if active_project_run(workspace, project_key):
+            from goodteam_os.workflow_recovery import linked_parent
+
+            parent = linked_parent(workspace, project_key, continuation_id=value["id"]) if value.get("workflow_recovery") else None
+            if active_project_run(workspace, project_key) and parent is None:
                 raise ValueError("Another Workflow owns the project; continuation is paused.")
             known, selected = _scope_tasks(value, LocalTaskStore(root, project_key).list_tasks())
             pending = value.get("pending_batch")

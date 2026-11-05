@@ -81,6 +81,42 @@ Read an existing batch report at
 response contains `task_assistant_session.project_continuation` and
 `project_task_batches` for status and review presentation.
 
+## Recover an unfinished ordinary Workflow
+
+A failed ordinary Workflow can retain useful application changes while still
+requiring work through the parallel project pool. Keep its original failed task
+and QA evidence open. Do not replace its registered repository or mark it done
+to unlock the queue.
+
+1. Once its writing attempts are idle and known, call the existing Task
+   Assistant action `prepare_workflow_recovery` with the displayed
+   `expected_run_id` and `expected_retry_version`. This captures an exact retained
+   candidate and queues the configured release Reviewer profiles against the
+   read-only `workflow_recovery` artifact. Protected Skill Workflows are excluded.
+2. Run those jobs through `POST /api/reviewer-jobs/run`, supplying `project_key`,
+   `run_id`, `approval: "release"`, `artifact_key: "workflow_recovery"` and the
+   returned artifact version. Failed Reviewer invocations use the existing
+   Reviewer retry action. These reports are advisory; they neither approve the
+   parent nor override its failed QA.
+3. Inspect the exact candidate and real provider-backed reports. Through the
+   normal authorized Git workflow, land that candidate in the original
+   registered repository. Its ancestry and complete tree must match the reviewed
+   candidate, and the checkout must be clean.
+4. Authorize a finite `start_project_continuation` with the existing task IDs,
+   limits and confirmations, adding `workflow_recovery: {run_id, version}` from
+   step 1. This mode uses a fixed task inventory, without outcome discovery.
+   GoodTeam binds the completed report versions itself; the HTTP request cannot
+   supply paths, commands or Reviewer evidence.
+5. Manager choices use the same Assistant queue, isolated pool, review and landed
+   delivery acceptance described above. Only this confirmed continuation and its
+   admitted batches may share the failed parent. Changed parent inputs, source
+   candidate or report identity block further admission.
+
+Stop future recovery work and settle admitted batches before retrying the
+original Workflow. Its retained failure, proposal and approval state remain
+unchanged until its ordinary execution and review resolve them. No merge or
+deployment authority is created by recovery.
+
 ## Local evidence
 
 `tests/test_project_iteration_continuation.py` retains one representative
@@ -90,3 +126,8 @@ commits, with an offline provider executable and synthetic Manager choices.
 It is evidence of the execution/continuation wiring, not real-model quality or
 whole-project autonomy acceptance. That product record remains in #419.
 Automatic GitHub CI remains paused.
+
+`tests/test_workflow_project_recovery.py` adds the failed-parent recovery case:
+exact-candidate review, normal Git landing, overlapping isolated local Worker
+processes and a fresh Manager choice, while the original failed QA is preserved.
+Its offline provider fixture is separate from live StockFlow acceptance.

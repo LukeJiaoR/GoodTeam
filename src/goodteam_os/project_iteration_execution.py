@@ -46,10 +46,13 @@ def active_project_batch(workspace, project_key):
     return None
 
 
-def _require_execution_slot(workspace, project_key, run_id):
+def _require_execution_slot(workspace, project_key, run_id, *, continuation_id=None, recovery=None):
     require_no_active_project_goal(workspace, project_key)
     active = active_project_batch(workspace, project_key)
-    if active_project_run(workspace, project_key) or (active and active["run_id"] != run_id):
+    from goodteam_os.workflow_recovery import linked_parent
+
+    parent = linked_parent(workspace, project_key, continuation_id=continuation_id, admitted=recovery)
+    if (active_project_run(workspace, project_key) and parent is None) or (active and active["run_id"] != run_id):
         raise ValueError("Finish or reconcile the active project execution before starting another batch.")
 
 
@@ -174,7 +177,8 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                 # A blocked attempt may have released its slot before a report
                 # existed. Resuming is execution, so re-admit against current
                 # Workflow/Goal/batch authority, then reserve the same slot.
-                _require_execution_slot(workspace, project_key, run_id)
+                _require_execution_slot(workspace, project_key, run_id,
+                    continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"))
                 _require_authority(workspace, project_key, root, project_config, batch.get("expected_authority"))
                 if batch.get("current_recovery_attempt"):
                     command = batch["recovery_commands"][batch["current_recovery_attempt"]]
@@ -187,12 +191,15 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                         **current.get("project_task_batches", {}), run_id: batch}}
                 session_store._mutate(reclaim)
             return batch
-        _require_execution_slot(workspace, project_key, run_id)
+        _require_execution_slot(workspace, project_key, run_id, continuation_id=expected_continuation_id)
         _require_authority(workspace, project_key, root, project_config, expected_authority)
         _require_continuation(session, expected_continuation_id)
         proposal = session.get("proposed_task")
         if proposal and proposal.get("status") != "cancelled":
-            raise ValueError("Resolve the current task draft before starting a batch.")
+            from goodteam_os.workflow_recovery import linked_parent
+
+            if linked_parent(workspace, project_key, continuation_id=expected_continuation_id) is None:
+                raise ValueError("Resolve the current task draft before starting a batch.")
         queue = {item["id"]: item for item in session.get("queued_task_proposals", [])}
         proposals = [queue.get(identifier) for identifier in proposal_ids]
         if any(item is None or item.get("status") != "queued" or item.get("confirmed")
@@ -221,6 +228,8 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
             "project_root": str(Path(root).resolve()), "project_config": str(Path(project_config).resolve()),
             "expected_authority": expected_authority,
             "expected_continuation_id": expected_continuation_id,
+            **({"workflow_recovery": session["project_continuation"]["workflow_recovery"]}
+               if expected_continuation_id and session["project_continuation"].get("workflow_recovery") else {}),
             "tracks": tracks, "status": "claimed", "confirmed": True,
             "created_at": datetime.now(UTC).isoformat()}
 
@@ -330,7 +339,8 @@ def _execute_batch(*, workspace, project_key, root, batch):
                 report = iteration_batch_report(workspace=workspace, project_key=project_key, root=root,
                                                 run_id=batch["run_id"])
                 return _settle_batch(workspace, project_key, root, batch, report=report)
-            _require_execution_slot(workspace, project_key, batch["run_id"])
+            _require_execution_slot(workspace, project_key, batch["run_id"],
+                continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"))
             _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
             _claim_tasks(root, project_key, batch)
             report = dispatch_tracks(project_root=Path(root).resolve(), tracks=batch["tracks"],
