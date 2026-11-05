@@ -2706,6 +2706,10 @@ class WorkerJobStore:
         stdout_path.write_text("", encoding="utf-8")
         stderr_path.write_text("", encoding="utf-8")
         process: subprocess.Popen[str] | None = None
+        if job.get("role") == "implementation" and "release-notes.md" in job.get("expected_artifacts", []):
+            # The final-response transport owns this file, outside the Worker
+            # workspace. Never reuse an earlier attempt's release document.
+            result_path.write_text("", encoding="utf-8")
         stop_heartbeat = threading.Event()
         returncode = 1
         transport_ref = None
@@ -2887,10 +2891,13 @@ class WorkerJobStore:
             if markdown_artifact else "At the end, summarize changed files, verification commands, and unresolved risks."
         )
         if job.get("role") == "implementation" and "release-notes.md" in job.get("expected_artifacts", []):
-            final_output_instruction += (
-                f" The release change request requires a complete corrected release document at {job_root / 'release-notes.md'}."
-                " Write it in this exact job-local path, not only in shared docs. Preserve verified corrections,"
-                " unresolved risks and skipped checks; do not invent rollback instructions or evidence."
+            final_output_instruction = (
+                "Return the complete corrected release document as your final assistant response, starting with "
+                "'# Release Notes' and including '## Release Identity', '## Verification', "
+                "'## Risks and Limitations', and '## Rollback'. The adapter saves this response as the current "
+                "job result; do not write into controller job directories or return a changed-files summary. "
+                "A workspace copy is optional and cannot substitute for the final response. Preserve verified "
+                "corrections, unresolved risks and skipped checks; do not invent rollback instructions or evidence."
                 " QA and staging after this job are not yet verified; describe those checks as pending."
                 " The controller will retain these bytes for release review; missing output blocks release."
             )
