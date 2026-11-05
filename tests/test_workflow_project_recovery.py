@@ -61,9 +61,9 @@ match = re.search(r'TASK_FILE=(unit-\d+\.txt)', prompt)
 if not match:
     if os.environ.get('WORKFLOW_RECOVERY_EMPTY_REVIEW') and 'QA_FAILURE_FIXTURE' not in prompt:
         raise SystemExit(0)
-    output.write_text('Status: failed\nSF09 missing\n' if 'QA_FAILURE_FIXTURE' in prompt else
+    output.write_text('Status: blocked\nSF09 missing\n' if 'QA_FAILURE_FIXTURE' in prompt else
         '# Summary\nReviewed exact source.\n# Findings\nNo actionable findings.\n'
-        '# Evidence\nRead-only source inspection.\n# Risk assessment\nParent QA still failed.\n# Recommendation\nContinue bounded recovery.\n')
+        '# Evidence\nRead-only source inspection.\n# Risk assessment\nParent QA still blocked.\n# Recommendation\nContinue bounded recovery.\n')
     raise SystemExit(0)
 name = match.group(1)
 assert Path('app.txt').read_text() == 'retained application\n'
@@ -90,7 +90,7 @@ event('end')
     monkeypatch.setenv("WORKFLOW_RECOVERY_SIGNALS", str(signals))
     state = create_initial_state("failed-parent", "DEMO", "Finish the original application and real parallel delivery")
     state.source_ref = str(config)
-    state.current_node, state.next_node = "implementation", "failure_triage"
+    state.current_node, state.next_node = "implementation", "blocked"
     state.blockers = ["qa worker reported release-blocking failure"]
     state.repository_baseline = prepare_workflow_workspace(source, project_key="DEMO", run_id=state.run_id)
     slot = Path(state.repository_baseline["workspace_path"])
@@ -116,6 +116,7 @@ event('end')
         return result
 
     target = web.workflow_retry_target(tmp_path, states.read_project_current("DEMO"))
+    assert target["available"] and target["mode"] == "retry_implementation"
     selected = dict(action="prepare_workflow_recovery", expected_run_id=state.run_id,
                     expected_retry_version=target["version"])
     prepared = action(selected)
@@ -221,7 +222,8 @@ event('end')
         state.run_id, state.current_node, state.next_node, state.approvals)
     assert session.read()["proposed_task"]["run_id"] == state.run_id
     assert (workers.root / qa["id"] / "result.md").read_bytes() == qa_bytes
-    assert qa_bytes.startswith(b"Status: failed")
+    assert parent.blockers == state.blockers
+    assert qa_bytes.startswith(b"Status: blocked")
     retry = web.workflow_retry_target(tmp_path, parent)
     with pytest.raises(web.ProjectApiError, match="settle its admitted batch"):
         web.retry_blocked_workflow(workspace=tmp_path, project_key="DEMO", expected_run_id=state.run_id,

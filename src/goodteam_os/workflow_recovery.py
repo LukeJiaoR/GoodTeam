@@ -62,7 +62,7 @@ def _idle(workspace, state):
     from goodteam_os.workflow_retry import build_retry_target
 
     if (state.task_skill_context or state.current_node != "implementation"
-            or state.next_node != "failure_triage" or not state.blockers
+            or state.next_node not in {"failure_triage", "blocked"} or not state.blockers
             or not state.repository_baseline):
         raise ValueError("Recovery requires the original failed ordinary Workflow.")
     config, jobs, context = _workflow_retry_context(workspace, state)
