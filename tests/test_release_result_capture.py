@@ -113,3 +113,40 @@ def test_existing_exact_job_local_release_document_remains_supported(release, tm
     capture_release_candidate(state, tmp_path / "workspace", config,
                               [{"role": "implementation", "job_id": job["id"], "status": "completed"}])
     assert Path(state.release_candidate["path"]).read_text() == DOCUMENT
+
+
+def test_retry_archives_legacy_document_but_cannot_reuse_it(release, tmp_path, monkeypatch):
+    _root, config, state, store, _job = release
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "2")
+    monkeypatch.setattr("goodteam_os.workers._sleep", lambda _seconds: None)
+    job = store.create_job(run_id=state.run_id, project_key=state.project_key,
+                           role="implementation", adapter="claude", task="Correct release notes",
+                           context="Offline retry fixture", expected_artifacts=["release-notes.md"])
+    counter = tmp_path / "attempt-counter"
+    script = """import pathlib,sys
+sys.stdin.read()
+counter=pathlib.Path(sys.argv[1])
+attempt=int(counter.read_text())+1 if counter.exists() else 1
+counter.write_text(str(attempt))
+if attempt==1:
+    pathlib.Path(sys.argv[2]).write_text(sys.argv[3])
+    sys.stderr.write('ERROR: unexpected status 503 Service Unavailable')
+    sys.exit(1)
+"""
+
+    def offline(self, job_root, current, _spec):
+        return self._run_cli_worker(
+            job_root, current,
+            command=[sys.executable, "-c", script, str(counter), str(job_root / "release-notes.md"), DOCUMENT],
+            model="synthetic", preflight={}, label="Offline release", capture="output_file",
+            summarize=lambda code, stderr: "Synthetic complete" if code == 0 else stderr, timeout_seconds=10,
+        )
+
+    monkeypatch.setattr(WorkerJobStore, "_run_cli_backend", offline)
+    result = store.run_job(job["id"])
+    assert result["status"] == "completed" and result["attempts"] == 2
+    with pytest.raises(ReleaseCandidateError):
+        capture_release_candidate(state, tmp_path / "workspace", config, [result])
+    first_attempt = Path(result["attempt_history"][0]["status_path"]).parent
+    assert (first_attempt / "release-notes.md").read_text() == DOCUMENT
+    assert not (store.root / job["id"] / "release-notes.md").exists()

@@ -1581,6 +1581,9 @@ class WorkerJobStore:
                 copy2(source, target)
                 copied_paths[str(source)] = str(target)
                 retained_status[f"{name}_path"] = str(target)
+        release_notes = job_root / "release-notes.md"
+        if release_notes.is_file() and release_notes.resolve().is_relative_to(job_root.resolve()):
+            copy2(release_notes, retained / release_notes.name)
         # Output aliases must refer to the retained bytes, without changing the
         # live outcome's nested evidence or its private prompt/transport identity.
         evidence = status.get("invocation_evidence")
@@ -2710,6 +2713,7 @@ class WorkerJobStore:
             # The final-response transport owns this file, outside the Worker
             # workspace. Never reuse an earlier attempt's release document.
             result_path.write_text("", encoding="utf-8")
+            (job_root / "release-notes.md").unlink(missing_ok=True)
         stop_heartbeat = threading.Event()
         returncode = 1
         transport_ref = None
