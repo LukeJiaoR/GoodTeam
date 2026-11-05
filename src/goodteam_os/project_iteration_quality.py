@@ -187,8 +187,9 @@ def prepare_project_batch_quality(*, workspace, project_key, root, run_id, argv,
             or type(fix_seconds) is not int or not 1 <= fix_seconds <= 600):
         raise TaskInputError("batch_quality_configuration_invalid")
     with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
-        _require_execution_slot(workspace, project_key, run_id)
         batch = _batch(workspace, project_key, root, run_id)
+        _require_execution_slot(workspace, project_key, run_id,
+            continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"))
         if batch.get("status") == "abandoned":
             raise TaskInputError("batch_quality_abandoned")
         if batch.get("status") == "delivered":
@@ -351,7 +352,8 @@ def advance_project_batch_quality(*, workspace, project_key, root, run_id, expec
         if not quality.get("required") or quality.get("input_digest") != expected_input_digest:
             raise TaskInputError("batch_quality_input_changed")
         if quality.get("status") != "reviewed" and batch.get("status") != "delivered":
-            _require_execution_slot(workspace, project_key, run_id)
+            _require_execution_slot(workspace, project_key, run_id,
+                continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"))
             _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
             service = AutomaticCandidateReviewService(root, **runtime)
             try:

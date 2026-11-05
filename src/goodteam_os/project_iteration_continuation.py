@@ -51,6 +51,22 @@ def _event(store, identifier, event, details):
     store.append_event(identifier, event, actor="system", details=details)
 
 
+def pending_project_batch(session, root, project_key):
+    """Keep uncertain/admitted work; release only settled or unclaimed intent."""
+    pending = (session.get(_FIELD) or {}).get("pending_batch")
+    if not pending:
+        return None
+    known = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
+    settled = all(known.get(identifier, {}).get("status") == "done"
+                  and known[identifier].get("delivery_verified") for identifier in pending["task_ids"])
+    admitted = any(set(batch.get("proposal_ids", [])) & set(pending["proposal_ids"])
+                   for batch in session.get("project_task_batches", {}).values())
+    unclaimed = (not pending.get("run_id") and not admitted
+                 and all(known.get(identifier, {}).get("status") == "todo"
+                         and not known[identifier].get("run_id") for identifier in pending["task_ids"]))
+    return None if settled or unclaimed else pending
+
+
 def configure_project_continuation(*, workspace, project_key, root, project_config, request):
     """Confirm existing task identities and finite iteration/model-call limits."""
     from goodteam_os.project_import import read_bound_project_readiness
@@ -90,18 +106,7 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
                         if current.get("workflow_recovery") else None) != recovery):
                 raise ValueError("Continuation command was already used with different scope or limits.")
             return current
-        pending = current.get("pending_batch")
-        if pending:
-            known = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
-            settled = all(known.get(identifier, {}).get("status") == "done"
-                          and known[identifier].get("delivery_verified") for identifier in pending["task_ids"])
-            admitted = any(set(batch.get("proposal_ids", [])) & set(pending["proposal_ids"])
-                           for batch in store.read().get("project_task_batches", {}).values())
-            unclaimed = (not pending.get("run_id") and not admitted
-                         and all(known.get(identifier, {}).get("status") == "todo"
-                                 and not known[identifier].get("run_id") for identifier in pending["task_ids"]))
-            if settled or unclaimed:
-                pending = None
+        pending = pending_project_batch(store.read(), root, project_key)
         if current.get("status") == "active" or pending:
             raise ValueError("Stop the existing continuation and settle its current batch first.")
         if recovery is not None:

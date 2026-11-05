@@ -114,6 +114,16 @@ def require_proposal(state, artifact_key, *, expected_run_id="", expected_artifa
     return dict(binding)
 
 
+def is_worker_report_text(text):
+    """Adapter placeholders and file-change summaries are not authored reports."""
+    from goodteam_os.graph import _is_worker_meta_summary
+
+    placeholder = text.startswith("# Worker Result\n") and (
+        "See stdout.txt and stderr.txt." in text or "Status: completed-without-assistant-text" in text
+    )
+    return bool(text.strip() and not _is_worker_meta_summary(text) and not placeholder)
+
+
 def current_job_artifact(job_root: Path, status, *, artifact_key, filename):
     """Only the current job's result is authoritative, never a shared docs mirror."""
     from goodteam_os.graph import _is_worker_meta_summary
@@ -125,10 +135,7 @@ def current_job_artifact(job_root: Path, status, *, artifact_key, filename):
     if not result.is_relative_to(root) or not result.is_file():
         return None
     text = result.read_text(encoding="utf-8")
-    adapter_placeholder = text.startswith("# Worker Result\n") and (
-        "See stdout.txt and stderr.txt." in text or "Status: completed-without-assistant-text" in text
-    )
-    if text.strip() and not _is_worker_meta_summary(text) and not adapter_placeholder:
+    if is_worker_report_text(text):
         return text
     # File-producing adapters can return a job-local deliverable. Require the
     # exact declared filename and job-local ownership, not arbitrary references.

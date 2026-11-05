@@ -11,6 +11,9 @@ from goodteam_os import project_iteration_continuation as continuation, web
 from goodteam_os.project_iteration import project_iteration_backlog
 from goodteam_os.project_iteration_execution import iteration_batch_report
 from goodteam_os.project_iteration_planner import plan_next_iteration
+from goodteam_os.project_iteration_quality import prepare_project_batch_quality, advance_project_batch_quality
+from goodteam_os.project_iteration_recovery import project_batch_recovery_evidence
+from goodteam_os.project_registry import ProjectRegistry
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
@@ -40,6 +43,7 @@ reviewer_dispatch:
   phases:
     release: parallel
 """)
+    ProjectRegistry().register_project(config, root=source, key="DEMO")
     binary = tmp_path / "bin/codex"
     binary.parent.mkdir()
     signals = tmp_path / "signals"
@@ -53,6 +57,8 @@ prompt = sys.stdin.read()
 output = Path(sys.argv[sys.argv.index('--output-last-message') + 1])
 match = re.search(r'TASK_FILE=(unit-\d+\.txt)', prompt)
 if not match:
+    if os.environ.get('WORKFLOW_RECOVERY_EMPTY_REVIEW') and 'QA_FAILURE_FIXTURE' not in prompt:
+        raise SystemExit(0)
     output.write_text('Status: failed\nSF09 missing\n' if 'QA_FAILURE_FIXTURE' in prompt else
         '# Summary\nReviewed exact source.\n# Findings\nNo actionable findings.\n'
         '# Evidence\nRead-only source inspection.\n# Risk assessment\nParent QA still failed.\n# Recommendation\nContinue bounded recovery.\n')
@@ -69,6 +75,10 @@ deadline = time.monotonic() + 10
 while len(list(signals.glob('*.ready'))) < 2:
     assert time.monotonic() < deadline, 'two Workers did not overlap'
     time.sleep(.01)
+if name == 'unit-2.txt' and not (signals / 'failed-once').exists():
+    (signals / 'failed-once').touch()
+    event('failed')
+    raise SystemExit(4)
 Path(name).write_text('delivered ' + name + '\n')
 output.write_text('Candidate ready for review.\n')
 event('end')
@@ -95,9 +105,9 @@ event('end')
     qa_bytes = (workers.root / qa["id"] / "result.md").read_bytes()
     endpoint = "/api/projects/DEMO/task-assistant/actions"
 
-    def action(request):
+    def action(request, expected=200):
         code, result = web.handle_project_api_post(tmp_path, endpoint, request)
-        assert code == 200
+        assert code == expected
         return result
 
     target = web.workflow_retry_target(tmp_path, states.read_project_current("DEMO"))
@@ -118,6 +128,17 @@ event('end')
         expected_backlog_version=project_iteration_backlog(source, "DEMO")["version"])
     with pytest.raises(web.ProjectApiError, match="read-only recovery review"):
         action(request)
+    monkeypatch.setenv("WORKFLOW_RECOVERY_EMPTY_REVIEW", "1")
+    empty_review = dict(project_key="DEMO", run_id=state.run_id, approval="release",
+        artifact_key="workflow_recovery", artifact_version=record["version"], job_id=prepared["reviewer_jobs"][0]["id"])
+    assert web.run_queued_reviewer_jobs_action(tmp_path, empty_review)[0] == 200
+    with pytest.raises(web.ProjectApiError, match="read-only recovery review"):
+        action(request)
+    monkeypatch.delenv("WORKFLOW_RECOVERY_EMPTY_REVIEW")
+    target = web.workflow_retry_target(tmp_path, states.read_project_current("DEMO"))
+    prepared = action({**selected, "expected_retry_version": target["version"]})
+    record = prepared["workflow_recovery"]
+    request["workflow_recovery"] = reference = {"run_id": state.run_id, "version": record["version"]}
     reviewer = prepared["reviewer_jobs"][0]
     review_request = dict(project_key="DEMO", run_id=state.run_id, approval="release",
                           artifact_key="workflow_recovery", artifact_version=record["version"], job_id=reviewer["id"])
@@ -139,7 +160,7 @@ event('end')
     def manager(**kwargs):
         eligible = [item["task_id"] for item in kwargs["backlog"]["candidates"] if item["eligible_to_plan"]]
         chosen = eligible[:2]
-        if choices:
+        if len(choices) == 1:
             assert all(ledger.get_task(task["id"])["status"] == "review" for task in tasks[:2])
             assert choices == [[task["id"] for task in tasks[:2]]]
         choices.append(chosen)
@@ -154,11 +175,29 @@ event('end')
         time.sleep(.02)
     saved = session.read()["project_continuation"]
     report = iteration_batch_report(workspace=tmp_path, project_key="DEMO", root=source, run_id=saved["pending_batch"]["run_id"])
-    assert report["all_ok"], report
+    assert not report["all_ok"] and ledger.get_task(tasks[1]["id"])["status"] == "blocked", report
     events = [json.loads(line) for line in (signals / "calls.jsonl").read_text().splitlines()]
     assert [item["event"] for item in events[:2]] == ["start", "start"]
     assert len({item["cwd"] for item in events}) == 2
     assert not list(source.glob("unit-*.txt"))
+    run_id = saved["pending_batch"]["run_id"]
+    recovery = project_batch_recovery_evidence(workspace=tmp_path, project_key="DEMO", root=source, run_id=run_id)
+    assert recovery["retryable_task_ids"] == [tasks[1]["id"]]
+    action(dict(action="retry_project_batch", run_id=run_id, expected_recovery_version=recovery["version"],
+        idempotency_key="retry-only-failed", retry_task_ids=[tasks[1]["id"]], confirmed=True,
+        billing_acknowledged=True), expected=202)
+    deadline = time.monotonic() + 15
+    while ledger.get_task(tasks[1]["id"])["status"] != "review":
+        assert time.monotonic() < deadline
+        time.sleep(.02)
+    quality_run = dict(workspace=tmp_path, project_key="DEMO", root=source, run_id=run_id)
+    quality = prepare_project_batch_quality(**quality_run,
+        argv=[sys.executable, "-I", "-B", "-c", "from pathlib import Path; assert Path('unit-1.txt').exists() and Path('unit-2.txt').exists()"],
+        criteria=[0, 1], reviewer_model="offline-fixture", fix_model="offline-fixture")
+    assert quality["status"] == "prepared", quality
+    advanced = advance_project_batch_quality(**quality_run, expected_input_digest=quality["input_digest"],
+        confirmed=True, billing_acknowledged=True)
+    assert advanced["quality"]["reason"] == "batch_quality_reviewer_admission_required", advanced
     plan_next_iteration(workspace=tmp_path, project_key="DEMO", root=source, project_config=config,
         expected_backlog_version=project_iteration_backlog(source, "DEMO")["version"], confirmed=True,
         allowed_task_ids=grant["task_ids"], manager_runner=manager)
@@ -176,3 +215,20 @@ event('end')
     continuation.stop_project_continuation(workspace=tmp_path, project_key="DEMO", continuation_id=grant["id"])
     assert continuation.tick_project_continuation(workspace=tmp_path, project_key="DEMO", root=source,
         project_config=config)["status"] == "stopped"
+    recovery = project_batch_recovery_evidence(**quality_run)
+    action(dict(action="abandon_project_batch", run_id=run_id, expected_recovery_version=recovery["version"],
+        idempotency_key="settle-before-parent", confirmed=True))
+    next_grant = action({**request, "task_ids": [tasks[2]["id"]], "max_batches": 1,
+        "idempotency_key": "unadmitted-reservation", "expected_backlog_version": project_iteration_backlog(source, "DEMO")["version"]})["project_continuation"]
+
+    def refuse_admission(**kwargs):
+        raise ValueError("Offline fixture: batch admission refused before any claim")
+
+    blocked = continuation.tick_project_continuation(workspace=tmp_path, project_key="DEMO", root=source,
+        project_config=config, batch_runner=refuse_admission)
+    assert blocked["pending_batch"] and not blocked["pending_batch"]["run_id"]
+    continuation.stop_project_continuation(workspace=tmp_path, project_key="DEMO", continuation_id=next_grant["id"])
+    monkeypatch.setattr(web, "_retry_bound_workflow", lambda **kwargs: {"resumed_original_parent": kwargs["state"].run_id})
+    retry = web.workflow_retry_target(tmp_path, states.read_project_current("DEMO"))
+    assert web.retry_blocked_workflow(workspace=tmp_path, project_key="DEMO", expected_run_id=state.run_id,
+        expected_retry_version=retry["version"])["resumed_original_parent"] == state.run_id

@@ -248,7 +248,8 @@ def recover_project_batch(*, workspace, project_key, root, request):
             if not evidence["can_abandon"]:
                 raise ValueError("This batch is not available for recovery.")
             if retry:
-                _require_execution_slot(workspace, project_key, batch["run_id"])
+                _require_execution_slot(workspace, project_key, batch["run_id"],
+                    continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"))
                 _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
             selected = request.get("retry_task_ids")
             if retry and (not isinstance(selected, list) or not selected or any(not isinstance(item, str) for item in selected)

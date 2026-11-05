@@ -4,6 +4,7 @@ This is an admission adapter, not another task ledger or dispatcher. A recovery
 review cannot approve the parent, and a continuation still owns its finite scope.
 """
 from pathlib import Path
+from hashlib import sha256
 import json
 
 from goodteam_os.reviewer_dispatch import artifact_version_for_path
@@ -13,6 +14,19 @@ from goodteam_os.workflow_workspace import collect_workflow_workspace
 
 
 ARTIFACT = "workflow_recovery"
+
+
+def _report_version(root, job):
+    from goodteam_os.artifact_revisions import is_worker_report_text
+    from goodteam_os.legacy_reviewer_reports import _report_bytes
+    from goodteam_os.repository_access import RepositoryAccessError
+    from goodteam_os.workers import WorkerJobStore
+
+    try:
+        raw = _report_bytes(WorkerJobStore(root), job["id"])
+        return "sha256:" + sha256(raw).hexdigest() if is_worker_report_text(raw.decode("utf-8")) else ""
+    except (OSError, ValueError, RepositoryAccessError):
+        return ""
 
 
 def _inputs(state):
@@ -60,12 +74,11 @@ def candidate(workspace, state, *, reviewed=False):
                    and job.get("artifact_version") == record["version"]
                    and job.get("execution_policy") == "read_only" and job.get("status") == "completed"
                    and evaluate_review_evidence_policy(build_reviewer_provenance(job), gate="release")["state"] == "ok"
-                   and Path(str(job.get("result_path", ""))).is_file()
-                   and Path(str(job.get("result_path", ""))).stat().st_size]
+                   and _report_version(root, job)]
         latest = {job["profile_id"]: job for job in sorted(reports, key=lambda item: str(item.get("updated_at", "")))}
         if not record["reviewer_job_ids"] or set(latest) != set(record["reviewer_profile_ids"]):
             raise ValueError("Complete the exact-candidate independent read-only recovery review first.")
-        return {**record, "review_reports": {job["id"]: artifact_version_for_path(job["result_path"]) for job in latest.values()}}
+        return {**record, "review_reports": {job["id"]: _report_version(root, job) for job in latest.values()}}
     return record
 
 

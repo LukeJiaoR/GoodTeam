@@ -4994,9 +4994,13 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str,
             code = {"active_attempt": "retry_attempt_active", "attempt_unknown": "retry_attempt_unknown"}.get(target["reason"], "retry_not_available")
             raise ProjectApiError(code, "This task cannot be retried from the displayed attempt. Refresh to inspect its current state.", 409,
                                   recovery=["refresh"])
-        continuation = TaskAssistantSessionStore(workspace, key).read().get("project_continuation") or {}
+        from goodteam_os.project_iteration_continuation import pending_project_batch
+
+        session = TaskAssistantSessionStore(workspace, key).read()
+        continuation = session.get("project_continuation") or {}
         if ((continuation.get("workflow_recovery") or {}).get("run_id") == state.run_id
-                and (continuation.get("status") == "active" or continuation.get("pending_batch"))):
+                and (continuation.get("status") == "active"
+                     or pending_project_batch(session, Path(context["root"]), key))):
             raise ProjectApiError("workflow_recovery_pending", "Stop future recovery work and settle its admitted batch before retrying the parent.", 409)
         append_action(workspace, run_id=state.run_id, project_key=key, actor="human",
                       action="blocked_workflow_retry_started", before_node=state.next_node,
