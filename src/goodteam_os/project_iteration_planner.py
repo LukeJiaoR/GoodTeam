@@ -38,8 +38,10 @@ before dispatch. Do not claim those checks have occurred at planning time.
 
 Compare candidates using project goals, dependencies, risk, evidence, value,
 and verification effort. Only select IDs present in the supplied eligible
-backlog. Do not invent candidates, claim unprovided repository inspection,
-or change the current authorization boundaries.
+backlog. Out-of-scope tasks are context only, never selectable. Use the previous
+delivery only when its status is verified; human-attested delivery does not
+claim machine checks or independent machine review. Do not invent candidates,
+claim unprovided repository inspection, or change the current authorization boundaries.
 
 Return one JSON object only (no Markdown):
 {"selected_task_ids":["T-1","T-2"],
@@ -85,7 +87,8 @@ Only one follow-up per delivered outcome; do not add task IDs or extra fields.""
 
 
 def run_manager_iteration_choice(*, project_config: Path, project_key: str,
-                                 backlog: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+                                 backlog: dict[str, Any], context: dict[str, Any],
+                                 planning_attempt_id: str = "") -> dict[str, Any]:
     """Call the existing read-only Manager worker with an idempotent input."""
     from goodteam_os.graph import resolve_project_runtime_root, resolve_role_adapter
     from goodteam_os.manager_execution import (
@@ -103,14 +106,17 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
     adapter = resolve_role_adapter(target, "orchestrator")
     model = _model_name(_configured_manager_model(target))
     settings = _manager_settings(target)
-    scope = str(backlog.get("planning_scope") or "")
-    identity = "project-iteration:" + backlog["version"].split(":", 1)[-1] + (":" + scope if scope else "")
+    packet = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    identity = "project-iteration:" + sha256(packet.encode()).hexdigest()
+    if planning_attempt_id:
+        # One existing continuation reservation owns one billable input. Changed
+        # evidence cannot buy another call after a lost reply under that slot.
+        identity = "project-iteration-attempt:" + sha256(planning_attempt_id.encode()).hexdigest()
     discovery = context.get("schema_version") == "project_outcome_discovery_packet.v1"
     if discovery:
         # Outcome/HEAD/memory were captured together. A coincidentally unchanged
         # backlog cannot reuse advice from another delivered result or grant.
         identity = "project-outcome:" + sha256(json.dumps(context, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    packet = json.dumps(context, ensure_ascii=False, sort_keys=True)
     with _manager_turn_lock(root, identity):
         store = WorkerJobStore(root)
         job, created = _create_manager_job(
@@ -126,11 +132,12 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
                 ],
                 expected_artifacts=[], project_key=project_key,
                 phase="project_outcome_discovery" if discovery else "project_iteration_choice", execution_policy="read_only",
-                idempotency_key=(f"project-outcome-choice:{project_key}:{identity}" if discovery else
-                    f"project-iteration-choice:{project_key}:{backlog['version']}" + (":" + scope if scope else "")),
+                idempotency_key=f"{'project-outcome' if discovery else 'project-iteration'}-choice:{project_key}:{identity}",
                 **settings,
             ),
         )
+        if not created and (store.root / str(job["id"]) / "context.md").read_text(encoding="utf-8") != packet:
+            raise ValueError("The reserved planning input changed; inspect the original attempt before planning again.")
         if not created and job.get("status") not in {"queued", "completed"}:
             raise ManagerExecutionError("Prior planning outcome is uncertain; do not replay automatically.")
         result = store.run_job(str(job["id"])) if created or job["status"] == "queued" else job
@@ -232,10 +239,43 @@ def _require_planning_idle(workspace: Path, project_key: str) -> None:
             raise ValueError("Finish or stop the active Goal before selecting an unrelated iteration.")
 
 
+def _planning_context(workspace, project_key, root, session, snapshot, source_snapshot, allowed):
+    from goodteam_os.project_outcome_discovery import _head, verified_outcome
+
+    try:
+        head = _head(root)
+    except (OSError, ValueError):
+        head = None
+    try:
+        outcome = {"status": "verified", **verified_outcome(
+            workspace=workspace, project_key=project_key, root=root)}
+    except (OSError, ValueError, KeyError, TypeError):
+        outcome = {"status": "unavailable", "reason": "no_current_verified_delivery"}
+    # A recommendation must not invalidate itself by appearing in its own
+    # conversation input. Placeholders preserve original source indices; the
+    # continuity projection ignores non-events without renumbering originals.
+    conversation = {**session, "timeline": [None if isinstance(event, dict)
+                    and event.get("event") == "project_iteration_choice_recorded" else event
+                    for event in session.get("timeline", [])]}
+    return {
+        "schema_version": "project_iteration_choice_packet.v1",
+        "project_key": project_key,
+        "project_head": head,
+        "previous_delivery": outcome,
+        "backlog": snapshot,
+        "repository_understanding": _project_evidence(workspace, project_key, root),
+        "conversation": conversation_context(conversation, query="next project iteration"),
+        **({"authorized_task_ids": sorted(allowed),
+            "out_of_scope_tasks": [item for item in source_snapshot["candidates"]
+                                   if item["task_id"] not in allowed]} if allowed is not None else {}),
+    }
+
+
 def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                         project_config: Path, expected_backlog_version: str,
                         manager_runner: Callable[..., dict[str, Any]] = run_manager_iteration_choice,
-                        confirmed: bool = False, allowed_task_ids: list[str] | None = None) -> dict[str, Any]:
+                        confirmed: bool = False, allowed_task_ids: list[str] | None = None,
+                        planning_attempt_id: str = "") -> dict[str, Any]:
     """Persist a version-bound read-only recommendation; do not start a run."""
     if confirmed is not True:
         raise ValueError("Confirm the potentially billable Manager planning call first.")
@@ -252,6 +292,7 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             raise ValueError("The project backlog changed; refresh before planning.")
         source_snapshot = snapshot
         scope = ""
+        allowed = None
         if allowed_task_ids is not None:
             if (not isinstance(allowed_task_ids, list) or not allowed_task_ids
                     or any(not isinstance(item, str) for item in allowed_task_ids)):
@@ -265,8 +306,12 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             snapshot["next_candidate"] = next(item for item in snapshot["candidates"] if item["eligible_to_plan"])
             snapshot["candidate_count"] = len(snapshot["candidates"])
         session = store.read()
+        context = _planning_context(workspace, project_key, root, session, snapshot, source_snapshot, allowed)
+        input_digest = sha256(json.dumps(context, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         previous = latest_iteration_choice(session, snapshot)
-        if previous and previous["status"] == "recommended" and previous.get("planning_scope", "") == scope:
+        if (previous and previous["status"] == "recommended" and previous.get("planning_scope", "") == scope
+                and previous.get("planning_input_digest") == input_digest
+                and previous.get("planning_attempt_id", "") == planning_attempt_id):
             return {"iteration_choice": previous, "workflow_started": False, "reused": True}
         proposed = session.get("proposed_task")
         if isinstance(proposed, dict) and proposed.get("status") != "cancelled":
@@ -276,24 +321,24 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             if linked_parent(workspace, project_key, continuation_id=continuation.get("id")) is None:
                 raise ValueError("Resolve the current task proposal before planning another iteration.")
         _require_planning_idle(workspace, project_key)
-        context = {
-            "schema_version": "project_iteration_choice_packet.v1",
-            "project_key": project_key,
-            "backlog": snapshot,
-            "repository_understanding": _project_evidence(workspace, project_key, root),
-            "conversation": conversation_context(session, query="next project iteration"),
-            **({"authorized_task_ids": sorted(allowed), "project_backlog_context": source_snapshot} if scope else {}),
-        }
         result = manager_runner(project_config=project_config, project_key=project_key,
-                                backlog=snapshot, context=context)
+                                backlog=snapshot, context=context,
+                                **({"planning_attempt_id": planning_attempt_id} if planning_attempt_id else {}))
         choice = validate_iteration_choice(snapshot, result.get("selection"))
-        event_id = f"iteration-choice:{snapshot['version']}" + (":" + scope if scope else "")
+        event_id = f"iteration-choice:{input_digest}" + (":" + planning_attempt_id if planning_attempt_id else "")
+        # The input identifies a reusable Worker result, not its latest activation.
+        # Append a fresh event when older inputs recur so display and queue agree.
+        event_id += f":activation:{len(session.get('timeline', []))}"
+        choice.update(planning_input_digest=input_digest, planning_attempt_id=planning_attempt_id,
+                      source_event_id=event_id)
         if scope:
-            choice.update(planning_scope=scope, source_event_id=event_id)
+            choice.update(planning_scope=scope)
         # Project tasks can change while the model is running. A stale result is
         # not a new authority and may not be shown as a current recommendation.
         if project_iteration_backlog(root, project_key)["version"] != snapshot["version"]:
             raise ValueError("The project backlog changed during planning; refresh.")
+        if context != _planning_context(workspace, project_key, root, store.read(), snapshot, source_snapshot, allowed):
+            raise ValueError("The project evidence changed during planning; refresh.")
         _require_planning_idle(workspace, project_key)
         store.append_event(
             event_id,

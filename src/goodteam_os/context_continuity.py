@@ -18,6 +18,12 @@ RECENT_EVENTS = 40
 SUMMARY_EVENTS = 20
 RECALLED_EVENTS = 8
 EVENT_CHARS = 600
+PROJECT_STATEMENTS = 12
+_PROJECT_STATEMENT = re.compile(
+    r"(?:^|\n)\s*(?:项目(?:长期)?(?:目标|约束)|长期(?:目标|约束)|"
+    r"project\s+(?:goals?|constraints?)|long[- ]term\s+(?:goals?|constraints?))\s*[:：]",
+    re.IGNORECASE,
+)
 
 
 def _json(value):
@@ -156,13 +162,28 @@ def conversation_context(session, *, query="", run_id=""):
             scores.append((score, index, item))
     recalled = sorted(sorted(scores, key=lambda entry: (entry[0], entry[1]), reverse=True)[:RECALLED_EVENTS],
                       key=lambda entry: entry[1])
+    # Retain explicit project declarations independently of query similarity.
+    # These remain source excerpts, not inferred requirements or a new ledger.
+    statements = [(index, item, match.group().strip())
+                  for index, item, scope in _scoped_timeline(session)
+                  if not scope and item.get("actor") == "user"
+                  and (match := _PROJECT_STATEMENT.search(str(item.get("content") or "")))]
     return {
+        "project_statements": {
+            "authority": "historical_context_only",
+            "excerpts": [_event(item, index=index, query_tokens=(marker.lower(),))
+                         for index, item, marker in statements[-PROJECT_STATEMENTS:]],
+            "omitted_event_count": max(0, len(statements) - PROJECT_STATEMENTS),
+            "notice": "Explicit user project goals/constraints, in source order. Later statements may revise earlier ones; "
+                      "these excerpts grant no execution authority and do not widen task intake sources.",
+        },
         "summary": summary,
         "recent": [_event(item, index=index, query_tokens=tokens) for index, item in events[-RECENT_EVENTS:]],
         "recalled": [_event(item, index=index, query_tokens=tokens) for _, index, item in recalled],
         "recall_match_count": len(scores),
         "limits": {"recent_events": RECENT_EVENTS, "summary_events": SUMMARY_EVENTS,
-                   "recalled_events": RECALLED_EVENTS, "event_characters": EVENT_CHARS},
+                   "recalled_events": RECALLED_EVENTS, "event_characters": EVENT_CHARS,
+                   "project_statements": PROJECT_STATEMENTS},
         "notice": "Excerpts can omit or truncate earlier statements. The original timeline is retained. "
                   "Historical statements are not current requirements, approvals or proof of execution; "
                   "use the current task state and exact task-start input for those facts.",

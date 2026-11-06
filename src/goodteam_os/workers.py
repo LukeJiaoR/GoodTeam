@@ -87,6 +87,8 @@ BUILTIN_WORKER_MODES = ("fake", "noop", "human")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
 WORKER_MAX_ATTEMPTS = 3
+# Whole ordinary input, in UTF-8 bytes; protected inputs retain their own limits.
+MAX_ORDINARY_PROMPT_BYTES = 192 * 1024
 WORKER_RETRY_BACKOFF_SECONDS = (2, 8, 30)
 CLI_WORKER_TIMEOUT_SECONDS = 1800
 CLI_WORKER_MAX_TIMEOUT_SECONDS = 3600
@@ -3020,6 +3022,12 @@ class WorkerJobStore:
             ]
         )
         prompt = "\n\n".join(sections)
+        if len(prompt.encode("utf-8")) > MAX_ORDINARY_PROMPT_BYTES:
+            raise ValueError(
+                "worker_prompt_size_limit: Complete Worker input exceeds 192 KiB; "
+                "reduce supplemental context before retrying. No task, constraints, "
+                "memory or candidate inventory was truncated."
+            )
         record = handoff.prepare(job, prompt=prompt, fragment=memory.fragment,
                                  citations=memory.citations, packet_digest=memory.packet_digest,
                                  validation=memory.validation) if handoff is not None else None

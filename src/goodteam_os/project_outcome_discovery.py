@@ -57,16 +57,20 @@ def _head(root):
     return _read_git(Path(root), ["rev-parse", "HEAD^{commit}"]).decode().strip()
 
 
-def verified_outcome(*, workspace, project_key, root, value, run_id=None):
-    """Revalidate original delivery/quality and its retained Git content at HEAD."""
+def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
+    """Revalidate delivery at HEAD; discovery additionally binds its grant.
+
+    Ordinary read-only planning can observe the latest project delivery without
+    a discovery grant. Observation never grants follow-up execution authority.
+    """
     from goodteam_os.dispatch_workspace import _git
     from goodteam_os.project_iteration_continuation import _verify_landed_batch
     from goodteam_os.project_iteration_execution import TASK_INTENT_FIELDS
 
     batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
     eligible = [batch for batch in batches.values() if batch.get("status") == "delivered"
-                and batch.get("expected_continuation_id") == value["id"]
-                and set(batch.get("task_ids", [])).issubset(value["task_ids"])]
+                and (value is None or batch.get("expected_continuation_id") == value["id"]
+                     and set(batch.get("task_ids", [])).issubset(value["task_ids"]))]
     batch = batches.get(run_id) if run_id else max(eligible, key=lambda row: row["created_at"], default=None)
     if not batch or batch not in eligible:
         raise ValueError("Discovery requires a verified delivery from this authorized continuation.")

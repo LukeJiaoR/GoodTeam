@@ -75,6 +75,11 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Candidat
         if selected == second_task["id"]:
             assert ledger.get_task(first_task["id"])["delivery_verified"] is True
             assert (source / "unit-1.txt").read_text() == "delivered unit-1.txt\n"
+            previous = kwargs["context"]["previous_delivery"]
+            assert previous["status"] == "verified"
+            assert [task["id"] for task in previous["tasks"]] == [first_task["id"]]
+            assert previous["project_head"] == git(source, "rev-parse", "HEAD")
+            assert previous["quality"]["check_status"] == "not_configured"
         return {"selection": {"selected_task_ids": [selected], "compared_task_ids": [item["task_id"] for item in eligible],
                 "rationale": "Choose the approved eligible task using freshly observed dependency and delivery evidence."}}
 
