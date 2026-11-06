@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import http from 'node:http';
 import process from 'node:process';
 
-test('Codex provider settings persist in PG and model discovery uses the saved key', async ({ page, request }) => {
+test('coding and memory models persist independently in PG and reuse saved credentials', async ({ page, request }) => {
   test.skip(!process.env.GOODTEAM_DATABASE_URL, 'Requires disposable PostgreSQL');
   const modelRequests = [];
   const provider = http.createServer((req, res) => {
@@ -18,7 +18,7 @@ test('Codex provider settings persist in PG and model discovery uses the saved k
     await page.getByLabel('Provider name').fill('Browser fixture');
     await page.getByLabel('Base URL', { exact: false }).fill(`http://127.0.0.1:${provider.address().port}/v1`);
     await page.getByLabel('API Key', { exact: false }).fill('browser-fixture-key');
-    await page.getByRole('button', { name: 'Fetch models' }).click();
+    await page.getByRole('form', { name: 'Add provider' }).getByRole('button', { name: 'Fetch models' }).click();
     await page.getByLabel('Choose a fetched model').selectOption('fixture-model');
     await page.getByRole('button', { name: 'Save provider' }).click();
     const card = page.getByRole('article', { name: 'Browser fixture' });
@@ -28,7 +28,7 @@ test('Codex provider settings persist in PG and model discovery uses the saved k
     await expect(card.getByText('Active', { exact: true })).toBeVisible();
     await card.getByRole('button', { name: 'Edit provider' }).click();
     await expect(page.locator('input[type="password"]')).toHaveValue('');
-    await page.getByRole('button', { name: 'Fetch models' }).click();
+    await page.getByRole('form', { name: 'Edit provider' }).getByRole('button', { name: 'Fetch models' }).click();
     await expect(page.getByLabel('Choose a fetched model')).toBeVisible();
     expect(modelRequests).toEqual(Array(2).fill({ path: '/v1/models', authorization: 'Bearer browser-fixture-key' }));
     const publicState = await (await request.get('/api/providers')).json();
@@ -38,6 +38,20 @@ test('Codex provider settings persist in PG and model discovery uses the saved k
     expect(badOrigin.status()).toBe(403);
     const badType = await request.post('/api/providers', { data: '{}', headers: { 'Content-Type': 'text/plain' } });
     expect(badType.status()).toBe(415);
+    const memory = page.getByRole('form', { name: 'Project memory retrieval' });
+    await memory.getByLabel('Memory provider').selectOption(publicState.active.codex);
+    await memory.getByLabel('Embedding model').fill('fixture-embedding');
+    await memory.getByRole('button', { name: 'Save memory retrieval' }).click();
+    await expect(page.getByText('Memory retrieval saved. New pickups use these settings; existing task inputs remain captured.')).toBeVisible();
+    await page.reload();
+    await expect(memory.getByLabel('Embedding model')).toHaveValue('fixture-embedding');
+    await expect(card.getByText('Active', { exact: true })).toBeVisible();
+    const withMemory = await (await request.get('/api/providers')).json();
+    expect(withMemory.active).toEqual(publicState.active);
+    expect(withMemory.providers).toEqual(publicState.providers);
+    expect(withMemory.embeddings).toMatchObject({ provider_id: publicState.active.codex, model: 'fixture-embedding' });
+    expect(JSON.stringify(withMemory)).not.toContain('browser-fixture-key');
+    await card.getByRole('button', { name: 'Edit provider' }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.getByRole('button', { name: 'Save provider' })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -1,4 +1,12 @@
 export const zhCN = {
+  "providers.memoryTitle": "项目记忆检索",
+  "providers.memoryHint": "独立选择向量化模型，不影响编码模型。需要 GoodTeam PostgreSQL 启用 pgvector，且所选服务商支持 embeddings 接口。",
+  "providers.memoryProvider": "记忆检索服务商",
+  "providers.memoryDisabled": "保留现有记忆检索",
+  "providers.embeddingModel": "向量化模型",
+  "providers.memoryDataHint": "新任务准备上下文时，会将查询和所属项目的有效角色记忆发送给此服务。索引按需更新；再次保存配置会重新建立索引。下方 Codex 用量不包含向量化调用。",
+  "providers.saveMemory": "保存记忆检索配置",
+  "providers.memorySaved": "已保存记忆检索配置。后续上下文读取使用新配置，已有任务保留捕获的输入。",
   "providers.title": "Agent 服务商",
   "providers.description": "为 GoodTeam 各项目选择 Codex API 连接，新任务使用当前启用的服务商。",
   "providers.refresh": "刷新",

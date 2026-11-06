@@ -124,7 +124,7 @@ def _remember(root, outcome):
 
 
 def _packet(workspace, project_key, root, value, outcome):
-    from goodteam_os.memory import RoleMemoryStore
+    from goodteam_os.memory import runtime_role_memory_store
     from goodteam_os.project_iteration_planner import _project_evidence
 
     snapshot = rank_project_backlog(LocalTaskStore(root, project_key).list_tasks(), project_key, limit=None)
@@ -139,7 +139,7 @@ def _packet(workspace, project_key, root, value, outcome):
         "backlog": snapshot, "verified_outcome": outcome,
         "allowed_source_refs": refs,
         "repository_understanding": _project_evidence(Path(workspace), project_key, Path(root), inspect_missing=True),
-        "memory_pickup": RoleMemoryStore(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
+        "memory_pickup": runtime_role_memory_store(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
     packet["packet_digest"] = _digest(packet)
     return packet
 
