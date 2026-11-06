@@ -11,6 +11,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
 
+from goodteam_os.assistant_drafts import archive_terminal_proposal
 from goodteam_os.assistant_requests import conversation_lock
 from goodteam_os.context_continuity import conversation_context
 from goodteam_os.project_iteration import (
@@ -233,6 +234,7 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
     workspace, root = Path(workspace), Path(root)
     store = TaskAssistantSessionStore(workspace, project_key)
     with conversation_lock(store):
+        archive_terminal_proposal(store, workspace=workspace, root=root)
         snapshot = project_iteration_backlog(root, project_key, limit=None)
         if snapshot["status"] != "candidate_ready":
             raise ValueError("No eligible local project task exists for the Manager to rank.")
