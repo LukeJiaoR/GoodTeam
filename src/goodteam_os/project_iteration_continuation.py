@@ -241,8 +241,11 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 planning = value.get("planning_backlog_version")
                 if planning and planning != snapshot["version"]:
                     raise ValueError("The backlog changed after a reserved planning attempt; inspect before resuming.")
+                if planning and value.get("planning_input_version") != 2:
+                    raise ValueError("An older reserved planning attempt must be reconciled before continuing.")
                 if not planning:
                     value = _save(store, {**value, "planning_backlog_version": snapshot["version"],
+                                         "planning_input_version": 2,
                                          "manager_calls": value["manager_calls"] + 1})
                 if value["status"] != "active":
                     return value

@@ -27,6 +27,8 @@ Automatic continuation passes its existing reservation identity (continuation
 ID and consumed planning slot). A lost reply can reuse that slot's original
 job; changed input cannot invoke another model call under the same slot. This
 does not add a dispatcher, ledger or new budget grant.
+An unfinished reservation from the earlier backlog-only identity protocol is
+blocked for reconciliation instead of being replayed under a new job identity.
 
 Scoped planning sends its selectable inventory once, with only the other tasks
 in the supplemental project inventory. It retains all candidates; the UI preview
@@ -54,6 +56,7 @@ and limits. This is a byte boundary, not a model token estimate or a dollar cap.
   without widening intake, complete-prompt rejection before CLI invocation, and
   real offline planning processes that replan on HEAD/goal changes while a
   reserved attempt refuses changed input without another provider call.
+  A retained legacy reservation likewise cannot spend its slot again on upgrade.
 - `tests/test_project_iteration_continuation.py`: the existing two-batch isolated
   execution now asserts that the second selection receives the first batch's
   verified delivery and its current HEAD. Both actual Worker subprocesses,

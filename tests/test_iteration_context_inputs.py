@@ -115,3 +115,26 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dump
         plan_next_iteration(**spec, planning_attempt_id="continuation:one-paid-slot")
     assert len(calls.read_text().splitlines()) == 4
     assert all(job["execution_policy"] == "read_only" for job in WorkerJobStore(source).list_jobs())
+
+
+def test_legacy_reserved_planning_cannot_spend_again_after_identity_upgrade(tmp_path):
+    from goodteam_os.project_iteration_continuation import configure_project_continuation, tick_project_continuation
+
+    source = repository(tmp_path / "source")
+    config = tmp_path / "project.yaml"
+    config.write_text(f"key: DEMO\nrepos:\n  root: {source}\nworker_backend:\n  mode: fake\n")
+    task = LocalTaskStore(source, "DEMO").create_task(title="An approved iteration", role="implementation",
+                                                   description="A bounded project improvement.")
+    version = project_iteration_backlog(source, "DEMO")["version"]
+    args = dict(workspace=tmp_path, project_key="DEMO", root=source, project_config=config)
+    configure_project_continuation(**args, request={"task_ids": [task["id"]], "max_batches": 1,
+        "confirmed": True, "billing_acknowledged": True, "idempotency_key": "legacy-slot",
+        "expected_backlog_version": version})
+    store = TaskAssistantSessionStore(tmp_path, "DEMO")
+    store._mutate(lambda session: {**session, "project_continuation": {
+        **session["project_continuation"], "planning_backlog_version": version, "manager_calls": 1}})
+    result = tick_project_continuation(**args,
+        manager_runner=lambda **_: pytest.fail("A legacy reserved call was spent again"))
+    assert result["status"] == "blocked" and result["manager_calls"] == 1
+    assert "older reserved planning attempt" in result["reason"]
+    assert not WorkerJobStore(source).list_jobs()
