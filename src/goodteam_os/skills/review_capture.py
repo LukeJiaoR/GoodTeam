@@ -60,7 +60,7 @@ def capture_final_turn(stdout: bytes, *, returncode: int, forbid_tools: bool = F
         raise ValueError("nonfinite value")
 
     for line in stdout.splitlines():
-        if not line.strip() or len(line) > MAX_EVENT_BYTES:
+        if not line.strip():
             raise SkillError("review_capture_json", "The controlled result channel contains an invalid event.")
         try:
             event = json.loads(line.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
@@ -69,6 +69,15 @@ def capture_final_turn(stdout: bytes, *, returncode: int, forbid_tools: bool = F
             raise SkillError("review_capture_json", "The controlled result channel contains invalid JSON.") from exc
         if not isinstance(event, dict) or not isinstance(event.get("type"), str):
             raise SkillError("review_capture_json", "The controlled result channel requires typed object events.")
+        # Native command output can exceed the ordinary event limit while
+        # remaining inside the unchanged whole-channel bound. Its command
+        # identity, matching start and textual output are still checked below.
+        item = event.get("item")
+        if len(line) > MAX_EVENT_BYTES and not (
+            event["type"] == "item.completed" and isinstance(item, dict)
+            and item.get("type") == "command_execution" and isinstance(item.get("aggregated_output"), str)
+        ):
+            raise SkillError("review_capture_json", "The controlled result channel contains an oversized event.")
         count += 1
         kind = event["type"]
         if completed:
