@@ -326,6 +326,9 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                                 **({"planning_attempt_id": planning_attempt_id} if planning_attempt_id else {}))
         choice = validate_iteration_choice(snapshot, result.get("selection"))
         event_id = f"iteration-choice:{input_digest}" + (":" + planning_attempt_id if planning_attempt_id else "")
+        # The input identifies a reusable Worker result, not its latest activation.
+        # Append a fresh event when older inputs recur so display and queue agree.
+        event_id += f":activation:{len(session.get('timeline', []))}"
         choice.update(planning_input_digest=input_digest, planning_attempt_id=planning_attempt_id,
                       source_event_id=event_id)
         if scope:

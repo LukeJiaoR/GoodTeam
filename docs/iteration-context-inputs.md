@@ -22,6 +22,9 @@ current Git HEAD, verified delivery, saved repository observations and bounded
 conversation. A fresh planning request cannot reuse a recommendation for changed
 inputs. Inputs are checked again after the model returns. Recommendation events
 are excluded from their own input projection without renumbering source events.
+When an earlier input recurs, its Worker result is reused and a fresh advisory
+event makes it current for both display and queue handoff. Repeating that current
+request remains idempotent and does not spend another model call.
 
 Automatic continuation passes its existing reservation identity (continuation
 ID and consumed planning slot). A lost reply can reuse that slot's original
@@ -56,6 +59,8 @@ and limits. This is a byte boundary, not a model token estimate or a dollar cap.
   without widening intake, complete-prompt rejection before CLI invocation, and
   real offline planning processes that replan on HEAD/goal changes while a
   reserved attempt refuses changed input without another provider call.
+  Returning from HEAD B to A restores A's recommendation in both the latest
+  projection and queue, without repeating A's Worker invocation.
   A retained legacy reservation likewise cannot spend its slot again on upgrade.
 - `tests/test_project_iteration_continuation.py`: the existing two-batch isolated
   execution now asserts that the second selection receives the first batch's

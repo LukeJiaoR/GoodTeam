@@ -6,7 +6,8 @@ import sys
 import pytest
 
 from goodteam_os.context_continuity import conversation_context
-from goodteam_os.project_iteration import project_iteration_backlog
+from goodteam_os.assistant_queue import queue_manager_iteration_choice
+from goodteam_os.project_iteration import latest_iteration_choice, project_iteration_backlog
 from goodteam_os.project_iteration_planner import plan_next_iteration
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
@@ -84,12 +85,15 @@ assert not set(ids) & {row['task_id'] for row in packet['out_of_scope_tasks']}
 with Path(os.environ['PLANNING_FIXTURE_CALLS']).open('a') as stream:
     stream.write(json.dumps(packet) + '\n')
 Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dumps({
-    'selected_task_id': ids[-1], 'compared_task_ids': ids,
+    'selected_task_id': ids[-1] if packet['project_head'] == os.environ['PLANNING_FIXTURE_INITIAL_HEAD'] else ids[0],
+    'compared_task_ids': ids,
     'rationale': 'Choose this eligible task using the current repository and supplied project evidence.'}))
 ''')
     binary.chmod(0o755)
     monkeypatch.setenv("PATH", str(binary.parent) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("PLANNING_FIXTURE_CALLS", str(calls))
+    initial_head = git(source, "rev-parse", "HEAD")
+    monkeypatch.setenv("PLANNING_FIXTURE_INITIAL_HEAD", initial_head)
     ledger = LocalTaskStore(source, "DEMO")
     tasks = [ledger.create_task(title=f"Iteration {i}", description="Implement a bounded project improvement.",
                                 role="implementation") for i in range(3)]
@@ -103,6 +107,21 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dump
     assert second["reused"] is False
     assert second["iteration_choice"]["source_event_id"] != first["iteration_choice"]["source_event_id"]
     store = TaskAssistantSessionStore(tmp_path, "DEMO")
+    assert second["iteration_choice"]["selected_task_id"] != first["iteration_choice"]["selected_task_id"]
+    # Returning to an earlier input reuses its Worker but makes that advice
+    # current again for both the display and the existing queue handoff.
+    git(source, "checkout", "--detach", initial_head)
+    restored = plan_next_iteration(**spec)["iteration_choice"]
+    assert restored["planning_input_digest"] == first["iteration_choice"]["planning_input_digest"]
+    assert latest_iteration_choice(store.read(), project_iteration_backlog(source, "DEMO")) == restored
+    assert restored["source_event_id"] != first["iteration_choice"]["source_event_id"]
+    assert plan_next_iteration(**spec)["reused"] is True
+    assert len(calls.read_text().splitlines()) == 2
+    queued = queue_manager_iteration_choice(workspace=tmp_path, project_key="DEMO", root=source,
+        expected_backlog_version=spec["expected_backlog_version"],
+        expected_choice_event_id=restored["source_event_id"], expected_task_ids=restored["selected_task_ids"])
+    assert queued["queued_task_ids"] == first["iteration_choice"]["selected_task_ids"]
+    assert queued["workflow_started"] is False
     store.append_message("new-goal", "user", "项目目标：优先完成可离线验证的迭代。")
     assert plan_next_iteration(**spec)["reused"] is False
     assert len(calls.read_text().splitlines()) == 3
