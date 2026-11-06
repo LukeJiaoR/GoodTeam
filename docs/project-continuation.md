@@ -81,6 +81,31 @@ Read an existing batch report at
 response contains `task_assistant_session.project_continuation` and
 `project_task_batches` for status and review presentation.
 
+## Recover a batch after a local host interruption
+
+If a host dies before saving the ordinary isolated Codex implementation
+Worker's exit, the original running status remains unknown and normal retry
+stays blocked. Do not edit that status or invent an exit code. Inspect the
+original local Worker **and all related processes**, and stop them if needed.
+After confirming they have stopped, use the current recovery version from the
+batch report:
+
+```sh
+goodteam batch-retire-worker --workspace /path/to/workspace \
+  --project-key PROJECT --run-id task-batch-... --job-id job-... \
+  --expected-recovery-version sha256:... --confirm-processes-stopped
+```
+
+This trusted local command also refuses a PID still present or inaccessible.
+PID absence alone is insufficient; the flag explicitly attests the Operator's
+inspection of related processes. An immutable receipt in host dispatch state
+binds the original job/status bytes, local host and exact Worker. Original
+logs, partial files, report and unknown exit code remain unchanged. HTTP cannot
+create this receipt. Missing/changed original evidence still blocks recovery.
+Use the existing failed-task retry afterwards, with its normal confirmation,
+cost acknowledgement and continuation scope/budget checks. Retirement alone
+does not launch work, revive Stop, accept output, merge or deploy.
+
 ## Recover an unfinished ordinary Workflow
 
 A failed ordinary Workflow can retain useful application changes while still
