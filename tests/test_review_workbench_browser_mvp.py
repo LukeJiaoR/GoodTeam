@@ -25,6 +25,19 @@ def test_export_is_read_only_for_ledger_and_memory(tmp_path):
     before_events = ledger.read_events(execution_id)
     before_memory = _memory_event_files(tmp_path)
 
+    # Provenance and the user-facing manifest must report the same observed
+    # CI, review and merge facts through their shared pure extractors.
+    from goodteam_os.execution.evidence import ExecutionEvidenceService
+
+    evidence = ExecutionEvidenceService(tmp_path)
+    provenance = evidence.build_provenance(execution_id)
+    manifest = evidence.get_evidence(execution_id)
+    for field in ("ci_summary", "review_summary", "merge_summary"):
+        assert provenance[field] == manifest[field]
+    assert provenance["ci_summary"]["state"] == "success"
+    assert provenance["review_summary"] == {"reviews": 1, "comments": 1, "states": ["APPROVED"]}
+    assert provenance["merge_summary"]["merged"] is True
+
     first = api.export_review_workbench_html(execution_id)
     second = api.export_review_workbench_html(execution_id)
 

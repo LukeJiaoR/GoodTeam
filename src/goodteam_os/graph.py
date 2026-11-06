@@ -3241,22 +3241,6 @@ def _is_worker_meta_summary(text: str) -> bool:
     return False
 
 
-def _extract_referenced_artifact_file(text: str, runtime_root: Path) -> Path | None:
-    patterns = [
-        re.compile(r"`([^`]+\.md)`"),
-        re.compile(r"(?:^|\s)([\w\-./]+\.md)(?:\s|$)", re.MULTILINE),
-    ]
-    for pattern in patterns:
-        for match in pattern.finditer(text):
-            rel = match.group(1).strip().strip("`")
-            candidate = runtime_root / rel
-            if candidate.is_file():
-                return candidate
-            if (runtime_root / "docs" / rel).is_file():
-                return runtime_root / "docs" / rel
-    return None
-
-
 def generate_artifact_via_worker(
     *,
     state: AgileDevState,
