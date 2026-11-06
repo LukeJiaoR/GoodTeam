@@ -14,6 +14,7 @@ from functools import lru_cache
 import json
 import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from psycopg.types.json import Jsonb
 
@@ -28,11 +29,11 @@ def document_key(path):
 
 
 def ensure_storage_config(path):
-    """A migrated workspace cannot silently reopen its stale file backup."""
+    """A PG workspace cannot silently reopen empty or stale file state."""
     binding = _storage_binding(document_key(path))
     if binding is not None and (not database_configured() or binding.get("database_schema") !=
                                os.environ.get("GOODTEAM_DATABASE_SCHEMA", "goodteam")):
-        raise ValueError("This state was migrated to PostgreSQL; restore its database configuration before use.")
+        raise ValueError("This state is bound to PostgreSQL; restore its database configuration before use.")
 
 
 @lru_cache(maxsize=1024)
@@ -49,6 +50,56 @@ def _storage_binding(key):
 
 def refresh_storage_bindings():
     _storage_binding.cache_clear()
+    _project_locations.cache_clear()
+
+
+def bind_postgres_backend(root):
+    """Persist backend selection before committing any new PG authority."""
+    root = Path(root).resolve()
+    ensure_storage_config(root / "entry")
+    _bind_postgres_root(str(root), database().schema)
+
+
+@lru_cache(maxsize=1024)
+def _bind_postgres_root(root, schema):
+    target = Path(root) / ".goodteam" / "postgres-backend.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    marker = {"schema_version": "postgres_store.v1", "database_schema": schema}
+    with NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+        json.dump(marker, handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    try:
+        try:
+            os.link(temporary, target)
+        except FileExistsError:
+            if json.loads(target.read_text(encoding="utf-8")) != marker:
+                raise ValueError("The state already has a different PostgreSQL binding.")
+        descriptor = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
+        refresh_storage_bindings()
+
+
+def project_state_directory(workspace, project_key, kind):
+    """Use only locations captured by offline import, never a live file fallback."""
+    workspace = Path(workspace).resolve()
+    locations = _project_locations(str(workspace), database())
+    selected = locations.get(kind, {}).get(project_key)
+    return Path(selected) if selected else workspace / "state" / "projects" / project_key
+
+
+@lru_cache(maxsize=256)
+def _project_locations(workspace, backend):
+    key = document_key(Path(workspace) / "state" / "postgres-project-locations.json")
+    with backend.connection() as conn:
+        row = conn.execute("SELECT payload FROM state_documents WHERE path=%s AND NOT deleted", (key,)).fetchone()
+    return row["payload"] if row else {}
 
 
 @contextmanager
@@ -112,11 +163,12 @@ def read_json(path):
     return row["payload"]
 
 
-def write_json(path, payload, *, exclusive=False):
+def write_json(path, payload, *, storage_root, exclusive=False):
     """PG-only write; existing file implementations retain their durability code."""
     ensure_storage_config(path)
     with connection() as conn:
         _record(conn, path)
+        bind_postgres_backend(storage_root)
         if exclusive:
             row = conn.execute(
                 "INSERT INTO state_documents(path,payload) VALUES (%s,%s) ON CONFLICT DO NOTHING RETURNING path",
@@ -186,6 +238,6 @@ def read_events(path):
     return value
 
 
-def append_events(path, events):
+def append_events(path, events, *, storage_root):
     with document_lock(path):
-        write_json(path, [*read_events(path), *events])
+        write_json(path, [*read_events(path), *events], storage_root=storage_root)

@@ -416,7 +416,7 @@ class IntentCommitStore:
 
     def _write_payload(self, payload: Mapping[str, object]) -> None:
         if database_configured():
-            state_documents.write_json(self.path, dict(payload))
+            state_documents.write_json(self.path, dict(payload), storage_root=self.workspace)
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(

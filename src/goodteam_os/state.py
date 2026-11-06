@@ -94,21 +94,22 @@ class StateStore:
 
     def project_state_dir(self, project_key: str) -> Path:
         key = normalize_project_key(project_key)
-        primary = self.root / "state" / "projects" / key
         if database_configured():
-            # PG state belongs to this workspace; a missing local projection
-            # cannot select a different home-directory workspace's workflow.
-            return primary
+            return state_documents.project_state_directory(self.root, key, "workflow")
+        return self._legacy_project_state_dir(key)
+
+    def _legacy_project_state_dir(self, key, *, registry_entry=None):
+        primary = self.root / "state" / "projects" / key
         if ((primary / "current.json").is_file() or (primary / "readiness.json").is_file()
                 or (primary / "archived").is_dir()):
             return primary
-        for candidate in self._candidate_project_state_dirs(key):
+        for candidate in self._candidate_project_state_dirs(key, registry_entry=registry_entry):
             if ((candidate / "current.json").is_file() or (candidate / "readiness.json").is_file()
                     or (candidate / "archived").is_dir()):
                 return candidate
         return primary
 
-    def _candidate_project_state_dirs(self, key: str) -> list[Path]:
+    def _candidate_project_state_dirs(self, key: str, *, registry_entry=None) -> list[Path]:
         candidates: list[Path] = []
         try:
             candidates.append(self.root.parent / "state" / "projects" / key)
@@ -123,7 +124,7 @@ class StateStore:
         try:
             from goodteam_os.project_registry import ProjectRegistry
 
-            entry = ProjectRegistry().find_project(key)
+            entry = registry_entry if registry_entry is not None else ProjectRegistry().find_project(key)
             if entry:
                 sp = entry.get("state_path")
                 if sp:
@@ -266,7 +267,7 @@ class StateStore:
         payload["resources"] = resources_to_json(state.resources)
         payload["artifacts"] = legacy_artifacts_view(state.resources) if state.resources else dict(state.artifacts)
         if database_configured():
-            state_documents.write_json(path, payload)
+            state_documents.write_json(path, payload, storage_root=self.root)
             return
         with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
             temporary = Path(handle.name)
@@ -298,7 +299,7 @@ class StateStore:
                     payload["resources"] = resources_to_json(state.resources)
                     payload["artifacts"] = legacy_artifacts_view(state.resources) if state.resources else dict(state.artifacts)
                     payload["checkpoint"] = {"node": state.current_node, "sequence": sequence}
-                    state_documents.write_json(path, payload, exclusive=True)
+                    state_documents.write_json(path, payload, storage_root=self.root, exclusive=True)
                     return path
                 with path.open("x", encoding="utf-8") as file:
                     payload = asdict(state)

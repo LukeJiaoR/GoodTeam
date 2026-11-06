@@ -70,6 +70,7 @@ def _now() -> str:
 
 
 def goal_store_exists(workspace: Path) -> bool:
+    ensure_storage_config(Path(workspace) / "state" / "goals.sqlite3")
     legacy = (Path(workspace) / "state" / "goals.sqlite3").is_file()
     if database_configured():
         from goodteam_os.postgres_goals import exists

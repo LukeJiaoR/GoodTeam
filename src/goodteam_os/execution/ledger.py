@@ -34,7 +34,7 @@ class ExecutionLedger:
     def append_event(self, event: LedgerEvent) -> Path:
         path = self._execution_dir(event.execution_id) / "events.jsonl"
         if database_configured():
-            state_documents.append_events(path, [json.loads(event.to_json())])
+            state_documents.append_events(path, [json.loads(event.to_json())], storage_root=self.project_root)
             return path
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = f"{event.to_json()}\n".encode("utf-8")
@@ -75,10 +75,9 @@ class ExecutionLedger:
     def _execution_dir(self, execution_id: str) -> Path:
         return self.executions_root / execution_id
 
-    @staticmethod
-    def _write_json(path: Path, payload: str) -> None:
+    def _write_json(self, path: Path, payload: str) -> None:
         if database_configured():
-            state_documents.write_json(path, json.loads(payload))
+            state_documents.write_json(path, json.loads(payload), storage_root=self.project_root)
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(payload, encoding="utf-8")

@@ -464,7 +464,7 @@ class TaskAssistantSessionStore:
 
     def _write(self, payload: dict[str, object]) -> None:
         if database_configured():
-            state_documents.write_json(self.path, payload)
+            state_documents.write_json(self.path, payload, storage_root=self.workspace)
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", encoding="utf-8", dir=self.path.parent, delete=False) as handle:

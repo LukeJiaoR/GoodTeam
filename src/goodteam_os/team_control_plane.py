@@ -364,7 +364,7 @@ class TeamControlPlaneStore:
 
     def _write_state(self, state: dict[str, object], *, durable: bool = False) -> None:
         if database_configured():
-            state_documents.write_json(self.state_path, state)
+            state_documents.write_json(self.state_path, state, storage_root=self.workspace)
             return
         self.state_dir.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", encoding="utf-8", dir=self.state_dir, delete=False) as handle:
@@ -414,7 +414,7 @@ class TeamControlPlaneStore:
         if not events:
             return
         if database_configured():
-            state_documents.append_events(self.events_path, events)
+            state_documents.append_events(self.events_path, events, storage_root=self.workspace)
             return
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
         with self.events_path.open("a", encoding="utf-8") as handle:
@@ -439,7 +439,7 @@ class TeamControlPlaneStore:
                 pending.append(event)
                 existing_ids.add(event_id)
         if database_configured():
-            state_documents.append_events(self.events_path, pending)
+            state_documents.append_events(self.events_path, pending, storage_root=self.workspace)
             return
         previous = self.events_path.read_bytes() if self.events_path.exists() else b""
         separator = b"\n" if previous and not previous.endswith(b"\n") else b""

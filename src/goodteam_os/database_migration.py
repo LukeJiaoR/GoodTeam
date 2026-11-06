@@ -4,10 +4,8 @@ from __future__ import annotations
 import argparse
 from hashlib import sha256
 import json
-import os
 from pathlib import Path
 import sqlite3
-from tempfile import NamedTemporaryFile
 
 from psycopg import sql
 from psycopg.types.json import Jsonb
@@ -15,7 +13,35 @@ from psycopg.types.json import Jsonb
 from goodteam_os.database import database
 from goodteam_os.goals import GoalStore
 from goodteam_os import postgres_goals
-from goodteam_os.state_documents import document_key, refresh_storage_bindings
+from goodteam_os.state_documents import bind_postgres_backend, document_key, refresh_storage_bindings
+
+
+def _project_locations(workspace, registry):
+    from goodteam_os.project_readiness import ProjectReadinessStore
+    from goodteam_os.project_registry import ProjectRegistry
+    from goodteam_os.state import StateStore, normalize_project_key
+
+    entries = {normalize_project_key(entry["key"]): entry for entry in
+               ProjectRegistry(registry)._read_data(legacy=True)["projects"] if entry.get("key")}
+    states, readiness = StateStore(workspace), ProjectReadinessStore(workspace)
+    # Reuse the legacy resolver's supported roots and precedence. Registry-only
+    # state directories are included through their registered project keys.
+    parents = {workspace / "state" / "projects", *(path.parent for path in
+               states._candidate_project_state_dirs("__migration__", registry_entry={}))}
+    keys = set(entries) | {normalize_project_key(path.name) for parent in parents
+                          for path in parent.glob("*") if path.is_dir()}
+    locations = {"workflow": {}, "readiness": {}}
+    directories = set()
+    for key in sorted(keys):
+        primary = workspace / "state" / "projects" / key
+        entry = entries.get(key, {})
+        workflow = states._legacy_project_state_dir(key, registry_entry=entry).resolve()
+        preparation = readiness._legacy_path(key, registry_entry=entry).parent.resolve()
+        directories.update((primary, workflow, preparation))
+        for kind, selected in (("workflow", workflow), ("readiness", preparation)):
+            if selected != primary:
+                locations[kind][key] = str(selected)
+    return locations, directories
 
 
 def _object(pairs):
@@ -40,7 +66,8 @@ def _sources(workspace, project_roots, registry):
     for path in (registry, state / "operator" / "queue.json", state / "operator" / "events.ndjson"):
         if path.is_file():
             paths.add(path)
-    for directory in (state / "projects").glob("*"):
+    locations, directories = _project_locations(workspace, registry)
+    for directory in directories:
         for name in ("task-assistant-session.json", "current.json", "intent-commits.json",
                      "readiness.json", "team-state.json", "team-events.jsonl"):
             if (directory / name).is_file():
@@ -53,7 +80,7 @@ def _sources(workspace, project_roots, registry):
             paths.add(path)
         for name in ("task.json", "run.json", "events.jsonl"):
             paths.update((root / ".goodteam" / "executions").glob("*/" + name))
-    return sorted(paths)
+    return sorted(paths), locations
 
 
 def migrate(*, workspace, project_roots, offline_confirmed=False, registry_path=None):
@@ -64,7 +91,7 @@ def migrate(*, workspace, project_roots, offline_confirmed=False, registry_path=
     from goodteam_os.project_registry import get_default_registry_path
 
     registry = Path(registry_path or get_default_registry_path()).resolve()
-    source_paths = _sources(workspace, roots, registry)
+    source_paths, locations = _sources(workspace, roots, registry)
     sources = []
     for path in source_paths:
         if path.is_symlink():
@@ -101,20 +128,18 @@ def migrate(*, workspace, project_roots, offline_confirmed=False, registry_path=
             imported += 1
         if any(path.read_bytes() != raw for path, raw, _payload, _digest in sources):
             raise ValueError("State changed during migration; stop its writers before retrying.")
+        # Preserve original paths (including evidence/checkpoint references),
+        # and bind their resolution to this workspace in the same transaction.
+        location_key = document_key(workspace / "state" / "postgres-project-locations.json")
+        previous = conn.execute("SELECT payload,deleted FROM state_documents WHERE path=%s", (location_key,)).fetchone()
+        if previous and (previous["deleted"] or previous["payload"] != locations):
+            raise ValueError("Imported project state locations changed; PostgreSQL state was preserved.")
+        if not previous:
+            conn.execute("INSERT INTO state_documents(path,payload) VALUES (%s,%s)", (location_key, Jsonb(locations)))
         goal_count = _migrate_goals(workspace, conn)
-    marker = {"schema_version": "postgres_store.v1", "database_schema": backend.schema}
-    for root in set([workspace, *roots, registry.parent]):
-        target = root / ".goodteam" / "postgres-backend.json"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as handle:
-            temporary = Path(handle.name)
-            json.dump(marker, handle)
-            handle.flush()
-            os.fsync(handle.fileno())
-        try:
-            os.replace(temporary, target)
-        finally:
-            temporary.unlink(missing_ok=True)
+    legacy_directories = {Path(path) for values in locations.values() for path in values.values()}
+    for root in {workspace, *roots, registry.parent, *legacy_directories}:
+        bind_postgres_backend(root)
     refresh_storage_bindings()
     return {"schema_version": "postgres_import.v1", "documents_imported": imported,
             "documents_checked": len(sources), "goals_imported": goal_count,

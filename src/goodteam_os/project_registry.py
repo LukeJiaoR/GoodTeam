@@ -176,9 +176,9 @@ class ProjectRegistry:
                 return entry
         return None
 
-    def _read_data(self) -> dict[str, Any]:
+    def _read_data(self, *, legacy=False) -> dict[str, Any]:
         try:
-            data = state_documents.read_json(self.registry_path) if database_configured() else json.loads(
+            data = state_documents.read_json(self.registry_path) if database_configured() and not legacy else json.loads(
                 self.registry_path.read_text(encoding="utf-8"),
                 object_pairs_hook=_registry_json_object,
                 parse_constant=_reject_json_constant,
@@ -214,7 +214,7 @@ class ProjectRegistry:
 
     def _write_data(self, data: dict[str, Any]) -> None:
         if database_configured():
-            state_documents.write_json(self.registry_path, data)
+            state_documents.write_json(self.registry_path, data, storage_root=self.registry_path.parent)
             return
         try:
             self.registry_path.parent.mkdir(parents=True, exist_ok=True)

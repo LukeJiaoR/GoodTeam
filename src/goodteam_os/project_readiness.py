@@ -149,15 +149,20 @@ class ProjectReadinessStore:
         return readiness
 
     def read(self, project_key: str) -> dict[str, object] | None:
+        state_documents.ensure_storage_config(self._path(project_key))
         if database_configured():
             key = normalize_project_key(project_key)
+            path = self._path(key)
             descriptors = self._open_project_directory_chain(key, create=False) if self.workspace_fd is not None else []
             if descriptors is None:
-                return None
+                if path.parent == self.workspace.resolve() / "state" / "projects" / key:
+                    return None
+                # Legacy reads also allowed an explicitly resolved external
+                # readiness location when the primary directory was absent.
+                descriptors = []
             try:
                 if descriptors:
                     self._verify_current_chain(key, descriptors)
-                path = self._path(key)
                 data = state_documents.read_json(path) if state_documents.exists(path) else None
                 if descriptors:
                     self._verify_current_chain(key, descriptors)
@@ -365,7 +370,7 @@ class ProjectReadinessStore:
                 payload, _previous, descriptors = pending
                 with state_documents.document_lock(self._path(key)), state_documents.connection() as conn, conn.transaction():
                     self._verify_anchored_write(key)
-                    state_documents.write_json(self._path(key), payload)
+                    state_documents.write_json(self._path(key), payload, storage_root=self.workspace)
                     self._verify_current_chain(key, descriptors)
                 self._postgres_writes.pop(key)
                 _close_descriptors(descriptors)
@@ -401,18 +406,21 @@ class ProjectReadinessStore:
 
     def _path(self, project_key: str) -> Path:
         key = normalize_project_key(project_key)
-        primary = self.workspace / "state" / "projects" / key / "readiness.json"
         if database_configured():
-            return primary
+            return state_documents.project_state_directory(self.workspace, key, "readiness") / "readiness.json"
+        return self._legacy_path(key)
+
+    def _legacy_path(self, key, *, registry_entry=None):
+        primary = self.workspace / "state" / "projects" / key / "readiness.json"
         if primary.is_file():
             return primary
-        for candidate_dir in self._candidate_state_dirs(key):
+        for candidate_dir in self._candidate_state_dirs(key, registry_entry=registry_entry):
             candidate_path = candidate_dir / "readiness.json"
             if candidate_path.is_file():
                 return candidate_path
         return primary
 
-    def _candidate_state_dirs(self, key: str) -> list[Path]:
+    def _candidate_state_dirs(self, key: str, *, registry_entry=None) -> list[Path]:
         candidates: list[Path] = []
         try:
             candidates.append(self.workspace.parent / "state" / "projects" / key)
@@ -427,7 +435,7 @@ class ProjectReadinessStore:
         try:
             from goodteam_os.project_registry import ProjectRegistry
 
-            entry = ProjectRegistry().find_project(key)
+            entry = registry_entry if registry_entry is not None else ProjectRegistry().find_project(key)
             if entry:
                 sp = entry.get("state_path")
                 if sp:
@@ -456,7 +464,7 @@ class ProjectReadinessStore:
             key = normalize_project_key(project_key)
             path = self._path(key)
             if self.workspace_fd is None:
-                state_documents.write_json(path, readiness)
+                state_documents.write_json(path, readiness, storage_root=self.workspace)
             else:
                 # Stage until the existing importer/executor verifies its
                 # pinned directory chain and commits. A rollback changes no PG

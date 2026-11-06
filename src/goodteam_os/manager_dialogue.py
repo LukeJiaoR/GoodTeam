@@ -91,6 +91,7 @@ def _status(snapshot, *, chinese):
 
 def _propose_delivery(store, root, snapshot, incoming, chinese):
     from goodteam_os.project_iteration_continuation import _verify_landed_batch
+    from goodteam_os.project_iteration_quality import accepted_batch_quality
 
     grant = snapshot["continuation"]
     run_id = (grant.get("pending_batch") or {}).get("run_id", "")
@@ -100,6 +101,9 @@ def _propose_delivery(store, root, snapshot, incoming, chinese):
             or snapshot["batch"].get("expected_continuation_id") != grant.get("id")):
         return None, _status(snapshot, chinese=chinese)
     try:
+        quality = accepted_batch_quality(workspace=store.workspace, project_key=store.project_key, root=root, run_id=run_id)
+        if quality:
+            candidate = quality["candidate_commit"]
         _verify_landed_batch(workspace=store.workspace, project_key=store.project_key, root=root,
                              run_id=run_id, candidate_commit=candidate, landed_commit=landed)
     except (ValueError, OSError) as exc:

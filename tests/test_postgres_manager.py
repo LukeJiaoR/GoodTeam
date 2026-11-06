@@ -5,6 +5,7 @@ The CLI/model responses are offline fixtures, not real-provider acceptance.
 from dataclasses import asdict
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 from uuid import uuid4
@@ -103,7 +104,7 @@ def test_legacy_import_preserves_authority_identity_and_rejects_overwrite(tmp_pa
         migrate(workspace=tmp_path, project_roots=[source], offline_confirmed=True)
     assert session.read()["timeline"][-1]["content"] == "PG 中的新消息"
     monkeypatch.delenv("GOODTEAM_DATABASE_URL")
-    with pytest.raises(ValueError, match="migrated to PostgreSQL"):
+    with pytest.raises(ValueError, match="PostgreSQL"):
         session.read()
 
 
@@ -214,6 +215,7 @@ def test_stop_while_waiting_invalidates_old_confirmation(tmp_path, monkeypatch, 
         "batch": {"expected_continuation_id": "grant"}, "integration": {"candidate_commit": "a" * 40},
         "landed_commit": "b" * 40, "version": store.read()["project_continuation"]["status"]})
     monkeypatch.setattr(continuation, "_verify_landed_batch", lambda **kwargs: ({}, None))
+    monkeypatch.setattr("goodteam_os.project_iteration_quality.accepted_batch_quality", lambda **kwargs: None)
     effects = []
     monkeypatch.setattr(continuation, "accept_project_batch_delivery", lambda **kwargs: effects.append(kwargs))
     service = TaskAssistantService(tmp_path, project_config=config, manager_turn=_manager)
@@ -267,3 +269,110 @@ def test_pg_model_failure_retries_existing_message_identity(tmp_path, monkeypatc
     session = TaskAssistantSessionStore(tmp_path, "HISTORY").read()
     assert session["timeline"][-1]["run_id"] == "original-history-run"
     assert states.read_project_current("HISTORY").run_id == "new-history-run"
+
+
+def test_fresh_pg_state_rejects_missing_configuration_after_restart(tmp_path, postgres):
+    postgres()
+    workspace, goal_workspace, source = (tmp_path / name for name in ("workspace", "goals-only", "source"))
+    session = TaskAssistantSessionStore(workspace, "DEMO")
+    session._mutate(lambda value: {**value, "project_continuation": {
+        "id": "ended", "status": "stopped", "manager_calls": 2, "max_manager_calls": 2}})
+    task = LocalTaskStore(source, "DEMO").create_task(title="Preserved", description="Original scope", role="implementation")
+    goals = GoalStore(goal_workspace, "DEMO")
+    goal = goals.create_goal(objective="Preserved", acceptance_criteria=["Verified"], allowed_scope=[task["id"]],
+        max_work_units=1, confirmed=True, idempotency_key="original")
+    goals.stop_goal(goal["id"], expected_revision=goal["revision"], idempotency_key="stop")
+    program = """
+import sys
+from pathlib import Path
+from goodteam_os.goals import GoalStore, goal_store_exists
+from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+from goodteam_os.tasks import LocalTaskStore
+workspace, goals, source = map(Path, sys.argv[1:])
+for read in (lambda: TaskAssistantSessionStore(workspace, 'DEMO').read(),
+             lambda: goal_store_exists(goals), lambda: GoalStore(goals, 'DEMO').list_goals(),
+             lambda: LocalTaskStore(source, 'DEMO').list_tasks()):
+    try:
+        read()
+    except ValueError as exc:
+        assert 'PostgreSQL' in str(exc)
+    else:
+        raise AssertionError('PG authority silently reopened in file mode')
+"""
+    env = dict(os.environ)
+    env.pop("GOODTEAM_DATABASE_URL")
+    restarted = subprocess.run([sys.executable, "-c", program, str(workspace), str(goal_workspace), str(source)],
+                               env=env, capture_output=True, text=True, timeout=30)
+    assert restarted.returncode == 0, restarted.stderr
+    assert session.read()["project_continuation"]["manager_calls"] == 2
+    assert goals.get_goal(goal["id"])["status"] == "stopped"
+
+
+def test_import_preserves_legacy_fallback_locations_and_approvals(tmp_path, monkeypatch, postgres):
+    from goodteam_os.state import ApprovalDecision
+
+    workspace = tmp_path / "workspace"
+    source = repository(tmp_path / "source")
+    registry = ProjectRegistry()
+    origins = {"PARENT": tmp_path, "HOME": Path(os.environ["GOODTEAM_HOME"]), "REGISTERED": tmp_path / "external"}
+    expected, source_bytes = {}, {}
+    for key, origin in origins.items():
+        state = create_initial_state("original-" + key, key, "Preserve the original approval")
+        state.approvals["plan"] = ApprovalDecision.APPROVED
+        states = StateStore(origin)
+        states.write_project_current(state)
+        ProjectReadinessStore(origin).initialize(key, source)
+        directory = states.project_state_dir(key)
+        registry.register_project(workspace / "projects" / (key + ".yaml"), root=source, key=key,
+                                  state_path=directory if key == "REGISTERED" else None)
+        expected[key] = (asdict(StateStore(workspace).read_project_current(key)), ProjectReadinessStore(workspace).read(key))
+        source_bytes.update({path: path.read_bytes() for path in directory.glob("*.json")})
+    postgres()
+    migrate(workspace=workspace, project_roots=[source], offline_confirmed=True)
+    for key in origins:
+        assert (asdict(StateStore(workspace).read_project_current(key)), ProjectReadinessStore(workspace).read(key)) == expected[key]
+    descriptor = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        anchored = ProjectReadinessStore(workspace, workspace_fd=descriptor)
+        assert [anchored.read(key) for key in origins] == [expected[key][1] for key in origins]
+    finally:
+        os.close(descriptor)
+    assert source_bytes == {path: path.read_bytes() for path in source_bytes}
+    assert migrate(workspace=workspace, project_roots=[source], offline_confirmed=True)["documents_imported"] == 0
+    # The captured original locations survive restart and a changed home setting.
+    program = """
+import json, sys
+from pathlib import Path
+from goodteam_os.state import StateStore
+store = StateStore(Path(sys.argv[1]))
+print(json.dumps([store.read_project_current(key).run_id for key in sys.argv[2:]]))
+"""
+    env = {**os.environ, "GOODTEAM_HOME": str(tmp_path / "different-home")}
+    result = subprocess.run([sys.executable, "-c", program, str(workspace), *origins], env=env,
+                            capture_output=True, text=True, check=True, timeout=30)
+    assert json.loads(result.stdout) == ["original-" + key for key in origins]
+
+
+def test_pg_conversation_delivers_reviewed_correction(tmp_path, monkeypatch, postgres):
+    from test_project_iteration_quality import test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution
+
+    postgres()
+
+    def delivery_handoff(workspace, root, config, request):
+        store = TaskAssistantSessionStore(workspace, "DEMO")
+        def awaiting(session):
+            session["project_continuation"] = {"id": "correction-grant", "status": "active",
+                "manager_calls": 1, "max_manager_calls": 1, "pending_batch": {"run_id": request["run_id"]}}
+            session["project_task_batches"][request["run_id"]]["expected_continuation_id"] = "correction-grant"
+            return session
+        store._mutate(awaiting)
+        service = TaskAssistantService(workspace, project_config=config, manager_turn=_manager)
+        result = service.send_message(project_key="DEMO", root=root, text="确认这批交付", message_id="corrected-handoff")
+        assert "确认你已审阅" in result["session"]["timeline"][-1]["content"]
+        assert request["candidate_commit"] in result["session"]["timeline"][-1]["content"]
+        assert _new_process_message(workspace, root, config, "corrected-confirm", "确认交付")["status"] == "succeeded"
+        receipt = store.read()["project_task_batches"][request["run_id"]]["delivery_receipt"]
+        assert receipt["candidate_commit"] == receipt["quality"]["candidate_commit"] == request["candidate_commit"]
+
+    test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
+        tmp_path, monkeypatch, delivery_handoff=delivery_handoff)

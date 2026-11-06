@@ -74,6 +74,10 @@ def initialize(store, *, importing=False):
                 sql.Identifier(store._goal_schema))).fetchall()
             if rows != [{"version": 1}]:
                 raise GoalCorruptState("Unsupported Goal ledger version; continuation is disabled.")
+            if not importing:
+                from goodteam_os.state_documents import bind_postgres_backend
+
+                bind_postgres_backend(store.workspace)
 
 
 def _lock_key(store):

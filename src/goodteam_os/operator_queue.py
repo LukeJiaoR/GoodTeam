@@ -459,7 +459,7 @@ class DurableOperatorQueue:
 
     def _append_event_unlocked(self, event: Mapping[str, Any]) -> None:
         if database_configured():
-            state_documents.append_events(self.events_path, [dict(event)])
+            state_documents.append_events(self.events_path, [dict(event)], storage_root=self.root.parent)
             return
         self.root.mkdir(parents=True, exist_ok=True)
         with self.events_path.open("a", encoding="utf-8") as handle:
@@ -469,7 +469,7 @@ class DurableOperatorQueue:
 
     def _write_state_unlocked(self, state: Mapping[str, Any]) -> None:
         if database_configured():
-            state_documents.write_json(self.state_path, dict(state))
+            state_documents.write_json(self.state_path, dict(state), storage_root=self.root.parent)
             return
         self.root.mkdir(parents=True, exist_ok=True)
         temporary = self.state_path.with_name(f"{self.state_path.name}.{os.getpid()}.tmp")

@@ -53,9 +53,11 @@ copied into LangGraph. The migration command imports the business stores listed
 above; it is not a generic importer for every JSON file.
 
 An unset DB setting retains compatibility for installations that have never
-migrated. A configured PG failure never selects file/SQLite storage. An explicit
-import writes a local backend marker; removing the DB configuration afterward
-cannot reopen the stale backup through these stores.
+used PostgreSQL. A configured PG failure never selects file/SQLite storage.
+Normal PG document writes and Goal initialization persist a local backend
+marker before their database transaction commits; successful offline imports
+also bind their source roots. Removing the DB configuration afterward cannot
+reopen empty or stale file state, including through `goal_store_exists()`.
 The marker binding is cached for the service lifetime; cutover requires stopped
 writers, and the importer refreshes that cache for same-process migration tools.
 Model subprocesses (including CLI discovery and Pi RPC) do not inherit the
@@ -74,7 +76,9 @@ operation kind and exact continuation identity; it cannot supply arbitrary
 commands, grant parameters, Reviewer authority or delivery hashes.
 
 Before proposing delivery, the server obtains the current batch report and Git
-head and uses the original landed-candidate/quality checks. The conversation
+head and uses the original landed-candidate/quality checks. When batch quality
+is configured, it proposes the final accepted quality candidate, including any
+reviewed correction, rather than the initial integration commit. The conversation
 shows the batch and exact candidate/landed commits and asks the user to confirm
 they reviewed that candidate and its verification evidence. The graph then
 persists an interrupt. Questions resume interpretation without accepting the
@@ -115,6 +119,13 @@ Pass every target whose task ledger belongs to this workspace. The command
 also imports the application's configured project registry; `--registry` can
 select its exact path explicitly. Preserve that same registry setting after
 cutover. Backend markers also protect the registry's containing directory.
+Workflow and readiness state retain the existing resolver's precedence across
+the primary directory, parent workspace, `GOODTEAM_HOME` and registry locations.
+The import captures selected original paths in a PG mapping in the same
+transaction as their records; checkpoint and evidence path identities are
+preserved. Afterward, PG readers use that mapping without consulting a different
+home directory or falling back to file state. Registered-project lookup for
+quality/correction and Skill admission also reads the PG registry.
 The command preserves source files, rejects duplicate/non-finite JSON, validates the legacy
 Goal ledger read-only, and copies original Goal row order and full snapshots.
 Business data imports share one PG transaction; an import receipt binds each
@@ -138,7 +149,10 @@ The optional `tests/test_postgres_manager.py` requires
 case uses its own schema and isolated workspace. It covers source-preserving
 import and conflicts; process restart, a question and confirmation; duplicate
 message replay; Stop while waiting; the original two-run Goal/Workflow path; and
-the original model-failure retry contract. Import checks compare readiness,
+the original model-failure retry contract. Additional regression cases cover
+fresh PG state with missing configuration after restart, migration from all
+supported legacy locations with approvals intact, and conversation confirmation
+of an actual reviewed correction. Import checks compare readiness,
 Team/Operator events and execution replay before and after migration, and reject
 reopening stale files after removing the PG setting. The retained preparation
 API scenario also runs against PG; a replaced directory prevents a staged
