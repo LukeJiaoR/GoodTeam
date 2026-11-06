@@ -21,15 +21,17 @@ from goodteam_os import web
 from goodteam_os.execution.task_snapshot_store import store_for_project
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.project_iteration import project_iteration_backlog
+from goodteam_os.project_import import import_project
 from goodteam_os.project_iteration_quality import prepare_project_batch_quality
 from goodteam_os.project_outcome_discovery import validate_discovered_task
+from goodteam_os.project_readiness_executor import ProjectReadinessExecutor
 from goodteam_os.project_registry import ProjectRegistry
 from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.team_control_plane import ensure_team_state
 from goodteam_os.workers import WorkerJobStore
-from test_dispatch_isolation import git, repository
+from test_dispatch_isolation import git
 from test_project_iteration_quality import _private_json
 
 
@@ -85,6 +87,7 @@ else:
     if 'Role: orchestrator\n' in prompt:
         packet = json.loads(prompt.split('## Context\n\n', 1)[1].split('\n\n## Sandbox Context', 1)[0])
         if packet['schema_version'] == 'project_iteration_choice_packet.v1':
+            assert packet['repository_understanding']['reason'] == 'no_completed_project_inspection'
             eligible = [item['task_id'] for item in packet['backlog']['candidates'] if item['eligible_to_plan']]
             assert len(eligible) == 1
             response = {'selected_task_ids': eligible, 'selected_task_id': eligible[0],
@@ -93,6 +96,11 @@ else:
             kind = 'manager_choice'
         else:
             assert packet['schema_version'] == 'project_outcome_discovery_packet.v1'
+            inspected = packet['repository_understanding']
+            assert inspected['status'] == 'complete', inspected
+            assert inspected['source'] == 'repository_inventory'
+            assert inspected['snapshot_id'] and inspected['inventory_digest']
+            assert inspected['semantic_understanding'] == 'not_performed'
             outcome = packet['verified_outcome']
             assert outcome['quality']['check_status'] == 'passed'
             assert outcome['quality']['acceptance_status'] == 'accepted_by_review_policy'
@@ -149,9 +157,30 @@ else:
 
 def test_verified_outcome_creates_once_then_delivers_next_iteration_within_frozen_authority(tmp_path, monkeypatch):
     binary, native_home, calls = _offline_cli(tmp_path, monkeypatch)
-    source = repository(tmp_path / "source")
+    # Real new-project readiness has no repository-understanding artifact.
+    # Its first delivery must supply current inventory to the next Manager.
+    source = tmp_path / "source"
+    source.mkdir()
+    import_project(tmp_path, str(source), requested_key="DEMO")
+    ready = ProjectReadinessExecutor(tmp_path, preflight=lambda _key: {
+        "status": "ready", "mode": "offline_fixture", "external_invocation": False,
+    }).start("DEMO", source, inputs={
+        "goal": "Deliver two bounded documentation iterations.", "brief": "Offline discovery fixture.",
+        "tech_preferences": "Plain text", "constraints": "Local only",
+        "prohibited_operations": "No external calls",
+    }, idempotency_key="new-project-readiness", background=False)
+    assert ready["lifecycle"] == "ready"
+    assert not any(step["id"] == "repository_understanding" for step in ready["steps"])
+    git(source, "init", "-q")
+    git(source, "config", "user.name", "Dispatch fixture")
+    git(source, "config", "user.email", "dispatch@example.invalid")
+    git(source, "config", "commit.gpgSign", "false")
+    (source / ".gitignore").write_text(".goodteam/\n")
+    (source / "original.txt").write_text("human source\n")
+    git(source, "add", ".")
+    git(source, "commit", "-qm", "Initial fixture")
     config = tmp_path / "projects/demo.local.yaml"
-    config.parent.mkdir()
+    config.parent.mkdir(exist_ok=True)
     config.write_text(f"key: DEMO\nsource_type: existing_project\nrepos:\n  root: {source}\nworker_backend:\n  mode: codex\n")
     ProjectRegistry().register_project(config, root=source, key="DEMO")
     ensure_team_state(tmp_path, "DEMO", config)
