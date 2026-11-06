@@ -157,6 +157,73 @@ def _response(workspace, project_key, root, batch, command):
             "recovery": recovery, "task_assistant_session": TaskAssistantSessionStore(workspace, project_key).read()}
 
 
+def retire_project_batch_worker(*, workspace, project_key, root, run_id, job_id,
+                               expected_recovery_version, confirmed_processes_stopped=False):
+    """Trusted local Operator attestation; never infer retirement from HTTP/PID alone.
+
+    The Operator must inspect descendants as well as the original process. Keep
+    original running bytes and unknown exit code; only enable normal failed-task
+    retry, which still requires its own confirmation and execution authority.
+    """
+    import os
+    import socket
+
+    from goodteam_os.assistant_requests import conversation_lock
+    from goodteam_os.dispatch_workspace import _identifier, dispatch_workspace_lock, prepare_dispatch_workspace
+    from goodteam_os.memory_storage import atomic_write
+
+    if confirmed_processes_stopped is not True:
+        raise ValueError("Confirm the original Worker and all related processes have stopped after local inspection.")
+    _identifier(job_id)
+    store, _saved = _batch(workspace, project_key, root, run_id)
+    with goal_guard(workspace, project_key), workflow_guard(workspace, project_key), conversation_lock(store):
+        _store, batch = _batch(workspace, project_key, root, run_id)
+        dispatch_id = effective_dispatch_id(batch)
+        with dispatch_workspace_lock(Path(root), dispatch_id):
+            report = json.loads(read_bytes(dispatch_artifact_root(root, dispatch_id) / "report.json"))
+            entries = [entry for entry in report["jobs"] if entry.get("job_id") == job_id]
+            if (batch["status"] != "blocked" or report.get("run_id") != dispatch_id
+                    or report.get("project_root") != str(Path(root).resolve()) or len(entries) != 1
+                    or entries[0].get("project_task_id") not in batch["task_ids"] or entries[0].get("outcome") == "ok"):
+                raise ValueError("Only an interrupted Worker of the original blocked batch can be retired.")
+            entry = {**entries[0], "dispatch_run_id": dispatch_id}
+            receipt_path = dispatch_artifact_root(root, dispatch_id) / ("retired-worker-" + job_id + ".json")
+            if read_bytes(receipt_path) is not None:
+                dispatch_job_terminal(Path(root), entry)  # Replay verifies the original bytes.
+                return project_batch_recovery_evidence(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
+            evidence = project_batch_recovery_evidence(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
+            if evidence["version"] != expected_recovery_version or not _quality_quiescent(root, batch):
+                raise ValueError("Recovery evidence changed or quality execution is unresolved; inspect before confirming.")
+            job_root = Path(root) / ".goodteam/workers/jobs" / job_id
+            job_raw, raw = read_bytes(job_root / "job.json"), read_bytes(job_root / "status.json")
+            job, status = json.loads(job_raw), json.loads(raw)
+            context = job.get("sandbox_context") or {}
+            if (job.get("id") != job_id or job.get("run_id") != dispatch_id
+                    or status.get("job_id") != job_id or status.get("run_id") != dispatch_id
+                    or job.get("status") != "running" or status.get("status") != "running"
+                    or job.get("adapter") != "codex" or job.get("role") != "implementation"
+                    or any(status.get(key) != job.get(key) or job.get(key) != entry.get(key) for key in ("role", "adapter"))
+                    or context.get("mode") != "dispatch_isolated" or context.get("execution_id") != dispatch_id
+                    or context.get("sandbox_id") != job_id or job.get("execution_id")
+                    or status.get("exit_code") is not None or type(status.get("pid")) is not int or status["pid"] <= 0):
+                raise ValueError("Original ordinary local Codex Worker identity is unavailable.")
+            isolated = prepare_dispatch_workspace(Path(root), dispatch_id, None)
+            if str(isolated.workspace(job_id)) != context.get("workspace_path"):
+                raise ValueError("Original Worker workspace identity changed.")
+            try:
+                os.kill(status["pid"], 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise ValueError("Original Worker PID is still present; retirement is refused.")
+            receipt = {"project_root": str(Path(root).resolve()), "dispatch_run_id": dispatch_id,
+                       "job_id": job_id, "source_digest": sha256(raw + b"\0" + job_raw).hexdigest(),
+                       "pid": status["pid"], "host": socket.gethostname(), "producer": "local_operator",
+                       "processes_stopped": True, "recorded_at": datetime.now(UTC).isoformat()}
+            atomic_write(receipt_path, json.dumps(receipt, sort_keys=True).encode())
+            return project_batch_recovery_evidence(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
+
+
 def reconcile_recovery_tasks(root, project_key, batch, command):
     """Finish the admitted session command's LocalTaskStore projection once."""
     from goodteam_os.project_iteration_execution import TASK_INTENT_FIELDS

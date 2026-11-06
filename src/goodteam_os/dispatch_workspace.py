@@ -486,7 +486,7 @@ def verify_dispatch_result(project_root: Path, result: dict) -> dict:
 
 
 def dispatch_job_terminal(project_root: Path, result: dict) -> tuple[dict, str]:
-    """Original host return, never a stale-heartbeat or dispatch-error projection."""
+    """Original host return or an explicit local retirement, never a stale label."""
     job_id = _identifier(result["job_id"])
     source_id = _identifier(result["dispatch_run_id"])
     root = Path(project_root) / ".goodteam" / "workers" / "jobs" / job_id
@@ -499,14 +499,31 @@ def dispatch_job_terminal(project_root: Path, result: dict) -> tuple[dict, str]:
             or job.get("id") != job_id or job.get("run_id") != source_id
             or status.get("job_id") != job_id or status.get("run_id") != source_id
             or any(status.get(key) != job.get(key) or job.get(key) != result.get(key) for key in ("role", "adapter"))
-            or status.get("status") not in {"completed", "failed"}
-            or job.get("status") != status["status"] or status.get("process_alive") is True):
+            or job.get("status") != status.get("status") or status.get("process_alive") is True):
+        raise DispatchWorkspaceError("Original Worker termination is unknown or still live.")
+    proof = hashlib.sha256(raw + b"\0" + job_raw).hexdigest()
+    retired = (read_bytes(dispatch_artifact_root(project_root, source_id) / ("retired-worker-" + job_id + ".json"))
+               if status.get("status") == "running" else None)
+    if retired is not None:
+        import socket
+
+        receipt = json.loads(retired)
+        expected = {"project_root": str(Path(project_root).resolve()), "dispatch_run_id": source_id,
+                    "job_id": job_id, "source_digest": proof, "pid": status.get("pid"),
+                    "host": socket.gethostname(), "producer": "local_operator", "processes_stopped": True}
+        if (not isinstance(receipt, dict) or any(receipt.get(key) != value for key, value in expected.items())
+                or status.get("status") != "running" or status.get("exit_code") is not None):
+            raise DispatchWorkspaceError("The explicit Worker retirement does not match its original evidence.")
+        return {**status, "raw_status": "running", "status": "failed", "process_alive": False,
+                "termination_source": "operator_confirmed_retirement", "exit_code": None,
+                "summary": "Operator confirmed the interrupted Worker and its related processes stopped; exit code unknown."}, hashlib.sha256(raw + b"\0" + job_raw + b"\0" + retired).hexdigest()
+    if status.get("status") not in {"completed", "failed"}:
         raise DispatchWorkspaceError("Original Worker termination is unknown or still live.")
     exit_code = status.get("exit_code")
     if job["adapter"] not in {"fake", "noop"} and (
             type(exit_code) is not int or (exit_code == 0) != (status["status"] == "completed")):
         raise DispatchWorkspaceError("Original Worker has no observed process exit; timeout is not proof of termination.")
-    return status, hashlib.sha256(raw + b"\0" + job_raw).hexdigest()
+    return status, proof
 
 
 def read_dispatch_recovery(project_root: Path, source: dict) -> dict:

@@ -2,8 +2,8 @@
 
 Manager choices and native CLI output are offline protocol fixtures. Dispatch,
 Git isolation, failed process evidence, retry admission, quality receipts and
-delivery use production paths. Temporarily hiding a terminal status explicitly
-models interrupted evidence publication; no running process is called failed.
+delivery use production paths. Retaining a real running snapshot after its
+process exits models interrupted publication; no live process is called stopped.
 """
 import json
 import os
@@ -86,7 +86,7 @@ def _files(root):
     return {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
 
-def test_failed_task_retry_preserves_success_then_delivers_continues_and_abandons(tmp_path, monkeypatch):
+def test_failed_task_retry_preserves_success_then_delivers_continues_and_abandons(tmp_path, monkeypatch, capsys):
     binaries, native_home, review_calls = _offline_native_cli(tmp_path, monkeypatch)
     signals = _worker_cli(tmp_path, monkeypatch)
     source = repository(tmp_path / "source")
@@ -162,6 +162,9 @@ def test_failed_task_retry_preserves_success_then_delivers_continues_and_abandon
     live = visible(run_id)["recovery"]
     live_command = {"run_id": run_id, "expected_recovery_version": live["version"],
                     "idempotency_key": "must-not-start-live", "confirmed": True}
+    live_job = next(job for job in WorkerJobStore(source).list_jobs() if job.get("status") == "running")
+    live_root = WorkerJobStore(source).root / live_job["id"]
+    running_bytes = {name: (live_root / name).read_bytes() for name in ("job.json", "status.json")}
     try:
         assert not live["retryable_task_ids"] and not live["can_abandon"]
         with pytest.raises(web.ProjectApiError):
@@ -208,6 +211,42 @@ def test_failed_task_retry_preserves_success_then_delivers_continues_and_abandon
         assert len(calls()) == 2
     finally:
         hidden.rename(status)
+
+    # Restore original host-produced running bytes after the real PID exited,
+    # modeling a host lost before terminal publication. Keep the exit unknown.
+    from goodteam_os.cli import main
+    from goodteam_os.dispatch_workspace import dispatch_job_terminal
+
+    for name, raw in running_bytes.items():
+        (failed_root / name).write_bytes(raw)
+    failed_files = _files(failed_root)
+    interrupted = visible(run_id)["recovery"]
+    assert failed["id"] in interrupted["unknown_task_ids"] and not interrupted["can_abandon"]
+    command = ["batch-retire-worker", "--workspace", str(tmp_path), "--project-key", "DEMO",
+        "--run-id", run_id, "--job-id", failed_job["job_id"],
+        "--expected-recovery-version", interrupted["version"]]
+    assert main(command) == 2  # No implicit confirmation from a dead PID.
+    capsys.readouterr()
+    status.write_text(json.dumps({**json.loads(running_bytes["status.json"]), "pid": os.getpid()}))
+    assert main([*command, "--confirm-processes-stopped"]) == 2
+    assert "PID is still present" in capsys.readouterr().err
+    status.write_bytes(running_bytes["status.json"])
+    assert main([*command, "--confirm-processes-stopped"]) == 0
+    confirmed = json.loads(capsys.readouterr().out)
+    assert confirmed["retryable_task_ids"] == [failed["id"]]
+    observed, _proof = dispatch_job_terminal(source, {**failed_job, "dispatch_run_id": initial["run_id"]})
+    assert observed["status"] == "failed" and observed["raw_status"] == "running"
+    assert observed["exit_code"] is None and observed["termination_source"] == "operator_confirmed_retirement"
+    receipt = dispatch_artifact_root(source, initial["run_id"]) / ("retired-worker-" + failed_job["job_id"] + ".json")
+    receipt_bytes = receipt.read_bytes()
+    assert main([*command, "--confirm-processes-stopped"]) == 0
+    capsys.readouterr()
+    assert receipt.read_bytes() == receipt_bytes
+    assert _files(failed_root) == failed_files and initial_report_path.read_bytes() == initial_report_bytes
+    # A changed original invalidates the retirement; never reuse stale proof.
+    status.write_bytes(status.read_bytes() + b"\n")
+    assert failed["id"] in visible(run_id)["recovery"]["unknown_task_ids"]
+    status.write_bytes(running_bytes["status.json"])
 
     ready = visible(run_id)["recovery"]
     assert ready["retryable_task_ids"] == [failed["id"]] and ready["preserved_task_ids"] == [first["id"]]

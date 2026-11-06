@@ -103,6 +103,15 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--trusted-codex-review-policy", type=Path)
             command.add_argument("--trusted-codex-correction-policy", type=Path)
 
+    retirement = subparsers.add_parser("batch-retire-worker", help="Locally confirm an interrupted batch Worker's processes have stopped")
+    retirement.add_argument("--workspace", type=Path, default=Path("."))
+    retirement.add_argument("--project-key", required=True)
+    retirement.add_argument("--run-id", required=True)
+    retirement.add_argument("--job-id", required=True)
+    retirement.add_argument("--expected-recovery-version", required=True)
+    retirement.add_argument("--confirm-processes-stopped", action="store_true",
+                            help="Attest local inspection of the original Worker and every related process; PID absence alone is insufficient")
+
     restart = subparsers.add_parser("restart", help="Restart the background GoodTeam server")
     restart.add_argument("--host", default="127.0.0.1")
     restart.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -657,6 +666,20 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         return 0
     if args.command == "tg-poll":
         payload = poll_telegram_approvals(workspace=args.workspace, project_key=args.project_key, once=args.once)
+        print(json.dumps(payload, indent=2))
+        return 0
+    if args.command == "batch-retire-worker":
+        from goodteam_os.project_iteration_recovery import retire_project_batch_worker
+        from goodteam_os.web import _project_target_and_root
+
+        try:
+            key, _target, root = _project_target_and_root(args.workspace, args.project_key)
+            payload = retire_project_batch_worker(workspace=args.workspace, project_key=key, root=root,
+                run_id=args.run_id, job_id=args.job_id, expected_recovery_version=args.expected_recovery_version,
+                confirmed_processes_stopped=args.confirm_processes_stopped)
+        except (ValueError, OSError, TypeError) as exc:
+            print(f"batch-retire-worker: {exc}", file=sys.stderr)
+            return 2
         print(json.dumps(payload, indent=2))
         return 0
     if args.command == "batch-quality":
