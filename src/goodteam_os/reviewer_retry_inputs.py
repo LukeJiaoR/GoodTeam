@@ -30,7 +30,7 @@ JOB_REQUEST_FIELDS = (
     "execution_id", "project_key", "pi_path", "pi_provider", "pi_model",
     "pi_thinking_level", "pi_session_dir", "reasoning_depth", "additional_prompt",
     "desired_instances", "execution_policy", "worker_id", "worker_name",
-    "workflow_workspace",
+    "workflow_workspace", "provider_connection",
 )
 SELECTION_IDENTITY_FIELDS = (
     "run_id", "role", "profile_id", "approval", "gate", "phase", "artifact_key",
@@ -113,6 +113,10 @@ def _load_request(store, job: Mapping[str, object]) -> tuple[dict[str, Any], dic
         raise SkillError("review_retry_inputs", "The original Reviewer constraints cannot be restored exactly.")
     if saved.get("research_report_source") and research is None:
         raise SkillError("review_retry_inputs", "The captured Reviewer research input is missing; retry cannot reopen its mutable source.")
+    if saved["adapter"] == "codex":
+        # Missing historical metadata means local configuration, never a new
+        # authorization to capture today's active GoodTeam provider.
+        saved.setdefault("provider_connection", None)
     return saved, files, research
 
 
