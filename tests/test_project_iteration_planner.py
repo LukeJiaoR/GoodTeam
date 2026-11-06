@@ -233,7 +233,7 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     assert [item["project_task_id"] for item in queue] == [task_a["id"], task_b["id"]]
     assert all(item["confirmed"] is False and item["status"] == "queued" for item in queue)
     assert all(item["source_message_ids"] == [] for item in queue)
-    assert all(item["source_event_id"] == f"iteration-choice:{snapshot['version']}" for item in queue)
+    assert all(item["source_event_id"] == first["iteration_choice"]["source_event_id"] for item in queue)
     assert all(item["run_id"] == "" for item in queue)
     assert ledger.get_task(task_a["id"])["status"] == "todo"
 

@@ -250,6 +250,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                     workspace=workspace, project_key=project_key, root=root, project_config=project_config,
                     expected_backlog_version=snapshot["version"], confirmed=True,
                     allowed_task_ids=value["task_ids"],
+                    planning_attempt_id=f"{value['id']}:{value['manager_calls']}",
                     **({"manager_runner": manager_runner} if manager_runner is not None else {}),
                 )
                 chosen = result["iteration_choice"]["selected_task_ids"]
