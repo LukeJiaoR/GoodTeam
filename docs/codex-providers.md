@@ -37,6 +37,13 @@ receipts bind the optional provider reference without changing historical
 receipts that predate this field. Manager runtime verification also includes the
 connection identity.
 
+Explicit legacy Manager and Reviewer retries replay the original provider ID and
+revision, even after the active provider changes. An explicit local connection
+(`null`) or a historical job without this field stays on the local Codex path;
+retry does not acquire a newly activated GoodTeam provider. Edited or removed
+connections still fail before invocation. This preserves the connection boundary
+while an existing project recovers and continues its next iteration.
+
 Explicitly admitted native Reviewer/Correction and protected Skill runtimes keep
 their existing independently authorized connections. Settings do not replace their
 admission policies or grant new execution/review authority.
@@ -110,6 +117,51 @@ of a live commercial provider.
 
 These tests preserve the existing project-iteration contract; they are not new
 real-model semantic acceptance or completion of the repository's #419 goal.
+
+### Legacy retry correction (2026-11-07)
+
+On base `d4ddab5`, the shared legacy retry input list omitted
+`provider_connection`, and `WorkerJobStore.create_job` always captured the active
+provider. Both `_replay_legacy_manager_request` and `create_reviewer_retry`
+therefore sent the original context through the newly selected connection.
+
+The correction adds that field to the existing replay contract and distinguishes
+an omitted new-job binding from an explicit replayed binding, including `null`.
+Historical missing bindings normalize to `null` only in the legacy loader.
+Protected Skill inputs retain their existing request shape and admission path.
+
+`tests/test_retry_provider_binding.py` uses real offline CLI subprocesses for
+both retry routes, covering managed, explicit local and historical connections.
+All six cases failed on the original source with the new provider observed at
+the subprocess boundary. The corrected cases also check captured context,
+idempotent replay, unchanged original metadata, new-job provider selection and
+pre-invocation rejection of edited/deleted original connections.
+
+The native `codex-cli 0.164.0` smoke uses disposable PostgreSQL, an empty native
+home and a loopback Responses fixture. Initial Manager/Reviewer requests fail
+against A; after activating B, both retries succeed against A with A's synthetic
+credential. All four observed requests target `/A/v1/responses`. No paid model
+or real project data is used. The existing PG-backed two-iteration test remains
+the pick → execute → learn → pick-again regression; synthetic model responses do
+not establish autonomous real-model acceptance.
+
+Verification tier: **control plane**. Commands below ran on this correction over
+base `d4ddab5e35bb528b04261d51b7827de4233e8e29`, using disposable PG and Node
+24.22.1 where applicable:
+
+| Command / evidence | Result |
+| --- | --- |
+| `PYTHONPATH=src .venv/bin/python -m pytest tests/test_retry_provider_binding.py tests/test_providers.py tests/test_manager_execution.py tests/test_review_capture.py -q --tb=short` | 13 passed |
+| `PYTHONPATH=src .venv/bin/python -m pytest tests -q --tb=short --durations=10` | 429 passed in 741.61s; 8 existing multiprocessing fork warnings |
+| `PYTHONPATH=src .venv/bin/ruff check src/goodteam_os tests/` | Passed |
+| `cd frontend && npm run test:unit -- src/features/settings/ProviderSettings.test.jsx src/features/team/AssistantRuntimePanel.test.jsx src/features/reviews/ReviewPage.informed.test.jsx` | 14 passed |
+| `cd frontend && npm run lint && npm run build` | Passed; existing bundle/dynamic-import warnings |
+| Native Codex + PG + loopback fixture described above | Both retries used A after selecting B; zero requests to B |
+
+Browser E2E was not repeated because this correction changes no UI/API contract;
+related component checks were run. Paid-provider compatibility was not exercised.
+GitHub Actions remain paused; no candidate publication, remote CI, merge or
+deployment is part of this verification.
 
 ## References
 

@@ -923,6 +923,7 @@ def _invocation_command(command: object) -> str:
 
 
 _NO_TASK_SKILL_CONTEXT = object()
+_CAPTURE_PROVIDER_CONNECTION = object()
 
 
 @dataclass(frozen=True)
@@ -1100,8 +1101,11 @@ class WorkerJobStore:
         review_target: dict[str, str] | None = None,
         task_input: "TaskExecutionSnapshot | None" = None,
         workflow_workspace: dict[str, Any] | None = None,
+        provider_connection: object = _CAPTURE_PROVIDER_CONNECTION,
     ) -> dict[str, Any]:
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
+            if provider_connection is not _CAPTURE_PROVIDER_CONNECTION:
+                raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
             if workflow_workspace is not None:
                 raise ValueError("Workflow workspaces cannot replace the protected Skill execution protocol.")
             if task_input is not None:
@@ -1109,6 +1113,7 @@ class WorkerJobStore:
                 raise TaskInputError("task_input_protocol_conflict")
             skill_request = locals().copy()
             skill_request.pop("workflow_workspace")
+            skill_request.pop("provider_connection")
             from goodteam_os.skills.worker_requests import create_skill_worker_job
 
             return create_skill_worker_job(self, skill_request)[0]
@@ -1172,7 +1177,10 @@ class WorkerJobStore:
             job["max_attempts"] = max_attempts
             job["cli_timeout_seconds"] = cli_timeout
         if adapter == "codex" and not job_id.startswith("job-correction-"):
-            job["provider_connection"] = ProviderStore().capture()
+            # Only new requests capture the active provider. Explicit None is
+            # the original local configuration, including pre-provider jobs.
+            job["provider_connection"] = (ProviderStore().capture()
+                if provider_connection is _CAPTURE_PROVIDER_CONNECTION else provider_connection)
         if workflow_workspace is not None:
             from goodteam_os.workflow_workspace import context_for_job
 
@@ -1287,6 +1295,8 @@ class WorkerJobStore:
             bound = inspect.signature(type(self).create_job).bind(self, **job_spec)
             bound.apply_defaults()
             values = dict(bound.arguments)
+            if values.pop("provider_connection") is not _CAPTURE_PROVIDER_CONNECTION:
+                raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
             if values.pop("workflow_workspace") is not None:
                 raise ValueError("Workflow workspaces cannot replace the protected Skill execution protocol.")
             return create_skill_worker_job(self, values)
