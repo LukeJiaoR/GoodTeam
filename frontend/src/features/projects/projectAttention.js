@@ -1,7 +1,7 @@
 import { routes } from '../../lib/routing/routes';
 
 export const ATTENTION_KINDS = ['blocked', 'approval', 'needs_input'];
-const SOURCES = ['workflow', 'readiness', 'assistant'];
+const SOURCES = ['workflow', 'readiness', 'assistant', 'continuation'];
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const identity = (value) => typeof value === 'string' && Boolean(value.trim())
   && value === value.trim() && ![...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) && !['.', '..'].includes(value);
@@ -32,6 +32,9 @@ export function normalizeProjectAttention(value, activeRun = null, projectKey) {
         || item.id.length <= `readiness::${item.target_id}`.length)) return null;
     if (item.source === 'assistant' && (item.kind !== 'needs_input'
         || item.id !== `assistant:proposal:${item.target_id}`)) return null;
+    if (item.source === 'continuation' && (item.kind === 'approval'
+        || !item.id.startsWith(`continuation:${item.target_id}:`)
+        || item.id === `continuation:${item.target_id}:`)) return null;
     seen.add(item.id);
     counts[item.kind] += 1;
     counts.total += 1;
@@ -114,6 +117,14 @@ export function resolveAttentionFocus({ selection, projectKey, runId = '', proje
         || !proposal.needs_clarification || mission?.read_only) return { status: 'changed' };
     return { status: 'current', item, target: 'draft' };
   }
+  if (item.source === 'continuation') {
+    const session = data.task_assistant_session;
+    const notice = session?.project_continuation_notice;
+    if (session?.project_key !== projectKey || mission?.read_only || notice?.id !== item.id
+        || notice.continuation_id !== item.target_id || notice.kind !== item.kind
+        || session.project_continuation?.id !== item.target_id) return { status: 'changed' };
+    return { status: 'current', item, target: 'continuation' };
+  }
   if (!Array.isArray(project.readiness.steps)) return { status: 'unavailable' };
   const step = project.readiness.steps.find(value => value?.id === item.target_id);
   if (!step || (step.status === 'failed' ? 'blocked' : step.status === 'needs_input' ? 'needs_input' : '') !== item.kind
@@ -130,6 +141,10 @@ export function resolveAttentionFocus({ selection, projectKey, runId = '', proje
 }
 
 export function attentionReason(item, t) {
+  if (item.source === 'continuation') {
+    const key = `work.manager.continuation.reason.${item.reason}`;
+    return t(key) === key ? item.reason : t(key);
+  }
   const localKey = `projects.attention.reason.${item.reason}`;
   const local = t(localKey);
   if (local !== localKey) return local;
@@ -140,6 +155,7 @@ export function attentionReason(item, t) {
 
 
 export function attentionTitle(item, t) {
+  if (item.source === 'continuation') return t('projects.attention.continuation.title');
   if (item.source !== 'readiness') return item.title;
   const key = `projects.attention.step.${item.target_id}`;
   const label = t(key);

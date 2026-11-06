@@ -1,11 +1,13 @@
 """Read-only, identity-bound attention across the existing project work surfaces.
 
 This is a presentation of durable state, not an inbox or an approval authority.
-Only current workflow attention, preparation steps and clarification drafts are
-covered. Counts describe items, not blocker strings, unread events or jobs.
+Current workflow attention, preparation, clarification and continuation handoffs
+are covered. Counts describe items, not unread events or jobs.
 """
 
 from collections.abc import Mapping
+
+from goodteam_os.project_continuation_notice import project_continuation_notice
 
 SCHEMA_VERSION = "project_attention.v1"
 PRIORITY = {"blocked": 0, "approval": 1, "needs_input": 2}
@@ -85,6 +87,13 @@ def build_project_attention(*, project_key, readiness, workflow=None, session=No
             "target_id": proposal_id,
             "title": _text(proposal.get("exact_request")) or _text(proposal.get("summary")) or proposal_id,
             "reason": "clarification_required",
+        })
+    notice = project_continuation_notice(session)
+    if notice and notice["kind"]:
+        items.append({
+            "id": notice["id"], "kind": notice["kind"], "source": "continuation", "run_id": "",
+            "target_id": notice["continuation_id"], "title": "Project iteration needs attention",
+            "reason": notice["reason"],
         })
     # Duplicate records must not inflate counts or generate duplicate UI keys.
     items = list({item["id"]: item for item in items}.values())

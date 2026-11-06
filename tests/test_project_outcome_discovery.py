@@ -203,6 +203,9 @@ def test_verified_outcome_creates_once_then_delivers_next_iteration_within_froze
     def events():
         return [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
 
+    def handoffs():
+        return [item for item in store.read()["timeline"] if item.get("event") == "project_continuation_handoff"]
+
     def settled(task_id):
         deadline = time.monotonic() + 20
         while ledger.get_task(task_id)["status"] not in {"review", "blocked"}:
@@ -231,6 +234,11 @@ def test_verified_outcome_creates_once_then_delivers_next_iteration_within_froze
     tick()
     first_run = settled(seed["id"])
     tick()  # Awaiting review/delivery cannot spend the discovery budget.
+    assert handoffs()[-1]["details"]["phase"] == "review_required"
+    assert handoffs()[-1]["details"]["run_id"] == first_run
+    waiting_messages = handoffs()
+    tick()
+    assert handoffs() == waiting_messages
     assert [event["kind"] for event in events()] == ["manager_choice", "worker"]
     assert len(ledger.list_tasks()) == 1 and not (source / "docs/seed.txt").exists()
 
@@ -244,6 +252,7 @@ def test_verified_outcome_creates_once_then_delivers_next_iteration_within_froze
         prepared = prepare_project_batch_quality(workspace=tmp_path, project_key="DEMO", root=source,
             run_id=run_id, argv=[sys.executable, "-I", "-B", "-c", check], criteria=[0],
             reviewer_model="offline-fixture", fix_model="offline-fixture", seconds=30, wall_seconds=300, fix_seconds=30)
+        assert handoffs()[-1]["details"]["phase"] == "quality_required"
         snapshot = store_for_project(source, existing_only=True).load(prepared["execution_id"])
         policy = dict(schema_version="goodteam.codex-trusted-review-policy.v1",
             authorization_id="discovery-" + snapshot.payload_digest[:24], worker_root=str(source),
@@ -259,6 +268,7 @@ def test_verified_outcome_creates_once_then_delivers_next_iteration_within_froze
         quality = action(advance, codex_review_admission=admission)["quality"]
         assert quality["status"] == "reviewed", quality
         assert quality["check_status"] == "passed" and quality["acceptance_status"] == "accepted_by_review_policy"
+        assert handoffs()[-1]["details"]["phase"] == "delivery_required"
         review = quality["validation"]["review"]
         assert review["independence"] == "registered_read_only_new_session"
         assert review["candidate"]["head_sha"] == quality["candidate_commit"]
@@ -361,6 +371,10 @@ def test_verified_outcome_creates_once_then_delivers_next_iteration_within_froze
         "follow-up uses delivered candidate: " + candidate + "\n")
     terminal = tick()
     assert terminal["status"] == "exhausted" and terminal["reason"] == "approved_iteration_budget_used"
+    final_message = handoffs()[-1]
+    assert final_message["details"]["phase"] == "exhausted"
+    assert final_message["details"]["delivery_receipt_ids"] == [first_receipt["receipt_id"], second_receipt["receipt_id"]]
+    assert "Review the results and authorize" in final_message["content"]
     assert terminal["seed_task_ids"] == [seed["id"]] and terminal["discovered_task_ids"] == [next_id]
     assert terminal["manager_calls"] == terminal["max_manager_calls"] == 2
     assert terminal["batches_started"] == terminal["max_batches"] == 2
@@ -376,6 +390,8 @@ def test_verified_outcome_creates_once_then_delivers_next_iteration_within_froze
         ledger.create_task_once(creation_ref=duplicate_ref, intent={**intent,
             "external_refs": [duplicate_ref, *[ref for ref in intent["external_refs"] if ref != creation_ref]]})
     assert action(request)["project_continuation"] == tick() == terminal
+    assert handoffs()[-1] == final_message
+    assert sum(item["details"]["phase"] == "exhausted" for item in handoffs()) == 1
     assert ledger.list_tasks() == saved_tasks and calls.read_bytes() == saved_calls
     assert all(task["status"] == "done" and task["delivery_verified"] for task in saved_tasks)
     facts = [event for event in memory.list_events("orchestrator", include_execution=True)

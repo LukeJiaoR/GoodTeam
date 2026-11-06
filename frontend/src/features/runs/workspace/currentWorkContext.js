@@ -69,6 +69,7 @@ export const WORK_CONTEXT_TARGETS = {
   preparation: { tab: 'manager', selector: '.team-attention[data-kind="project_preparation"]' },
   draft: { tab: 'manager', selector: '.team-task-proposal' },
   recovery: { tab: 'manager', selector: '.assistant-request' },
+  continuation: { tab: 'manager', selector: '.project-continuation-controls' },
   composer: { tab: 'manager', selector: '.team-manager-dock textarea, .work-start-panel textarea' },
   outcomes: { tab: 'outcomes', selector: '.team-pane--outcomes' },
   execution: { tab: 'execution', selector: '.team-pane--execution' },
@@ -97,6 +98,8 @@ export function focusWorkContext(root, target, { reducedMotion = false, isCurren
     const executionDetails = node.matches('.team-pane--execution')
       ? node.querySelector('.team-execution-disclosure') : node.closest('.team-execution-disclosure');
     if (executionDetails) executionDetails.open = true;
+    const planningDetails = target === 'continuation' ? node.closest('.project-conversation-planning') : null;
+    if (planningDetails) planningDetails.open = true;
     const surface = target === 'composer' ? node.closest('.team-manager-dock') || node : node;
     surface.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'nearest' });
     if (!node.matches('input, textarea, button, a[href]')) node.setAttribute('tabindex', '-1');

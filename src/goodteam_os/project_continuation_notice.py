@@ -38,7 +38,7 @@ def project_continuation_notice(session):
     own_batch = batch.get("expected_continuation_id") == identifier
     quality = batch.get("quality") or {}
     phase, reason = status, value.get("reason", "")
-    if status == "active" and own_batch and batch.get("status") == "review":
+    if status in {"active", "stopped"} and own_batch and batch.get("status") == "review":
         phase, reason = "review_required", "independent_review_and_delivery_required"
         if quality.get("required"):
             accepted = (quality.get("status") == "reviewed" and quality.get("check_status") == "passed"
@@ -46,6 +46,8 @@ def project_continuation_notice(session):
                         and quality.get("acceptance_status") == "accepted_by_review_policy")
             phase = "delivery_required" if accepted else "quality_required"
             reason = quality.get("reason") or phase
+    elif status == "stopped" and own_batch and batch.get("status") == "blocked":
+        phase, reason = "blocked", batch.get("error") or "batch_blocked"
     elif status == "active":
         return None
     if reason == "discovery_no_followup":
@@ -60,7 +62,7 @@ def project_continuation_notice(session):
     return {
         "id": f"continuation:{identifier}:" + sha256(identity.encode()).hexdigest()[:24],
         "continuation_id": identifier, "phase": phase, "reason": reason,
-        "kind": "blocked" if phase == "blocked" else "" if phase == "completed" else "needs_input",
+        "kind": "blocked" if phase == "blocked" else "" if phase in {"completed", "stopped"} else "needs_input",
         "run_id": run_id, "task_ids": list(pending.get("task_ids") or value.get("task_ids", [])),
         "delivered_task_ids": list(dict.fromkeys(delivered)), "delivery_receipt_ids": receipts,
         "batches_started": value.get("batches_started", 0), "max_batches": value.get("max_batches", 0),

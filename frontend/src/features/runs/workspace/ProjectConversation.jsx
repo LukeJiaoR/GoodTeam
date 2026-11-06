@@ -17,7 +17,7 @@ import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
 import ProjectIterationSuggestion from './ProjectIterationSuggestion';
 import ProjectContinuationControls from './ProjectContinuationControls';
 
-function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, assistantFocusKey, visible, language, hasPendingItems, t, children }) {
+function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, assistantFocusKey, visible, language, hasPendingItems, hasPendingAttention, t, children }) {
   const conversationRef = useRef(null);
   const reading = useConversationReading({ scope, conversationRef, timeline, attentionKey, deliveryKey, assistantFocusKey, visible });
   const copy = readingCopy(language);
@@ -26,7 +26,12 @@ function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, 
     return text.length > 140 ? `${text.slice(0, 139)}…` : text;
   };
   const viewPendingItems = () => {
-    if (hasPendingItems) reading.inspect(conversationRef.current?.querySelector('.project-conversation-attention'));
+    if (hasPendingItems) {
+      const root = conversationRef.current?.closest('.product-work-page');
+      const continuation = root?.querySelector('.project-continuation-controls[data-needs-input="true"]');
+      if (continuation && !hasPendingAttention) focusWorkContext(root, 'continuation');
+      else reading.inspect(conversationRef.current?.querySelector('.project-conversation-attention'));
+    }
   };
   return <>
       {reading.paused ? <div className="project-conversation-follow" role="region" aria-label={copy.label}>
@@ -92,22 +97,26 @@ export default function ProjectConversation({
   onClearContext,
 }) {
   const requestStatus = Object.values(assistantState?.assistant_requests || {}).find((request) => request.status !== 'succeeded')?.status;
+  const continuationNotice = iterationSession?.project_continuation_notice;
   const responding = ['message', 'retry_message'].includes(assistantBusy) || assistantState?.status === 'running' || requestStatus === 'running';
-  const needsAttention = ['failed', 'interrupted'].includes(requestStatus)
+  const needsAssistantAttention = ['failed', 'interrupted'].includes(requestStatus)
     || ['pending', 'stale', 'failed'].includes(assistantState?.pending_team_decision?.status);
+  const needsAttention = needsAssistantAttention || Boolean(continuationNotice?.kind);
   const managerTone = responding ? 'active' : needsAttention ? 'warning' : 'neutral';
   const managerStatus = t(responding ? 'assistant.project.responding' : needsAttention ? 'assistant.project.needsAttention' : 'assistant.project.available');
   const deliveryKey = (timeline || []).find((item) => item.delivery_status === 'sending')?.id || '';
   const scope = readingScope(projectKey, mission);
-  const hasPendingItems = Boolean((attention && !(attention.kind === 'blocker' && executionRunning))
-    || needsAttention || Object.values(assistantState?.assistant_requests || {}).some(request => ['failed', 'interrupted'].includes(request.status))
+  const hasPendingAttention = Boolean((attention && !(attention.kind === 'blocker' && executionRunning))
+    || needsAssistantAttention || Object.values(assistantState?.assistant_requests || {}).some(request => ['failed', 'interrupted'].includes(request.status))
     || (proposedTask?.needs_clarification && !proposedTask.run_id && proposedTask.status !== 'cancelled'));
+  const hasPendingItems = hasPendingAttention || Boolean(continuationNotice?.kind);
   const attentionKey = JSON.stringify([
     hasPendingItems ? [attention?.kind || '', attention?.id || '', attention?.intent_commit?.status || ''] : [],
     assistantState?.pending_team_decision ? [assistantState.pending_team_decision.id, assistantState.pending_team_decision.status] : [],
     Object.entries(assistantState?.assistant_requests || {}).filter(([, request]) => ['failed', 'interrupted'].includes(request.status))
       .map(([id, request]) => [id, request.status, request.attempt]).sort(),
     proposedTask?.needs_clarification ? [proposedTask.id, proposedTask.revision] : [],
+    continuationNotice?.kind ? continuationNotice.id : '',
   ]);
 
   return (
@@ -139,7 +148,8 @@ export default function ProjectConversation({
       </div>
       <ConversationReadingFrame key={scope} scope={scope} timeline={timeline || []} attentionKey={attentionKey}
         deliveryKey={deliveryKey} assistantFocusKey={`${assistantState?.pending_team_decision?.id || ''}:${requestStatus || ''}`}
-        visible={!sectionProps?.hidden} language={language} hasPendingItems={hasPendingItems} t={t}>
+        visible={!sectionProps?.hidden} language={language} hasPendingItems={hasPendingItems}
+        hasPendingAttention={hasPendingAttention} t={t}>
         <>
             {(iterationBacklog?.schema_version === 'project_iteration_backlog.v1'
               || iterationSession?.project_continuation || Object.keys(iterationSession?.project_task_batches || {}).length > 0) ? (
@@ -159,7 +169,8 @@ export default function ProjectConversation({
               <p>{t('work.conversationWelcome.description')}</p>
             </div> : null}
             <ol className="team-manager-timeline" aria-label={t('assistant.project.history')}>
-              {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t} />)}
+              {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t}
+                continuationNoticeId={continuationNotice?.kind ? continuationNotice.id : undefined} />)}
               {Object.entries(assistantState?.assistant_requests || {}).filter(([, request]) => request.status === 'running').map(([id, request]) => (
                 <AssistantPendingReply key={`${id}:${request.attempt}`} request={request} t={t} />
               ))}
