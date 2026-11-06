@@ -13,7 +13,9 @@ export default function CollectionToolbar({ label, query, onQueryChange, filters
       </label>
       {filters.length ? (
         <div className="collection-filters" role="group" aria-label={t('collection.filter')}>
-          {filters.map(([value, title]) => <button type="button" key={value} aria-pressed={selected === value} onClick={() => onSelect(value)}>{title}</button>)}
+          {filters.map(([value, title, total]) => <button type="button" key={value} aria-pressed={selected === value} onClick={() => onSelect(value)}>
+            {title}{Number.isInteger(total) ? <> <span className="collection-filter-count">{total}</span></> : null}
+          </button>)}
         </div>
       ) : null}
       <span className="collection-count" role="status" aria-atomic="true">{t('collection.results', { count })}</span>

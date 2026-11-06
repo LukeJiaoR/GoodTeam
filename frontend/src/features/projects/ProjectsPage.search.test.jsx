@@ -60,7 +60,7 @@ test.each(['empty input', 'clear button'])('%s removes only the search parameter
 test('selecting All removes the filter sentinel without removing literal all search text', async () => {
   const { search, params, user } = await renderBrowse(['/projects?source=bookmark&q=all&filter=active']);
 
-  await user.click(within(screen.getByRole('group', { name: 'Filter results' })).getByRole('button', { name: 'All', exact: true }));
+  await user.click(within(screen.getByRole('group', { name: 'Filter results' })).getByRole('button', { name: 'All 2', exact: true }));
 
   expect(params().has('filter')).toBe(false);
   expect(params().get('q')).toBe('all');
@@ -85,7 +85,7 @@ test('Back and Forward restore literal search queries while typing replaces only
     '/projects?source=bookmark',
   ]);
   await user.type(search, 'allocation');
-  await user.click(within(screen.getByRole('group', { name: 'Filter results' })).getByRole('button', { name: 'Active run', exact: true }));
+  await user.click(within(screen.getByRole('group', { name: 'Filter results' })).getByRole('button', { name: 'Active run 1', exact: true }));
   await user.clear(search);
   await user.type(search, 'all');
   expect(search).toHaveValue('all');

@@ -10,7 +10,7 @@ export default function ProjectAttentionOverview({ projects, status, onRefresh, 
   const current = status === 'ready';
   const loading = ['loading', 'refreshing'].includes(status);
   return <section className="project-attention" aria-labelledby="project-attention-title" aria-busy={loading}>
-    <header className="projects-launcher__heading">
+    <header className="project-attention__heading">
       <div><h2 id="project-attention-title">{t('projects.attention.title')}</h2>
         <p>{t('projects.attention.scope')}</p></div>
       <Button variant="secondary" busy={loading} onClick={onRefresh}>
@@ -34,8 +34,8 @@ export default function ProjectAttentionOverview({ projects, status, onRefresh, 
           {items.map(item => <li key={JSON.stringify([item.project.project_key, item.id])}>
             <Link className="project-attention__link" to={attentionHref(item.project.project_key, item)}>
               <StatusBadge tone={item.kind === 'blocked' ? 'danger' : 'active'}>{t(`projects.attention.kind.${item.kind}`)}</StatusBadge>
-              <span className="project-attention__copy"><strong>{item.project.display_name}</strong>
-                <span>{attentionTitle(item, t)}</span><small>{attentionReason(item, t)}</small>
+              <span className="project-attention__copy"><span className="project-attention__title"><strong>{item.project.display_name}</strong>
+                <span>{attentionTitle(item, t)}</span></span><span>{attentionReason(item, t)}</span>
                 <small>{t(`projects.attention.source.${item.source}`)} · {item.target_id}</small>
               </span><ArrowRight size={17} aria-hidden="true" />
             </Link>

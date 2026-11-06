@@ -64,7 +64,7 @@
 .product-shell--workspace :is(.projects-import-dialog, .team-dialog) {
   border-radius: 16px;
 }
-.product-shell--workspace :is(.projects-import-dialog, .team-dialog) :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
+.product-shell--workspace .team-dialog :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
   min-height: 40px;
   max-width: 100%;
   border: 1px solid var(--product-border);
