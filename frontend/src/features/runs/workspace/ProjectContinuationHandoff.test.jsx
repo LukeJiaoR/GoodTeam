@@ -4,6 +4,8 @@ import { translate } from '../../../i18n';
 import { normalizeProjectAttention, attentionHref, readAttentionSelection, resolveAttentionFocus } from '../../projects/projectAttention';
 import { TimelineItem } from './ConversationTimeline';
 import ProjectContinuationControls from './ProjectContinuationControls';
+import ProjectConversation from './ProjectConversation';
+import { readingScope, saveReadingPosition } from './conversationReading';
 
 it('offers a current bilingual Manager handoff through existing controls without starting work', () => {
   vi.stubGlobal('requestAnimationFrame', callback => callback());
@@ -65,5 +67,21 @@ it('offers a current bilingual Manager handoff through existing controls without
   view.rerender(<ol><TimelineItem item={item} language="en" t={(key, params) => translate('en', key, params)}
     continuationNoticeId="continuation:new:notice" /></ol>);
   expect(screen.queryByRole('button', { name: 'View iteration and actions' })).not.toBeInTheDocument();
+  // A retained handoff must not divert the paused reader from current approval.
+  saveReadingPosition({ scope: readingScope('APP'), following: false,
+    anchor: { id: item.id, offset: 0 }, seenId: item.id, attentionKey: '' });
+  const conversation = attention => <div className="product-work-page">
+    <ProjectConversation projectKey="APP" iterationSession={session} iterationBacklog={{ candidates: [] }}
+      timeline={[item]} assistantState={{}} attention={attention} language="en"
+      t={(key, params) => translate('en', key, params)} onAssistantAction={onAction} />
+  </div>;
+  view.rerender(conversation({ kind: 'approval', id: 'current-approval' }));
+  const pendingLabel = translate('en', 'assistant.project.viewPending');
+  fireEvent.click(screen.getByRole('button', { name: pendingLabel }));
+  expect(screen.getByRole('region', { name: pendingLabel })).toHaveFocus();
+  view.rerender(conversation(null));
+  fireEvent.click(screen.getByRole('button', { name: pendingLabel }));
+  expect(screen.getByRole('region', { name: 'Automatic project iteration' })).toHaveFocus();
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
