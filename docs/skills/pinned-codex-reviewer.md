@@ -211,8 +211,8 @@ still unimplemented and not registered by the stock CLI or managed service.**
 
 Server-side embedding startup can supply an existing `CodexReviewAdmission` object
 to `cli.main(..., codex_review_admission=authority)` for `dispatch` or `serve`,
-or directly to `web.serve`/`build_dashboard_handler`. The Web instance carries
-that dependency to queued Reviewer run/retry and exact locked-source retry;
+or directly to `web.serve(..., codex_review_admission=authority)`. The Web instance
+carries that dependency to queued Reviewer run/retry and exact locked-source retry;
 each Worker still acquires and rechecks its own fresh context through the
 existing runtime. Server construction does not acquire a provider route.
 Retry keeps the original source, request, model and method versions. Reports
