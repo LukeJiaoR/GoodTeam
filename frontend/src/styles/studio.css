@@ -103,19 +103,7 @@
 .product-shell.product-shell--studio .project-launcher-entry > .file-location { margin: 0 12px 4px; padding: 0 0 0 36px; }
 .product-shell.product-shell--studio .project-launcher-entry > .file-location > summary { min-height: 24px; padding: 2px 0; margin: 0; font-size: var(--studio-text-small); }
 /* Shared records and document surfaces. */
-.product-shell.product-shell--studio :is(.review-queue, .review-artifact, .review-inspector, .knowledge-intro, .knowledge-confirmed-facts, .knowledge-overview > .repository-overview, .knowledge-artifacts > aside, .knowledge-document, .knowledge-memory > aside, .knowledge-memory-workspace, .team-manager, .team-responsibility, .team-worker) { border-radius: var(--product-radius); border: 1px solid var(--product-border); background: var(--product-surface); box-shadow: var(--product-shadow); }
-.product-shell.product-shell--studio .team-summary { display: flex; flex-wrap: wrap; gap: 0; padding: 18px 8px; border: 1px solid var(--product-border); border-radius: 18px; background: var(--product-surface); box-shadow: var(--product-shadow); margin-bottom: 20px; }
-.product-shell.product-shell--studio .team-summary > div { flex: 1 1 105px; padding: 6px 18px; border: 0; border-right: 1px solid var(--product-border); background: transparent; border-radius: 0; box-shadow: none; }
-.product-shell.product-shell--studio .team-summary > div:last-child { border: 0; }
-.product-shell.product-shell--studio .team-summary strong { font-size: 24px; font-weight: 500; }
-.product-shell.product-shell--studio .team-summary span { font-size: var(--studio-text-small); }
-.product-shell.product-shell--studio .team-manager { margin-bottom: 28px; padding: 20px; }
-.product-shell.product-shell--studio .team-roster__heading h2 { font-size: 16px; font-weight: 550; }
-.product-shell.product-shell--studio .team-responsibility-list { display: grid; gap: 14px; }
-.product-shell.product-shell--studio .team-responsibility__header { padding: 19px 22px; }
-.product-shell.product-shell--studio .team-worker { box-shadow: none; border-radius: 12px; }
-.product-shell.product-shell--studio .team-worker__icon { border-radius: 12px; background: var(--product-bg); color: var(--product-text-muted); }
-.product-shell.product-shell--studio .team-role-workers > li { border-radius: 12px; }
+.product-shell.product-shell--studio :is(.review-queue, .review-artifact, .review-inspector, .knowledge-intro, .knowledge-confirmed-facts, .knowledge-overview > .repository-overview, .knowledge-artifacts > aside, .knowledge-document, .knowledge-memory > aside, .knowledge-memory-workspace) { border-radius: var(--product-radius); border: 1px solid var(--product-border); background: var(--product-surface); box-shadow: var(--product-shadow); }
 .product-shell.product-shell--studio .knowledge-view-switcher { display: flex; width: fit-content; gap: 3px; padding: 4px; margin: 0 0 24px; background: var(--product-surface-muted); border: 1px solid var(--product-border); border-radius: 999px; }
 .product-shell.product-shell--studio .knowledge-view-switcher button { min-height: 34px; padding: 7px 18px; font-size: var(--studio-text-control); border: 0; border-radius: 999px; color: var(--product-text-muted); background: transparent; }
 .product-shell.product-shell--studio .knowledge-view-switcher button.is-active { color: var(--product-text); background: var(--product-surface); box-shadow: 0 1px 4px #0000000c; }
@@ -329,7 +317,6 @@
   .product-shell.product-shell--studio .project-launcher-row__activity { grid-column: 2; grid-row: 2; justify-self: start; }
   .product-shell.product-shell--studio .project-launcher-row__action { grid-column: 3; grid-row: 1 / 3; justify-self: end; padding-top: 0; }
   .product-shell.product-shell--studio .project-launcher-row__action > span { display: none; }
-  .product-shell.product-shell--studio .team-summary > div { flex-basis: 30%; padding: 8px 12px; border: 0; }
   .product-shell.product-shell--studio .knowledge-view-switcher { width: 100%; }
   .product-shell.product-shell--studio .knowledge-view-switcher button { flex: 1; min-width: 0; padding-inline: 8px; font-size: var(--studio-text-small); }
   .product-shell.product-shell--studio .review-workspace { grid-template-columns: minmax(0,1fr); }

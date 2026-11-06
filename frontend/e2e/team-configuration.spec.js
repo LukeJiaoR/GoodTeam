@@ -33,17 +33,31 @@ test('bulk settings persist and keep paused workers, individual instructions and
   const worker = role.workers[0];
   const otherRoles = team.roles.filter((item) => item.role !== role.role);
 
-  await expect(page.getByRole('article')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Show roles in Design & implementation', exact: true }).click();
+  await expect(page.getByRole('article')).toHaveCount(team.roles.length);
   const roleRow = page.getByRole('article', { name: role.label, exact: true });
+  await roleRow.locator('.team-member > summary').click();
   await roleRow.getByRole('button', { name: `Pause ${role.label} / ${worker.name} (${worker.id})`, exact: true }).click();
   await expect(roleRow.getByRole('button', { name: `Activate ${role.label} / ${worker.name} (${worker.id})`, exact: true })).toBeVisible();
   await roleRow.getByRole('button', { name: `Edit ${role.label} / ${worker.name} (${worker.id})`, exact: true }).click();
   let dialog = page.getByRole('dialog');
   await dialog.getByText('Additional instructions (optional)', { exact: true }).click();
   await dialog.getByLabel('Additional instructions', { exact: true }).fill('Keep this worker-specific instruction.');
+  const endpoint = `**/api/projects/${fixture.key}/team/commands`;
+  const failedRequests = [];
+  await page.route(endpoint, async route => {
+    failedRequests.push(route.request().postDataJSON());
+    await route.fulfill({ status: 503, json: { code: 'offline', message: 'Configuration save interrupted' } });
+  });
   await dialog.getByRole('button', { name: 'Save worker', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  await expect(dialog.getByLabel('Additional instructions', { exact: true })).toHaveValue('Keep this worker-specific instruction.');
+  await page.unroute(endpoint);
+  const retried = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/team/commands'));
+  await dialog.getByRole('button', { name: 'Save worker', exact: true }).click();
+  expect((await retried).request().postDataJSON()).toEqual(failedRequests[0]);
   await expect(dialog).toHaveCount(0);
+  expect(fixture.errors.filter(error => error.includes('503 (Service Unavailable)'))).toHaveLength(1);
+  fixture.errors.splice(fixture.errors.findIndex(error => error.includes('503 (Service Unavailable)')), 1);
 
   await page.getByRole('button', { name: 'Bulk configure', exact: true }).click();
   dialog = page.getByRole('dialog');
@@ -58,7 +72,6 @@ test('bulk settings persist and keep paused workers, individual instructions and
   await dialog.getByRole('button', { name: 'Apply configuration', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.reload();
-  await page.getByRole('button', { name: 'Show roles in Design & implementation', exact: true }).click();
   await expect(page.getByText('fake · isolated-test-model', { exact: true })).toBeVisible();
 
   const saved = await readTeam();

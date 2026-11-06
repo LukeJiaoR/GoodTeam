@@ -1,7 +1,7 @@
 import { finishCatalog, mergeCatalog, refreshCatalog } from './catalogState';
-import { AlertTriangle, Bot, History, PackageOpen, Pause, Pencil, Play, Plus, Settings2, Trash2, UserRoundCog, X } from 'lucide-react';
+import { AlertTriangle, Bot, ChevronDown, History, PackageOpen, Pause, Pencil, Play, Plus, Settings2, Trash2, UserRoundCog, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { useOutletContext, useParams } from 'react-router-dom';
+import { Link, useOutletContext, useParams } from 'react-router-dom';
 import CollectionToolbar from '../../components/ui/CollectionToolbar';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
@@ -21,6 +21,14 @@ import { buildTeamModel, capabilityCounts, groupTeamRoles, rosteredWorkerCount }
 
 function newCommandKey() {
   return globalThis.crypto?.randomUUID?.() || `team-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function closeDetailsOnEscape(event) {
+  if (event.key === 'Escape' && event.currentTarget.open) {
+    event.preventDefault();
+    event.currentTarget.open = false;
+    event.currentTarget.querySelector('summary').focus();
+  }
 }
 
 function HistoryPanel({ onClose, events, t }) {
@@ -209,7 +217,7 @@ export default function TeamPage({ api = settingsApi }) {
     setDialog(next);
   };
 
-  if (status === 'loading') return <main id="main-content" className="team-page"><div className="team-page-skeleton" role="status"><span /><span /><span /></div></main>;
+  if (status === 'loading') return <main id="main-content" className="team-page"><div className="team-page-skeleton" role="status" aria-label={t('product.states.loading')}><span /><span /><span /></div></main>;
   if (status === 'error' && !data) return <main id="main-content" className="team-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
   if (!team) {
     return (
@@ -261,16 +269,13 @@ export default function TeamPage({ api = settingsApi }) {
         )}
       />
 
-      <section className="team-summary" aria-label={t('team.summary.label')}>
-        <div><strong>{responsibilities.length}</strong><span>{t('team.groups.summary')}</span></div>
-        <div><strong>{workers}</strong><span>{t('team.summary.workers')}</span></div>
-        <div data-tone="active"><strong>{counts.ready}</strong><span>{t('team.capability.ready')}</span></div>
-        <div><strong>{counts.unstaffed}</strong><span>{t('team.capability.unstaffed')}</span></div>
-        <div data-tone="degraded"><strong>{counts.degraded}</strong><span>{t('team.capability.degraded')}</span></div>
-        <div data-tone="disabled"><strong>{counts.disabled}</strong><span>{t('team.capability.disabled')}</span></div>
-      </section>
+      <p className="team-summary" aria-label={t('team.summary.label')}>
+        <span><strong>{responsibilities.length}</strong> {t('team.groups.summary')}</span>
+        <span><strong>{workers}</strong> {t('team.summary.workers')}</span>
+      </p>
 
       {savedNotice ? <p className="team-save-notice" role="status">{t('team.config.saved')}</p> : null}
+      {error ? <><p role="status">{t('team.stale')}</p><ProductError error={error} onRetry={() => refresh()} t={t} /></> : null}
       {mutationError && !dialog ? <ProductError error={mutationError} onRetry={() => setMutationError(null)} t={t} /> : null}
       {loadError ? <ProductError error={loadError} onRetry={refreshAgents} t={t} /> : null}
 
@@ -285,7 +290,7 @@ export default function TeamPage({ api = settingsApi }) {
           </div>
           <div className="team-manager__runtime">
             <code>{team.manager.runtimeLabel || t('team.modelDefault')}</code>
-            <StatusBadge tone="active">{t('team.manager.alwaysOn')}</StatusBadge>
+            <StatusBadge tone="neutral">{t('team.manager.alwaysOn')}</StatusBadge>
           </div>
           <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => openDialog({ type: 'manager' })}>
             <Bot aria-hidden="true" size={15} />
@@ -296,75 +301,32 @@ export default function TeamPage({ api = settingsApi }) {
 
       <section className="team-roster" aria-labelledby="team-roster-title">
         <div className="team-roster__heading">
-          <div>
-            <h2 id="team-roster-title">{t('team.rolesTitle')}</h2>
-            <p>{t('team.rolesDescription')}</p>
-            <p>{t('team.dispatchable.scope')}</p>
-          </div>
-
+          <h2 id="team-roster-title">{t('team.rolesTitle')}</h2>
+          <p>{t('team.availability.scope')} <Link to={`/projects/${encodeURIComponent(projectKey)}/work`}>{t('team.execution.link')}</Link></p>
         </div>
         <CollectionToolbar label={t('team.search')} query={query} onQueryChange={setQuery}
-          filters={['all', 'attention', 'ready', 'disabled'].map((key) => [key, t(key === 'all' ? 'collection.all' : key === 'disabled' ? 'team.state.disabled' : `team.filter.${key}`)])}
-          selected={filter} onSelect={setFilter} count={visibleGroups.length} t={t} />
+          filters={['all', 'attention', 'ready', 'disabled'].map((key) => [key, t(key === 'all' ? 'collection.all' : key === 'disabled' ? 'team.state.disabled' : `team.filter.${key}`), key === 'all' ? team.roles.length : key === 'attention' ? counts.unstaffed + counts.degraded : counts[key]])}
+          selected={filter} onSelect={setFilter} count={visibleRoles.length} t={t} />
         {!visibleRoles.length ? <div className="collection-empty"><p>{t('collection.noResults')}</p><Button variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>{t('collection.reset')}</Button></div> : null}
         <div className="team-responsibility-list">
           {visibleGroups.map((group) => (
-            <ResponsibilityGroup key={group.key} group={group} t={t} saving={saving} forceOpen={Boolean(query.trim()) || filter !== 'all'}
+            <ResponsibilityGroup key={group.key} group={group} t={t} saving={saving} forceOpen
               expansionContext={`${query.trim()}:${filter}`}
               onConfigure={() => openDialog({ type: 'batch', roleKeys: group.roles.map((role) => role.role) })}>
               <div className="team-worker-list">
                 {group.roles.map((role) => (
                   <article className="team-worker" data-role-state={role.state} key={role.role} aria-labelledby={`team-role-${role.role}`}>
-                    <div className="team-worker__overview">
-                      <div className="team-worker__identity">
-                        <span className="team-worker__icon"><Bot aria-hidden="true" size={17} /></span>
-                        <div>
-                          <h3 id={`team-role-${role.role}`}>{role.label}</h3>
-                          <p><code>{role.role}</code></p>
-                        </div>
-                      </div>
-                      <div className="team-worker__workers">
-                        {role.workers.length ? (
-                          <ul className="team-role-workers">
-                            {role.workers.map((worker) => (
-                              <li key={worker.id}>
-                                <span className="team-role-workers__status">
-                                  <StatusBadge tone="neutral">{t(`team.lifecycle.${worker.lifecycle}`)}</StatusBadge>
-                                  <StatusBadge tone={worker.dispatchable ? 'active' : 'neutral'}>
-                                    {t(worker.dispatchable ? 'team.dispatchable.passed' : 'team.dispatchable.notPassed')}
-                                  </StatusBadge>
-                                </span>
-                                <strong>{worker.name}</strong>
-                                <span className="team-role-workers__runtime">{worker.provider} · {worker.model || t('team.dialog.inheritModel')}</span>
-                                <span className="team-role-workers__actions">
-                                  <button type="button" className="product-button product-button--secondary team-edit-button" aria-label={t('team.actions.editAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => openDialog({ type: 'worker', worker })}>
-                                    <Pencil aria-hidden="true" size={14} />{t('team.config.edit')}
-                                  </button>
-                                  {worker.lifecycle === 'active' ? (
-                                    <button type="button" className="team-icon-button" title={t('team.actions.pause')} aria-label={t('team.actions.pauseAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'inactivate_worker', worker_id: worker.id }], { reason: `Pause ${worker.name}` })}>
-                                      <Pause aria-hidden="true" size={14} />
-                                    </button>
-                                  ) : (
-                                    <button type="button" className="team-icon-button" title={t('team.actions.activate')} aria-label={t('team.actions.activateAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'activate_worker', worker_id: worker.id }], { reason: `Activate ${worker.name}` })}>
-                                      <Play aria-hidden="true" size={14} />
-                                    </button>
-                                  )}
-                                  <button type="button" className="team-icon-button" title={t('team.actions.delete')} aria-label={t('team.actions.deleteAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'delete_worker', worker_id: worker.id }], { reason: `Delete ${worker.name}` })}>
-                                    <Trash2 aria-hidden="true" size={14} />
-                                  </button>
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="team-worker__empty">{t('team.noWorkers')}</p>
-                        )}
-                      </div>
-                      <div className="team-worker__capability">
-                        <StatusBadge tone={role.state === 'disabled' ? 'neutral' : role.capabilityTone}>
-                          {role.state === 'disabled' ? t('team.state.disabled') : t(`team.capability.${role.capability}`)}
-                        </StatusBadge>
-                        <span className="team-role-actions">
+                    <div className="team-worker__identity">
+                      <h3 id={`team-role-${role.role}`}>{role.label}</h3>
+                      <details className="team-role-settings" onKeyDown={closeDetailsOnEscape}>
+                        <summary aria-label={t('team.roleSettings', { name: role.label })}>
+                          <StatusBadge tone={role.state === 'disabled' ? 'neutral' : role.capabilityTone}>
+                            {role.state === 'disabled' ? t('team.state.disabled') : t(`team.capability.${role.capability}`)}
+                          </StatusBadge>
+                          <ChevronDown aria-hidden="true" size={14} />
+                        </summary>
+                        <code>{role.role}</code>
+                        <div className="team-role-actions">
                           {role.state === 'enabled' ? (
                             <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => runCommands([{ kind: 'disable_role', role: role.role }], { reason: `Disable ${role.label}` })}>
                               {t('team.actions.disableRole')}
@@ -382,7 +344,7 @@ export default function TeamPage({ api = settingsApi }) {
                             <Plus aria-hidden="true" size={14} />
                             {t('team.actions.addWorker')}
                           </button>
-                        </span>
+                        </div>
                         <p className="team-role-method-status" data-status={role.skillBinding.status}>
                           <span>{t(`team.roleSkills.status.${role.skillBinding.status}`)}</span>
                           {role.skillBinding.executionStatus !== 'connected'
@@ -392,7 +354,51 @@ export default function TeamPage({ api = settingsApi }) {
                         {role.capability === 'degraded' ? (
                           <p className="team-role-warning"><AlertTriangle aria-hidden="true" size={13} />{t('team.degradedHint')}</p>
                         ) : null}
-                      </div>
+                      </details>
+                    </div>
+                    <div className="team-worker__workers">
+                      {role.workers.length ? (
+                        <ul className="team-role-workers">
+                          {role.workers.map((worker) => (
+                            <li key={worker.id}>
+                              <details className="team-member" onKeyDown={closeDetailsOnEscape}>
+                                <summary aria-label={t('team.workerSettings', { name: `${role.label} / ${worker.name} (${worker.id})` })}>
+                                  <strong>{worker.name}</strong>
+                                  <span className="team-role-workers__runtime">{worker.provider} · {worker.model || t('team.dialog.inheritModel')}</span>
+                                  <StatusBadge tone={worker.dispatchable && role.state === 'enabled' ? 'active' : 'neutral'}>
+                                    {t(role.state === 'disabled' ? 'team.availability.disabled' : worker.lifecycle !== 'active' ? 'team.availability.inactive' : worker.dispatchable ? 'team.availability.ready' : 'team.availability.unavailable')}
+                                  </StatusBadge>
+                                  <span className="team-member__toggle">{t('team.configuration')}<ChevronDown aria-hidden="true" size={14} /></span>
+                                </summary>
+                                <div className="team-member__details">
+                                  <dl>
+                                    <div><dt>Worker ID</dt><dd>{worker.id}</dd></div>
+                                    <div><dt>{t('team.dialog.reasoning')}</dt><dd>{worker.reasoningDepth === 'default' ? t('team.dialog.reasoningDefault') : worker.reasoningDepth}</dd></div>
+                                    {worker.additionalPrompt ? <div className="team-member__prompt"><dt>{t('team.dialog.additionalPrompt')}</dt><dd>{worker.additionalPrompt}</dd></div> : null}
+                                  </dl>
+                                  <span className="team-role-workers__actions">
+                                    <button type="button" className="product-button product-button--secondary team-edit-button" aria-label={t('team.actions.editAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => openDialog({ type: 'worker', worker })}>
+                                      <Pencil aria-hidden="true" size={14} />{t('team.config.edit')}
+                                    </button>
+                                    {worker.lifecycle === 'active' ? (
+                                      <button type="button" className="team-icon-button" title={t('team.actions.pause')} aria-label={t('team.actions.pauseAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'inactivate_worker', worker_id: worker.id }], { reason: `Pause ${worker.name}` })}>
+                                        <Pause aria-hidden="true" size={14} />
+                                      </button>
+                                    ) : (
+                                      <button type="button" className="team-icon-button" title={t('team.actions.activate')} aria-label={t('team.actions.activateAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'activate_worker', worker_id: worker.id }], { reason: `Activate ${worker.name}` })}>
+                                        <Play aria-hidden="true" size={14} />
+                                      </button>
+                                    )}
+                                    <button type="button" className="team-icon-button" title={t('team.actions.delete')} aria-label={t('team.actions.deleteAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'delete_worker', worker_id: worker.id }], { reason: `Delete ${worker.name}` })}>
+                                      <Trash2 aria-hidden="true" size={14} />
+                                    </button>
+                                  </span>
+                                </div>
+                              </details>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : <p className="team-worker__empty">{t('team.noWorkers')}</p>}
                     </div>
                   </article>
                 ))}
