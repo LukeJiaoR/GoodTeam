@@ -334,7 +334,9 @@ def _full_smoke_external_reason(
 
 
 def _run_text(command: list[str], cwd: Path) -> str:
-    completed = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
+    from goodteam_os.database import provider_environment
+
+    completed = subprocess.run(command, cwd=cwd, env=provider_environment(), capture_output=True, text=True, check=False)
     return (completed.stdout or completed.stderr).strip()
 
 

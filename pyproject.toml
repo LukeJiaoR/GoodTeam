@@ -7,6 +7,13 @@ dependencies = [
   "pyTelegramBotAPI>=4.0",
   "rank-bm25>=0.2.2",
   "PyYAML>=6.0.2,<7",
+  "langgraph==1.2.20",
+  "langgraph-checkpoint-postgres==3.2.0",
+  "psycopg[binary,pool]>=3.3.8,<4",
+  "pypdf>=6,<8",
+  "python-docx>=1.2,<2",
+  "openpyxl>=3.1,<4",
+  "Pillow>=11,<13",
 ]
 
 [project.optional-dependencies]

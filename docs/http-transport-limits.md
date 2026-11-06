@@ -1,8 +1,8 @@
 # Dashboard HTTP transport limits
 
-Both the project-only handler and the production dashboard use the same bounded
-POST reader. Existing route, same-origin, loopback, protected-execution, and
-server-action authorization checks remain in their existing order. This is a
+The production dashboard served by `web.serve` uses a bounded POST reader.
+Existing route, same-origin, loopback, protected-execution, and server-action
+authorization checks remain in their existing order. This is a
 resource boundary, not a new authorization policy.
 
 - A POST body can contain at most **8 MiB of encoded request bytes**, including
@@ -39,11 +39,15 @@ resource boundary, not a new authorization policy.
   unchanged. Long-running application operations remain subject to their existing
   lifecycle controls, rather than being interrupted by a transport timer.
 
-The exported web.ThreadingHTTPServer constructor remains compatible with existing
-callers and test fixtures, and now refers to the bounded subclass. Integrators
-embedding build_dashboard_handler should use that server too; an independently
-chosen standard server retains its own thread-admission policy. The handler still
-sets its own read timeout and validates body limits in that case.
+Embedding callers should start the full dashboard with
+`web.serve(workspace, host="127.0.0.1", port=8788)`. This entry point constructs
+the bounded server and owns its serving loop; it is not a handler factory. The
+unused project-only `build_dashboard_handler` factory has been removed. Migrate
+any old embedding code to `web.serve` rather than constructing that handler.
+
+The exported `web.ThreadingHTTPServer` constructor remains the bounded subclass
+for existing low-level callers and test fixtures. An independently chosen
+standard server retains its own thread-admission policy.
 
 Tests use only isolated loopback sockets, synthetic bodies, and temporary
 workspaces. No real project, worker/provider, or remote service is needed.

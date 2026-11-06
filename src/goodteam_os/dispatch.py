@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
+from goodteam_os.database import provider_environment
 from goodteam_os.models import _parse_simple_yaml
 from goodteam_os.parallel_capacity import DEFAULT_MAX_CONCURRENT_WORKERS, dispatch_pool_size
 from goodteam_os.workers import WorkerJobStore
@@ -99,6 +100,7 @@ def run_track_verify(command: str, *, cwd: Path) -> dict[str, object]:
         completed = subprocess.run(
             [shell, "-lc", command],
             cwd=cwd,
+            env=provider_environment(),
             capture_output=True,
             text=True,
             check=False,

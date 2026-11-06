@@ -60,10 +60,31 @@ def test_cors_configured_host_allowlist_is_unchanged(host, origin, allowed):
 def test_http_response_does_not_allow_omitted_default_port_on_nondefault_listener(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(web, "context_estimate_for_request", lambda workspace, body: calls.append(body) or {"ok": True})
-    server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.build_dashboard_handler(tmp_path))
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    # Reserve the real listener before starting serve, so its configured port
+    # matches the bound origin without an allocate/close/rebind race.
+    server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.BaseHTTPRequestHandler)
+    serving = threading.Event()
+    serve_forever = server.serve_forever
+
+    def reuse_listener(address, handler):
+        assert address == server.server_address
+        server.RequestHandlerClass = handler
+        return server
+
+    def run_listener():
+        serving.set()
+        serve_forever(poll_interval=0.01)
+
+    monkeypatch.setattr(web, "ThreadingHTTPServer", reuse_listener)
+    monkeypatch.setattr(server, "serve_forever", run_listener)
+    thread = threading.Thread(
+        target=web.serve,
+        kwargs={"workspace": tmp_path, "host": "127.0.0.1", "port": server.server_port},
+        daemon=True,
+    )
     thread.start()
     try:
+        assert serving.wait(timeout=5), "Real HTTP service did not start"
         assert server.server_port != 80
         origins = [None, "http://127.0.0.1", "http://127.0.0.1:80", f"http://127.0.0.1:{server.server_port}"]
         for origin in origins:
@@ -83,7 +104,8 @@ def test_http_response_does_not_allow_omitted_default_port_on_nondefault_listene
                 connection.close()
         assert calls == [{}, {}, {}, {}]
     finally:
-        server.shutdown()
-        server.server_close()
+        if serving.is_set():
+            server.shutdown()
         thread.join(timeout=5)
+        server.server_close()
         assert not thread.is_alive()

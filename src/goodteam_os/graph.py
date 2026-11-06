@@ -455,8 +455,11 @@ def ensure_project_task_ledger(project_config: Path) -> Path | None:
     project_key = str(target.get("key", "") or "")
     store = LocalTaskStore(runtime_root, project_key=project_key)
     store.path.parent.mkdir(parents=True, exist_ok=True)
-    if not store.path.is_file():
-        store.path.write_text('{\n  "version": 1,\n  "next_id": 1,\n  "tasks": []\n}', encoding="utf-8")
+    from goodteam_os import state_documents
+
+    with store._lock():
+        if not state_documents.exists(store.path):
+            store._write({"version": 1, "next_id": 1, "tasks": []})
     return store.path
 
 
@@ -3239,22 +3242,6 @@ def _is_worker_meta_summary(text: str) -> bool:
     if first.startswith("**verification**") or first.startswith("verification:"):
         return True
     return False
-
-
-def _extract_referenced_artifact_file(text: str, runtime_root: Path) -> Path | None:
-    patterns = [
-        re.compile(r"`([^`]+\.md)`"),
-        re.compile(r"(?:^|\s)([\w\-./]+\.md)(?:\s|$)", re.MULTILINE),
-    ]
-    for pattern in patterns:
-        for match in pattern.finditer(text):
-            rel = match.group(1).strip().strip("`")
-            candidate = runtime_root / rel
-            if candidate.is_file():
-                return candidate
-            if (runtime_root / "docs" / rel).is_file():
-                return runtime_root / "docs" / rel
-    return None
 
 
 def generate_artifact_via_worker(

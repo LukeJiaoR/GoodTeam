@@ -17,12 +17,15 @@ from shutil import copy2, which
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
+from goodteam_os.database import provider_environment
 from goodteam_os.skills.worker_creation_lock import serialized_worker_creation
-from goodteam_os.memory import RoleMemoryStore, default_embedder
+from goodteam_os.memory import RoleMemoryStore, default_embedder, runtime_role_memory_store
 from goodteam_os.memory_handoff import MemoryHandoffStore, PreparedMemoryRecord, digest as memory_digest
 from goodteam_os.roles import role_definition, stable_role_prompt
 from goodteam_os.pi_rpc import PiRpcError
 from goodteam_os.worker_capabilities import BACKEND_REASONING_DEPTHS, REASONING_DEPTHS
+from goodteam_os.providers import ProviderStore, ProviderError, PROVIDER_KEY_ENV, codex_connection_arguments
+from goodteam_os.provider_usage import record_codex_usage
 from goodteam_os.session_runtimes import (
     SESSION_BACKENDS,
     PiSessionRuntime,
@@ -84,6 +87,8 @@ BUILTIN_WORKER_MODES = ("fake", "noop", "human")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 WORKER_STALE_AFTER_SECONDS = 120
 WORKER_MAX_ATTEMPTS = 3
+# Whole ordinary input, in UTF-8 bytes; protected inputs retain their own limits.
+MAX_ORDINARY_PROMPT_BYTES = 192 * 1024
 WORKER_RETRY_BACKOFF_SECONDS = (2, 8, 30)
 CLI_WORKER_TIMEOUT_SECONDS = 1800
 CLI_WORKER_MAX_TIMEOUT_SECONDS = 3600
@@ -356,6 +361,7 @@ def _codex_build_command(binary: str, model: str, project_root: Path, result_pat
     return [
         binary,
         "exec",
+        "--json",
         "--model",
         model,
         "--skip-git-repo-check",
@@ -372,6 +378,7 @@ def _query_codex_models(command_path: str) -> dict[str, dict[str, Any]] | None:
     try:
         completed = subprocess.run(
             [command_path, "debug", "models"],
+            env=provider_environment(),
             check=False,
             capture_output=True,
             text=True,
@@ -416,6 +423,7 @@ def _query_agy_models(command_path: str) -> tuple[str, ...] | None:
     try:
         completed = subprocess.run(
             [command_path, "models"],
+            env=provider_environment(),
             check=False,
             capture_output=True,
             text=True,
@@ -459,6 +467,7 @@ def _query_opencode_models(command_path: str) -> tuple[str, ...] | None:
     try:
         completed = subprocess.run(
             [command_path, "models", "--refresh"],
+            env=provider_environment(),
             check=False,
             capture_output=True,
             text=True,
@@ -612,8 +621,8 @@ def _run_command_in_pty(
 
     Returns ``(returncode, stdout, stderr)``. With a single PTY the child's stdout
     and stderr are merged onto one stream, so the returned stderr is always "".
-    The accumulated output has ANSI escape codes stripped. On timeout the child is
-    killed and ``subprocess.TimeoutExpired`` is raised with the partial output, so
+    The accumulated output has ANSI escape codes stripped. On timeout the owned
+    process group is stopped before ``subprocess.TimeoutExpired`` is raised, so
     callers can reuse their existing timeout handling.
     """
     master_fd, slave_fd = pty.openpty()
@@ -626,6 +635,7 @@ def _run_command_in_pty(
         stderr=slave_fd,
         text=False,
         close_fds=True,
+        start_new_session=True,
     )
     os.close(slave_fd)
     if process_input is not None and proc.stdin is not None:
@@ -640,7 +650,6 @@ def _run_command_in_pty(
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
-                proc.kill()
                 output = _strip_terminal_control(b"".join(chunks).decode("utf-8", errors="replace"))
                 raise subprocess.TimeoutExpired(command, timeout_seconds, output=output)
             ready, _, _ = select.select([master_fd], [], [], min(remaining, 1.0))
@@ -654,16 +663,20 @@ def _run_command_in_pty(
             if not data:
                 break
             chunks.append(data)
+        returncode = proc.wait(timeout=max(deadline - time.time(), 0))
+    except subprocess.TimeoutExpired as exc:
+        from goodteam_os.skills.review_process import _terminate
+
+        _terminate(proc)
+        output = _strip_terminal_control(b"".join(chunks).decode("utf-8", errors="replace"))
+        raise subprocess.TimeoutExpired(command, timeout_seconds, output=output) from exc
     finally:
         try:
             os.close(master_fd)
         except OSError:
             pass
-    try:
-        returncode = proc.wait(timeout=max(deadline - time.time(), 1.0))
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        returncode = proc.wait()
+        if proc.stdin is not None:
+            proc.stdin.close()
     text = b"".join(chunks).decode("utf-8", errors="replace")
     return returncode, _strip_terminal_control(text), ""
 
@@ -912,6 +925,7 @@ def _invocation_command(command: object) -> str:
 
 
 _NO_TASK_SKILL_CONTEXT = object()
+_CAPTURE_PROVIDER_CONNECTION = object()
 
 
 @dataclass(frozen=True)
@@ -1089,8 +1103,11 @@ class WorkerJobStore:
         review_target: dict[str, str] | None = None,
         task_input: "TaskExecutionSnapshot | None" = None,
         workflow_workspace: dict[str, Any] | None = None,
+        provider_connection: object = _CAPTURE_PROVIDER_CONNECTION,
     ) -> dict[str, Any]:
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
+            if provider_connection is not _CAPTURE_PROVIDER_CONNECTION:
+                raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
             if workflow_workspace is not None:
                 raise ValueError("Workflow workspaces cannot replace the protected Skill execution protocol.")
             if task_input is not None:
@@ -1098,6 +1115,7 @@ class WorkerJobStore:
                 raise TaskInputError("task_input_protocol_conflict")
             skill_request = locals().copy()
             skill_request.pop("workflow_workspace")
+            skill_request.pop("provider_connection")
             from goodteam_os.skills.worker_requests import create_skill_worker_job
 
             return create_skill_worker_job(self, skill_request)[0]
@@ -1160,6 +1178,11 @@ class WorkerJobStore:
         if max_attempts is not None:
             job["max_attempts"] = max_attempts
             job["cli_timeout_seconds"] = cli_timeout
+        if adapter == "codex" and not job_id.startswith("job-correction-"):
+            # Only new requests capture the active provider. Explicit None is
+            # the original local configuration, including pre-provider jobs.
+            job["provider_connection"] = (ProviderStore().capture()
+                if provider_connection is _CAPTURE_PROVIDER_CONNECTION else provider_connection)
         if workflow_workspace is not None:
             from goodteam_os.workflow_workspace import context_for_job
 
@@ -1224,7 +1247,7 @@ class WorkerJobStore:
             self._write_json(job_root / "sandbox_context.json", job["sandbox_context"])
         role_config, role_prompt = _role_prompt_for_job(role)
         (job_root / "role_prompt.md").write_text(role_prompt, encoding="utf-8")
-        role_memory_store = RoleMemoryStore(self.project_root, embedder=default_embedder())
+        role_memory_store = runtime_role_memory_store(self.project_root, local_embedder=default_embedder)
         role_memory_paths = role_memory_store.ensure_role_memory(
             role_key=role,
             role_name=str(role_config.get("name", role)),
@@ -1274,6 +1297,8 @@ class WorkerJobStore:
             bound = inspect.signature(type(self).create_job).bind(self, **job_spec)
             bound.apply_defaults()
             values = dict(bound.arguments)
+            if values.pop("provider_connection") is not _CAPTURE_PROVIDER_CONNECTION:
+                raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
             if values.pop("workflow_workspace") is not None:
                 raise ValueError("Workflow workspaces cannot replace the protected Skill execution protocol.")
             return create_skill_worker_job(self, values)
@@ -2435,14 +2460,18 @@ class WorkerJobStore:
         reject_unverified_runtime_entry(job_root, job)
         task_input = self._admit_input_dispatch(job_root, job)
         binary = which(spec.which_name) or spec.default_path()
+        connection = ProviderStore().resolve(job.get("provider_connection")) if spec.which_name == "codex" else None
         raw = str(job.get("model", ""))
         bare = raw.split(":", 1)[1].strip() if ":" in raw else raw.strip()
-        model = bare or spec.model_default
+        model = bare or (connection or {}).get("model") or spec.model_default
         result_path = job_root / "result.md"
         runtime_context = self._worker_runtime_cwd(job)
         worker_env = self._worker_env(job_root, spec, runtime_context.runtime_cwd)
         pythonpath_workspace_src = (runtime_context.runtime_cwd / "src").is_dir()
         preflight = _cli_preflight(spec, binary, model)
+        if connection:
+            worker_env[PROVIDER_KEY_ENV] = connection["api_key"]
+            preflight["auth_present"] = bool(connection["api_key"])
         adapter = str(job.get("adapter", ""))
         command = _command_with_reasoning_depth(
             _command_with_execution_policy(
@@ -2453,6 +2482,9 @@ class WorkerJobStore:
             adapter=adapter,
             reasoning_depth=str(job.get("reasoning_depth", "") or ""),
         )
+        if connection:
+            index = command.index("-")
+            command[index:index] = codex_connection_arguments(connection)
         if adapter == "codex" and "--ignore-user-config" not in command:
             # Codex resolves this path against CODEX_HOME, which is isolated
             # per job. Keep the trusted local catalog bound to its source home.
@@ -2474,6 +2506,8 @@ class WorkerJobStore:
                 prompt_index = command.index("-")
                 command[prompt_index:prompt_index] = ["--sandbox", sandbox_mode, "-c", 'approval_policy="never"']
         runtime_evidence = {
+            **({"provider_connection": {key: connection[key] for key in
+                ("id", "revision", "name", "protocol", "base_url")}} if connection else {}),
             **_worker_runtime_evidence(
                 runtime_context,
                 pythonpath_workspace_src=pythonpath_workspace_src,
@@ -2591,9 +2625,10 @@ class WorkerJobStore:
     def _worker_env(self, job_root: Path, spec: "CliBackendSpec", runtime_cwd: Path) -> dict[str, str] | None:
         workspace_src = runtime_cwd / "src"
         needs_pythonpath = workspace_src.is_dir()
-        if not spec.isolated_home and not needs_pythonpath:
+        if not spec.isolated_home and not needs_pythonpath and not any(
+                key in os.environ for key in ("GOODTEAM_DATABASE_URL", "GOODTEAM_TEST_DATABASE_URL")):
             return None
-        worker_env = dict(os.environ)
+        worker_env = provider_environment()
         if spec.isolated_home:
             isolated_home = self._prepare_isolated_codex_home(job_root)
             worker_env["CODEX_HOME"] = str(isolated_home)
@@ -2694,6 +2729,18 @@ class WorkerJobStore:
         process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
         process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
+        provider_key = (worker_env or {}).get(PROVIDER_KEY_ENV, "")
+
+        def safe_output(value):
+            text = value or ""
+            return text.replace(provider_key, "[REDACTED]") if provider_key else text
+
+        def observed_usage(stdout, status):
+            if job.get("adapter") != "codex" or "--json" not in command or capture != "output_file":
+                return {}
+            return record_codex_usage(job, model=model, provider=runtime_evidence.get("provider_connection", {}),
+                                      started_at=started_at, status=status, stdout=stdout)
+
         running_summary = f"{label} is running."
         base_extra = {
             "command": process_command,
@@ -2762,7 +2809,7 @@ class WorkerJobStore:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    **({"start_new_session": True} if correction else {}),
+                    start_new_session=True,
                 )
                 running_extra = {**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds, "pid": process.pid}
                 self._write_status(
@@ -2793,10 +2840,20 @@ class WorkerJobStore:
                 returncode = int(process.returncode if process.returncode is not None else 1)
         except subprocess.TimeoutExpired as exc:
             stop_heartbeat.set()
-            stdout_path.write_text(_timeout_text(exc.output), encoding="utf-8")
-            stderr_path.write_text(_timeout_text(exc.stderr), encoding="utf-8")
+            partial_stdout = safe_output(_timeout_text(exc.output))
+            stdout_path.write_text(partial_stdout, encoding="utf-8")
+            stderr_path.write_text(safe_output(_timeout_text(exc.stderr)), encoding="utf-8")
             if process is not None and not correction:
-                process.kill()
+                from goodteam_os.skills.review_process import _terminate
+
+                # Do not publish a terminal result or permit retry until the
+                # tools launched by this ordinary Worker have also stopped.
+                try:
+                    _terminate(process)
+                finally:
+                    for stream in (process.stdin, process.stdout, process.stderr):
+                        if stream is not None:
+                            stream.close()
             summary = f"{label} timed out after {timeout_seconds} seconds."
             result_path.write_text(
                 f"# Worker Result\n\nStatus: failed\n\n{summary}\n",
@@ -2807,7 +2864,8 @@ class WorkerJobStore:
                 job,
                 "failed",
                 summary,
-                extra={**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds},
+                extra={**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds,
+                       **observed_usage(partial_stdout, "failed")},
             ), prompt, transport_ref)
         finally:
             stop_heartbeat.set()
@@ -2821,8 +2879,11 @@ class WorkerJobStore:
                     for stream in (process.stdin, process.stdout, process.stderr):
                         if stream is not None:
                             stream.close()
-        stdout_path.write_text(stdout or "", encoding="utf-8")
-        stderr_path.write_text(stderr or "", encoding="utf-8")
+        stdout, stderr = safe_output(stdout), safe_output(stderr)
+        stdout_path.write_text(stdout, encoding="utf-8")
+        stderr_path.write_text(stderr, encoding="utf-8")
+        if provider_key and result_path.is_file():
+            result_path.write_text(safe_output(result_path.read_text(encoding="utf-8")), encoding="utf-8")
         returncode = int(returncode)
         status = "completed" if returncode == 0 else "failed"
         summary = summarize(returncode, stderr or "")
@@ -2838,7 +2899,7 @@ class WorkerJobStore:
             job,
             status,
             summary,
-            extra={**base_extra, "exit_code": returncode},
+            extra={**base_extra, "exit_code": returncode, **observed_usage(stdout, status)},
         ), prompt, transport_ref)
 
     def _heartbeat_until_stopped(
@@ -2961,6 +3022,12 @@ class WorkerJobStore:
             ]
         )
         prompt = "\n\n".join(sections)
+        if len(prompt.encode("utf-8")) > MAX_ORDINARY_PROMPT_BYTES:
+            raise ValueError(
+                "worker_prompt_size_limit: Complete Worker input exceeds 192 KiB; "
+                "reduce supplemental context before retrying. No task, constraints, "
+                "memory or candidate inventory was truncated."
+            )
         record = handoff.prepare(job, prompt=prompt, fragment=memory.fragment,
                                  citations=memory.citations, packet_digest=memory.packet_digest,
                                  validation=memory.validation) if handoff is not None else None
@@ -3244,6 +3311,7 @@ def _runtime_version_evidence(binary: str, *, available: bool, detect: bool) -> 
     try:
         completed = subprocess.run(
             [binary, "--version"],
+            env=provider_environment(),
             check=False,
             capture_output=True,
             text=True,
@@ -3430,6 +3498,12 @@ def worker_backend_doctor(mode: str) -> dict[str, Any]:
         "auth_env": auth_env,
     }
     if spec.which_name == "codex":
+        connection = ProviderStore().active()
+        if connection:
+            report.update(auth_present=bool(connection["api_key"]), ready=available,
+                          provider_connection={"id": connection["id"], "name": connection["name"]},
+                          hint="GoodTeam provider configured; connectivity is checked when a task runs.")
+            return report
         codex_home = os.getenv("CODEX_HOME", "") or os.path.expanduser("~/.codex")
         auth_file = Path(codex_home) / "auth.json"
         auth_file_present = auth_file.is_file()
@@ -3680,6 +3754,7 @@ def _discover_installed_agents(provider: str = "") -> list[dict[str, Any]]:
         models: tuple[str, ...] = ()
         models_source = "unavailable" if spec.which_name in {"codex", "agy", "opencode"} else "unsupported"
         model_capabilities: dict[str, dict[str, Any]] = {}
+        connection = ProviderStore().active() if canonical == "codex" else None
         if spec.which_name == "claude" and report.get("available"):
             # Claude Code does not expose a stable non-interactive model-list
             # command. Its documented aliases and current full model names are
@@ -3688,7 +3763,15 @@ def _discover_installed_agents(provider: str = "") -> list[dict[str, Any]]:
             models = spec.models
             models_source = "static"
         elif spec.which_name == "codex" and report.get("available"):
-            live_models = _query_codex_models(str(report.get("command_path", "")))
+            if connection:
+                from goodteam_os.providers import fetch_models
+                try:
+                    live_models = {name: {} for name in fetch_models(connection)["models"]}
+                except ProviderError as exc:
+                    live_models = None
+                    report["hint"] = str(exc)
+            else:
+                live_models = _query_codex_models(str(report.get("command_path", "")))
             if live_models:
                 models = tuple(live_models)
                 model_capabilities = live_models
@@ -3714,9 +3797,9 @@ def _discover_installed_agents(provider: str = "") -> list[dict[str, Any]]:
                 "hint": str(report.get("hint", "")),
                 "models": list(dict.fromkeys(models)),
                 "models_source": models_source,
-                "model_default": spec.model_default,
+                "model_default": (connection or {}).get("model") or spec.model_default,
                 "model_capabilities": model_capabilities,
-                "reasoning_depths": list(BACKEND_REASONING_DEPTHS.get(canonical, ())),
+                "reasoning_depths": [] if connection else list(BACKEND_REASONING_DEPTHS.get(canonical, ())),
             }
         )
     if provider and provider not in {"pi", "pi-rpc"}:

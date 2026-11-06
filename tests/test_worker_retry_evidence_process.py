@@ -1,7 +1,9 @@
 """Actual offline CLI boundaries: retry evidence, host timeout, and artifact copy."""
 import json
 from dataclasses import replace
+import os
 from pathlib import Path
+import signal
 import sys
 
 import pytest
@@ -10,6 +12,50 @@ from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.graph import render_downstream_artifact_markdown
 from goodteam_os.state import create_initial_state
 from goodteam_os.workers import CLI_BACKENDS, WorkerJobStore, classify_worker_failure
+
+
+@pytest.mark.parametrize("use_pty", [False, True], ids=["pipe", "pty"])
+def test_cli_timeout_stops_owned_tool_process_before_recording_failure(tmp_path, monkeypatch, use_pty):
+    monkeypatch.setattr("goodteam_os.workers.default_embedder", lambda: None)
+    monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "1")
+    identities = tmp_path / "owned-processes.json"
+    child_script = "import time; time.sleep(30)"
+    script = '''import json,os,pathlib,subprocess,sys,time
+sys.stdin.read()
+child = subprocess.Popen([sys.executable, '-c', sys.argv[1]])
+pathlib.Path(sys.argv[2]).write_text(json.dumps([os.getpid(), child.pid]))
+print('tool started', flush=True)
+time.sleep(30)
+'''
+
+    def run_offline(self, job_root, job, _spec):
+        return self._run_cli_worker(
+            job_root, job, command=[sys.executable, "-c", script, child_script, str(identities)],
+            model="synthetic", preflight={}, label="Synthetic CLI", capture="stdout",
+            summarize=lambda code, stderr: "Synthetic complete", timeout_seconds=0.5, use_pty=use_pty,
+        )
+
+    monkeypatch.setattr(WorkerJobStore, "_run_cli_backend", run_offline)
+    workers = WorkerJobStore(tmp_path)
+    job = workers.create_job(run_id="timeout-tools", role="implementation", adapter="claude",
+                             task="Offline timeout probe", context="Disposable workspace only")
+    try:
+        result = workers.run_job(job["id"])
+        assert result["status"] == "failed" and result["failure_class"] == "timeout"
+        assert result["attempts"] == 1 and result["disposition"] == "human_handoff"
+        assert "tool started" in Path(result["stdout_path"]).read_text()
+        owned = json.loads(identities.read_text())
+        for pid in owned:
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
+    finally:
+        # Only fixture-owned processes; also clean up when the old implementation fails.
+        if identities.exists():
+            for pid in json.loads(identities.read_text()):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 def test_configured_cli_deadline_is_captured_before_process_execution(tmp_path, monkeypatch):

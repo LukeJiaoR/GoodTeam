@@ -13,10 +13,19 @@ from goodteam_os.manager_execution import ManagerExecutionError
 from goodteam_os.project_readiness import assess_project_mode
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.state import normalize_project_key
+from goodteam_os import state_documents
+from goodteam_os.database import database_configured
 
 
 @contextmanager
 def conversation_lock(store):
+    with state_documents.document_lock(store.path.with_suffix(".operation.lock"), blocking=False):
+        with _file_conversation_lock(store):
+            yield
+
+
+@contextmanager
+def _file_conversation_lock(store):
     path = store.path.with_suffix(".operation.lock")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as lock:
@@ -73,7 +82,11 @@ def response(service, project_key, root, *, intent="ambiguous"):
             "intent": intent, "workflow_started": False, "run_id": ""}
 
 
-def execute_message(service, *, project_key, root, text, message_id, expected_attempt=None, context_run_id=""):
+def execute_message(service, *, project_key, root, text, message_id, expected_attempt=None, context_run_id="", attachments=None):
+    from goodteam_os.conversation_attachments import resolve_attachments
+
+    attachment_ids = [] if attachments is None else attachments
+    files = resolve_attachments(service.workspace, project_key, root, attachment_ids)
     if not isinstance(context_run_id, str):
         raise ValueError("Invalid conversation task context")
     message_id = message_id.strip()
@@ -82,6 +95,8 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
     store = TaskAssistantSessionStore(service.workspace, project_key)
     with conversation_lock(store):
         previous = store.read().get("assistant_requests", {}).get(message_id)
+        if previous and previous.get("attachments", []) != attachment_ids:
+            raise ValueError("message_id is already used with different attachments")
         if previous and previous.get("context_run_id", "") != context_run_id:
             raise ValueError("message_id is already used with different task context")
         try:
@@ -96,7 +111,7 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
         if attempt is None:
             return response(service, project_key, root, intent=(previous or {}).get("intent", "ambiguous"))
         store.initialize_context(assess_project_mode(root))
-        store.append_message(message_id, "user", text)
+        store.append_message(message_id, "user", text, attachments=files if files else None)
         # Bind implicit task context with the accepted request, before runtime
         # inspection can fail. Preserve it on retries rather than retargeting a
         # failed question to whatever task happens to be current now.
@@ -104,15 +119,23 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
         if captured_run is None:
             captured_run = ((accepted_scope or {}).get("run") or {}).get("run_id", "")
         update_request(store, message_id, text=text, context_run_id=context_run_id,
+                       attachments=attachment_ids,
                        conversation_run_id=captured_run, attempt=attempt, status="running", phase="model", error=None)
         snapshot = None
         try:
             snapshot = runtime_snapshot(service.project_config)
             attempt_id = worker_attempt_id(project_key, message_id, attempt)
-            result = continue_conversation(
-                service, store=store, project_key=project_key, root=root,
-                text=text, message_id=message_id, attempt_id=attempt_id, context_run_id=context_run_id,
-            )
+            result = None
+            if not context_run_id and database_configured():
+                from goodteam_os.manager_dialogue import run_dialogue
+
+                result = run_dialogue(service, store=store, project_key=project_key, root=root,
+                                      text=text, message_id=message_id, attempt_id=attempt_id)
+            if result is None:
+                result = continue_conversation(
+                    service, store=store, project_key=project_key, root=root,
+                    text=text, message_id=message_id, attempt_id=attempt_id, context_run_id=context_run_id,
+                )
             if result is None:
                 result = service._send_message(project_key=project_key, root=root, text=text,
                                                message_id=message_id, attempt_id=attempt_id)
@@ -170,6 +193,7 @@ def retry_message(service, *, project_key, root, message_id, expected_attempt):
     if request is None:
         raise ValueError("Task Assistant request is unavailable")
     return execute_message(service, project_key=project_key, root=root, message_id=message_id,
+                           attachments=request.get("attachments", []),
                            text=request["text"], expected_attempt=expected_attempt, context_run_id=request.get("context_run_id", ""))
 
 

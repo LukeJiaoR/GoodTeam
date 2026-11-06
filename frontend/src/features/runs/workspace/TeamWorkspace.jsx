@@ -1,7 +1,7 @@
 import ProjectConversation from './ProjectConversation';
 import { TeamAvatar } from './ConversationTimeline';
 import { TaskAttention, TaskRunControls } from './TaskAttention';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronRight,
   FileCheck2,
@@ -9,6 +9,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Wrench,
+  X,
 } from 'lucide-react';
 import StatusBadge from '../../../components/ui/StatusBadge';
 import {
@@ -25,7 +26,7 @@ import SkillReviewExecutions from './SkillReviewExecutions';
 import { executionEvidenceHref } from './executionEvidence';
 
 const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
-const MOBILE_TEAM_QUERY = '(max-width: 767px)';
+const MOBILE_TEAM_QUERY = '(max-width: 1199px)';
 
 function useMobileTeamWorkspace() {
   const [mobile, setMobile] = useState(() => (
@@ -54,110 +55,48 @@ function executionStatusReason(actor, t) {
   return reason ? translated(t, `work.team.reasons.${reason}`, reason) : '';
 }
 
-function ExecutionStatusIndicator({ actor, reducedMotion, t }) {
-  const [tooltipOpen, setTooltipOpen] = useState(false);
-  const tooltipId = useId();
-  const status = statusText(actor.state, t);
-  const reason = executionStatusReason(actor, t);
-  const label = reason
-    ? translated(
-      t,
-      'work.team.executionStatusLabel',
-      `${status}. ${reason}`,
-      { status, reason },
-    )
-    : status;
-  const ambient = ['working', 'reviewing', 'fixing'].includes(actor.state) && !reducedMotion;
-
-  return (
-    <span
-      aria-describedby={tooltipOpen ? tooltipId : undefined}
-      aria-label={label}
-      className="team-status-led-trigger"
-      data-motion={ambient ? 'ambient' : 'static'}
-      data-state={actor.state || 'up_next'}
-      onBlur={() => setTooltipOpen(false)}
-      onFocus={() => setTooltipOpen(true)}
-      onMouseEnter={() => setTooltipOpen(true)}
-      onMouseLeave={() => setTooltipOpen(false)}
-      role="img"
-      tabIndex={0}
-    >
-      <span aria-hidden="true" className="team-status-led" />
-      <span
-        aria-hidden={!tooltipOpen}
-        className="team-status-led-tooltip"
-        data-open={tooltipOpen ? 'true' : 'false'}
-        id={tooltipId}
-        role="tooltip"
-      >
-        <strong>{status}</strong>
-        {reason ? <span>{reason}</span> : null}
-      </span>
-    </span>
-  );
-}
-
-
-function ExecutionPane({ actors, blocker, controls, context, task, onInspectAttempt, reducedMotion, sectionProps, t }) {
-  const [expanded, setExpanded] = useState(true);
-  return (
-    <section className="team-pane team-pane--execution" aria-label={t('work.team.workerStatus')} {...sectionProps}>
-      <details className="team-execution-disclosure" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-        <summary className="team-pane__header">
-          <span className="team-execution-heading">
-            <strong id="team-execution-title">{t('work.team.workerStatus')}</strong>
-            <span className="team-pane__eyebrow">{t('work.team.workerCount', { count: actors.length })}</span>
+function ExecutionPane({ actors, blocker, controls, context, onInspectAttempt, onClose, reducedMotion, sectionProps, t }) {
+  const [selectedId, setSelectedId] = useState('');
+  const selected = actors.find(actor => actor.id === selectedId);
+  return <section className="team-pane team-pane--execution" aria-label={t('work.team.workerStatus')} {...sectionProps}>
+    <header className="team-pane__header">
+      <div className="team-execution-heading"><strong id="team-execution-title">{t('work.team.workerStatus')}</strong><span className="team-pane__eyebrow">{t('work.team.workerCount', { count: actors.length })}</span></div>
+      {onClose ? <button type="button" className="team-panel-close" aria-label={t('work.navigation.closePanel')} onClick={onClose}><X size={15} /></button> : null}
+    </header>
+    {blocker}
+    {actors.length ? <ol className="team-actor-list">{actors.map(actor => {
+      const role = translated(t, `work.plan.role.${actor.role}`, actor.role);
+      const reason = executionStatusReason(actor, t);
+      return <li key={actor.id} data-state={actor.state}>
+        <button type="button" className="team-worker-summary" aria-expanded={selectedId === actor.id} aria-controls="team-worker-detail" onClick={() => setSelectedId(selectedId === actor.id ? '' : actor.id)}>
+          <span className="team-worker-dot" data-state={actor.state} data-motion={reducedMotion ? 'static' : 'ambient'} aria-hidden="true" />
+          <span className="team-worker-copy"><span className="team-worker-identity"><strong>{role}</strong><span>{statusText(actor.state, t)}</span></span>
+            <span className="team-worker-task" title={actor.responsibility}>{actor.responsibility || t('work.team.noResponsibility')}</span>
+            {reason ? <span className="team-worker-reason">{reason}</span> : null}
           </span>
-          <span className="team-execution-heading__status">
-            {task?.status ? <StatusBadge tone={tone(task.status)}>{statusText(task.status, t)}</StatusBadge> : null}
-            <ChevronRight aria-hidden="true" size={16} />
-          </span>
-        </summary>
-        <div className="team-execution-body">
-      {task?.objective && task.objective !== task.title ? <p className="project-task-identity" title={task.objective}>{task.objective}</p> : null}
-      {blocker}
-      {actors.length ? (
-        <ol className="team-actor-list">
-          {actors.map((actor) => {
-            const role = translated(t, `work.plan.role.${actor.role}`, actor.role);
-            const reason = executionStatusReason(actor, t);
-            return (
-              <li key={actor.id} data-state={actor.state}>
-                <div className="team-actor-list__summary">
-                  <TeamAvatar label={role} />
-                  <div className="team-actor-list__copy">
-                    <div className="team-actor-list__identity">
-                      <strong>{role}</strong>
-                      <span className="team-actor-list__state">
-                        <ExecutionStatusIndicator actor={actor} reducedMotion={reducedMotion} t={t} />
-                        <span>{statusText(actor.state, t)}</span>
-                      </span>
-                    </div>
-                    <p>{actor.responsibility || t('work.team.noResponsibility')}</p>
-                  </div>
-                </div>
-                {reason ? <p className="team-actor-list__reason">{reason}</p> : null}
-                {onInspectAttempt && actor.current_attempt_id ? <button
-                  type="button" className="team-attempt-inspect"
-                  aria-label={`${t('work.attempt.inspect')}: ${actor.responsibility || role}`}
-                  onClick={() => onInspectAttempt(actor)}
-                >{t('work.attempt.inspect')}<ChevronRight size={14} aria-hidden="true" /></button> : null}
-              </li>
-            );
-          })}
-        </ol>
-      ) : <p className="team-pane__empty">{t('work.team.executionEmpty')}</p>}
-        </div>
-      </details>
-      {controls}
-      {context}
+        </button>
+      </li>;
+    })}</ol> : <p className="team-pane__empty">{t('work.team.executionEmpty')}</p>}
+    <section id="team-worker-detail" className="team-worker-detail" hidden={!selected}>
+      {selected ? <>
+        <div className="team-worker-detail-heading"><strong>{translated(t, `work.plan.role.${selected.role}`, selected.role)}</strong><button type="button" className="team-panel-close" aria-label={t('work.navigation.closeWorker')} onClick={() => setSelectedId('')}><X size={14} /></button></div>
+        <p>{selected.responsibility || t('work.team.noResponsibility')}</p>
+        <dl><dt>{t('work.navigation.state')}</dt><dd>{statusText(selected.state, t)}</dd>
+          <dt>{t('work.navigation.assignment')}</dt><dd>{selected.task_id || selected.id}</dd>
+          {selected.dependency_task_title ? <><dt>{t('work.navigation.waitingFor')}</dt><dd>{selected.dependency_task_title}</dd></> : null}
+        </dl>
+        {executionStatusReason(selected, t) ? <p className="team-worker-reason">{executionStatusReason(selected, t)}</p> : null}
+        {onInspectAttempt && selected.current_attempt_id ? <button type="button" className="team-attempt-inspect" onClick={() => onInspectAttempt(selected)}>{t('work.attempt.inspect')}<ChevronRight size={14} aria-hidden="true" /></button> : null}
+      </> : null}
     </section>
-  );
+    {controls}
+    {context ? <details className="team-execution-context"><summary>{t('work.navigation.executionContext')}</summary>{context}</details> : null}
+  </section>;
 }
 
 function OutcomesPane({
   navigation,
+  onClose,
   historyContext,
   approval,
   mission,
@@ -183,7 +122,7 @@ function OutcomesPane({
           <h2 id="team-outcomes-title">{t('work.team.historyDelivery')}</h2>
           <span className="team-pane__eyebrow">{t('work.team.resultsHelp')}</span>
         </div>
-        {outcomes.length ? <span className="team-pane__count">{t('work.team.outcomeCount', { count: outcomes.length })}</span> : null}
+        {onClose ? <button type="button" className="team-panel-close" aria-label={t('work.navigation.closePanel')} onClick={onClose}><X size={15} /></button> : null}
       </header>
       <div className="team-outcomes-scroll">
       {navigation}
@@ -348,6 +287,7 @@ function TeamWorkspace({
   assistantBusy,
   assistantError,
   taskNavigation,
+  navigationInSidebar = false,
   executionContext,
   projectTools,
   historyContext,
@@ -383,7 +323,7 @@ function TeamWorkspace({
 }) {
   const mobileWorkspace = useMobileTeamWorkspace();
   const [mobileTab, setMobileTab] = useState('manager');
-  const [collapsedEvidence, setCollapsedEvidence] = useState(null);
+  const [evidenceVisibility, setEvidenceVisibility] = useState(null);
   const [expandedTaskId, setExpandedTaskId] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState('');
   const [selectedReviewTargetId, setSelectedReviewTargetId] = useState('');
@@ -391,6 +331,15 @@ function TeamWorkspace({
   const mobileTabRefs = useRef(new Map());
   const outcomeRefs = useRef(new Map());
   const returnFocusRef = useRef(null);
+  const panelsRef = useRef(null);
+  useEffect(() => {
+    const panels = panelsRef.current;
+    const dock = panels?.querySelector('.team-manager-dock');
+    if (!dock || !globalThis.ResizeObserver) return;
+    const observer = new ResizeObserver(() => panels.style.setProperty('--composer-height', `${dock.getBoundingClientRect().height + 12}px`));
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, []);
   const workspace = data.team_workspace;
   const mission = workspace.mission;
   const assistant = projectAssistant || workspace;
@@ -399,7 +348,9 @@ function TeamWorkspace({
   const selectedTask = outcomes.find((task) => task.id === selectedTaskId) || null;
   const attention = workspace.attention_request;
   const evidenceContext = `${projectKey}:${mission?.run_id || mission?.id || ''}:${attention?.target_id || ''}`;
-  const evidenceHidden = !mobileWorkspace && collapsedEvidence === evidenceContext;
+  const evidenceOpen = evidenceVisibility?.context === evidenceContext
+    ? evidenceVisibility.open : attention?.kind === 'approval';
+  const evidenceHidden = !mobileWorkspace && !evidenceOpen;
   const activeAttemptIds = new Set((workspace.execution_actors || []).filter(actor => actor.role !== 'orchestrator').map(actor => actor.current_attempt_id));
   const activeJobs = (data.worker_jobs || []).filter(job => activeAttemptIds.has(job.id) && job.status === 'running');
   const attentionReviewTask = attention?.target_type === 'review' && attention?.target_id
@@ -440,7 +391,7 @@ function TeamWorkspace({
     if (!attentionReviewTask) return;
     returnFocusRef.current = trigger || document.activeElement;
     setActiveReviewTaskId(attentionReviewTask.id);
-    setCollapsedEvidence(null);
+    setEvidenceVisibility({ context: evidenceContext, open: true });
     if (!mobileWorkspace) {
       outcomeRefs.current.get(attentionReviewTask.id)?.scrollIntoView?.({
         behavior: reducedMotion ? 'auto' : 'smooth',
@@ -450,7 +401,7 @@ function TeamWorkspace({
     }
     setSelectedReviewTargetId(attention.target_id);
     setSelectedTaskId(attentionReviewTask.id);
-  }, [attention, attentionReviewTask, mobileWorkspace, reducedMotion]);
+  }, [attention, attentionReviewTask, evidenceContext, mobileWorkspace, reducedMotion]);
   const closeTaskModal = useCallback(() => {
     const returnFocus = returnFocusRef.current;
     returnFocusRef.current = null;
@@ -473,13 +424,13 @@ function TeamWorkspace({
   }, []);
   const sectionProps = (tab) => ({
     id: `team-panel-${tab}`,
-    'data-mobile-active': mobileTab === tab ? 'true' : 'false',
+    'data-mobile-active': tab === 'manager' || mobileTab === tab ? 'true' : 'false',
     'data-read-only': readOnly ? 'true' : undefined,
     ...(!mobileWorkspace && tab === 'outcomes' ? { hidden: evidenceHidden } : {}),
     ...(mobileWorkspace ? {
       'aria-labelledby': `team-tab-${tab}`,
-      hidden: mobileTab !== tab,
-      role: 'tabpanel',
+      hidden: tab !== 'manager' && mobileTab !== tab,
+      role: 'region',
     } : {}),
   });
   useEffect(() => {
@@ -498,7 +449,6 @@ function TeamWorkspace({
   return (
     <>
       <div className="studio-work-toolbar">
-        <span>{t('product.studio.focusConversation')}</span>
         <div className="studio-work-toolbar__actions">
           {projectTools ? <details className="studio-project-tools" onKeyDown={event => {
             if (event.key !== 'Escape') return;
@@ -509,14 +459,13 @@ function TeamWorkspace({
             <summary><Wrench size={16} aria-hidden="true" />{t('product.studio.projectTools')}</summary>
             <div className="studio-project-tools__panel">{projectTools}</div>
           </details> : null}
-          <button type="button" aria-controls="team-panel-outcomes" aria-expanded={!evidenceHidden} onClick={() => setCollapsedEvidence(evidenceHidden ? null : evidenceContext)}>{evidenceHidden ? <PanelRightOpen size={16} aria-hidden="true" /> : <PanelRightClose size={16} aria-hidden="true" />}{t(evidenceHidden ? 'product.studio.showEvidence' : 'product.studio.hideEvidence')}</button>
+          <button type="button" aria-controls="team-panel-outcomes" aria-expanded={!evidenceHidden} onClick={() => setEvidenceVisibility({ context: evidenceContext, open: evidenceHidden })}>{evidenceHidden ? <PanelRightOpen size={16} aria-hidden="true" /> : <PanelRightClose size={16} aria-hidden="true" />}{t(evidenceHidden ? 'product.studio.showEvidence' : 'product.studio.hideEvidence')}</button>
         </div>
       </div>
       <div
         aria-label={t('work.team.navigation')}
-        aria-orientation="horizontal"
         className="team-mobile-nav"
-        role="tablist"
+        role="group"
       >
         {mobileTabs.map((tab) => {
           const selected = mobileTab === tab.id;
@@ -525,18 +474,17 @@ function TeamWorkspace({
             <button
               aria-controls={`team-panel-${tab.id}`}
               aria-label={hasAttention ? `${tab.label}. ${t('work.manager.needsYou')}` : tab.label}
-              aria-selected={selected}
+              aria-pressed={selected}
               data-active={selected ? 'true' : 'false'}
               id={`team-tab-${tab.id}`}
               key={tab.id}
-              onClick={() => setMobileTab(tab.id)}
+              onClick={() => setMobileTab(selected ? 'manager' : tab.id)}
               onKeyDown={(event) => handleMobileTabKeyDown(event, tab.id)}
               ref={(node) => {
                 if (node) mobileTabRefs.current.set(tab.id, node);
                 else mobileTabRefs.current.delete(tab.id);
               }}
-              role="tab"
-              tabIndex={selected ? 0 : -1}
+              tabIndex={0}
               type="button"
             >
               <span>{tab.label}</span>
@@ -551,6 +499,7 @@ function TeamWorkspace({
       </div>
       <div
         className="team-workspace"
+        ref={panelsRef}
         aria-label={t('work.team.workspace')}
         data-evidence-collapsed={evidenceHidden ? 'true' : undefined}
         data-read-only={readOnly ? 'true' : undefined}
@@ -559,8 +508,8 @@ function TeamWorkspace({
         <ProjectConversation
           executionRunning={activeJobs.length > 0}
           canManageTasks={true}
-          taskManagementOpen={!mobileWorkspace || taskManagementOpen}
-          onManageTasks={() => { setCollapsedEvidence(null); if (mobileWorkspace) { setMobileTab('outcomes'); onManageTasks?.(); } }}
+          taskManagementOpen={navigationInSidebar ? taskManagementOpen : mobileWorkspace ? taskManagementOpen : !evidenceHidden}
+          onManageTasks={() => { if (navigationInSidebar) { onManageTasks?.(); return; } setEvidenceVisibility({ context: evidenceContext, open: true }); if (mobileWorkspace) { setMobileTab('outcomes'); onManageTasks?.(); } }}
           onConfigureRuntime={onConfigureRuntime}
           acceptedMessage={conversationDelivery && conversationDelivery.projectKey === projectKey && !conversationDelivery.intentId
             && (conversationDelivery.contextKey || '').startsWith('message:')
@@ -605,8 +554,8 @@ function TeamWorkspace({
         </div>
         <ExecutionPane
           onInspectAttempt={onInspectAttempt}
+          onClose={mobileWorkspace ? () => setMobileTab('manager') : undefined}
           blocker={attention?.kind === 'blocker' ? <TaskAttention attention={attention} activeJobs={activeJobs} error={error} jobs={data.worker_jobs || []} projectKey={projectKey} busy={busy} onRetry={readOnly ? undefined : onRetry} retry={retry} t={t} /> : null}
-          task={mission}
           context={executionContext}
           controls={!readOnly && (workspace.capabilities || []).some((item) => item.action === 'cancel_mission')
             ? <TaskRunControls key={mission?.run_id || mission?.id} busy={busy} canCancel onTerminate={onTerminate} t={t} /> : null}
@@ -616,6 +565,7 @@ function TeamWorkspace({
           t={t}
         />
         <OutcomesPane
+          onClose={() => { setEvidenceVisibility({ context: evidenceContext, open: false }); setMobileTab('manager'); }}
           navigation={taskNavigation}
           historyContext={historyContext}
           mission={mission}

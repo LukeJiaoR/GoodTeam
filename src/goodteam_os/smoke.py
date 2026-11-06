@@ -256,8 +256,11 @@ def ensure_self_worktree(repo_root: Path, target: Path) -> None:
     if target.is_dir():
         return
     target.parent.mkdir(parents=True, exist_ok=True)
+    from goodteam_os.database import provider_environment
+
     subprocess.run(
         ["git", "-C", str(repo_root), "worktree", "add", "--detach", str(target), "HEAD"],
+        env=provider_environment(),
         capture_output=True,
         text=True,
         check=True,
@@ -265,8 +268,10 @@ def ensure_self_worktree(repo_root: Path, target: Path) -> None:
 
 
 def run_shell_command(command: str, cwd: Path) -> dict[str, object]:
+    from goodteam_os.database import provider_environment
+
     shell = os.getenv("SHELL") or "/bin/sh"
-    completed = subprocess.run([shell, "-lc", command], cwd=cwd, capture_output=True, text=True, check=False)
+    completed = subprocess.run([shell, "-lc", command], cwd=cwd, env=provider_environment(), capture_output=True, text=True, check=False)
     return {
         "command": command,
         "cwd": str(cwd),

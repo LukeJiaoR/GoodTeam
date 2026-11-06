@@ -37,67 +37,6 @@
   --product-on-accent: #171819;
   --product-shadow: 0 2px 8px #00000018;
 }
-.product-shell--workspace .product-chrome {
-  background: var(--product-bg);
-  border-bottom: 1px solid var(--product-border);
-  backdrop-filter: none;
-  padding: 0;
-  box-shadow: none;
-}
-.product-shell.product-shell--workspace .product-chrome__inner {
-  width: min(calc(100% - 2rem), 1680px);
-  min-height: 60px;
-  gap: 1rem;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-.product-shell.product-shell--workspace .product-brand__mark {
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--product-border);
-  border-radius: 9px;
-  color: var(--product-accent-strong);
-  background: var(--product-surface);
-  box-shadow: none;
-}
-.product-shell.product-shell--workspace .product-work-navigation {
-  justify-self: center;
-  min-width: 0;
-  max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  display: flex;
-  gap: 3px;
-  padding: 3px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  box-shadow: none;
-}
-.product-shell.product-shell--workspace .product-work-navigation__link {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  white-space: nowrap;
-  gap: .45rem;
-  min-height: 36px;
-  padding: 0 .85rem;
-  border-radius: 8px;
-  color: var(--product-text-muted);
-  font-size: 13px;
-  text-decoration: none;
-  box-shadow: none;
-}
-.product-shell.product-shell--workspace .product-work-navigation__link.is-active {
-  background: var(--product-accent-soft);
-  color: var(--product-accent-strong);
-}
-.product-shell.product-shell--workspace :is(.product-language-control select, .product-appearance-control) {
-  min-height: 34px;
-  border: 1px solid var(--product-border);
-  border-radius: 9px;
-  background: var(--product-surface);
-  box-shadow: none;
-}
 .product-shell--workspace .product-button {
   min-height: 38px;
   padding: .5rem .85rem;
@@ -125,7 +64,7 @@
 .product-shell--workspace :is(.projects-import-dialog, .team-dialog) {
   border-radius: 16px;
 }
-.product-shell--workspace :is(.projects-import-dialog, .team-dialog) :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
+.product-shell--workspace .team-dialog :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
   min-height: 40px;
   max-width: 100%;
   border: 1px solid var(--product-border);
@@ -180,20 +119,11 @@
 .product-shell--workspace .collection-count { margin-left: auto; color: var(--product-text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .product-shell--workspace .collection-empty { display: grid; justify-items: center; gap: .7rem; padding: 2.5rem 1rem; text-align: center; color: var(--product-text-muted); }
 @media (hover: hover) and (pointer: fine) {
-  .product-shell--workspace :is(.product-work-navigation__link, .collection-search button, .collection-filters button):hover { color: var(--product-accent-strong); background: var(--product-accent-soft); }
+  .product-shell--workspace :is(.collection-search button, .collection-filters button):hover { color: var(--product-accent-strong); background: var(--product-accent-soft); }
   .product-shell--workspace .product-button--secondary:hover:not(:disabled) { border-color: var(--product-accent); background: var(--product-accent-soft); }
-}
-@media (min-width: 768px) and (max-width: 1100px) {
-  .product-shell--workspace .product-appearance-control span { display: none; }
 }
 @media (max-width: 767px) {
   .product-shell.product-shell--workspace { --product-sticky-offset: 7.5rem; }
-  .product-shell.product-shell--workspace .product-chrome__inner { width: calc(100% - 1.5rem); grid-template-columns: 1fr auto; gap: .5rem; padding: .5rem 0; }
-  .product-shell.product-shell--workspace .product-work-navigation { grid-row: 2; grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; padding: 0; overflow: visible; }
-  .product-shell.product-shell--workspace .product-work-navigation__link { justify-content: center; flex-direction: column; min-width: 0; min-height: 44px; padding: .3rem .15rem; font-size: 11px; line-height: 1.2; gap: .2rem; }
-  .product-shell.product-shell--workspace .product-preferences { grid-row: 1; grid-column: 2; }
-  .product-shell.product-shell--workspace .product-work-navigation__link span { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-  .product-shell--workspace .product-appearance-control span, .product-shell--workspace .product-chrome__spacer { display: none; }
   .product-shell--workspace .collection-search { flex-basis: 100%; max-width: none; }
   .product-shell--workspace .collection-filters { max-width: 100%; }
   .product-shell--workspace .collection-filters button { min-height: 40px; }

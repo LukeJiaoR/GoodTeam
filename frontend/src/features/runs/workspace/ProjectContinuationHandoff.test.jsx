@@ -80,8 +80,19 @@ it('offers a current bilingual Manager handoff through existing controls without
   fireEvent.click(screen.getByRole('button', { name: pendingLabel }));
   expect(screen.getByRole('region', { name: pendingLabel })).toHaveFocus();
   view.rerender(conversation(null));
+  expect(screen.getByRole('region', { name: 'Automatic project iteration', hidden: true })
+    .closest('.project-conversation-planning').open).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: pendingLabel }));
   expect(screen.getByRole('region', { name: 'Automatic project iteration' })).toHaveFocus();
+  expect(screen.getByRole('region', { name: 'Automatic project iteration' })
+    .closest('.project-conversation-planning').open).toBe(true);
+  const stoppedNotice = { ...notice, id: 'continuation:grant:stopped', phase: 'stopped', kind: '', reason: 'owner_stopped' };
+  const stoppedItem = { ...item, id: stoppedNotice.id, details: stoppedNotice };
+  view.rerender(<ProjectConversation projectKey="APP" timeline={[stoppedItem]} assistantState={{}}
+    iterationSession={{ ...session, project_continuation: { ...value, status: 'stopped' }, project_continuation_notice: stoppedNotice }}
+    language="en" t={(key, params) => translate('en', key, params)} onAssistantAction={onAction} />);
+  expect(screen.getByText(/Automatic project iteration was stopped/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'View iteration and actions' })).not.toBeInTheDocument();
   localStorage.clear();
   vi.unstubAllGlobals();
 });

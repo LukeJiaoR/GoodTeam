@@ -1,7 +1,7 @@
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 /* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { focusWorkContext } from './workspace/currentWorkContext.js';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import WorkflowCanvas from '../../components/WorkflowCanvas';
@@ -722,7 +722,7 @@ function DeliveryView({ data, projectKey, t }) {
 
 export default function WorkPage() {
   const { projectKey = '', runId = '' } = useParams();
-  const { language, t } = useOutletContext();
+  const { language, t, projectNavigationHost, workQuery, openProjectNavigation, closeProjectNavigation } = useOutletContext();
   const { reducedMotion } = useReducedMotion();
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
@@ -1167,8 +1167,16 @@ export default function WorkPage() {
 
   const selectTask = (selected) => {
     setTaskManagementProject('');
+    closeProjectNavigation?.();
     navigate(selected ? routes.projectRun(projectKey, selected) : routes.projectWork(projectKey));
   };
+  const taskNavigation = <TaskNavigation currentRunId={currentRunId} currentTitle={currentRunTitle} currentStatus={projectedMission?.status} query={workQuery || ''} currentBlocked={currentWorkflowBlocked} runs={runHistory} selectedRunId={runId} onSelect={selectTask}
+      assistant={data.project_assistant} busy={conversation.busy} onAction={handleAssistantAction} t={t}
+      onClose={() => {
+        setTaskManagementProject('');
+        closeProjectNavigation?.();
+        focusWorkContext(workspaceRef.current, 'composer', { reducedMotion });
+      }} />;
   const conversationProps = {
     projectAssistant: data.project_assistant || { ...data.team_workspace, timeline: data.team_workspace?.manager_timeline || [] },
     conversationDelivery: conversation.delivery,
@@ -1180,13 +1188,9 @@ export default function WorkPage() {
     contextTitle: runId ? contextTitle : '',
     onClearContext: () => selectTask(''),
     taskManagementOpen,
-    onManageTasks: () => setTaskManagementProject(projectKey),
-    taskNavigation: <TaskNavigation currentRunId={currentRunId} currentBlocked={currentWorkflowBlocked} runs={runHistory} selectedRunId={runId} onSelect={selectTask}
-      assistant={data.project_assistant} busy={conversation.busy} onAction={handleAssistantAction} t={t}
-      onClose={(event) => {
-        setTaskManagementProject('');
-        focusWorkContext(event.currentTarget.closest('.product-work-page'), 'composer', { reducedMotion });
-      }} />,
+    onManageTasks: () => { setTaskManagementProject(projectKey); openProjectNavigation?.(); },
+    taskNavigation: projectNavigationHost ? null : taskNavigation,
+    navigationInSidebar: Boolean(projectNavigationHost),
   };
 
   const currentContext = (
@@ -1277,6 +1281,7 @@ export default function WorkPage() {
   return (
     <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
       {attentionFocus}
+      {projectNavigationHost ? createPortal(<fieldset className="studio-navigation-scope" disabled={interactionsPaused}>{taskNavigation}</fieldset>, projectNavigationHost) : null}
       {currentContext}
       {status === 'stale' ? <ProductError error={error} onRetry={() => { void handleRefreshContext(); }} t={t} /> : null}
       {status === 'stale' ? <p role="status">{t('work.context.staleActions')}</p> : null}

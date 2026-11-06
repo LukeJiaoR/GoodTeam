@@ -70,14 +70,22 @@ def _decision_scope(states, action, project_key, run_id, gate):
     # already retained it. Reuse only that exact operation, never log location
     # alone or another run's most recent approval.
     root = states.project_state_dir(project_key) / "checkpoints" / run_id
-    paths = sorted(root.glob(gate + "_review_gate-*.json"))
+    from goodteam_os import state_documents
+    from goodteam_os.database import database_configured
+
+    paths = state_documents.paths(root, gate + "_review_gate-*.json")
     if len(paths) > 256:
         raise TaskInputError("approved_plan_history_limit")
     fields = ("run_id", "actor", "action", "gate", "decision", "artifact", "artifact_path",
               "artifact_version", "workflow_operation_id")
     for path in paths:
-        raw = read_bytes(path, maximum=1024 * 1024)
-        value = json.loads(raw) if raw is not None else {}
+        if database_configured():
+            value = state_documents.read_json(path)
+            if len(json.dumps(value).encode()) > 1024 * 1024:
+                raise TaskInputError("approved_plan_history_limit")
+        else:
+            raw = read_bytes(path, maximum=1024 * 1024)
+            value = json.loads(raw) if raw is not None else {}
         transition = value.get("pending_transition", {})
         recorded = transition.get("action", {})
         if (value.get("project_key") == project_key and value.get("run_id") == run_id

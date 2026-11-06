@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ CONTEXT_DIR_NAME = ".goodteam/context"
 UNDERSTANDING_FILE = "understanding.md"
 INDEX_FILE = "index.md"
 SOURCES_FILE = "sources.yaml"
+SOURCES_SCHEMA = "project_context_sources.v2"
 
 _IGNORED_DIRS = {".git", ".goodteam", ".venv", "__pycache__", "node_modules", "dist", "build", ".next"}
 _TEXT_SUFFIXES = {".js", ".jsx", ".ts", ".tsx"}
@@ -27,6 +29,10 @@ def read_context_entry(root: Path) -> dict[str, object] | None:
         return None
     index = _read_text_if_present(context_dir / INDEX_FILE)
     sources = _parse_sources_yaml(context_dir / SOURCES_FILE)
+    if (sources.get("schema_version") != SOURCES_SCHEMA
+            or sources.get("understanding_sha256") != _digest(understanding)
+            or not _sources_current(sources.get("sources", []), root)):
+        return None
     return {
         "understanding": understanding,
         "index": index,
@@ -91,6 +97,7 @@ def generate_context_entry(
 ) -> dict[str, str]:
     context_dir = root / CONTEXT_DIR_NAME
     context_dir.mkdir(parents=True, exist_ok=True)
+    source_records = [_source_record(source, root=root) for source in sources]
     if generator is not None:
         prompt = _generation_prompt(sources)
         understanding = generator(prompt)
@@ -98,9 +105,13 @@ def generate_context_entry(
         understanding = _deterministic_understanding(sources)
     index = _deterministic_index(sources)
     source_record = {
+        "schema_version": SOURCES_SCHEMA,
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "sources": [_source_record(source) for source in sources],
+        "understanding_sha256": _digest(understanding),
+        "sources": source_records,
     }
+    if not _sources_current(source_records, root):
+        raise ValueError("Project context sources changed during generation; regenerate from current sources.")
 
     understanding_path = context_dir / UNDERSTANDING_FILE
     index_path = context_dir / INDEX_FILE
@@ -188,12 +199,15 @@ def _parse_sources_yaml(path: Path) -> dict[str, object]:
 
 
 def _dump_sources_yaml(record: dict[str, object]) -> str:
-    lines = [f"generated_at: {_quote_yaml_scalar(str(record.get('generated_at', '')))}", "sources:"]
+    lines = [f"{key}: {_quote_yaml_scalar(str(record.get(key, '')))}"
+             for key in ("schema_version", "generated_at", "understanding_sha256")]
+    lines.append("sources:")
     for source in record.get("sources", []):
         if not isinstance(source, dict):
             continue
         first = True
-        for key in ["repo", "path", "url", "purpose", "topic", "kind", "value"]:
+        for key in ["repo", "path", "url", "purpose", "topic", "kind", "value",
+                    "relative_path", "snapshot_kind", "sha256"]:
             value = source.get(key)
             if value is None or value == "":
                 continue
@@ -355,8 +369,36 @@ def _cap(value: str, limit: int = 1200) -> str:
     return value[: limit - 3].rstrip() + "..."
 
 
-def _source_record(source: dict) -> dict[str, str]:
-    return {
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _source_digest(source: dict, root: Path) -> str:
+    kind = source.get("snapshot_kind")
+    if kind == "captured":
+        # URL/inline content is a captured snapshot. Reads never fetch a URL.
+        return str(source.get("sha256", ""))
+    path = root / source["relative_path"] if "relative_path" in source else Path(source["path"])
+    if kind == "file" and path.is_file():
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    if path.is_dir():
+        if kind == "directory_tree":
+            return _digest(_render_directory_tree(path))
+        if kind == "code_skeleton":
+            return _digest(build_code_skeleton(path))
+    raise ValueError("Project context source is unavailable.")
+
+
+def _sources_current(sources: list[dict], root: Path) -> bool:
+    try:
+        return all(re.fullmatch(r"[a-f0-9]{64}", source.get("sha256", ""))
+                   and _source_digest(source, root) == source["sha256"] for source in sources)
+    except (OSError, ValueError, KeyError):
+        return False
+
+
+def _source_record(source: dict, *, root: Path) -> dict[str, str]:
+    record = {
         "repo": str(source.get("repo", "")),
         "path": str(source.get("path", "")),
         "url": str(source.get("url", "")),
@@ -365,6 +407,17 @@ def _source_record(source: dict) -> dict[str, str]:
         "kind": str(source.get("kind", "")),
         "value": str(source.get("value", "")),
     }
+    if not record["path"]:
+        return {**record, "snapshot_kind": "captured",
+                "sha256": _digest(str(source.get("content") or source.get("summary") or ""))}
+    path = Path(record["path"]).resolve()
+    record["path"] = str(path)
+    if path.is_relative_to(root.resolve()):
+        record["relative_path"] = str(path.relative_to(root.resolve()))
+    record["snapshot_kind"] = ("file" if path.is_file() else "directory_tree"
+                               if source.get("purpose") == "Shallow project directory overview" else "code_skeleton")
+    record["sha256"] = _source_digest(record, root)
+    return record
 
 
 def _generation_prompt(sources: list[dict]) -> str:

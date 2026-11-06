@@ -11,15 +11,17 @@ _COPY = {
     "exhausted": "Automatic project iteration reached an approved limit and has stopped.",
     "no_followup": "Manager proposed no follow-up within the approved scope. This does not mean the project is complete.",
     "completed": "This authorized project iteration has ended. Review its recorded delivery evidence.",
+    "stopped": "Automatic project iteration was stopped. Its existing evidence and results are preserved.",
 }
 _NEXT = {
     "review_required": "Inspect the candidate, independently review it, then use the existing delivery confirmation after landing it.",
     "quality_required": "Open the batch checks and review card and follow its next step for this same input.",
-    "delivery_required": "Inspect the retained evidence, land this exact candidate through the authorized Git workflow, then confirm delivery.",
+    "delivery_required": "Inspect the retained evidence, land this exact candidate through the authorized Git workflow, then ask to confirm delivery in this conversation.",
     "blocked": "Inspect the retained result and resolve the blocker through the existing batch recovery or project configuration controls.",
     "exhausted": "Review the results and authorize a new bounded continuation if more work is needed.",
     "no_followup": "Discuss the rationale and provide missing goals or context in the project conversation. Select initial tasks and authorize again to execute more work.",
     "completed": "Review the results; select tasks and authorize a new continuation if more work is needed.",
+    "stopped": "Review any pending candidate or ask about the results here. Further execution needs a new bounded authorization.",
 }
 
 
@@ -46,7 +48,7 @@ def project_continuation_notice(session):
             reason = quality.get("reason") or phase
     elif status == "stopped" and own_batch and batch.get("status") == "blocked":
         phase, reason = "blocked", batch.get("error") or "batch_blocked"
-    elif status in {"active", "stopped"}:
+    elif status == "active":
         return None
     if reason == "discovery_no_followup":
         phase = "no_followup"
@@ -60,7 +62,7 @@ def project_continuation_notice(session):
     return {
         "id": f"continuation:{identifier}:" + sha256(identity.encode()).hexdigest()[:24],
         "continuation_id": identifier, "phase": phase, "reason": reason,
-        "kind": "blocked" if phase == "blocked" else "" if phase == "completed" else "needs_input",
+        "kind": "blocked" if phase == "blocked" else "" if phase in {"completed", "stopped"} else "needs_input",
         "run_id": run_id, "task_ids": list(pending.get("task_ids") or value.get("task_ids", [])),
         "delivered_task_ids": list(dict.fromkeys(delivered)), "delivery_receipt_ids": receipts,
         "batches_started": value.get("batches_started", 0), "max_batches": value.get("max_batches", 0),

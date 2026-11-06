@@ -10,6 +10,8 @@ from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
 from goodteam_os.state import normalize_project_key
+from goodteam_os.database import database_configured
+from goodteam_os import state_documents
 
 
 SCHEMA_VERSION = "task_assistant_session.v2"
@@ -23,14 +25,15 @@ class TaskAssistantSessionStore:
         self.workspace = Path(workspace)
         self.project_key = normalize_project_key(project_key)
         self.path = self.workspace / "state" / "projects" / self.project_key / "task-assistant-session.json"
+        state_documents.ensure_storage_config(self.path)
         self.lock_path = self.path.with_suffix(".lock")
         with _LOCKS_GUARD:
             self._lock = _LOCKS.setdefault(str(self.path), threading.Lock())
 
     def read(self) -> dict[str, object]:
-        if not self.path.is_file():
+        if not state_documents.exists(self.path):
             return self._empty()
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        payload = state_documents.read_json(self.path)
         if not isinstance(payload, dict):
             raise ValueError("Task Assistant session is invalid")
         version = str(payload.get("schema_version", ""))
@@ -53,6 +56,7 @@ class TaskAssistantSessionStore:
         actor: str,
         content: str,
         run_id: str = "",
+        attachments: list[dict] | None = None,
     ) -> dict[str, object]:
         identifier = str(message_id).strip()
         if not identifier or actor not in {"user", "task_assistant", "system"} or not str(content).strip():
@@ -62,6 +66,8 @@ class TaskAssistantSessionStore:
             timeline = list(session["timeline"])
             existing = next((item for item in timeline if item.get("message_id") == identifier), None)
             expected = {"actor": actor, "content": str(content), "run_id": str(run_id)}
+            if attachments is not None:
+                expected["attachments"] = attachments
             if existing is not None:
                 if all(existing.get(key) == value for key, value in expected.items()):
                     return session
@@ -437,7 +443,7 @@ class TaskAssistantSessionStore:
         return self._mutate(mutate)
 
     def _mutate(self, operation):
-        with self._lock:
+        with self._lock, state_documents.document_lock(self.path):
             self.lock_path.parent.mkdir(parents=True, exist_ok=True)
             lock_descriptor = os.open(self.lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
             try:
@@ -460,6 +466,9 @@ class TaskAssistantSessionStore:
                 os.close(lock_descriptor)
 
     def _write(self, payload: dict[str, object]) -> None:
+        if database_configured():
+            state_documents.write_json(self.path, payload, storage_root=self.workspace)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", encoding="utf-8", dir=self.path.parent, delete=False) as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)

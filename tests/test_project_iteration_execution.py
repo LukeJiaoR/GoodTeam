@@ -102,7 +102,10 @@ event('end')
     with ThreadPoolExecutor(max_workers=2) as pool:
         responses = list(pool.map(lambda _: start_once(), range(2)))
     first = next(item for item in responses if item is not None)
-    deadline = time.monotonic() + 30
+    # Eleven isolated Git workspaces plus evidence fan-in take about 30 seconds
+    # on a development host. Keep a bounded wait without racing that baseline;
+    # the provider overlap deadline and all execution assertions stay intact.
+    deadline = time.monotonic() + 60
     while any(task["status"] in {"todo", "in_progress"} for task in ledger.list_tasks()):
         assert time.monotonic() < deadline, "The background batch did not settle."
         # Repeated service ticks observe the same live thread and do not

@@ -48,7 +48,11 @@ def test_terminal_handoff_is_atomic_bound_to_delivery_and_retains_stop(tmp_path,
                                   "reason": "discovery_no_followup"}]
     # The existing owner Stop can close this handoff without new task/model authority.
     stopped = stop_project_continuation(workspace=tmp_path, project_key="DEMO", continuation_id="grant")
-    assert stopped["status"] == "stopped" and project_continuation_notice(store.read()) is None
+    assert stopped["status"] == "stopped"
+    stopped_notice = project_continuation_notice(store.read())
+    assert stopped_notice["phase"] == "stopped" and stopped_notice["kind"] == ""
+    assert any(item["event"] == "project_continuation_handoff" and item["details"] == stopped_notice
+               for item in store.read()["timeline"])
     assert _save(store, active)["status"] == "stopped"  # A late result cannot revive it.
     assert store.read()["project_continuation"]["manager_calls"] == 2
     assert build_project_attention(project_key="DEMO", readiness={}, session=store.read())["counts"]["total"] == 0

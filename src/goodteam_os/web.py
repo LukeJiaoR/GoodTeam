@@ -27,6 +27,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 from goodteam_os import context as project_context
+from goodteam_os.database import provider_environment
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.debate import default_debate_dispatch, run_gate_debate
 from goodteam_os.dispatch import (
@@ -134,6 +135,8 @@ from goodteam_os.staging import (
     delivery_contract_report,
     run_staging_backend,
 )
+from goodteam_os import state_documents
+from goodteam_os.database import database_configured
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import (
     LocalTaskStore,
@@ -1272,6 +1275,7 @@ def _run_readonly_command(command: list[str], workspace: Path, warnings: list[st
         return subprocess.run(
             command,
             cwd=workspace,
+            env=provider_environment(),
             capture_output=True,
             text=True,
             timeout=DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS,
@@ -1473,6 +1477,7 @@ def _ensure_dispatch_worktree(workspace: Path, *, name: str, branch: str) -> Pat
         subprocess.run(
             ["git", "worktree", "add", str(worktree), "-b", branch, "main"],
             cwd=workspace,
+            env=provider_environment(),
             check=True,
         )
     _link_dispatch_worktree_venv(workspace, worktree)
@@ -2064,6 +2069,7 @@ def run_gated_server_action(
         result = subprocess.run(
             argv,
             cwd=root,
+            env=provider_environment(),
             capture_output=True,
             text=True,
             timeout=SERVER_ACTION_TIMEOUT_SECONDS,
@@ -2588,7 +2594,9 @@ def build_goal_history(workspace: Path, project_key: str, *, limit: int = 20, be
 
     key = normalize_project_key(project_key)
     _project_config_for_key(workspace, key)
-    if not (workspace / "state" / "goals.sqlite3").is_file():
+    from goodteam_os.goals import goal_store_exists
+
+    if not goal_store_exists(workspace):
         if before:
             raise ProjectApiError("invalid_goal_page", "Unknown Goal history cursor.", 400)
         return {"goals": [], "next_before": "", "project_key": key}
@@ -2698,7 +2706,7 @@ def _task_ledger_from_state(state: AgileDevState | None) -> Path | None:
     if not path:
         return None
     ledger = Path(path)
-    if ledger.name != "tasks.json" or not ledger.is_file():
+    if ledger.name != "tasks.json" or not state_documents.exists(ledger):
         return None
     return ledger
 
@@ -2948,7 +2956,7 @@ def _run_git_project_command(
             result = subprocess.run(
                 command,
                 cwd=root_path,
-                env=env,
+                env=provider_environment(env),
                 capture_output=True,
                 text=True,
                 timeout=GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS,
@@ -3554,16 +3562,12 @@ def is_active_run(state: AgileDevState | None) -> bool:
 def _latest_archived_run_summary(workspace: Path, project_key: str) -> dict[str, str]:
     key = normalize_project_key(project_key)
     archive_dir = StateStore(workspace).project_state_dir(key) / "archived"
-    if not archive_dir.is_dir():
+    if not database_configured() and not archive_dir.is_dir():
         return {}
-    archived_paths = sorted(
-        archive_dir.glob("*.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
+    archived_paths = state_documents.paths(archive_dir, newest_first=True)
     for path in archived_paths:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = state_documents.read_json(path)
         except (OSError, json.JSONDecodeError):
             continue
         return {
@@ -3608,7 +3612,7 @@ def build_project_run_history(workspace: Path, project_key: str) -> dict[str, ob
                 current,
                 status="active" if is_active_run(current) else "complete",
                 updated_at=datetime.fromtimestamp(
-                    current_path.stat().st_mtime,
+                    state_documents.modified_time(current_path),
                     tz=UTC,
                 ).isoformat(),
             )
@@ -3619,7 +3623,7 @@ def build_project_run_history(workspace: Path, project_key: str) -> dict[str, ob
             _run_projection(
                 state,
                 status="archived",
-                updated_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+                updated_at=datetime.fromtimestamp(state_documents.modified_time(path), tz=UTC).isoformat(),
                 reason=reason,
             )
         )
@@ -3643,7 +3647,7 @@ def build_project_run_detail(
         summary = _run_projection(
             state,
             status=status,
-            updated_at=datetime.fromtimestamp(current_path.stat().st_mtime, tz=UTC).isoformat(),
+            updated_at=datetime.fromtimestamp(state_documents.modified_time(current_path), tz=UTC).isoformat(),
         )
     else:
         archived = next(
@@ -3666,7 +3670,7 @@ def build_project_run_detail(
         summary = _run_projection(
             state,
             status="archived",
-            updated_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+            updated_at=datetime.fromtimestamp(state_documents.modified_time(path), tz=UTC).isoformat(),
             reason=path.stem.removeprefix(f"{state.run_id}-"),
         )
     project_config = _project_config_for_key(workspace, key)
@@ -5870,9 +5874,9 @@ def _project_configs_from_state_sources(workspace: Path) -> list[Path]:
     paths: list[Path] = []
     seen_keys: set[str] = set()
     for state_projects_dir in state_dirs:
-        if not state_projects_dir.is_dir():
+        if not state_projects_dir.is_dir() and not database_configured():
             continue
-        for current_path in state_projects_dir.glob("*/current.json"):
+        for current_path in state_documents.paths(state_projects_dir, "*/current.json"):
             project_name = current_path.parent.name
             if project_name in seen_keys:
                 continue
@@ -6196,6 +6200,13 @@ def handle_project_api_get(
     from goodteam_os.skills.review_api import handle_review_get
     from goodteam_os.task_input_context import handle_task_input_get
 
+    if path == "/api/providers":
+        from goodteam_os.providers import ProviderStore
+        return 200, ProviderStore().view()
+    if path == "/api/providers/usage":
+        from goodteam_os.provider_usage import usage_summary
+        return 200, usage_summary()
+
     task_input_response = handle_task_input_get(workspace, path)
     if task_input_response is not None:
         return task_input_response
@@ -6345,6 +6356,14 @@ def handle_project_api_post(
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
     from goodteam_os.skills.review_api import handle_review_post
 
+    if path in {"/api/providers", "/api/providers/models"}:
+        from goodteam_os.providers import ProviderStore, ProviderError
+        try:
+            store = ProviderStore()
+            return 200, store.fetch_models(request) if path.endswith("/models") else store.update(request)
+        except ProviderError as exc:
+            raise ProjectApiError(exc.code, str(exc), exc.status) from None
+
     review_response = handle_review_post(workspace, path, request, **review_worker_kwargs(codex_review_admission))
     if review_response is not None:
         return review_response
@@ -6375,6 +6394,13 @@ def handle_project_api_post(
         result["readiness"] = readiness
         result["capabilities"] = build_capabilities(readiness)
         return (201 if result["created"] else 200), result
+    attachment_upload_match = re.fullmatch(r"/api/projects/([^/]+)/task-assistant/attachments", path)
+    if attachment_upload_match:
+        from goodteam_os.conversation_attachments import upload_attachment
+
+        key = _decode_project_api_key(attachment_upload_match.group(1))
+        key, _target, root = _project_target_and_root(workspace, key)
+        return 201, {"attachment": upload_attachment(workspace, key, root, request)}
     task_assistant_message_match = re.fullmatch(
         r"/api/projects/([^/]+)/task-assistant/messages",
         path,
@@ -6393,6 +6419,7 @@ def handle_project_api_post(
                 message_id=str(request.get("message_id", "")),
                 text=str(request.get("text", "")),
                 context_run_id=request.get("context_run_id", ""),
+                attachments=request.get("attachments", []),
             )
         except ManagerExecutionError as exc:
             raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
@@ -6996,11 +7023,25 @@ def _is_skill_api_post_path(path: str) -> bool:
     return path in {"/api/skills/local/preview", "/api/skills/local/install"}
 
 
+def _check_provider_http_request(handler, path):
+    if path not in {"/api/providers", "/api/providers/models"}:
+        return
+    client = ipaddress.ip_address(str(handler.client_address[0]))
+    if not client.is_loopback or not _protected_execution_origin_is_trusted(
+        origin=str(handler.headers.get("Origin", "")), request_host=str(handler.headers.get("Host", "")),
+        server_host=str(handler.server.server_address[0]), server_port=handler.server.server_port,
+        fetch_site=str(handler.headers.get("Sec-Fetch-Site", "")),
+    ):
+        raise ProjectApiError("same_origin_required", "Configure providers from the local GoodTeam origin.", 403)
+    if str(handler.headers.get("Content-Type", "")).split(";", 1)[0].strip().lower() != "application/json":
+        raise ProjectApiError("json_content_type_required", "Provider requests require application/json.", 415)
+
+
 def _is_project_api_post_path(path: str) -> bool:
     return bool(
-        path in {"/api/projects/import", "/api/settings"}
+        path in {"/api/projects/import", "/api/settings", "/api/providers", "/api/providers/models"}
         or re.fullmatch(
-            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions)|team/commands)",
+            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions|attachments)|team/commands)",
             path,
         )
         or re.fullmatch(r"/api/projects/[^/]+/runs/[^/]+/skill-reviews/job-skill-[0-9a-f]{64}/(?:retry|cancel)", path)
@@ -7303,154 +7344,28 @@ def _persist_context_sources(project_config: Path, sources: list[dict[str, str]]
     project_config.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
 
 
-def build_dashboard_handler(workspace: Path, *, codex_review_admission: "CodexReviewAdmission | None" = None,
-                            codex_correction_admission=None):
-    from goodteam_os.skills.codex_runtime import review_worker_kwargs
-    from goodteam_os.execution.correction_native import correction_worker_kwargs
+def _send_chat_attachment(handler, workspace, path):
+    match = re.fullmatch(r"/api/projects/([^/]+)/task-assistant/attachments/([0-9a-f]{64})", path)
+    if not match:
+        return False
+    from goodteam_os.conversation_attachments import read_attachment
 
-    runtime_kwargs = review_worker_kwargs(codex_review_admission)
-    correction_kwargs = correction_worker_kwargs(codex_correction_admission)
-
-    class DashboardHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            try:
-                response = handle_project_api_get(workspace, urlparse(self.path).path, **runtime_kwargs)
-                if response is None:
-                    self.send_error(404)
-                    return
-                status, payload = response
-                self._send_json(status, payload)
-            except Exception as exc:
-                self._send_api_error(exc)
-
-        def do_POST(self) -> None:
-            project_path = urlparse(self.path).path
-            is_project_path = _is_project_api_post_path(project_path)
-            is_skill_path = _is_skill_api_post_path(project_path)
-            normalized_path = project_path
-            if normalized_path.startswith("/api/"):
-                normalized_path = normalized_path.removeprefix("/api")
-            if not is_project_path and not is_skill_path and normalized_path not in {
-                "/context-estimate",
-                "/context-generate",
-                "/project-config",
-            }:
-                self.send_error(404)
-                return
-            if not _request_origin_is_same_origin(
-                origin=str(self.headers.get("Origin", "")),
-                host=str(self.headers.get("Host", "")),
-            ):
-                self._send_api_error(
-                    ProjectApiError(
-                        "same_origin_required",
-                        "Cross-origin POST requests are not allowed.",
-                        403,
-                        recovery=["retry_from_goodteam_origin"],
-                    )
-                )
-                return
-            if is_skill_path:
-                try:
-                    client = ipaddress.ip_address(str(self.client_address[0]))
-                except ValueError:
-                    client = None
-                if (
-                    client is None
-                    or not client.is_loopback
-                    or not _request_host_is_loopback(str(self.headers.get("Host", "")))
-                ):
-                    self._send_api_error(
-                        ProjectApiError(
-                            "local_skill_import_requires_loopback",
-                            "Local Skill import is available only from a loopback GoodTeam client.",
-                            403,
-                            recovery=["use_git_skill_source", "retry_from_local_goodteam"],
-                        )
-                    )
-                    return
-            try:
-                raw_body = read_request_body(self)
-                if is_project_path or is_skill_path:
-                    request = _parse_project_api_request(raw_body)
-                    response = (
-                        handle_project_api_post(workspace, project_path, request, **runtime_kwargs, **correction_kwargs)
-                        if is_project_path
-                        else handle_skill_api_post(workspace, project_path, request)
-                    )
-                    assert response is not None
-                    status, result = response
-                    self._send_json(status, result)
-                    return
-                request = json.loads(raw_body.decode("utf-8") or "{}")
-                if normalized_path == "/context-estimate":
-                    result = context_estimate_for_request(workspace, request)
-                elif normalized_path == "/context-generate":
-                    result = context_generate_for_request(workspace, request)
-                elif (
-                    request.get("action") == "update_worker_backends"
-                    or (
-                        ("project" in request or "project_key" in request)
-                        and "workers" in request
-                        and "project_name" not in request
-                    )
-                ):
-                    result = update_project_worker_backend_settings(
-                        workspace=workspace,
-                        request=request,
-                    )
-                else:
-                    result = create_local_project_config(
-                        workspace=workspace,
-                        project_name=str(request.get("project_name", "")),
-                        project_key=str(request.get("project_key", "")),
-                        project_root=str(request.get("project_root", "")),
-                        docs_path=str(request.get("docs_path", "")),
-                        backend_path=str(request.get("backend_path", "")),
-                        frontend_path=str(request.get("frontend_path", "")),
-                        task_sync=[str(value) for value in request.get("task_sync", [])],
-                        plane_api_host_url=str(request.get("plane_api_host_url", "")),
-                        plane_workspace_slug=str(request.get("plane_workspace_slug", "")),
-                        plane_project_id=str(request.get("plane_project_id", "")),
-                        plane_api_key_env=str(request.get("plane_api_key_env", "")),
-                        plane_mcp_server=str(request.get("plane_mcp_server", "")),
-                        worker_backend_mode=str(request.get("worker_backend_mode", "codex")),
-                        workers=dict(request.get("workers", {})),
-                        model_profile=str(request.get("model_profile", "balanced")),
-                        delivery_mode=str(request.get("delivery_mode", "init_project")),
-                        delivery_standards=str(request.get("delivery_standards", "")),
-                        role_model_overrides=dict(request.get("role_model_overrides", {})),
-                        worker_type_settings=dict(request.get("worker_type_settings", {})),
-                        init_git=_request_bool(request.get("init_git"), True),
-                        initial_files=_initial_git_files(request.get("initial_files")),
-                        create_remote=_request_bool(request.get("create_remote"), False),
-                        remote_private=_request_bool(request.get("remote_private"), True),
-                    )
-                self._send_json(200, result)
-            except Exception as exc:
-                self._send_api_error(exc)
-
-        def _send_api_error(self, error: Exception) -> None:
-            status, payload = _project_api_error_response(error)
-            self._send_json(status, payload)
-
-        def _send_json(self, status: int, payload: dict[str, object]) -> None:
-            body = json.dumps(payload, indent=2).encode("utf-8")
-            try:
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                _send_cors_headers(self, host="127.0.0.1", port=int(self.server.server_port))
-                self.end_headers()
-                self.wfile.write(body)
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                self.close_connection = True
-
-        def log_message(self, format: str, *args: object) -> None:
-            return
-
-    return DashboardHandler
+    try:
+        key, _target, root = _project_target_and_root(workspace, _decode_project_api_key(match.group(1)))
+        metadata, original, _text = read_attachment(workspace, key, root, match.group(2))
+        body = original.read_bytes()
+        handler.send_response(200)
+        handler.send_header("Content-Type", metadata["media_type"])
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "private, no-store")
+        handler.send_header("X-Content-Type-Options", "nosniff")
+        disposition = "inline" if metadata["media_type"].startswith("image/") else "attachment"
+        handler.send_header("Content-Disposition", f"{disposition}; filename*=UTF-8''{quote(metadata['name'], safe='')}")
+        handler.end_headers()
+        handler.wfile.write(body)
+    except Exception as exc:
+        handler._send_api_error(exc)
+    return True
 
 
 def handle_execution_get(path: str, query: dict[str, list[str]]) -> tuple[int, dict[str, object]] | None:
@@ -8146,6 +8061,8 @@ def serve(
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
+            if _send_chat_attachment(self, workspace, parsed.path):
+                return
             query = parse_qs(parsed.query)
             project_key = query.get("project", [""])[0]
             if maybe_send_favicon_response(self, parsed.path):
@@ -8474,6 +8391,11 @@ def serve(
 
         def do_POST(self) -> None:
             project_path = urlparse(self.path).path
+            try:
+                _check_provider_http_request(self, project_path)
+            except ProjectApiError as exc:
+                self._send_api_error(exc)
+                return
             is_project_path = _is_project_api_post_path(project_path)
             is_skill_path = _is_skill_api_post_path(project_path)
             normalized_path = project_path

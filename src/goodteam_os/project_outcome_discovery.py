@@ -57,16 +57,20 @@ def _head(root):
     return _read_git(Path(root), ["rev-parse", "HEAD^{commit}"]).decode().strip()
 
 
-def verified_outcome(*, workspace, project_key, root, value, run_id=None):
-    """Revalidate original delivery/quality and its retained Git content at HEAD."""
+def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
+    """Revalidate delivery at HEAD; discovery additionally binds its grant.
+
+    Ordinary read-only planning can observe the latest project delivery without
+    a discovery grant. Observation never grants follow-up execution authority.
+    """
     from goodteam_os.dispatch_workspace import _git
     from goodteam_os.project_iteration_continuation import _verify_landed_batch
     from goodteam_os.project_iteration_execution import TASK_INTENT_FIELDS
 
     batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
     eligible = [batch for batch in batches.values() if batch.get("status") == "delivered"
-                and batch.get("expected_continuation_id") == value["id"]
-                and set(batch.get("task_ids", [])).issubset(value["task_ids"])]
+                and (value is None or batch.get("expected_continuation_id") == value["id"]
+                     and set(batch.get("task_ids", [])).issubset(value["task_ids"]))]
     batch = batches.get(run_id) if run_id else max(eligible, key=lambda row: row["created_at"], default=None)
     if not batch or batch not in eligible:
         raise ValueError("Discovery requires a verified delivery from this authorized continuation.")
@@ -124,7 +128,7 @@ def _remember(root, outcome):
 
 
 def _packet(workspace, project_key, root, value, outcome):
-    from goodteam_os.memory import RoleMemoryStore
+    from goodteam_os.memory import runtime_role_memory_store
     from goodteam_os.project_iteration_planner import _project_evidence
 
     snapshot = rank_project_backlog(LocalTaskStore(root, project_key).list_tasks(), project_key, limit=None)
@@ -139,7 +143,7 @@ def _packet(workspace, project_key, root, value, outcome):
         "backlog": snapshot, "verified_outcome": outcome,
         "allowed_source_refs": refs,
         "repository_understanding": _project_evidence(Path(workspace), project_key, Path(root), inspect_missing=True),
-        "memory_pickup": RoleMemoryStore(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
+        "memory_pickup": runtime_role_memory_store(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
     packet["packet_digest"] = _digest(packet)
     return packet
 

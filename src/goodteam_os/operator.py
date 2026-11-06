@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
+from goodteam_os.database import provider_environment
 from goodteam_os.execution import ExecutionAPI
 from goodteam_os.execution.automatic_review import AutomaticCandidateReviewService, MACHINE_SCHEMA
 from goodteam_os.execution.candidate_probe import probe_candidate
@@ -977,6 +977,7 @@ class LocalOperatorActions:
         subprocess.run(
             ["git", "push", "origin", f"{head}:refs/heads/{branch}"],
             cwd=worktree,
+            env=provider_environment(),
             capture_output=True,
             check=True,
             text=True,
@@ -1062,24 +1063,6 @@ def _approval_artifact(item: Mapping[str, Any]) -> str:
             "",
         ]
     )
-
-
-def _structured_review_result(path: Path) -> dict[str, Any] | None:
-    if not path.is_file():
-        return None
-    text = path.read_text(encoding="utf-8", errors="replace")
-    decoder = json.JSONDecoder()
-    candidates: list[dict[str, Any]] = []
-    for index, character in enumerate(text):
-        if character != "{":
-            continue
-        try:
-            value, _end = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict) and value.get("verdict") in {"approve", "request_changes", "escalate"}:
-            candidates.append(value)
-    return candidates[-1] if candidates else None
 
 
 def _contract_requirements(contract):

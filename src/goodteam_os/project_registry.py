@@ -11,6 +11,8 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from goodteam_os.state import normalize_project_key
+from goodteam_os import state_documents
+from goodteam_os.database import database_configured
 
 
 LOGGER = logging.getLogger(__name__)
@@ -54,6 +56,7 @@ def get_default_registry_path() -> Path:
 class ProjectRegistry:
     def __init__(self, registry_path: Path | None = None):
         self.registry_path = (registry_path or get_default_registry_path()).resolve()
+        state_documents.ensure_storage_config(self.registry_path)
 
     def list_registered_projects(self) -> list[dict[str, Any]]:
         return self._read_data()["projects"]
@@ -88,7 +91,7 @@ class ProjectRegistry:
                 if path_str.startswith(("/private/var/", "/tmp/", "/var/tmp/")):
                     return
 
-        with _REGISTRY_LOCK:
+        with _REGISTRY_LOCK, state_documents.document_lock(self.registry_path):
             data = self._read_data()
             projects = list(data.get("projects", []))
             updated = False
@@ -134,7 +137,7 @@ class ProjectRegistry:
             self._write_data(data)
 
     def unregister_project(self, key_or_config_path: str | Path) -> bool:
-        with _REGISTRY_LOCK:
+        with _REGISTRY_LOCK, state_documents.document_lock(self.registry_path):
             data = self._read_data()
             projects = list(data.get("projects", []))
             target_str = str(key_or_config_path).strip()
@@ -173,9 +176,9 @@ class ProjectRegistry:
                 return entry
         return None
 
-    def _read_data(self) -> dict[str, Any]:
+    def _read_data(self, *, legacy=False) -> dict[str, Any]:
         try:
-            data = json.loads(
+            data = state_documents.read_json(self.registry_path) if database_configured() and not legacy else json.loads(
                 self.registry_path.read_text(encoding="utf-8"),
                 object_pairs_hook=_registry_json_object,
                 parse_constant=_reject_json_constant,
@@ -210,6 +213,9 @@ class ProjectRegistry:
             ) from exc
 
     def _write_data(self, data: dict[str, Any]) -> None:
+        if database_configured():
+            state_documents.write_json(self.registry_path, data, storage_root=self.registry_path.parent)
+            return
         try:
             self.registry_path.parent.mkdir(parents=True, exist_ok=True)
             temporary_path: Path | None = None

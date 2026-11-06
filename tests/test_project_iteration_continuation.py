@@ -21,7 +21,7 @@ from goodteam_os.tasks import LocalTaskStore
 from test_dispatch_isolation import git, repository
 
 
-def test_verified_delivery_automatically_replans_next_scoped_batch_and_survives_replay(tmp_path, monkeypatch):
+def test_verified_delivery_automatically_replans_next_scoped_batch_and_survives_replay(tmp_path, monkeypatch, delivery_handoff=None):
     source = repository(tmp_path / "source")
     config = tmp_path / "projects/demo.local.yaml"
     config.parent.mkdir()
@@ -30,6 +30,8 @@ def test_verified_delivery_automatically_replans_next_scoped_batch_and_survives_
     binary.parent.mkdir()
     binary.write_text(f"#!{sys.executable}\n" + r'''import json, os, re, sys, time
 from pathlib import Path
+assert not os.environ.get('GOODTEAM_DATABASE_URL')
+assert not os.environ.get('GOODTEAM_TEST_DATABASE_URL')
 if '--version' in sys.argv:
     print('offline project continuation fixture')
     raise SystemExit(0)
@@ -73,6 +75,11 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Candidat
         if selected == second_task["id"]:
             assert ledger.get_task(first_task["id"])["delivery_verified"] is True
             assert (source / "unit-1.txt").read_text() == "delivered unit-1.txt\n"
+            previous = kwargs["context"]["previous_delivery"]
+            assert previous["status"] == "verified"
+            assert [task["id"] for task in previous["tasks"]] == [first_task["id"]]
+            assert previous["project_head"] == git(source, "rev-parse", "HEAD")
+            assert previous["quality"]["check_status"] == "not_configured"
         return {"selection": {"selected_task_ids": [selected], "compared_task_ids": [item["task_id"] for item in eligible],
                 "rationale": "Choose the approved eligible task using freshly observed dependency and delivery evidence."}}
 
@@ -140,7 +147,10 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Candidat
         with pytest.raises(web.ProjectApiError, match="does not match every original"):
             action(first_acceptance)
     ledger.update_task(first_task["id"], title=first_task["title"])
-    action(first_acceptance)
+    if delivery_handoff is None:
+        action(first_acceptance)
+    else:
+        delivery_handoff(tmp_path, source, config, first_acceptance)
     assert ledger.get_task(first_task["id"])["status"] == "done"
     assert len(calls.read_text().splitlines()) == 1
 

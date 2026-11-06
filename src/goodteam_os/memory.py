@@ -163,10 +163,20 @@ class ProjectMemoryStore:
         }
 
 
+def runtime_role_memory_store(project_root: Path, *, local_embedder=None):
+    """Explicit machine pickup only; ordinary browsing stays local and read-only."""
+    from .memory_embeddings import configured_retriever
+
+    retriever = configured_retriever()
+    return RoleMemoryStore(project_root, retriever=retriever,
+        embedder=local_embedder() if retriever is None and local_embedder is not None else None)
+
+
 class RoleMemoryStore:
-    def __init__(self, project_root: Path, embedder=None):
+    def __init__(self, project_root: Path, embedder=None, *, retriever=None):
         self.project_root = project_root
         self.embedder = embedder
+        self.retriever = retriever
 
     def role_root(self, role_key: str) -> Path:
         return self.project_root / ".goodteam" / "memory" / "roles" / slug(role_key)
@@ -674,6 +684,8 @@ class RoleMemoryStore:
                            "generated_sources": generated_sources, "legacy_sources": legacy_sources},
         }
         if query.strip():
+            if self.retriever is not None:
+                packet["provenance"]["retrieval"] = self.retriever.reference
             try:
                 ranked = self._rank_events(role_key, query, query_tokens=tokenize(query), events=active) if active else []
             except (OSError, UnicodeError, ValueError, TypeError):
@@ -924,6 +936,9 @@ Role: `{role_key}`
         query_tokens: list[str],
         events: list[dict[str, str]],
     ) -> list[tuple[float, dict[str, str]]]:
+        if self.retriever is not None:
+            return self.retriever.rank(self.project_root, role_key, query, events,
+                identify=self._event_id, minimum_score=COSINE_FLOOR)
         vectors = self._embed_events(role_key, events)
         if vectors is not None:
             query_vector = self.embedder([query])[0]
