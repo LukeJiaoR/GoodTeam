@@ -49,6 +49,19 @@ it('offers a current bilingual Manager handoff through existing controls without
   // A resolved or replaced grant cannot offer an action through an old message/link.
   data.task_assistant_session = { ...session, project_continuation_notice: null };
   expect(resolve()).toEqual({ status: 'changed' });
+  // Stopping future dispatch cannot finish an unresolved owned batch.
+  view.rerender(<ProjectContinuationControls snapshot={{ candidates: [] }} projectKey="APP" onAction={onAction}
+    session={{ project_continuation: { ...value, status: 'blocked', pending_batch: { run_id: 'batch' } },
+      project_continuation_notice: { ...notice, phase: 'blocked', kind: 'blocked' },
+      project_task_batches: { batch: { run_id: 'batch', status: 'blocked', task_ids: ['APP-2'],
+        recovery: { version: 'recovery-v1', can_abandon: true } } } }} />);
+  expect(screen.queryByRole('button', { name: 'Keep results and finish' })).not.toBeInTheDocument();
+  const abandon = screen.getByRole('button', { name: 'Abandon this batch' });
+  expect(abandon).toBeDisabled();
+  fireEvent.click(screen.getByLabelText(/I confirm abandoning this batch/));
+  fireEvent.click(abandon);
+  expect(onAction.mock.lastCall[0]).toMatchObject({ action: 'abandon_project_batch', run_id: 'batch',
+    expected_recovery_version: 'recovery-v1', confirmed: true });
   view.rerender(<ol><TimelineItem item={item} language="en" t={(key, params) => translate('en', key, params)}
     continuationNoticeId="continuation:new:notice" /></ol>);
   expect(screen.queryByRole('button', { name: 'View iteration and actions' })).not.toBeInTheDocument();
