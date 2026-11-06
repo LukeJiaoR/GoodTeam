@@ -74,9 +74,9 @@ test database; production database configuration is never used for these checks.
 
 ## Local verification
 
-Pinned base: `1d653a30cbaca668749d019043ccaec0bfa63a05` (includes #675,
-#678, #680 and #681). Full-backend source: `a2710110ed58af40d4c9115bc89db3996d2a205e`.
-Final integrated source: `a02ee366fa70a7441db98d86cffd8cb1d5911f84`.
+Pinned base: `addbc8d382028921a6f32c86d9af1acd970a96d6` (includes #675,
+#678, #680, #681 and #682). Full-backend source: `a2710110ed58af40d4c9115bc89db3996d2a205e`.
+Final integrated source: `294d0ee1e044244a1dbd976795ce24856749a5a3`.
 The follow-up commit changes this verification record only.
 
 - `env -u GOODTEAM_DATABASE_URL -u GOODTEAM_TEST_DATABASE_URL PYTHONPATH=src python -m pytest tests -q --tb=short`:
@@ -103,7 +103,13 @@ The follow-up commit changes this verification record only.
   **3 PostgreSQL cases skipped**, in 122.67 seconds. These checks cover the
   intersecting runtime memory, planning, delivery and retry paths. Neither
   integration run is a claim of a full-suite run on the final integrated source.
-- Node 24.22.1 at `a02ee36`: `npm --prefix frontend test` passed
+- The final main advance, #682, changes frontend layout only. After syncing it
+  at `294d0ee`, `src/` and `tests/` are byte-identical to the tested `a02ee36`
+  and reviewed `a46bf71`. The PR's backend/test patch is also identical against
+  the new base (SHA-256 `4a275b38b9dc364ebe283b544afab8dea79e4c70493539dbcd7e35f7bb68b213`).
+  Automated code review at `a46bf71` completed without findings; its security
+  review also completed. This records the actual reviewed revision.
+- Node 24.22.1 at `294d0ee`: `npm --prefix frontend test` passed
   (12 Node + 315 Vitest checks). `npm --prefix frontend run lint` and
   `npm --prefix frontend run build` passed, with existing bundle-size and
   dynamic-import warnings.
