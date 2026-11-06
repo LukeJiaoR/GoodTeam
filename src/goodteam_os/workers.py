@@ -17,6 +17,7 @@ from shutil import copy2, which
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
+from goodteam_os.database import provider_environment
 from goodteam_os.skills.worker_creation_lock import serialized_worker_creation
 from goodteam_os.memory import RoleMemoryStore, default_embedder
 from goodteam_os.memory_handoff import MemoryHandoffStore, PreparedMemoryRecord, digest as memory_digest
@@ -372,6 +373,7 @@ def _query_codex_models(command_path: str) -> dict[str, dict[str, Any]] | None:
     try:
         completed = subprocess.run(
             [command_path, "debug", "models"],
+            env=provider_environment(),
             check=False,
             capture_output=True,
             text=True,
@@ -416,6 +418,7 @@ def _query_agy_models(command_path: str) -> tuple[str, ...] | None:
     try:
         completed = subprocess.run(
             [command_path, "models"],
+            env=provider_environment(),
             check=False,
             capture_output=True,
             text=True,
@@ -459,6 +462,7 @@ def _query_opencode_models(command_path: str) -> tuple[str, ...] | None:
     try:
         completed = subprocess.run(
             [command_path, "models", "--refresh"],
+            env=provider_environment(),
             check=False,
             capture_output=True,
             text=True,
@@ -2591,9 +2595,10 @@ class WorkerJobStore:
     def _worker_env(self, job_root: Path, spec: "CliBackendSpec", runtime_cwd: Path) -> dict[str, str] | None:
         workspace_src = runtime_cwd / "src"
         needs_pythonpath = workspace_src.is_dir()
-        if not spec.isolated_home and not needs_pythonpath:
+        if not spec.isolated_home and not needs_pythonpath and not any(
+                key in os.environ for key in ("GOODTEAM_DATABASE_URL", "GOODTEAM_TEST_DATABASE_URL")):
             return None
-        worker_env = dict(os.environ)
+        worker_env = provider_environment()
         if spec.isolated_home:
             isolated_home = self._prepare_isolated_codex_home(job_root)
             worker_env["CODEX_HOME"] = str(isolated_home)
@@ -3244,6 +3249,7 @@ def _runtime_version_evidence(binary: str, *, available: bool, detect: bool) -> 
     try:
         completed = subprocess.run(
             [binary, "--version"],
+            env=provider_environment(),
             check=False,
             capture_output=True,
             text=True,

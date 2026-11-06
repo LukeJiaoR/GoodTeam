@@ -12,6 +12,8 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from goodteam_os.state import StateStore, normalize_project_key
+from goodteam_os.database import database_configured
+from goodteam_os import state_documents
 
 
 INTENT_COMMIT_SCHEMA_VERSION = "intent_commit.v1"
@@ -58,7 +60,7 @@ class IntentCommitStore:
         self._lock = _lock_for_path(self.path)
 
     def list_intents(self, *, mission_id: str = "") -> list[dict[str, object]]:
-        with self._lock:
+        with self._lock, state_documents.document_lock(self.path):
             records = list(self._read_payload()["intents"].values())
         wanted = str(mission_id or "").strip()
         if wanted:
@@ -74,7 +76,7 @@ class IntentCommitStore:
 
     def get(self, intent_id: str) -> dict[str, object] | None:
         identifier = _required_identifier(intent_id)
-        with self._lock:
+        with self._lock, state_documents.document_lock(self.path):
             record = self._read_payload()["intents"].get(identifier)
         return deepcopy(record) if isinstance(record, dict) else None
 
@@ -96,7 +98,7 @@ class IntentCommitStore:
         if normalized_mission["run_id"] != normalized_target["run_id"]:
             raise IntentCommitError("Intent mission and approval target run identities must match.")
 
-        with self._lock:
+        with self._lock, state_documents.document_lock(self.path):
             payload = self._read_payload()
             records = payload["intents"]
             for record in reversed(list(records.values())):
@@ -220,7 +222,7 @@ class IntentCommitStore:
 
     def begin_confirm(self, intent_id: str) -> tuple[dict[str, object], bool]:
         identifier = _required_identifier(intent_id)
-        with self._lock:
+        with self._lock, state_documents.document_lock(self.path):
             payload = self._read_payload()
             record = _require_record(payload, identifier)
             if _text(record.get("status")) == "committed":
@@ -383,7 +385,7 @@ class IntentCommitStore:
         update: Callable[[dict[str, object]], None],
     ) -> dict[str, object]:
         identifier = _required_identifier(intent_id)
-        with self._lock:
+        with self._lock, state_documents.document_lock(self.path):
             payload = self._read_payload()
             record = _require_record(payload, identifier)
             update(record)
@@ -391,14 +393,14 @@ class IntentCommitStore:
             return deepcopy(record)
 
     def _read_payload(self) -> dict[str, Any]:
-        if not self.path.is_file():
+        if not state_documents.exists(self.path):
             return {
                 "schema_version": INTENT_COMMIT_STORE_SCHEMA_VERSION,
                 "project_key": self.project_key,
                 "intents": {},
             }
         try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            payload = state_documents.read_json(self.path)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise IntentCommitError("The durable Intent Commit state cannot be read safely.") from exc
         if not isinstance(payload, dict) or payload.get("schema_version") != INTENT_COMMIT_STORE_SCHEMA_VERSION:
@@ -413,6 +415,9 @@ class IntentCommitStore:
         return payload
 
     def _write_payload(self, payload: Mapping[str, object]) -> None:
+        if database_configured():
+            state_documents.write_json(self.path, dict(payload))
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(
             prefix=f".{self.path.name}.",

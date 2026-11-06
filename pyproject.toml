@@ -7,6 +7,9 @@ dependencies = [
   "pyTelegramBotAPI>=4.0",
   "rank-bm25>=0.2.2",
   "PyYAML>=6.0.2,<7",
+  "langgraph==1.2.20",
+  "langgraph-checkpoint-postgres==3.2.0",
+  "psycopg[binary,pool]>=3.3.8,<4",
 ]
 
 [project.optional-dependencies]

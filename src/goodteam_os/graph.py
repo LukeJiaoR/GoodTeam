@@ -455,8 +455,11 @@ def ensure_project_task_ledger(project_config: Path) -> Path | None:
     project_key = str(target.get("key", "") or "")
     store = LocalTaskStore(runtime_root, project_key=project_key)
     store.path.parent.mkdir(parents=True, exist_ok=True)
-    if not store.path.is_file():
-        store.path.write_text('{\n  "version": 1,\n  "next_id": 1,\n  "tasks": []\n}', encoding="utf-8")
+    from goodteam_os import state_documents
+
+    with store._lock():
+        if not state_documents.exists(store.path):
+            store._write({"version": 1, "next_id": 1, "tasks": []})
     return store.path
 
 

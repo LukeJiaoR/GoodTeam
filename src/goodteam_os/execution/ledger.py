@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 from typing import Any, TypeVar
 
 from goodteam_os.execution.idempotency import execution_id_from_task
 from goodteam_os.execution.models import ExecutionRun, ExecutionTask, LedgerEvent
+from goodteam_os import state_documents
+from goodteam_os.database import database_configured
 
 
 _JsonModelT = TypeVar("_JsonModelT", ExecutionTask, ExecutionRun)
@@ -15,6 +18,7 @@ class ExecutionLedger:
     def __init__(self, project_root: Path):
         self.project_root = Path(project_root)
         self.executions_root = self.project_root / ".goodteam" / "executions"
+        state_documents.ensure_storage_config(self.executions_root / "entry")
 
     def create_task(self, task: ExecutionTask) -> Path:
         execution_id = execution_id_from_task(task.task_id)
@@ -29,6 +33,9 @@ class ExecutionLedger:
 
     def append_event(self, event: LedgerEvent) -> Path:
         path = self._execution_dir(event.execution_id) / "events.jsonl"
+        if database_configured():
+            state_documents.append_events(path, [json.loads(event.to_json())])
+            return path
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = f"{event.to_json()}\n".encode("utf-8")
         fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o644)
@@ -40,6 +47,8 @@ class ExecutionLedger:
 
     def read_events(self, execution_id: str) -> list[LedgerEvent]:
         path = self._execution_dir(execution_id) / "events.jsonl"
+        if database_configured():
+            return [LedgerEvent.from_json(json.dumps(event)) for event in state_documents.read_events(path)]
         if not path.exists():
             return []
 
@@ -68,6 +77,9 @@ class ExecutionLedger:
 
     @staticmethod
     def _write_json(path: Path, payload: str) -> None:
+        if database_configured():
+            state_documents.write_json(path, json.loads(payload))
+            return
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(payload, encoding="utf-8")
 
@@ -87,6 +99,6 @@ class ExecutionLedger:
 
     @staticmethod
     def _read_json_model(path: Path, model_type: type[_JsonModelT]) -> _JsonModelT | None:
-        if not path.exists():
+        if not state_documents.exists(path):
             return None
-        return model_type.from_json(path.read_text(encoding="utf-8"))
+        return model_type.from_json(json.dumps(state_documents.read_json(path)))

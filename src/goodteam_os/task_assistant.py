@@ -10,7 +10,7 @@ from goodteam_os import assistant_requests
 from goodteam_os.assistant_drafts import archive_terminal_proposal, is_conversation_only, stage_draft
 from goodteam_os.assistant_intake import intake_source_messages, mark_draft_needs_clarification, resolve_intake_sources
 from goodteam_os.assistant_runtime import runtime_view
-from goodteam_os.goals import GoalStore
+from goodteam_os.goals import GoalStore, goal_store_exists
 from goodteam_os.manager_execution import run_manager_chat_turn
 from goodteam_os.project_import import confirm_project_mode, import_project
 from goodteam_os.project_readiness import assess_project_mode
@@ -99,7 +99,7 @@ class TaskAssistantService:
         if goal_limit is not None and (type(goal_limit) is not int or not 1 <= goal_limit <= 50):
             raise ValueError("Goal page limit must be between 1 and 50.")
         goals, goal_page = [], None
-        if (self.workspace / "state" / "goals.sqlite3").is_file():
+        if goal_store_exists(self.workspace):
             goal_store = GoalStore(self.workspace, project_key)
             if goal_limit is None:
                 goals = goal_views(self.workspace, goal_store.list_goals())

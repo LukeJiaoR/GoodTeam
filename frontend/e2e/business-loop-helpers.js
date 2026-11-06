@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { execFileSync } from 'node:child_process';
 import { expect } from './fixtures.js';
 
 export async function getJson(page, url) {
@@ -26,7 +27,19 @@ export async function snapshot(page, fixture, evidence) {
   const data = await workState(page, fixture.key);
   const stateRoot = path.join(process.env.GOODTEAM_E2E_ROOT, 'workspace', 'state', 'projects', fixture.key);
   if (data.state) {
-    expect(JSON.parse(fs.readFileSync(path.join(stateRoot, 'current.json'), 'utf8'))).toEqual(data.state);
+    const saved = process.env.GOODTEAM_DATABASE_URL
+      ? execFileSync(process.env.GOODTEAM_E2E_PYTHON || path.resolve('../.venv/bin/python'), ['-c', `
+import json, sys
+from pathlib import Path
+from dataclasses import asdict
+from goodteam_os.state import StateStore
+state = StateStore(Path(sys.argv[1])).read_project_current(sys.argv[2])
+print(json.dumps(asdict(state)))
+`, path.join(process.env.GOODTEAM_E2E_ROOT, 'workspace'), fixture.key], {
+        encoding: 'utf8', env: { ...process.env, PYTHONPATH: path.resolve('../src') },
+      })
+      : fs.readFileSync(path.join(stateRoot, 'current.json'), 'utf8');
+    expect(JSON.parse(saved)).toEqual(data.state);
   }
   const logPath = path.join(stateRoot, 'action-log.jsonl');
   const ledger = fs.existsSync(logPath)

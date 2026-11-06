@@ -13,6 +13,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from goodteam_os.state import normalize_project_key
+from goodteam_os import state_documents
+from goodteam_os.database import database_configured
 
 
 MANIFEST_NAMES = {
@@ -109,6 +111,8 @@ class ProjectReadinessStore:
         self.workspace = workspace
         self.workspace_fd = workspace_fd
         self._anchored_writes: dict[str, AnchoredWrite] = {}
+        self._postgres_writes: dict[str, tuple[dict, object, list[int]]] = {}
+        state_documents.ensure_storage_config(workspace / "state" / "entry")
 
     def initialize(self, project_key: str, root: Path) -> dict[str, object]:
         key = normalize_project_key(project_key)
@@ -145,6 +149,23 @@ class ProjectReadinessStore:
         return readiness
 
     def read(self, project_key: str) -> dict[str, object] | None:
+        if database_configured():
+            key = normalize_project_key(project_key)
+            descriptors = self._open_project_directory_chain(key, create=False) if self.workspace_fd is not None else []
+            if descriptors is None:
+                return None
+            try:
+                if descriptors:
+                    self._verify_current_chain(key, descriptors)
+                path = self._path(key)
+                data = state_documents.read_json(path) if state_documents.exists(path) else None
+                if descriptors:
+                    self._verify_current_chain(key, descriptors)
+                if data is not None and not isinstance(data, dict):
+                    raise ValueError(f"readiness for {key!r} must be a JSON object")
+                return data
+            finally:
+                _close_descriptors(descriptors)
         if self.workspace_fd is not None:
             data = self._read_anchored(project_key)
             if data is not None:
@@ -170,6 +191,9 @@ class ProjectReadinessStore:
             raise ValueError("mode must be new_project or existing_project")
 
         key = normalize_project_key(project_key)
+        if database_configured():
+            return self.mutate(key, lambda readiness: _confirmed_mode_readiness(readiness, mode),
+                               readiness_validator=readiness_validator)
         if self.workspace_fd is not None:
             return self._confirm_mode_anchored(
                 key,
@@ -202,6 +226,18 @@ class ProjectReadinessStore:
         """
 
         key = normalize_project_key(project_key)
+        if database_configured():
+            with state_documents.document_lock(self._path(key)):
+                readiness = self.read(key)
+                if readiness is None:
+                    raise ValueError(f"No readiness found for project: {key}")
+                if readiness_validator is not None:
+                    readiness_validator(readiness)
+                updated = transform(copy.deepcopy(readiness))
+                if not isinstance(updated, dict):
+                    raise ValueError("readiness transform must return a JSON object")
+                self._write(key, updated)
+                return updated
         if self.workspace_fd is not None:
             return self._mutate_anchored(
                 key,
@@ -284,6 +320,17 @@ class ProjectReadinessStore:
             _close_descriptors(descriptors)
 
     def _verify_anchored_write(self, project_key: str) -> None:
+        if database_configured():
+            key = normalize_project_key(project_key)
+            pending = self._postgres_writes.get(key)
+            if pending:
+                _payload, previous, descriptors = pending
+                self._verify_current_chain(key, descriptors)
+                path = self._path(key)
+                current = state_documents.read_json(path) if state_documents.exists(path) else None
+                if current != previous:
+                    raise ValueError("Project readiness changed; reload before retrying.")
+            return
         if self.workspace_fd is None:
             return
         key = normalize_project_key(project_key)
@@ -312,6 +359,17 @@ class ProjectReadinessStore:
 
     def _commit_anchored_write(self, project_key: str) -> None:
         key = normalize_project_key(project_key)
+        if database_configured():
+            pending = self._postgres_writes.get(key)
+            if pending:
+                payload, _previous, descriptors = pending
+                with state_documents.document_lock(self._path(key)), state_documents.connection() as conn, conn.transaction():
+                    self._verify_anchored_write(key)
+                    state_documents.write_json(self._path(key), payload)
+                    self._verify_current_chain(key, descriptors)
+                self._postgres_writes.pop(key)
+                _close_descriptors(descriptors)
+            return
         anchored = self._anchored_writes.get(key)
         if anchored is None:
             return
@@ -321,13 +379,18 @@ class ProjectReadinessStore:
 
     def _rollback_anchored_write(self, project_key: str) -> None:
         key = normalize_project_key(project_key)
+        if database_configured():
+            pending = self._postgres_writes.pop(key, None)
+            if pending:
+                _close_descriptors(pending[2])
+            return
         anchored = self._anchored_writes.pop(key, None)
         if anchored is None:
             return
         self._rollback_anchored_transaction(anchored)
 
     def close(self) -> None:
-        for key in list(self._anchored_writes):
+        for key in list(self._anchored_writes) + list(self._postgres_writes):
             self._commit_anchored_write(key)
 
     def __del__(self) -> None:
@@ -339,6 +402,8 @@ class ProjectReadinessStore:
     def _path(self, project_key: str) -> Path:
         key = normalize_project_key(project_key)
         primary = self.workspace / "state" / "projects" / key / "readiness.json"
+        if database_configured():
+            return primary
         if primary.is_file():
             return primary
         for candidate_dir in self._candidate_state_dirs(key):
@@ -387,6 +452,26 @@ class ProjectReadinessStore:
         return unique
 
     def _write(self, project_key: str, readiness: dict[str, object]) -> None:
+        if database_configured():
+            key = normalize_project_key(project_key)
+            path = self._path(key)
+            if self.workspace_fd is None:
+                state_documents.write_json(path, readiness)
+            else:
+                # Stage until the existing importer/executor verifies its
+                # pinned directory chain and commits. A rollback changes no PG
+                # state; the preserved legacy file is never writable authority.
+                self._rollback_anchored_write(key)
+                descriptors = self._open_project_directory_chain(key, create=True)
+                assert descriptors is not None
+                try:
+                    self._verify_current_chain(key, descriptors)
+                    previous = state_documents.read_json(path) if state_documents.exists(path) else None
+                    self._postgres_writes[key] = (copy.deepcopy(readiness), previous, descriptors)
+                except BaseException:
+                    _close_descriptors(descriptors)
+                    raise
+            return
         if self.workspace_fd is not None:
             self._write_anchored(project_key, readiness)
             return

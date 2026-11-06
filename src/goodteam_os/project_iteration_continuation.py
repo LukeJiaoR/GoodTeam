@@ -313,7 +313,9 @@ def tick_authorized_project_continuations(workspace):
     from goodteam_os.web import _project_config_for_key, _project_target_and_root
 
     workspace = Path(workspace)
-    for path in sorted((workspace / "state" / "projects").glob("*/task-assistant-session.json")):
+    from goodteam_os.state_documents import paths
+
+    for path in paths(workspace / "state" / "projects", "*/task-assistant-session.json"):
         key = path.parent.name
         store = TaskAssistantSessionStore(workspace, key)
         try:

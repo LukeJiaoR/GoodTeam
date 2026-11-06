@@ -388,7 +388,9 @@ def start_goal_service(workspace):
         validated_idle = {}
         while not stop.wait(1):
             try:
-                if (workspace / "state" / "goals.sqlite3").is_file():
+                from goodteam_os.goals import goal_store_exists
+
+                if goal_store_exists(workspace):
                     store = GoalStore(workspace)
                     goals = store.list_continuation_goals(validated_idle=validated_idle)
                 else:

@@ -10,6 +10,8 @@ from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
 from goodteam_os.state import normalize_project_key
+from goodteam_os.database import database_configured
+from goodteam_os import state_documents
 
 
 SCHEMA_VERSION = "task_assistant_session.v2"
@@ -23,14 +25,15 @@ class TaskAssistantSessionStore:
         self.workspace = Path(workspace)
         self.project_key = normalize_project_key(project_key)
         self.path = self.workspace / "state" / "projects" / self.project_key / "task-assistant-session.json"
+        state_documents.ensure_storage_config(self.path)
         self.lock_path = self.path.with_suffix(".lock")
         with _LOCKS_GUARD:
             self._lock = _LOCKS.setdefault(str(self.path), threading.Lock())
 
     def read(self) -> dict[str, object]:
-        if not self.path.is_file():
+        if not state_documents.exists(self.path):
             return self._empty()
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        payload = state_documents.read_json(self.path)
         if not isinstance(payload, dict):
             raise ValueError("Task Assistant session is invalid")
         version = str(payload.get("schema_version", ""))
@@ -437,12 +440,17 @@ class TaskAssistantSessionStore:
         return self._mutate(mutate)
 
     def _mutate(self, operation):
-        with self._lock:
+        with self._lock, state_documents.document_lock(self.path):
             self.lock_path.parent.mkdir(parents=True, exist_ok=True)
             lock_descriptor = os.open(self.lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
             try:
                 fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
-                session = operation(self.read())
+                from goodteam_os.project_continuation_notice import append_continuation_notice, project_continuation_notice
+
+                session = self.read()
+                previous_notice = project_continuation_notice(session)
+                session = operation(session)
+                append_continuation_notice(session, previous_notice, created_at=_now())
                 from goodteam_os.context_continuity import compact_conversation
 
                 # Derived and persisted under the same atomic write as its
@@ -455,6 +463,9 @@ class TaskAssistantSessionStore:
                 os.close(lock_descriptor)
 
     def _write(self, payload: dict[str, object]) -> None:
+        if database_configured():
+            state_documents.write_json(self.path, payload)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", encoding="utf-8", dir=self.path.parent, delete=False) as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)

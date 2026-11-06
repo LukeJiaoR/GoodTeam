@@ -17,6 +17,8 @@ from typing import Any
 from uuid import uuid4
 
 from goodteam_os.state import normalize_project_key
+from goodteam_os.database import database_configured
+from goodteam_os.state_documents import ensure_storage_config
 
 MAX_WORK_UNITS = 10
 MAX_ASSESSMENT_ATTEMPTS = 3
@@ -67,11 +69,27 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def goal_store_exists(workspace: Path) -> bool:
+    legacy = (Path(workspace) / "state" / "goals.sqlite3").is_file()
+    if database_configured():
+        from goodteam_os.postgres_goals import exists
+
+        return exists(workspace) or legacy
+    return legacy
+
+
 class GoalStore:
     def __init__(self, workspace: Path, project_key: str = ""):
         self.workspace = Path(workspace)
         self.project_key = normalize_project_key(project_key) if project_key else ""
         self.path = self.workspace / "state" / "goals.sqlite3"
+        ensure_storage_config(self.path)
+        self._postgres = database_configured()
+        if self._postgres:
+            from goodteam_os.postgres_goals import initialize
+
+            initialize(self)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with self._connection() as db:
@@ -109,6 +127,12 @@ class GoalStore:
 
     @contextmanager
     def _transaction(self, *, write: bool = False):
+        if self._postgres:
+            from goodteam_os.postgres_goals import transaction
+
+            with transaction(self, write=write) as db:
+                yield db
+            return
         try:
             with self._connection() as db:
                 db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
@@ -216,8 +240,11 @@ class GoalStore:
         disposable cache; it is never durable authority or a dispatch receipt.
         """
         try:
-            file_identity = self.path.stat()
-            identity = (str(self.path.resolve()), self.project_key, file_identity.st_dev, file_identity.st_ino)
+            if self._postgres:
+                identity = (self._goal_schema, self.project_key)
+            else:
+                file_identity = self.path.stat()
+                identity = (str(self.path.resolve()), self.project_key, file_identity.st_dev, file_identity.st_ino)
             previous = validated_idle.get("records", {}) if validated_idle.get("identity") == identity else {}
             idle, goals = {}, []
             with self._transaction() as db:

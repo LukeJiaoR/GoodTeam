@@ -102,7 +102,9 @@ def require_no_active_project_goal(workspace, project_key):
     """Do not silently launch an unrelated Manager task inside a bounded Goal."""
     from pathlib import Path
 
-    if not (Path(workspace) / "state" / "goals.sqlite3").is_file():
+    from goodteam_os.goals import goal_store_exists
+
+    if not goal_store_exists(workspace):
         return
     from goodteam_os.goals import GoalStore
 

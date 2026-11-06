@@ -5,6 +5,9 @@ from enum import StrEnum
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from goodteam_os.database import database_configured
+from goodteam_os import state_documents
+
 from goodteam_os.skills.task_context import workflow_skill_context
 
 from goodteam_os.resources import (
@@ -87,10 +90,15 @@ def create_initial_state(run_id: str, project_key: str, idea: str) -> AgileDevSt
 class StateStore:
     def __init__(self, root: Path):
         self.root = root
+        state_documents.ensure_storage_config(Path(root) / "state" / "current.json")
 
     def project_state_dir(self, project_key: str) -> Path:
         key = normalize_project_key(project_key)
         primary = self.root / "state" / "projects" / key
+        if database_configured():
+            # PG state belongs to this workspace; a missing local projection
+            # cannot select a different home-directory workspace's workflow.
+            return primary
         if ((primary / "current.json").is_file() or (primary / "readiness.json").is_file()
                 or (primary / "archived").is_dir()):
             return primary
@@ -194,19 +202,15 @@ class StateStore:
         safe_reason = _safe_path_part(reason)
         path = self.project_state_dir(key) / "archived" / f"{state.run_id}-{safe_reason}.json"
         self._write(path, state)
-        (self.project_state_dir(key) / "current.json").unlink()
+        state_documents.remove(self.project_state_dir(key) / "current.json")
         return path
 
     def list_project_archived(self, project_key: str) -> list[tuple[Path, AgileDevState]]:
         archive_dir = self.project_state_dir(project_key) / "archived"
-        if not archive_dir.is_dir():
+        if not database_configured() and not archive_dir.is_dir():
             return []
         archived: list[tuple[Path, AgileDevState]] = []
-        for path in sorted(
-            archive_dir.glob("*.json"),
-            key=lambda candidate: candidate.stat().st_mtime,
-            reverse=True,
-        ):
+        for path in state_documents.paths(archive_dir, newest_first=True):
             try:
                 state = self._read(path)
                 if state is not None:
@@ -218,9 +222,9 @@ class StateStore:
         return archived
 
     def _read(self, path: Path) -> AgileDevState | None:
-        if not path.exists():
+        if not state_documents.exists(path):
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = state_documents.read_json(path)
         data["approvals"] = {
             key: ApprovalDecision(value) for key, value in data.get("approvals", {}).items()
         }
@@ -261,6 +265,9 @@ class StateStore:
         payload["task_skill_context"] = context
         payload["resources"] = resources_to_json(state.resources)
         payload["artifacts"] = legacy_artifacts_view(state.resources) if state.resources else dict(state.artifacts)
+        if database_configured():
+            state_documents.write_json(path, payload)
+            return
         with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
             temporary = Path(handle.name)
             try:
@@ -285,6 +292,14 @@ class StateStore:
             path = self._next_checkpoint_path(directory, state.current_node)
             sequence = self._checkpoint_sequence(path, state.current_node)
             try:
+                if database_configured():
+                    payload = asdict(state)
+                    payload["task_skill_context"] = context
+                    payload["resources"] = resources_to_json(state.resources)
+                    payload["artifacts"] = legacy_artifacts_view(state.resources) if state.resources else dict(state.artifacts)
+                    payload["checkpoint"] = {"node": state.current_node, "sequence": sequence}
+                    state_documents.write_json(path, payload, exclusive=True)
+                    return path
                 with path.open("x", encoding="utf-8") as file:
                     payload = asdict(state)
                     payload["task_skill_context"] = context
@@ -305,11 +320,11 @@ class StateStore:
         return directory / f"{current_node}-{sequence + 1:03d}.json"
 
     def _latest_checkpoint_path(self, directory: Path, current_node: str) -> Path | None:
-        if not directory.exists():
+        if not database_configured() and not directory.exists():
             return None
         candidates = [
             (sequence, path)
-            for path in directory.glob("*.json")
+            for path in state_documents.paths(directory)
             if (sequence := self._checkpoint_sequence(path, current_node)) is not None
         ]
         if not candidates:
