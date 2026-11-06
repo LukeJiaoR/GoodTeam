@@ -74,23 +74,34 @@ test database; production database configuration is never used for these checks.
 
 ## Local verification
 
-Pinned base: `e99fdc90077ab04a52d405f6b7bd404d786f0c9d` (#675).
-Tested backend source: `ad9c0712f0f1ebfce0dccf70bae1cbb0635814be`.
-The follow-up commit updates this verification record only.
+Pinned base: `1cfb6372e7652118551c401a93e0f1be663d0aef` (includes #675,
+#678 and #680). Full-backend source: `a2710110ed58af40d4c9115bc89db3996d2a205e`.
+Integrated source: `736f45b54c10404dd8e89566920697eb63dd65b7`.
+The follow-up commit changes this verification record only.
 
 - `env -u GOODTEAM_DATABASE_URL -u GOODTEAM_TEST_DATABASE_URL PYTHONPATH=src python -m pytest tests -q --tb=short`:
-  **414 passed, 16 skipped**, 8 existing fork deprecation warnings, 553.38 seconds.
-  This final run includes the legacy reservation upgrade guard and both distinct
-  project-iteration execution/learning scenarios.
-- The focused planner/continuity/outcome run passed 15 cases; the subsequent
-  legacy-reservation and existing continuation run passed 3 cases before the
-  final full run. The new input regressions reproduced the earlier failures.
-- Node 24.22.1: `npm --prefix frontend test` passed (12 Node + 314 Vitest checks).
+  **414 passed, 16 skipped**, 8 existing fork deprecation warnings, 591.52 seconds
+  at `a271011`. This includes the legacy reservation guard, historical-input
+  reactivation fix and both distinct project-iteration execution/learning scenarios.
+- The automated review's A-to-B-to-A finding reproduced before the fix. The
+  expanded existing regression and planner checks then passed all 13 cases.
+- While that full run was executing, main advanced with #680's Provider retry
+  binding fix. It merged without conflict. At integrated source `736f45b`, the
+  same pytest command targeting `test_iteration_context_inputs.py`,
+  `test_project_iteration_planner.py`, `test_project_iteration_continuation.py`,
+  `test_project_outcome_discovery.py`, `test_retry_provider_binding.py`,
+  `test_manager_execution.py`, `test_worker_retry_evidence_process.py`,
+  `test_review_inputs.py`, `test_skill_library.py` and
+  `test_project_iteration_execution.py` passed **42 cases in 165.68 seconds**.
+  This checks the merged Worker/planner/retry paths; the earlier full-suite
+  result is not a claim of a full-suite run on the integrated source.
+- Node 24.22.1: `npm --prefix frontend test` passed at `a271011`
+  (12 Node + 314 Vitest checks). Frontend source is unchanged at `736f45b`.
   `npm --prefix frontend run lint` and `npm --prefix frontend run build` passed,
   with existing bundle-size and dynamic-import warnings. These frontend checks
-  ran at `7c85abc5f5715c496cf0ebd53057c2b0302dee7b`; the final reservation guard
-  changes only backend code, its test and documentation.
-- `ruff check src/goodteam_os tests/` and `git diff --check`: passed.
+  ran at `7c85abc5f5715c496cf0ebd53057c2b0302dee7b` on identical frontend source.
+- `ruff check src/goodteam_os tests/` and `git diff --check`: passed on the
+  integrated source.
 
 The 16 skipped cases need a dedicated disposable PostgreSQL database. No paid
 provider or deployed-browser smoke was run. These local results are not remote
