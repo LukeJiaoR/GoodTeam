@@ -44,6 +44,7 @@ A historical document can explain *why* a decision was made, but it must not sil
 ## Current orientation
 
 - [`status.md`](status.md): short-lived current product surface, current control-plane model, and active-design boundary. Update it when the current product shape changes; do not use it as an append-only progress log.
+- [`plans/2026-11-07-compact-ui-alignment.md`](plans/2026-11-07-compact-ui-alignment.md): UI handoff for the implemented #674 workbench baseline and the pending cross-page alignment tracked in #677; a plan, not a claim that the other pages have migrated.
 
 ## Stable manuals
 
