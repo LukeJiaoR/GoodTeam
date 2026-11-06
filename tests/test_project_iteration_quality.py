@@ -55,7 +55,7 @@ def _offline_native_cli(tmp_path, monkeypatch):
     calls = tmp_path / "native-calls.jsonl"
     fixture = tmp_path / "offline_native_transport.py"
     fixture.write_text("CALLS = " + repr(str(calls)) + "\n" + r'''
-import json, re, sys
+import hashlib, json, re, sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -84,8 +84,17 @@ def final_turn(report):
 
 if mode == 'review':
     target = json.loads(prompt.split('# Exact review target\n', 1)[1].split('\n# Captured sources', 1)[0])
-    sources = json.loads(prompt.split('# Captured sources (logical names; files under sources/ for Git targets)\n', 1)[1]
-                        .split('\n# Result channel contract', 1)[0])
+    manifest = json.loads(prompt.split('# Captured sources (file manifest; read these exact files as needed)\n', 1)[1]
+                         .split('\n# Result channel contract', 1)[0])
+    sources = {}
+    for name, item in manifest.items():
+        data = Path(item['path']).read_bytes()
+        assert len(data) == item['bytes']
+        assert 'sha256:' + hashlib.sha256(data).hexdigest() == item['digest']
+        sources[name] = data.decode('utf-8')
+    assert {entry[side]['source_name'] for entry in target['files'] for side in ('base', 'head')
+            if entry[side] is not None} == set(sources)
+    assert '"head/unit-a.txt":"broken\\n"' not in prompt
     evidence = []
     for index, name in enumerate(('unit-a.txt', 'unit-b.txt')):
         text = sources['head/' + name]

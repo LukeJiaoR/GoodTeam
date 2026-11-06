@@ -56,8 +56,9 @@ def event(kind, **details):
 
 if '# Exact review target\n' in prompt:
     target = json.loads(prompt.split('# Exact review target\n', 1)[1].split('\n# Captured sources', 1)[0])
-    sources = json.loads(prompt.split('# Captured sources (logical names; files under sources/ for Git targets)\n', 1)[1]
-                        .split('\n# Result channel contract', 1)[0])
+    manifest = json.loads(prompt.split('# Captured sources (file manifest; read these exact files as needed)\n', 1)[1]
+                         .split('\n# Result channel contract', 1)[0])
+    sources = {name: Path(item['path']).read_text() for name, item in manifest.items()}
     evidence = [{'id': 'E' + str(index), 'path': name, 'line_start': 1, 'line_end': 1,
                  'quote': text.splitlines(keepends=True)[0],
                  'observation': 'Offline fixture inspected the exact candidate source.'}

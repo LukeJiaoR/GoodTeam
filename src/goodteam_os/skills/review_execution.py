@@ -37,6 +37,25 @@ def selected_review_runtime(workers, snapshot):
     return ClosedReviewRuntime()
 
 
+def _source_input(record):
+    from .codex_contract import ADAPTER_VERSION
+    from .codex_trusted import ADAPTER as TRUSTED_ADAPTER
+
+    # These existing adapters project captured files into the container's
+    # /review tree or the native cwd's sibling input tree. The tool-free local
+    # adapter and unknown adapters must retain their complete inline input.
+    roots = {ADAPTER_VERSION: "/review/sources", TRUSTED_ADAPTER: "../input/sources"}
+    root = roots.get(record["runtime_session"]["adapter_version"])
+    if record["target"]["kind"] == "git_change" and root is not None:
+        manifest = {name: {"path": root + "/" + name, "bytes": len(text.encode("utf-8")),
+                           "digest": content_digest(text.encode("utf-8"))}
+                    for name, text in record["sources"].items()}
+        return ("\n# Captured sources (file manifest; read these exact files as needed)\n"
+                + canonical_json(manifest))
+    return ("\n# Captured sources (logical names; files under sources/ for Git targets)\n"
+            + canonical_json(record["sources"]))
+
+
 def _input(provider, context_ref, record):
     private = provider.private_input(context_ref)
     original = private["original_job_input"]
@@ -52,8 +71,7 @@ def _input(provider, context_ref, record):
     text = (base + "\n# Locked methods\n" + required + "\n# Optional method catalog\n"
             + canonical_json(catalog) + "\nResources: methods/<skill_id>/<relative path>. Read only when relevant.\n"
             + "# Exact review target\n" + canonical_json(record["target"])
-            + "\n# Captured sources (logical names; files under sources/ for Git targets)\n"
-            + canonical_json(record["sources"])
+            + _source_input(record)
             + "\n# Result channel contract\n" + report_output_instructions(list(record["sources"])))
     from .codex_contract import ADAPTER_VERSION
     if record["runtime_session"]["adapter_version"] == ADAPTER_VERSION:

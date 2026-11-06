@@ -419,9 +419,9 @@ class LocalCodexReviewRuntime:
             os.mkdir(context_id, 0o700, dir_fd=fd)
         root = parent / context_id
         prompt = materialize_review_inputs(provider, context_ref, record, root / "input")
-        # Sources are already captured inline in the exact prompt. Native Codex
-        # reads existing credentials in place; invocation-only restrictions do
-        # not edit personal config or rules. This is not strict host isolation.
+        # The tool-free local prompt carries sources inline; the trusted native
+        # subclass can read the sibling input tree. Existing credentials stay
+        # in place. Invocation restrictions are not strict host isolation.
         with directory(root) as fd:
             os.mkdir("cwd", 0o700, dir_fd=fd)
         # The user's existing config can contain legacy metadata rejected by
