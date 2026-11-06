@@ -6,9 +6,11 @@ import { isChangeDiscussion, sendConversationInput } from './conversationRouting
 import { shouldSubmitConversationOnEnter } from './conversationFeedback';
 import ConversationChangeContext from './ConversationChangeContext.jsx';
 import { matchesSavedChange } from './conversationChangeContext';
+import { AttachmentList, AttachmentPicker } from './ConversationAttachments';
+import { useConversationAttachments } from './useConversationAttachments';
 
 function Composer({
-  draftKey, acceptedMessage, awaitingReply = false,
+  draftKey, projectKey, acceptedMessage, awaitingReply = false,
   busy, embedded = true, error, onStart, onQueueTask, suggestions = [], t,
   changeIntent, onDiscussChangeIntent, onKeepDiscussingChangeIntent,
   activeTask = false, changeTarget = null, recordedChange, onStartChangeIntent,
@@ -64,6 +66,9 @@ function Composer({
   const seed = changing && changeIntent.status === 'discussing' ? changeIntent.draft_text || '' : '';
   const goal = drafts[scopeKey] ?? seed;
   const blocked = Boolean(busy || sending);
+  const attachments = useConversationAttachments({ projectKey, draftKey, acceptedMessage, t });
+  const hasAttachments = attachments.files.length > 0;
+  const canAttach = Boolean(projectKey && !queuing && !changing);
   const setGoal = (value) => setDrafts((current) => ({ ...current, [scopeKey]: value }));
 
   useEffect(() => {
@@ -72,22 +77,26 @@ function Composer({
 
   const submit = async (event) => {
     event.preventDefault();
-    if (blocked || submitting.current || !goal.trim()) return;
+    if (blocked || submitting.current || attachments.pending || (!goal.trim() && !hasAttachments)) return;
     submitting.current = true;
     setSending(true);
     setSubmitError(null);
-    const sent = goal;
+    const original = goal;
+    const sent = goal.trim() ? goal : t('work.attachments.message');
+    const sentFiles = attachments.files;
     try {
       const result = queuing ? await onQueueTask(sent) : await sendConversationInput({
         text: sent,
+        attachments: sentFiles,
         intent: changing ? changeIntent : null,
         onStart,
         onDiscuss: onDiscussChangeIntent,
         onKeepDiscussing: onKeepDiscussingChangeIntent,
       });
       if (result !== false) {
-        clearDeliveredDraft(scopeKey, sent);
-        setDrafts((current) => (current[scopeKey] ?? seed) === sent
+        attachments.clear(sentFiles);
+        clearDeliveredDraft(scopeKey, original);
+        setDrafts((current) => (current[scopeKey] ?? seed) === original
           ? { ...current, [scopeKey]: '' } : current);
       }
     } catch (caught) {
@@ -146,7 +155,14 @@ function Composer({
         </div>
       ) : null}
       </div>
-      <div className="conversation-editor">
+      <div className="conversation-editor" onDragOver={event => {
+        if (canAttach && !blocked && !event.currentTarget.closest('fieldset')?.disabled && event.dataTransfer.types.includes('Files')) event.preventDefault();
+      }} onDrop={event => {
+        if (!event.dataTransfer.files.length) return;
+        event.preventDefault();
+        if (canAttach && !blocked && !event.currentTarget.closest('fieldset')?.disabled) attachments.add(event.dataTransfer.files);
+      }}>
+      <AttachmentList files={attachments.files} onRemove={attachments.remove} onRetry={attachments.retry} disabled={blocked} t={t} />
       <label>
         <span className="sr-only">{t(queuing ? 'assistant.project.newTask' : changing ? 'work.manager.changeReason' : 'work.taskAssistant.message')}</span>
         <textarea
@@ -161,33 +177,40 @@ function Composer({
           }}
           placeholder={t(changing ? 'work.manager.intent.question' : 'work.taskAssistant.placeholder')}
           rows="3"
-          required
+          required={!hasAttachments}
           value={goal}
           onChange={(event) => setGoal(event.target.value)}
+          onPaste={event => {
+            if (canAttach && !blocked && !event.currentTarget.closest('fieldset')?.disabled && event.clipboardData.files.length) {
+              event.preventDefault(); attachments.add(event.clipboardData.files);
+            }
+          }}
         />
       </label>
       {error || submitError ? <ProductError error={error || submitError} t={t} /> : null}
+      {attachments.error ? <p className="conversation-attachment-error" role="alert">{attachments.error}</p> : null}
       <div className="conversation-submit-row">
       <div className="conversation-tools">
+      {projectKey ? <AttachmentPicker disabled={blocked || !canAttach} onAdd={attachments.add} t={t} /> : null}
       {onQueueTask || (editableIntent && !queuing) ? (
         <div className="project-composer-modes" aria-label={t('assistant.project.inputMode')}>
-          <button type="button" aria-pressed={!queuing && !changing} onClick={() => {
+          <button type="button" disabled={blocked} aria-pressed={!queuing && !changing} onClick={() => {
             setEntryMode('message');
             if (changeIntent?.id) setModes((current) => ({ ...current, [changeIntent.id]: 'message' }));
           }}>{t('work.taskAssistant.message')}</button>
-          {onQueueTask ? <button type="button" aria-pressed={queuing} onClick={() => setEntryMode('new_task')}>
+          {onQueueTask ? <button type="button" disabled={blocked || hasAttachments} aria-pressed={queuing} onClick={() => setEntryMode('new_task')}>
             {t('assistant.project.newTask')}
           </button> : null}
-          {editableIntent && !queuing ? <button type="button" aria-pressed={changing} onClick={() => {
+          {editableIntent && !queuing ? <button type="button" disabled={blocked || hasAttachments} aria-pressed={changing} onClick={() => {
             setEntryMode('message');
             setModes((current) => ({ ...current, [changeIntent.id]: 'changes' }));
           }}>{t('work.manager.requestChanges')}</button> : null}
         </div>
       ) : null}
         {!changeIntent && !queuing ? <ConversationChangeContext active={activeTask} target={changeTarget}
-          recordedChange={recordedChange} busy={blocked} onBegin={beginChange} t={t} /> : null}
+          recordedChange={recordedChange} busy={blocked || hasAttachments} onBegin={beginChange} t={t} /> : null}
       </div>
-      <Button busy={sending && !awaitingReply} disabled={blocked || !goal.trim()} type="submit" data-send-icon={!queuing && !changing}
+      <Button busy={sending && !awaitingReply} disabled={blocked || attachments.pending || (!goal.trim() && !hasAttachments)} type="submit" data-send-icon={!queuing && !changing}
         title={t('work.composer.keyboardHint')}>
         {!queuing && !changing ? <ArrowUp size={20} aria-hidden="true" /> : null}
         <span className={!queuing && !changing ? 'sr-only' : undefined}>{t(awaitingReply && !queuing && !changing ? 'work.composer.awaitingReply' : queuing ? 'assistant.project.saveTask' : changing ? 'work.manager.intent.reviewInterpretation' : 'work.taskAssistant.send')}</span>

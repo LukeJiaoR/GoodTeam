@@ -185,6 +185,7 @@ def run_dialogue(service, *, store, project_key, root, text, message_id, attempt
             readiness = {"lifecycle": "legacy_unverified"}
         context = _manager_chat_context(readiness, assess_project_mode(root), session,
                                         team_view=service.team_view(project_key), current_message_id=turn_input["message_id"])
+        context += service.attachment_context(project_key, root, session, turn_input["message_id"])
         context += "\nFresh task context: " + json.dumps(scope, ensure_ascii=False, default=str)
         context += "\nFresh continuation/batch/attention (read-only, never authorization): " + json.dumps(snapshot, ensure_ascii=False)
         context += "\nPending conversation question (not authority): " + json.dumps(pending, ensure_ascii=False)

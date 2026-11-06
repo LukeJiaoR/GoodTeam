@@ -1,7 +1,9 @@
 import { test, expect, importProject } from './fixtures.js';
+import { Buffer } from 'node:buffer';
 import { clickMutation, decisions, prepareFirstTask, sendTask, snapshot, workState } from './business-loop-helpers.js';
 
 test('project Manager keeps chatting across tasks and saves future work without assigning it to itself', async ({ page, fixture }, testInfo) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
   const evidence = [];
   await importProject(page, fixture);
   const endpoint = `/api/projects/${fixture.key}/task-assistant/actions`;
@@ -12,6 +14,17 @@ test('project Manager keeps chatting across tasks and saves future work without 
   const before = await snapshot(page, fixture, evidence);
   const manager = page.getByRole('region', { name: 'Task Assistant', exact: true });
   await expect(manager.locator('.product-status-badge').first()).toHaveText('Available');
+  await page.getByRole('button', { name: 'Hide delivery panel', exact: true }).click();
+  const dock = manager.locator('.team-manager-dock');
+  const beforeDetails = await dock.boundingBox();
+  expect(beforeDetails.width).toBe(760);
+  expect(await page.locator('.studio-sidebar').evaluate(node => node.getBoundingClientRect().width)).toBe(256);
+  expect(await manager.locator('textarea').evaluate(node => getComputedStyle(node).fontSize)).toBe('14px');
+  const worker = page.locator('.team-worker-summary').first();
+  await worker.click();
+  await expect(worker).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#team-worker-detail')).toBeVisible();
+  expect(await dock.boundingBox()).toEqual(beforeDetails);
   await manager.getByRole('button', { name: 'New task', exact: true }).click();
   const future = 'Add keyboard navigation.\n\nKeep the existing schema.';
   await manager.getByRole('textbox', { name: 'New task', exact: true }).fill(future);
@@ -43,6 +56,8 @@ test('project Manager keeps chatting across tasks and saves future work without 
 
   const composer = manager.getByRole('textbox', { name: 'Message', exact: true });
   await composer.fill('Explain the earlier task.');
+  await manager.locator('input[type="file"]').setInputFiles({ name: 'history.md', mimeType: 'text/markdown', buffer: Buffer.from('Use the original iteration as a reference.') });
+  await expect(manager.locator('.conversation-editor li[data-upload="ready"]')).toHaveCount(1);
   await composer.evaluate((node) => { node.dataset.continuity = 'same-project-composer'; });
   await manager.getByRole('button', { name: 'Manage tasks', exact: true }).click();
   await page.getByRole('navigation', { name: 'Project tasks' }).getByRole('button', { name: /Implement a searchable project list/ }).click();
@@ -50,6 +65,8 @@ test('project Manager keeps chatting across tasks and saves future work without 
   await expect(page).toHaveURL(new RegExp(`/runs/${firstRun}$`));
   await expect(composer).toHaveAttribute('data-continuity', 'same-project-composer');
   await expect(composer).toHaveValue('Explain the earlier task.');
+  await expect(manager.locator('.conversation-editor li[data-upload="ready"]')).toHaveCount(1);
+  await expect(page.locator('.studio-sidebar #project-task-navigation')).toBeVisible();
   await manager.getByRole('button', { name: 'Configure runtime', exact: true }).click();
   const runtime = page.getByRole('dialog', { name: 'Task Assistant settings' });
   await expect(runtime).toBeVisible();
@@ -66,4 +83,14 @@ test('project Manager keeps chatting across tasks and saves future work without 
   expect(decisions(afterHistoryQuestion)).toEqual(decisions(current));
   await testInfo.attach('project-manager-history', { body: await page.screenshot(), contentType: 'image/png' });
   await testInfo.attach('project-manager-evidence', { body: JSON.stringify(evidence, null, 2), contentType: 'application/json' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#team-tab-execution').click();
+  const narrowWorker = page.locator('.team-worker-summary').first();
+  if (await narrowWorker.getAttribute('aria-expanded') !== 'true') await narrowWorker.click();
+  expect(await page.locator('#team-panel-execution').evaluate(panel => {
+    const list = panel.querySelector('.team-actor-list').getBoundingClientRect();
+    const detail = panel.querySelector('#team-worker-detail').getBoundingClientRect();
+    return list.bottom <= detail.top && panel.scrollHeight > panel.clientHeight;
+  })).toBe(true);
+  await expect(composer).toBeVisible();
 });
