@@ -198,7 +198,6 @@ export default function LoadProjectPanel({
       >
         <header className="projects-import-dialog__header">
           <div>
-            <p className="projects-load-eyebrow">{t('projects.load.eyebrow')}</p>
             <h2 id="projects-load-title">{t('projects.load.title')}</h2>
             <p id="projects-load-description">{t('projects.load.description')}</p>
           </div>

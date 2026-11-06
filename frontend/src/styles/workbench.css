@@ -1,9 +1,6 @@
 /* V11 workbench: compact project navigation, a fixed reading column and
    contextual panels. This layer deliberately leaves other page content alone. */
 .product-shell.product-shell--studio {
-  --studio-text-control: 13px;
-  --studio-text-body: 14px;
-  --studio-text-small: 12px;
   grid-template-columns: 256px minmax(0, 1fr);
 }
 .product-shell.product-shell--studio[data-sidebar="collapsed"] { grid-template-columns: 48px minmax(0, 1fr); }
@@ -85,7 +82,7 @@
 .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace,
 .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed="true"] { position: relative; display: grid; flex: 1 1 0; grid-template-areas: 'center execution'; grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: minmax(0, 1fr); gap: 28px; min-height: 0; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace-center { gap: 0; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager { --chat-body: 14px; --chat-control: 13px; --chat-meta: 12px; height: auto; min-height: 0; overflow: hidden; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager { --chat-body: var(--studio-text-body); --chat-control: var(--studio-text-control); --chat-meta: var(--studio-text-small); height: auto; min-height: 0; overflow: hidden; }
 .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; width: 100%; max-width: 760px; margin-inline: auto; min-height: 32px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-pane__header { order: 2; width: auto; min-height: 28px; padding: 0; gap: 6px; flex: 0 0 auto; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-manager-heading .product-status-badge { background: transparent; padding: 0; color: var(--work-text-muted); }
