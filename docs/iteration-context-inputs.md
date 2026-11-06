@@ -74,9 +74,9 @@ test database; production database configuration is never used for these checks.
 
 ## Local verification
 
-Pinned base: `1cfb6372e7652118551c401a93e0f1be663d0aef` (includes #675,
-#678 and #680). Full-backend source: `a2710110ed58af40d4c9115bc89db3996d2a205e`.
-Integrated source: `736f45b54c10404dd8e89566920697eb63dd65b7`.
+Pinned base: `1d653a30cbaca668749d019043ccaec0bfa63a05` (includes #675,
+#678, #680 and #681). Full-backend source: `a2710110ed58af40d4c9115bc89db3996d2a205e`.
+Final integrated source: `a02ee366fa70a7441db98d86cffd8cb1d5911f84`.
 The follow-up commit changes this verification record only.
 
 - `env -u GOODTEAM_DATABASE_URL -u GOODTEAM_TEST_DATABASE_URL PYTHONPATH=src python -m pytest tests -q --tb=short`:
@@ -93,16 +93,23 @@ The follow-up commit changes this verification record only.
   `test_manager_execution.py`, `test_worker_retry_evidence_process.py`,
   `test_review_inputs.py`, `test_skill_library.py` and
   `test_project_iteration_execution.py` passed **42 cases in 165.68 seconds**.
-  This checks the merged Worker/planner/retry paths; the earlier full-suite
-  result is not a claim of a full-suite run on the integrated source.
-- Node 24.22.1: `npm --prefix frontend test` passed at `a271011`
-  (12 Node + 314 Vitest checks). Frontend source is unchanged at `736f45b`.
-  `npm --prefix frontend run lint` and `npm --prefix frontend run build` passed,
-  with existing bundle-size and dynamic-import warnings. These frontend checks
-  ran at `7c85abc5f5715c496cf0ebd53057c2b0302dee7b` on identical frontend source.
+  This checks the merged Worker/planner/retry paths.
+- Main then advanced with #681's memory retrieval integration. It also merged
+  without conflict. At `a02ee36`, the same pytest command targeting
+  `test_iteration_context_inputs.py`, `test_project_outcome_discovery.py`,
+  `test_project_iteration_continuation.py`, `test_memory_core.py`,
+  `test_memory_embeddings.py`, `test_retry_provider_binding.py`,
+  `test_review_inputs.py` and `test_skill_library.py` passed **39 cases** with
+  **3 PostgreSQL cases skipped**, in 122.67 seconds. These checks cover the
+  intersecting runtime memory, planning, delivery and retry paths. Neither
+  integration run is a claim of a full-suite run on the final integrated source.
+- Node 24.22.1 at `a02ee36`: `npm --prefix frontend test` passed
+  (12 Node + 315 Vitest checks). `npm --prefix frontend run lint` and
+  `npm --prefix frontend run build` passed, with existing bundle-size and
+  dynamic-import warnings.
 - `ruff check src/goodteam_os tests/` and `git diff --check`: passed on the
   integrated source.
 
-The 16 skipped cases need a dedicated disposable PostgreSQL database. No paid
-provider or deployed-browser smoke was run. These local results are not remote
-CI or independent review evidence.
+The skipped cases need a dedicated disposable PostgreSQL database. No paid
+provider, real embedding service or deployed-browser smoke was run. These local
+results are not remote CI or independent review evidence.
