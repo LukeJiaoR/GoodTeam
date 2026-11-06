@@ -251,10 +251,49 @@ Provider/Manager behavior remains an offline fixture, not real-model semantic
 acceptance or a new StockFlow delivery. GitHub CI remains paused. The subsequent
 verification-documentation commit changes no production or test source.
 
-The repaired candidate has **not** received a new independent review. The previous
-one-attempt authorization is exhausted; no Reviewer was retried or restarted.
-PR #670 remains Draft and unmerged, with production migration/deployment pending
-separate authorization.
+At the end of that repair pass, the candidate had **not** received a new
+independent review. The previous one-attempt authorization was exhausted; no
+Reviewer was retried or restarted. PR #670 remained Draft and unmerged.
+
+### Additional GitHub review findings and merge authorization (2026-11-07)
+
+The maintainer subsequently authorized merging after the pending re-review and
+local verification were disclosed. The pre-merge check also read the existing
+GitHub review comments, which contained four additional findings omitted from
+the previous repair pass. All four were reproduced before fixing them:
+
+- The Workflow terminal hook now checks the configured session store instead of
+  requiring a JSON file, so completion reconciles the original project task.
+- Idle Goal cache fingerprints now use row values for both SQLite and PostgreSQL;
+  changed/corrupt records cannot hide behind identical dictionary keys.
+- Nested event locks inside a database transaction use transaction-scoped advisory
+  locks, so rollback releases them. Session-lock cleanup always restores the
+  connection context and discards a connection if unlocking fails. Ordinary
+  conversation locks retain their existing transaction/visibility behavior.
+- Verification, staging, smoke, sandbox and repository command subprocesses use
+  the existing PG environment filter. Sandbox output/argument redaction also
+  recognizes DB credentials. Trusted GoodTeam service processes retain their
+  database configuration.
+
+The four representative regressions failed on the previous candidate in 1.09
+seconds and passed after the repair in 1.12 seconds. The repair source is
+`4d3c43cd072f6a54276feb844c15014bc34c7905`, containing unchanged main
+`06a709a9991b2de685c3508419cac2dccbfa28fa`.
+
+| Command / evidence on `4d3c43c` | Observed result |
+| --- | --- |
+| `PYTHONPATH=src .venv/bin/python -m pytest tests -q --tb=short` with a dedicated `GOODTEAM_TEST_DATABASE_URL` | **417 passed**, including all 12 PG cases; 8 existing fork deprecation warnings; 711.34 seconds |
+| `npm --prefix frontend test` using Node 24.22.1 | 12 Node and 312 Vitest checks passed |
+| `npm --prefix frontend run lint`, `npm --prefix frontend run build` | Passed; existing bundle-size and ineffective-dynamic-import warnings retained |
+| `npm --prefix frontend run test:e2e -- project-manager.spec.js business-loop.spec.js` with PG enabled and separate report output | 2 passed in 32.1 seconds |
+| `.venv/bin/ruff check src/goodteam_os tests/`, `git diff --check` | Passed before committing the same source |
+
+The final documentation update changes no production or test source. The
+maintainer's merge authorization does not constitute a new independent review
+of this repaired head: no additional Reviewer subagent or manual review request
+was launched, and GitHub Actions CI remains paused. These local results still
+use offline provider fixtures and isolated workspaces. Production migration,
+deployment and live business execution were not performed.
 
 Official package/API references:
 
