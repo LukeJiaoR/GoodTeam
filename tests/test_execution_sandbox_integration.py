@@ -209,7 +209,8 @@ class _FakePopen:
 
 
 def _install_fake_cli(monkeypatch, *, calls: list[dict[str, Any]]) -> None:
-    def fake_popen(command, *, cwd, env, stdin, stdout, stderr, text):
+    def fake_popen(command, *, cwd, env, stdin, stdout, stderr, text, start_new_session):
+        assert start_new_session is True
         return _FakePopen(list(command), cwd=Path(cwd), env=env, calls=calls)
 
     monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
