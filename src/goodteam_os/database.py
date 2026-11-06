@@ -61,6 +61,13 @@ class PostgresDatabase:
                 conn.execute("""CREATE TABLE IF NOT EXISTS state_imports (
                     path TEXT PRIMARY KEY, source_digest TEXT NOT NULL,
                     imported_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())""")
+                conn.execute("""CREATE TABLE IF NOT EXISTS provider_usage (
+                    id TEXT PRIMARY KEY, scope TEXT NOT NULL, agent TEXT NOT NULL,
+                    provider_id TEXT NOT NULL, provider_name TEXT NOT NULL, model TEXT NOT NULL,
+                    project_key TEXT NOT NULL, job_id TEXT NOT NULL, started_at TIMESTAMPTZ NOT NULL,
+                    status TEXT NOT NULL, input_tokens BIGINT, cached_input_tokens BIGINT, output_tokens BIGINT
+                )""")
+                conn.execute("CREATE INDEX IF NOT EXISTS provider_usage_scope ON provider_usage(scope)")
         self.pool = ConnectionPool(
             url, min_size=0, max_size=16, timeout=10, max_waiting=32, open=True,
             kwargs={"autocommit": True, "row_factory": dict_row, "connect_timeout": 5,

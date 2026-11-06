@@ -66,6 +66,12 @@ def resolve_project_model_profile(
 ) -> tuple[str, ModelProfile]:
     profile_name = explicit_profile.strip() or str(project_target.get("model_profile", "") or "balanced")
     profile = load_model_profile(config_path, profile_name)
+    from goodteam_os.providers import ProviderStore
+    connection = ProviderStore().active()
+    if connection and connection["model"]:
+        for values in profile.values():
+            if str(values.get("primary", "")).startswith("codex:"):
+                values["primary"] = "codex:" + connection["model"]
     project_overrides = _project_role_overrides(project_target.get("role_model_overrides", {}))
     updated = apply_role_overrides(profile, project_overrides)
     updated = apply_role_overrides(updated, role_overrides or [])
