@@ -213,10 +213,48 @@ instance. Backend lint and `git diff --check` also passed. Existing full-suite
 and frontend results above remain bound to their recorded source; no full-suite
 rerun or GitHub Actions dispatch was performed for this base-only sync.
 
-The merge-preparation code inspection found no new blocking issue. It does not
-replace the outstanding independent Reviewer result. Production data and the
-running service have not been changed, and no prior Stop or Reviewer budget
-was reset.
+That local inspection preceded the independent review recorded below. Production
+data and the running service have not been changed, and no prior Stop or Reviewer
+budget was reset.
+
+### Independent review repairs (2026-11-07)
+
+The authorized single read-only Reviewer completed its review of
+`0a276b8d81fc1969d4cfa67e1a9cff39bed50602` within 600 seconds and returned Hold.
+The following repairs are committed in
+`297994755683593883ee308a35cb7f1c54e90942`, containing base
+`06a709a9991b2de685c3508419cac2dccbfa28fa`:
+
+- Fresh PG workspaces now establish their backend binding on normal writes,
+  preventing a restart without the DB configuration from selecting file state.
+- Conversation delivery selects the final accepted correction candidate. Its
+  representative integration check also exposed a JSON-only registry read in
+  quality/Skill admission; that lookup now uses the configured PG store.
+- Offline migration includes the original supported Workflow/readiness fallback
+  locations and persists their resolution, preserving run and approval identity.
+
+The fresh-workspace and legacy-location regressions failed before the repair.
+The correction case initially stopped earlier at the registry lookup, then
+passed the full reviewed-correction/dialogue-confirmation path after both fixes.
+The focused repair check passed all 4 selected cases in 102.87 seconds.
+
+| Command / evidence on `2979947` | Observed result |
+| --- | --- |
+| `PYTHONPATH=src .venv/bin/python -m pytest tests -q --tb=short` with `GOODTEAM_TEST_DATABASE_URL` | **413 passed**, including all 9 PG cases; 8 existing fork deprecation warnings; 672.48 seconds |
+| `npm --prefix frontend test` using Node 24.22.1 | 12 Node and 312 Vitest checks passed |
+| `npm --prefix frontend run lint`, `npm --prefix frontend run build` | Passed; existing bundle-size and ineffective-dynamic-import warnings retained |
+| `npm --prefix frontend run test:e2e -- project-manager.spec.js business-loop.spec.js` with PG enabled and a separate output directory | Both isolated browser paths passed in 30.5 seconds |
+| `.venv/bin/ruff check src/goodteam_os tests/`, `git diff --check` | Passed before committing the same production/test source |
+
+These are local results against a disposable PG instance and isolated projects.
+Provider/Manager behavior remains an offline fixture, not real-model semantic
+acceptance or a new StockFlow delivery. GitHub CI remains paused. The subsequent
+verification-documentation commit changes no production or test source.
+
+The repaired candidate has **not** received a new independent review. The previous
+one-attempt authorization is exhausted; no Reviewer was retried or restarted.
+PR #670 remains Draft and unmerged, with production migration/deployment pending
+separate authorization.
 
 Official package/API references:
 
