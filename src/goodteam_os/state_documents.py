@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
 
 from goodteam_os.database import database, database_configured
@@ -121,19 +122,30 @@ def document_lock(path, *, blocking=True):
     with connection() as conn:
         token = _CONNECTION.set(conn)
         acquired = False
+        # Nested event writes belong to the caller's transaction. Its rollback
+        # must release their locks without issuing SQL in an aborted transaction.
+        transactional = conn.info.transaction_status == TransactionStatus.INTRANS
+        suffix = "xact_lock" if transactional else "lock"
         try:
             if blocking:
-                conn.execute("SELECT pg_advisory_lock(%s)", (key,))
+                conn.execute(f"SELECT pg_advisory_{suffix}(%s)", (key,))
                 acquired = True
             else:
-                acquired = conn.execute("SELECT pg_try_advisory_lock(%s) AS acquired", (key,)).fetchone()["acquired"]
+                acquired = conn.execute(f"SELECT pg_try_advisory_{suffix}(%s) AS acquired", (key,)).fetchone()["acquired"]
                 if not acquired:
                     raise ValueError("Task Assistant is busy. Reload before retrying.")
             yield
         finally:
-            if acquired:
-                conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
-            _CONNECTION.reset(token)
+            try:
+                if acquired and not transactional:
+                    try:
+                        conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
+                    except BaseException:
+                        # A pooled connection must never retain a session lock.
+                        conn.close()
+                        raise
+            finally:
+                _CONNECTION.reset(token)
 
 
 def _record(conn, path):

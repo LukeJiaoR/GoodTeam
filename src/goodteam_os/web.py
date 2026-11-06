@@ -27,6 +27,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 from goodteam_os import context as project_context
+from goodteam_os.database import provider_environment
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.debate import default_debate_dispatch, run_gate_debate
 from goodteam_os.dispatch import (
@@ -1274,6 +1275,7 @@ def _run_readonly_command(command: list[str], workspace: Path, warnings: list[st
         return subprocess.run(
             command,
             cwd=workspace,
+            env=provider_environment(),
             capture_output=True,
             text=True,
             timeout=DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS,
@@ -1475,6 +1477,7 @@ def _ensure_dispatch_worktree(workspace: Path, *, name: str, branch: str) -> Pat
         subprocess.run(
             ["git", "worktree", "add", str(worktree), "-b", branch, "main"],
             cwd=workspace,
+            env=provider_environment(),
             check=True,
         )
     _link_dispatch_worktree_venv(workspace, worktree)
@@ -2066,6 +2069,7 @@ def run_gated_server_action(
         result = subprocess.run(
             argv,
             cwd=root,
+            env=provider_environment(),
             capture_output=True,
             text=True,
             timeout=SERVER_ACTION_TIMEOUT_SECONDS,
@@ -2952,7 +2956,7 @@ def _run_git_project_command(
             result = subprocess.run(
                 command,
                 cwd=root_path,
-                env=env,
+                env=provider_environment(env),
                 capture_output=True,
                 text=True,
                 timeout=GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS,

@@ -69,6 +69,10 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _row_values(row):
+    return tuple(row[name] for name in row.keys())
+
+
 def goal_store_exists(workspace: Path) -> bool:
     ensure_storage_config(Path(workspace) / "state" / "goals.sqlite3")
     legacy = (Path(workspace) / "state" / "goals.sqlite3").is_file()
@@ -270,7 +274,7 @@ class GoalStore:
                 for row in rows:
                     goal_id = row["id"]
                     works, events = work_rows[goal_id], event_rows[goal_id]
-                    records = (tuple(row), tuple(map(tuple, works)), tuple(map(tuple, events)), goal_id in pending)
+                    records = (_row_values(row), tuple(map(_row_values, works)), tuple(map(_row_values, events)), goal_id in pending)
                     if previous.get(goal_id) != records:
                         goal = self._snapshot_rows(row, works, events)
                         if goal["status"] == "active" or goal["active_work"] or goal_id in pending:

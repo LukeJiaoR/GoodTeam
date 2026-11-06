@@ -376,3 +376,55 @@ def test_pg_conversation_delivers_reviewed_correction(tmp_path, monkeypatch, pos
 
     test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
         tmp_path, monkeypatch, delivery_handoff=delivery_handoff)
+
+
+def test_pg_terminal_transition_reconciles_original_project_task(tmp_path, monkeypatch, postgres):
+    from test_project_iteration_planner import test_parallel_selection_is_persisted_and_reused_without_new_model_call
+
+    postgres()
+    test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_path, monkeypatch)
+
+
+def test_pg_idle_goal_cache_revalidates_changed_row_values(tmp_path, postgres):
+    from goodteam_os.goals import GoalCorruptState
+
+    postgres()
+    store = GoalStore(tmp_path, "DEMO")
+    goal = store.create_goal(objective="Keep stopped authority", acceptance_criteria=["Verified"],
+        allowed_scope=["src"], max_work_units=1, confirmed=True, idempotency_key="original")
+    store.stop_goal(goal["id"], expected_revision=goal["revision"], idempotency_key="stop")
+    store.sync_tasks(goal["id"], LocalTaskStore(tmp_path / "source", "DEMO"))
+    cache = {}
+    assert store.list_continuation_goals(validated_idle=cache) == []
+    assert goal["id"] in cache["records"]
+    with store._transaction(write=True) as conn:
+        conn.execute("UPDATE goals SET data=? WHERE id=?", ("{broken", goal["id"]))
+    with pytest.raises(GoalCorruptState):
+        store.list_continuation_goals(validated_idle=cache)
+    assert cache == {}
+
+
+def test_pg_failed_event_append_releases_nested_lock_and_rolls_back(tmp_path, postgres):
+    from hashlib import sha256
+    import psycopg
+    from psycopg import sql
+    from goodteam_os import state_documents
+
+    postgres()
+    queue = DurableOperatorQueue(tmp_path / "state")
+    path = state_documents.document_key(queue.events_path)
+    with database().connection() as conn:
+        conn.execute(sql.SQL("ALTER TABLE state_documents ADD CONSTRAINT reject_event CHECK (path <> {})").format(sql.Literal(path)))
+    request = dict(idempotency_key="original", source_url="local:original", source_revision="original-sha",
+                   project_key="DEMO", repository_identity="original-repository")
+    with pytest.raises(psycopg.Error):
+        queue.enqueue(**request)
+    assert state_documents._CONNECTION.get() is None
+    key = int.from_bytes(sha256(path.encode()).digest()[:8], signed=True)
+    with psycopg.connect(os.environ["GOODTEAM_DATABASE_URL"], autocommit=True) as observer:
+        assert observer.execute("SELECT pg_try_advisory_lock(%s)", (key,)).fetchone()[0]
+    with database().connection() as conn:
+        conn.execute("ALTER TABLE state_documents DROP CONSTRAINT reject_event")
+    assert queue.list_items() == []
+    assert queue.enqueue(**request)[1] is True
+    assert len(queue.list_items()) == len(state_documents.read_events(queue.events_path)) == 1

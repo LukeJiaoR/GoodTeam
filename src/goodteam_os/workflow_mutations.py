@@ -9,6 +9,7 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
+from goodteam_os import state_documents
 from goodteam_os.state import StateStore, normalize_project_key
 
 
@@ -127,7 +128,7 @@ def _reconcile_completed_manager_task(workspace, state):
         from goodteam_os.web import _project_target_and_root
 
         session = TaskAssistantSessionStore(workspace, state.project_key)
-        if not session.path.is_file():
+        if not state_documents.exists(session.path):
             return
         task = (session.read().get("proposed_task") or {})
         if task.get("run_id") != state.run_id or not task.get("project_task_id"):

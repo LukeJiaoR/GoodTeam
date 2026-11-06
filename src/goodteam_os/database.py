@@ -20,7 +20,7 @@ def database_configured() -> bool:
 
 
 def provider_environment(environment=None):
-    """External model processes do not receive the control-plane DB credential."""
+    """External tools and project commands never receive control-plane DB access."""
     source = os.environ if environment is None else environment
     return {key: value for key, value in source.items()
             if key not in {"GOODTEAM_DATABASE_URL", "GOODTEAM_DATABASE_SCHEMA", "GOODTEAM_TEST_DATABASE_URL"}}
