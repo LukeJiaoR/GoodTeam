@@ -4,6 +4,7 @@ from pathlib import Path
 from shutil import which
 from typing import Callable
 
+from goodteam_os.database import provider_environment
 from goodteam_os.models import _parse_simple_yaml
 
 
@@ -370,6 +371,7 @@ def _run_ssh_command(command: list[str], *, cwd: Path, timeout: int) -> dict[str
     completed = subprocess.run(
         command,
         cwd=cwd,
+        env=provider_environment(),
         capture_output=True,
         text=True,
         timeout=timeout,

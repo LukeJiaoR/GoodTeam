@@ -9,6 +9,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from goodteam_os.database import database_configured
+from goodteam_os import state_documents
+
 
 class TaskStoreCorruptError(ValueError):
     """Refuse to overwrite unreadable task evidence."""
@@ -73,6 +76,7 @@ class LocalTaskStore:
         self.project_root = project_root
         self.project_key = str(project_key or "").strip()
         self.path = project_root / ".goodteam" / "tasks" / "tasks.json"
+        state_documents.ensure_storage_config(self.path)
 
     def list_tasks(self) -> list[dict[str, Any]]:
         return list(self._read().get("tasks", []))
@@ -328,6 +332,12 @@ class LocalTaskStore:
 
     @contextmanager
     def _lock(self):
+        with state_documents.document_lock(self.path):
+            with self._file_lock():
+                yield
+
+    @contextmanager
+    def _file_lock(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with (self.path.parent / ".tasks.lock").open("a") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -337,10 +347,10 @@ class LocalTaskStore:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def _read(self) -> dict[str, Any]:
-        if not self.path.exists():
+        if not state_documents.exists(self.path):
             return {"tasks": [], "next_id": 1}
         try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            payload = state_documents.read_json(self.path)
             if (not isinstance(payload, dict) or not isinstance(payload.get("tasks"), list)
                     or type(payload.get("next_id")) is not int or payload["next_id"] < 1):
                 raise ValueError("Invalid task ledger structure.")
@@ -357,6 +367,9 @@ class LocalTaskStore:
         return payload
 
     def _write(self, payload: dict[str, Any]) -> None:
+        if database_configured():
+            state_documents.write_json(self.path, payload, storage_root=self.project_root)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
         try:

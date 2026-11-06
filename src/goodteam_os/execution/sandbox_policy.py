@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
+from goodteam_os.database import provider_environment
 from goodteam_os.execution.path_claims import normalize_repo_path
 
 
@@ -17,6 +18,8 @@ SECRET_ENV_NAMES = {
     "GITHUB_TOKEN",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "GOODTEAM_DATABASE_URL",
+    "GOODTEAM_TEST_DATABASE_URL",
 }
 SECRET_ENV_PREFIXES = ("AWS_", "GOOGLE_")
 REDACTION_MARKER = "[REDACTED]"
@@ -59,6 +62,7 @@ class SubprocessSandboxGitAdapter:
                 str(worktree_path),
                 base_ref,
             ],
+            env=provider_environment(),
             check=True,
             capture_output=True,
             text=True,
@@ -68,6 +72,7 @@ class SubprocessSandboxGitAdapter:
     def remove_worktree(self, *, repo_root: Path, worktree_path: Path) -> dict[str, object]:
         completed = subprocess.run(
             ["git", "-C", str(repo_root), "worktree", "remove", str(worktree_path)],
+            env=provider_environment(),
             check=True,
             capture_output=True,
             text=True,
@@ -87,7 +92,7 @@ def command_env(extra: dict[str, str]) -> tuple[dict[str, str], list[str], list[
             result[key] = REDACTION_MARKER
         else:
             result[key] = text
-    return result, sorted(redacted_keys), secret_values
+    return provider_environment(result), sorted(redacted_keys), secret_values
 
 
 def is_secret_key(key: str) -> bool:

@@ -17,6 +17,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from goodteam_os.pi_rpc import PiRpcError, PiRpcExited, PiRpcProcess, PiRpcRejected, monotonic_deadline, redact_pi_text
+from goodteam_os.database import provider_environment
 
 
 PI_CAPABILITIES = (
@@ -140,7 +141,8 @@ def pi_backend_doctor(project_root: Path | None = None, overrides: Mapping[str, 
 
         try:
             completed = subprocess.run(
-                [resolved, "--version"], capture_output=True, text=True, check=False, timeout=5
+                [resolved, "--version"], capture_output=True, text=True, check=False, timeout=5,
+                env=provider_environment(),
             )
             if completed.returncode == 0:
                 version = redact_pi_text((completed.stdout or completed.stderr).strip().splitlines()[0], limit=160)

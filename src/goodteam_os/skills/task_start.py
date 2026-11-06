@@ -7,6 +7,7 @@ restoration or Team loss cannot turn its replay into a legacy task.
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from pathlib import Path
 from typing import Any
 
@@ -163,12 +164,15 @@ def registered_project_scope(worker_root: Path) -> tuple[Path, str] | None:
     ambiguous registry is not interpreted as an empty set of Skill settings.
     """
     from goodteam_os.project_registry import get_default_registry_path
+    from goodteam_os.database import database_configured
+    from goodteam_os import state_documents
     from goodteam_os.state import normalize_project_key
     from .filesystem import directory, regular_file
     from .worker_requests import _json
 
     root = Path(worker_root).expanduser().resolve()
     registry_path = get_default_registry_path()
+    state_documents.ensure_storage_config(registry_path)
 
     def standalone_legacy():
         from goodteam_os.service import service_state_dir
@@ -176,19 +180,26 @@ def registered_project_scope(worker_root: Path) -> tuple[Path, str] | None:
         if (Path(service_state_dir()) / "skills" / "task-locks").exists():
             raise SkillError("project_scope_unknown", "Skill-aware dispatch requires a registered project; missing scope cannot become legacy.")
         return None
-    try:
-        with directory(registry_path.parent) as fd:
-            try:
-                raw = regular_file(fd, registry_path.name, maximum=4 * 1024 * 1024)[0]
-            except FileNotFoundError:
-                return standalone_legacy()
-    except FileNotFoundError:
-        return standalone_legacy()
-    except SkillError:
-        # An absent registry parent is a never-registered standalone project.
-        if not registry_path.parent.exists():
+    if database_configured():
+        if not state_documents.exists(registry_path):
             return standalone_legacy()
-        raise
+        raw = json.dumps(state_documents.read_json(registry_path)).encode()
+        if len(raw) > 4 * 1024 * 1024:
+            raise SkillError("project_scope_unknown", "Project registry exceeds its supported size.")
+    else:
+        try:
+            with directory(registry_path.parent) as fd:
+                try:
+                    raw = regular_file(fd, registry_path.name, maximum=4 * 1024 * 1024)[0]
+                except FileNotFoundError:
+                    return standalone_legacy()
+        except FileNotFoundError:
+            return standalone_legacy()
+        except SkillError:
+            # An absent registry parent is a never-registered standalone project.
+            if not registry_path.parent.exists():
+                return standalone_legacy()
+            raise
     payload = _json(raw)
     if payload.get("version", 1) != 1 or not isinstance(payload.get("projects"), list):
         raise SkillError("project_scope_unknown", "Project registry identity is unavailable.")

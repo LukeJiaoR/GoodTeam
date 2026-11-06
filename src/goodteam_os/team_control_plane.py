@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 from copy import deepcopy
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -46,6 +47,8 @@ from goodteam_os.skills.bindings import (
 from goodteam_os.skills.models import SkillError
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.state import normalize_project_key
+from goodteam_os import state_documents
+from goodteam_os.database import database_configured
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, worker_backend_doctor
 
 
@@ -304,22 +307,29 @@ class TeamControlPlaneStore:
         self.state_path = self.state_dir / "team-state.json"
         self.events_path = self.state_dir / "team-events.jsonl"
         self.lock_path = self.state_dir / "team-state.lock"
+        state_documents.ensure_storage_config(self.state_path)
 
     # ------------------------------------------------------------------ locks
 
+    @contextmanager
     def _locked(self):
-        return _file_lock(self.lock_path)
+        with state_documents.document_lock(self.state_path), _file_lock(self.lock_path):
+            if database_configured():
+                with state_documents.connection() as conn, conn.transaction():
+                    yield
+            else:
+                yield
 
     # ------------------------------------------------------------------ state
 
     def state_file_exists(self) -> bool:
-        return self.state_path.is_file()
+        return state_documents.exists(self.state_path)
 
     def read(self) -> dict[str, object] | None:
-        if not self.state_path.is_file():
+        if not state_documents.exists(self.state_path):
             return None
         try:
-            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+            payload = state_documents.read_json(self.state_path)
         except (OSError, json.JSONDecodeError) as exc:
             raise TeamControlPlaneError("Team control-plane state could not be read") from exc
         return _sanitize_team_state(payload)
@@ -353,6 +363,9 @@ class TeamControlPlaneStore:
             return state
 
     def _write_state(self, state: dict[str, object], *, durable: bool = False) -> None:
+        if database_configured():
+            state_documents.write_json(self.state_path, state, storage_root=self.workspace)
+            return
         self.state_dir.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", encoding="utf-8", dir=self.state_dir, delete=False) as handle:
             json.dump(state, handle, ensure_ascii=False, indent=2, sort_keys=True)
@@ -375,11 +388,12 @@ class TeamControlPlaneStore:
     # ----------------------------------------------------------------- events
 
     def read_events(self, *, limit: int | None = None, decision_id: str = "") -> list[dict[str, object]]:
-        if not self.events_path.is_file():
+        if not state_documents.exists(self.events_path):
             return []
         events: list[dict[str, object]] = []
         try:
-            lines = self.events_path.read_text(encoding="utf-8").splitlines()
+            lines = ([json.dumps(event) for event in state_documents.read_events(self.events_path)]
+                     if database_configured() else self.events_path.read_text(encoding="utf-8").splitlines())
         except OSError as exc:
             raise TeamControlPlaneError("Team decision ledger could not be read") from exc
         for line in lines:
@@ -398,6 +412,9 @@ class TeamControlPlaneStore:
 
     def _append_events(self, events: list[dict[str, object]]) -> None:
         if not events:
+            return
+        if database_configured():
+            state_documents.append_events(self.events_path, events, storage_root=self.workspace)
             return
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
         with self.events_path.open("a", encoding="utf-8") as handle:
@@ -421,6 +438,9 @@ class TeamControlPlaneStore:
             if event_id not in existing_ids:
                 pending.append(event)
                 existing_ids.add(event_id)
+        if database_configured():
+            state_documents.append_events(self.events_path, pending, storage_root=self.workspace)
+            return
         previous = self.events_path.read_bytes() if self.events_path.exists() else b""
         separator = b"\n" if previous and not previous.endswith(b"\n") else b""
         addition = "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in pending).encode("utf-8")

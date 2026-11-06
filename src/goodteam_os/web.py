@@ -27,6 +27,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 from goodteam_os import context as project_context
+from goodteam_os.database import provider_environment
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.debate import default_debate_dispatch, run_gate_debate
 from goodteam_os.dispatch import (
@@ -134,6 +135,8 @@ from goodteam_os.staging import (
     delivery_contract_report,
     run_staging_backend,
 )
+from goodteam_os import state_documents
+from goodteam_os.database import database_configured
 from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
 from goodteam_os.tasks import (
     LocalTaskStore,
@@ -1272,6 +1275,7 @@ def _run_readonly_command(command: list[str], workspace: Path, warnings: list[st
         return subprocess.run(
             command,
             cwd=workspace,
+            env=provider_environment(),
             capture_output=True,
             text=True,
             timeout=DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS,
@@ -1473,6 +1477,7 @@ def _ensure_dispatch_worktree(workspace: Path, *, name: str, branch: str) -> Pat
         subprocess.run(
             ["git", "worktree", "add", str(worktree), "-b", branch, "main"],
             cwd=workspace,
+            env=provider_environment(),
             check=True,
         )
     _link_dispatch_worktree_venv(workspace, worktree)
@@ -2064,6 +2069,7 @@ def run_gated_server_action(
         result = subprocess.run(
             argv,
             cwd=root,
+            env=provider_environment(),
             capture_output=True,
             text=True,
             timeout=SERVER_ACTION_TIMEOUT_SECONDS,
@@ -2588,7 +2594,9 @@ def build_goal_history(workspace: Path, project_key: str, *, limit: int = 20, be
 
     key = normalize_project_key(project_key)
     _project_config_for_key(workspace, key)
-    if not (workspace / "state" / "goals.sqlite3").is_file():
+    from goodteam_os.goals import goal_store_exists
+
+    if not goal_store_exists(workspace):
         if before:
             raise ProjectApiError("invalid_goal_page", "Unknown Goal history cursor.", 400)
         return {"goals": [], "next_before": "", "project_key": key}
@@ -2698,7 +2706,7 @@ def _task_ledger_from_state(state: AgileDevState | None) -> Path | None:
     if not path:
         return None
     ledger = Path(path)
-    if ledger.name != "tasks.json" or not ledger.is_file():
+    if ledger.name != "tasks.json" or not state_documents.exists(ledger):
         return None
     return ledger
 
@@ -2948,7 +2956,7 @@ def _run_git_project_command(
             result = subprocess.run(
                 command,
                 cwd=root_path,
-                env=env,
+                env=provider_environment(env),
                 capture_output=True,
                 text=True,
                 timeout=GIT_INIT_SUBPROCESS_TIMEOUT_SECONDS,
@@ -3554,16 +3562,12 @@ def is_active_run(state: AgileDevState | None) -> bool:
 def _latest_archived_run_summary(workspace: Path, project_key: str) -> dict[str, str]:
     key = normalize_project_key(project_key)
     archive_dir = StateStore(workspace).project_state_dir(key) / "archived"
-    if not archive_dir.is_dir():
+    if not database_configured() and not archive_dir.is_dir():
         return {}
-    archived_paths = sorted(
-        archive_dir.glob("*.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
+    archived_paths = state_documents.paths(archive_dir, newest_first=True)
     for path in archived_paths:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = state_documents.read_json(path)
         except (OSError, json.JSONDecodeError):
             continue
         return {
@@ -3608,7 +3612,7 @@ def build_project_run_history(workspace: Path, project_key: str) -> dict[str, ob
                 current,
                 status="active" if is_active_run(current) else "complete",
                 updated_at=datetime.fromtimestamp(
-                    current_path.stat().st_mtime,
+                    state_documents.modified_time(current_path),
                     tz=UTC,
                 ).isoformat(),
             )
@@ -3619,7 +3623,7 @@ def build_project_run_history(workspace: Path, project_key: str) -> dict[str, ob
             _run_projection(
                 state,
                 status="archived",
-                updated_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+                updated_at=datetime.fromtimestamp(state_documents.modified_time(path), tz=UTC).isoformat(),
                 reason=reason,
             )
         )
@@ -3643,7 +3647,7 @@ def build_project_run_detail(
         summary = _run_projection(
             state,
             status=status,
-            updated_at=datetime.fromtimestamp(current_path.stat().st_mtime, tz=UTC).isoformat(),
+            updated_at=datetime.fromtimestamp(state_documents.modified_time(current_path), tz=UTC).isoformat(),
         )
     else:
         archived = next(
@@ -3666,7 +3670,7 @@ def build_project_run_detail(
         summary = _run_projection(
             state,
             status="archived",
-            updated_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+            updated_at=datetime.fromtimestamp(state_documents.modified_time(path), tz=UTC).isoformat(),
             reason=path.stem.removeprefix(f"{state.run_id}-"),
         )
     project_config = _project_config_for_key(workspace, key)
@@ -5870,9 +5874,9 @@ def _project_configs_from_state_sources(workspace: Path) -> list[Path]:
     paths: list[Path] = []
     seen_keys: set[str] = set()
     for state_projects_dir in state_dirs:
-        if not state_projects_dir.is_dir():
+        if not state_projects_dir.is_dir() and not database_configured():
             continue
-        for current_path in state_projects_dir.glob("*/current.json"):
+        for current_path in state_documents.paths(state_projects_dir, "*/current.json"):
             project_name = current_path.parent.name
             if project_name in seen_keys:
                 continue

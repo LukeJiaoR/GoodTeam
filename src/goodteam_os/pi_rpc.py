@@ -66,7 +66,9 @@ class PiRpcProcess:
         self.cwd = cwd
         self.stderr_path = stderr_path
         self.on_record = on_record
-        self.env = env
+        from goodteam_os.database import provider_environment
+
+        self.env = provider_environment(env)
         self.process: subprocess.Popen[bytes] | None = None
         self._write_lock = threading.Lock()
         self._pending_lock = threading.Lock()

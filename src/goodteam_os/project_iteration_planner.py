@@ -223,8 +223,9 @@ def _require_planning_idle(workspace: Path, project_key: str) -> None:
         continuation = TaskAssistantSessionStore(workspace, project_key).read().get("project_continuation") or {}
         if linked_parent(workspace, project_key, continuation_id=continuation.get("id")) is None:
             raise ValueError("Finish or stop the active workflow before selecting another iteration.")
-    goal_db = workspace / "state" / "goals.sqlite3"
-    if goal_db.is_file():
+    from goodteam_os.goals import goal_store_exists
+
+    if goal_store_exists(workspace):
         from goodteam_os.goals import GoalStore
 
         if GoalStore(workspace, project_key).list_goals(active_only=True):

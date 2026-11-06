@@ -180,7 +180,7 @@ def _correction_admission(tmp_path, source, job_id, binary, native_home):
     return TrustedCodexCorrectionAdmission(_private_json(tmp_path / "correction-policy.json", policy))
 
 
-def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(tmp_path, monkeypatch):
+def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(tmp_path, monkeypatch, delivery_handoff=None):
     from goodteam_os.project_iteration_quality import (
         advance_project_batch_quality,
         prepare_project_batch_quality,
@@ -299,7 +299,10 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
     git(source, "merge", "--quiet", "--no-edit", "--no-ff", final_head)
     delivery = dict(run_id=batch["run_id"], candidate_commit=final_head, landed_commit=git(source, "rev-parse", "HEAD"),
                     reviewed=True, confirmed=True)
-    accept_project_batch_delivery(**scope, request=delivery)
+    if delivery_handoff is None:
+        accept_project_batch_delivery(**scope, request=delivery)
+    else:
+        delivery_handoff(tmp_path, source, config, delivery)
     assert all(task["status"] == "done" and task["delivery_verified"]
                and task["delivery_receipt"]["candidate_commit"] == final_head for task in ledger.list_tasks())
     saved_calls, saved_checks = calls.read_bytes(), checks.read_bytes()

@@ -9,6 +9,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from goodteam_os import state_documents
+from goodteam_os.database import database_configured
+
 if os.name == "nt":
     import msvcrt
 
@@ -73,6 +76,7 @@ class DurableOperatorQueue:
         self.events_path = self.root / "events.ndjson"
         self.lock_path = self.root / "queue.lock"
         self.clock = clock
+        state_documents.ensure_storage_config(self.state_path)
 
     def enqueue(
         self,
@@ -159,7 +163,7 @@ class DurableOperatorQueue:
         decisions must continue to use the locked methods above.
         """
 
-        if not self.state_path.is_file():
+        if not state_documents.exists(self.state_path):
             return None
         state = self._read_state_file()
         active = self._active_items(state)
@@ -322,6 +326,16 @@ class DurableOperatorQueue:
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
+        with state_documents.document_lock(self.state_path):
+            if database_configured():
+                with state_documents.connection() as conn, conn.transaction():
+                    yield
+            else:
+                with self._file_locked():
+                    yield
+
+    @contextmanager
+    def _file_locked(self) -> Iterator[None]:
         self.root.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("a+b") as lock_file:
             if os.name == "nt":
@@ -343,7 +357,7 @@ class DurableOperatorQueue:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _read_state_unlocked(self) -> dict[str, Any]:
-        if not self.state_path.exists():
+        if not state_documents.exists(self.state_path):
             return {
                 "schema_version": QUEUE_SCHEMA_VERSION,
                 "desired_state": "running",
@@ -354,7 +368,7 @@ class DurableOperatorQueue:
 
     def _read_state_file(self) -> dict[str, Any]:
         try:
-            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+            value = state_documents.read_json(self.state_path)
         except (OSError, json.JSONDecodeError) as exc:
             raise QueueCorruptionError(f"operator queue is malformed: {exc}") from exc
         self._validate_state(value)
@@ -444,6 +458,9 @@ class DurableOperatorQueue:
         self._write_state_unlocked(state)
 
     def _append_event_unlocked(self, event: Mapping[str, Any]) -> None:
+        if database_configured():
+            state_documents.append_events(self.events_path, [dict(event)], storage_root=self.root.parent)
+            return
         self.root.mkdir(parents=True, exist_ok=True)
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(dict(event), sort_keys=True, separators=(",", ":")) + "\n")
@@ -451,6 +468,9 @@ class DurableOperatorQueue:
             os.fsync(handle.fileno())
 
     def _write_state_unlocked(self, state: Mapping[str, Any]) -> None:
+        if database_configured():
+            state_documents.write_json(self.state_path, dict(state), storage_root=self.root.parent)
+            return
         self.root.mkdir(parents=True, exist_ok=True)
         temporary = self.state_path.with_name(f"{self.state_path.name}.{os.getpid()}.tmp")
         with temporary.open("w", encoding="utf-8") as handle:

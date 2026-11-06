@@ -398,6 +398,7 @@ def _manager_chat_task(text: str) -> str:
             "When the user says the idea/draft is not specific enough, continue discovery with concrete missing decisions. Do not defend the previous readiness judgment or repeat the same draft. Resolve short follow-up answers using the preceding question and retain the earlier goal and constraints.",
             "Use intent project_understanding for a broad request to inspect or explain the current project.",
             "Use intent project_question for a factual question about the current project (Git, framework, files, commands). Answer it directly using read-only inspection or supplied evidence; do not start preparation or propose a task.",
+            "Only when the server context explicitly supplies fresh continuation operations, continuation questions and proposals may use intent project_operation with project_operation containing exactly kind (explain, confirm_delivery or stop_continuation) and target_id (the exact continuation id). Follow the server context's operation contract. These interpretations are proposals, never proof that an action was applied. Without that context, use the normal intents.",
             "Resolve short references such as 'it', 'this', '它' or '他' to the current project when conversation context supports that reading. For example '他有git吗' asks whether this project uses Git, not whether a Worker can operate Git.",
             "For project_question, inspect the current checkout when evidence is missing, using read-only tools. For Git presence use git rev-parse --is-inside-work-tree; do not initialize, fetch, commit, or modify the repository. If inspection is unavailable, say what could not be verified instead of guessing.",
             "Ask a clarifying question only when a materially different interpretation remains after using the project and recent conversation context. Do not append execution-confirmation boilerplate to factual answers.",
@@ -446,9 +447,16 @@ def _parse_chat_turn(output: str, *, require_task_intake: bool = True) -> dict[s
         raise ManagerExecutionError("The configured Task Assistant did not return a structured chat response.")
     intent = str(payload.get("intent", "") or "").strip()
     response = str(payload.get("response", "") or "").strip()
-    if intent not in {"work_request", "project_understanding", "project_question", "team_management", "ambiguous"} or not response or len(response) > 4_000:
+    if intent not in {"work_request", "project_understanding", "project_question", "team_management", "project_operation", "ambiguous"} or not response or len(response) > 4_000:
         raise ManagerExecutionError("The configured Task Assistant returned an invalid structured chat response.")
     parsed: dict[str, object] = {"intent": intent, "response": response}
+    if intent == "project_operation":
+        operation = payload.get("project_operation")
+        if (not isinstance(operation, dict) or set(operation) != {"kind", "target_id"}
+                or operation.get("kind") not in {"explain", "confirm_delivery", "stop_continuation"}
+                or not isinstance(operation.get("target_id"), str) or len(operation["target_id"]) > 256):
+            raise ManagerExecutionError("The Task Assistant returned an invalid project operation.")
+        parsed["project_operation"] = operation
     if intent == "work_request" and require_task_intake and "task_intake" not in payload:
         raise ManagerExecutionError("The Task Assistant did not assess whether the task is ready to draft.")
     if intent in {"work_request", "ambiguous"} and "task_intake" in payload:

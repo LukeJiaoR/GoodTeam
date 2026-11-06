@@ -14,6 +14,7 @@ from goodteam_os.execution.github import (
     GitHubIssueNotFound,
     GitHubIssueSnapshot,
 )
+from goodteam_os.database import provider_environment
 from goodteam_os.execution.models import GitHubBinding
 from goodteam_os.projects import load_project_target
 
@@ -441,7 +442,7 @@ class GhCliGitHubClient:
             raise
 
     def _text(self, command: list[str]) -> str:
-        result = subprocess.run(command, cwd=self.cwd, capture_output=True, check=False, text=True)
+        result = subprocess.run(command, cwd=self.cwd, env=provider_environment(), capture_output=True, check=False, text=True)
         if result.returncode != 0:
             message = (result.stderr or result.stdout).strip()
             raise GitHubCLIError(message or f"GitHub CLI exited with {result.returncode}")
@@ -453,6 +454,7 @@ def _repository_identity(project_root: Path) -> str:
         return ""
     result = subprocess.run(
         ["git", "-C", str(project_root), "remote", "get-url", "origin"],
+        env=provider_environment(),
         capture_output=True,
         check=False,
         text=True,

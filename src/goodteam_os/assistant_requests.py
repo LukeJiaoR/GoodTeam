@@ -13,10 +13,19 @@ from goodteam_os.manager_execution import ManagerExecutionError
 from goodteam_os.project_readiness import assess_project_mode
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.state import normalize_project_key
+from goodteam_os import state_documents
+from goodteam_os.database import database_configured
 
 
 @contextmanager
 def conversation_lock(store):
+    with state_documents.document_lock(store.path.with_suffix(".operation.lock"), blocking=False):
+        with _file_conversation_lock(store):
+            yield
+
+
+@contextmanager
+def _file_conversation_lock(store):
     path = store.path.with_suffix(".operation.lock")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as lock:
@@ -109,10 +118,17 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
         try:
             snapshot = runtime_snapshot(service.project_config)
             attempt_id = worker_attempt_id(project_key, message_id, attempt)
-            result = continue_conversation(
-                service, store=store, project_key=project_key, root=root,
-                text=text, message_id=message_id, attempt_id=attempt_id, context_run_id=context_run_id,
-            )
+            result = None
+            if not context_run_id and database_configured():
+                from goodteam_os.manager_dialogue import run_dialogue
+
+                result = run_dialogue(service, store=store, project_key=project_key, root=root,
+                                      text=text, message_id=message_id, attempt_id=attempt_id)
+            if result is None:
+                result = continue_conversation(
+                    service, store=store, project_key=project_key, root=root,
+                    text=text, message_id=message_id, attempt_id=attempt_id, context_run_id=context_run_id,
+                )
             if result is None:
                 result = service._send_message(project_key=project_key, root=root, text=text,
                                                message_id=message_id, attempt_id=attempt_id)

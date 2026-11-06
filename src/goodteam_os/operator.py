@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
+from goodteam_os.database import provider_environment
 from goodteam_os.execution import ExecutionAPI
 from goodteam_os.execution.automatic_review import AutomaticCandidateReviewService, MACHINE_SCHEMA
 from goodteam_os.execution.candidate_probe import probe_candidate
@@ -976,6 +977,7 @@ class LocalOperatorActions:
         subprocess.run(
             ["git", "push", "origin", f"{head}:refs/heads/{branch}"],
             cwd=worktree,
+            env=provider_environment(),
             capture_output=True,
             check=True,
             text=True,
