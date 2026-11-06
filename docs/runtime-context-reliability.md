@@ -48,31 +48,25 @@ The existing project-iteration, outcome-discovery and recovery checks remain the
 two-round execution/learning regression boundary. These fixtures do not claim
 real-model prioritization acceptance, merge authority or deployment evidence.
 
-Local checks use the working-tree patch on base
-`16e0d57415deeeaf80e17c60645677820b21ef97`:
+Local verification uses base `d4ddab5e35bb528b04261d51b7827de4233e8e29`
+and tested source `2155eb68316cbe0835e9c5edac3f4133f22e8559`. The final
+follow-up commit changes this verification record only.
 
-- The three new regression cases failed on the original implementation. The
-  Worker checks now pass for both transports; the context regeneration case
-  passes with a same-size/same-mtime source edit.
-- `PYTHONPATH=src .venv/bin/python -m pytest tests/test_execution_sandbox_integration.py -q --tb=short`:
-  3 passed after updating its process double to accept and assert the new
-  `start_new_session` transport argument.
-- `npm --prefix frontend test` with Node 24.22.1: 12 Node and 313 Vitest checks
-  passed. Frontend lint and build passed; existing bundle-size and ineffective
-  dynamic-import warnings remain.
-- `.venv/bin/ruff check src/goodteam_os tests/` and `git diff --check`: passed.
-- `env -u GOODTEAM_DATABASE_URL -u GOODTEAM_TEST_DATABASE_URL PYTHONPATH=src .venv/bin/python -m pytest tests -q --tb=short`:
-  409 passed, 12 skipped, 1 failed in 536.03 seconds, with 8 existing fork
-  deprecation warnings. The only failure was the sandbox test double's old
-  signature described above. Its three-case file passed after that test-only
-  repair; production code was unchanged. This is a full run plus a focused
-  repair check, not one completely green full-suite invocation. The two-round
-  continuation, outcome-discovery and recovery scenarios passed in this run.
+- The three new regression cases failed on the original implementation. Both
+  timeout transports and same-size/same-mtime cache regeneration now pass.
+- `env -u GOODTEAM_DATABASE_URL -u GOODTEAM_TEST_DATABASE_URL PYTHONPATH=src python -m pytest tests -q --tb=short`:
+  **410 passed, 16 skipped**, 8 existing fork deprecation warnings, 548.03 seconds.
+  The existing two-round continuation, outcome-discovery and recovery scenarios
+  passed. The sandbox process double now accepts and asserts `start_new_session`.
+- Node 24.22.1: `npm --prefix frontend test` passed (12 Node and 314 Vitest checks).
+  `npm --prefix frontend run lint` and `npm --prefix frontend run build` passed;
+  existing bundle-size and ineffective dynamic-import warnings remain.
+- `ruff check src/goodteam_os tests/` and `git diff --check`: passed.
 
-The 12 PostgreSQL integration cases require a dedicated disposable database and are
-skipped when `GOODTEAM_TEST_DATABASE_URL` is absent. The test command unsets the
-production DB setting to keep all other checks inside disposable workspaces.
-No paid provider or deployed browser smoke is required for these backend-only
+The 16 PostgreSQL integration cases require a dedicated disposable database and
+are skipped when `GOODTEAM_TEST_DATABASE_URL` is absent. The test command unsets
+the production DB setting to keep all other checks inside disposable workspaces.
+No paid provider or deployed browser smoke was run for these backend-only
 changes; the process regression uses actual local offline tool processes.
 GitHub CI remains paused; no candidate publication or Actions dispatch is part
-of this change.
+of this change. Local results do not claim remote CI or independent review.
