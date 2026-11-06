@@ -85,8 +85,8 @@ test('project Manager keeps chatting across tasks and saves future work without 
   await expect(composer).toHaveAttribute('data-continuity', 'same-project-composer');
   await expect(composer).toHaveValue('Explain the earlier task.');
   await expect(manager.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0);
-  await page.getByRole('link', { name: 'Projects', exact: true }).click();
-  await expect(page.locator('.projects-page')).toBeVisible();
+  await page.getByRole('link', { name: 'Team', exact: true }).click();
+  await expect(page.locator('.team-page')).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(new RegExp(`/runs/${firstRun}$`));
   await expect(composer).toHaveValue('Explain the earlier task.');

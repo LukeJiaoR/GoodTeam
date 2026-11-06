@@ -16,7 +16,6 @@ export default function ResponsibilityGroup({ group, children, forceOpen, expans
           <ChevronDown aria-hidden="true" size={18} />
           <span>
             <strong>{label}</strong>
-            <span className="team-responsibility__description">{t(`team.groups.${group.key}.description`)}</span>
             <small>{t('team.groups.counts', { roles: group.roles.length, workers: rosteredWorkerCount(group.roles) })}</small>
           </span>
         </button>
