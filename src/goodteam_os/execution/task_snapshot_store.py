@@ -33,8 +33,11 @@ _REQUEST_FIELDS = (
 
 
 def _job_binding(snapshot: TaskExecutionSnapshot, job: dict[str, Any]) -> bytes:
+    request = {key: job.get(key) for key in _REQUEST_FIELDS}
+    if "provider_connection" in job:
+        request["provider_connection"] = job["provider_connection"]
     return canonical_bytes({"snapshot": snapshot.reference,
-                            "request": {key: job.get(key) for key in _REQUEST_FIELDS}})
+                            "request": request})
 
 
 def host_return_record(snapshot, dispatch, status, output_digest):

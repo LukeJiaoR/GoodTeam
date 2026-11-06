@@ -19,6 +19,9 @@ def runtime_snapshot(config):
         "model": _model_name(_configured_manager_model(target)),
         "reasoning_depth": settings.get("reasoning_depth", "default"),
     }
+    if public["provider"] == "codex":
+        from goodteam_os.providers import ProviderStore
+        public["provider_connection"] = ProviderStore().capture()
     encoded = json.dumps({**public, "settings": settings}, sort_keys=True).encode()
     return {**public, "fingerprint": hashlib.sha256(encoded).hexdigest()}
 

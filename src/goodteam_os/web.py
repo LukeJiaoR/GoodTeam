@@ -6200,6 +6200,13 @@ def handle_project_api_get(
     from goodteam_os.skills.review_api import handle_review_get
     from goodteam_os.task_input_context import handle_task_input_get
 
+    if path == "/api/providers":
+        from goodteam_os.providers import ProviderStore
+        return 200, ProviderStore().view()
+    if path == "/api/providers/usage":
+        from goodteam_os.provider_usage import usage_summary
+        return 200, usage_summary()
+
     task_input_response = handle_task_input_get(workspace, path)
     if task_input_response is not None:
         return task_input_response
@@ -6348,6 +6355,14 @@ def handle_project_api_post(
 ) -> tuple[int, dict[str, object]] | None:
     from goodteam_os.skills.codex_runtime import review_worker_kwargs
     from goodteam_os.skills.review_api import handle_review_post
+
+    if path in {"/api/providers", "/api/providers/models"}:
+        from goodteam_os.providers import ProviderStore, ProviderError
+        try:
+            store = ProviderStore()
+            return 200, store.fetch_models(request) if path.endswith("/models") else store.update(request)
+        except ProviderError as exc:
+            raise ProjectApiError(exc.code, str(exc), exc.status) from None
 
     review_response = handle_review_post(workspace, path, request, **review_worker_kwargs(codex_review_admission))
     if review_response is not None:
@@ -7008,9 +7023,23 @@ def _is_skill_api_post_path(path: str) -> bool:
     return path in {"/api/skills/local/preview", "/api/skills/local/install"}
 
 
+def _check_provider_http_request(handler, path):
+    if path not in {"/api/providers", "/api/providers/models"}:
+        return
+    client = ipaddress.ip_address(str(handler.client_address[0]))
+    if not client.is_loopback or not _protected_execution_origin_is_trusted(
+        origin=str(handler.headers.get("Origin", "")), request_host=str(handler.headers.get("Host", "")),
+        server_host=str(handler.server.server_address[0]), server_port=handler.server.server_port,
+        fetch_site=str(handler.headers.get("Sec-Fetch-Site", "")),
+    ):
+        raise ProjectApiError("same_origin_required", "Configure providers from the local GoodTeam origin.", 403)
+    if str(handler.headers.get("Content-Type", "")).split(";", 1)[0].strip().lower() != "application/json":
+        raise ProjectApiError("json_content_type_required", "Provider requests require application/json.", 415)
+
+
 def _is_project_api_post_path(path: str) -> bool:
     return bool(
-        path in {"/api/projects/import", "/api/settings"}
+        path in {"/api/projects/import", "/api/settings", "/api/providers", "/api/providers/models"}
         or re.fullmatch(
             r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions|attachments)|team/commands)",
             path,
@@ -8362,6 +8391,11 @@ def serve(
 
         def do_POST(self) -> None:
             project_path = urlparse(self.path).path
+            try:
+                _check_provider_http_request(self, project_path)
+            except ProjectApiError as exc:
+                self._send_api_error(exc)
+                return
             is_project_path = _is_project_api_post_path(project_path)
             is_skill_path = _is_skill_api_post_path(project_path)
             normalized_path = project_path
