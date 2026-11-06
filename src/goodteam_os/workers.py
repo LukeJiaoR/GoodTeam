@@ -619,8 +619,8 @@ def _run_command_in_pty(
 
     Returns ``(returncode, stdout, stderr)``. With a single PTY the child's stdout
     and stderr are merged onto one stream, so the returned stderr is always "".
-    The accumulated output has ANSI escape codes stripped. On timeout the child is
-    killed and ``subprocess.TimeoutExpired`` is raised with the partial output, so
+    The accumulated output has ANSI escape codes stripped. On timeout the owned
+    process group is stopped before ``subprocess.TimeoutExpired`` is raised, so
     callers can reuse their existing timeout handling.
     """
     master_fd, slave_fd = pty.openpty()
@@ -633,6 +633,7 @@ def _run_command_in_pty(
         stderr=slave_fd,
         text=False,
         close_fds=True,
+        start_new_session=True,
     )
     os.close(slave_fd)
     if process_input is not None and proc.stdin is not None:
@@ -647,7 +648,6 @@ def _run_command_in_pty(
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
-                proc.kill()
                 output = _strip_terminal_control(b"".join(chunks).decode("utf-8", errors="replace"))
                 raise subprocess.TimeoutExpired(command, timeout_seconds, output=output)
             ready, _, _ = select.select([master_fd], [], [], min(remaining, 1.0))
@@ -661,16 +661,20 @@ def _run_command_in_pty(
             if not data:
                 break
             chunks.append(data)
+        returncode = proc.wait(timeout=max(deadline - time.time(), 0))
+    except subprocess.TimeoutExpired as exc:
+        from goodteam_os.skills.review_process import _terminate
+
+        _terminate(proc)
+        output = _strip_terminal_control(b"".join(chunks).decode("utf-8", errors="replace"))
+        raise subprocess.TimeoutExpired(command, timeout_seconds, output=output) from exc
     finally:
         try:
             os.close(master_fd)
         except OSError:
             pass
-    try:
-        returncode = proc.wait(timeout=max(deadline - time.time(), 1.0))
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        returncode = proc.wait()
+        if proc.stdin is not None:
+            proc.stdin.close()
     text = b"".join(chunks).decode("utf-8", errors="replace")
     return returncode, _strip_terminal_control(text), ""
 
@@ -2793,7 +2797,7 @@ class WorkerJobStore:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    **({"start_new_session": True} if correction else {}),
+                    start_new_session=True,
                 )
                 running_extra = {**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds, "pid": process.pid}
                 self._write_status(
@@ -2828,7 +2832,16 @@ class WorkerJobStore:
             stdout_path.write_text(partial_stdout, encoding="utf-8")
             stderr_path.write_text(safe_output(_timeout_text(exc.stderr)), encoding="utf-8")
             if process is not None and not correction:
-                process.kill()
+                from goodteam_os.skills.review_process import _terminate
+
+                # Do not publish a terminal result or permit retry until the
+                # tools launched by this ordinary Worker have also stopped.
+                try:
+                    _terminate(process)
+                finally:
+                    for stream in (process.stdin, process.stdout, process.stderr):
+                        if stream is not None:
+                            stream.close()
             summary = f"{label} timed out after {timeout_seconds} seconds."
             result_path.write_text(
                 f"# Worker Result\n\nStatus: failed\n\n{summary}\n",
