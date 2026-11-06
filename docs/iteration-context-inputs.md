@@ -66,3 +66,27 @@ and limits. This is a byte boundary, not a model token estimate or a dollar cap.
 
 GitHub CI remains paused. PostgreSQL integration requires a dedicated disposable
 test database; production database configuration is never used for these checks.
+
+## Local verification
+
+Pinned base: `e99fdc90077ab04a52d405f6b7bd404d786f0c9d` (#675).
+Tested backend source: `ad9c0712f0f1ebfce0dccf70bae1cbb0635814be`.
+The follow-up commit updates this verification record only.
+
+- `env -u GOODTEAM_DATABASE_URL -u GOODTEAM_TEST_DATABASE_URL PYTHONPATH=src python -m pytest tests -q --tb=short`:
+  **414 passed, 16 skipped**, 8 existing fork deprecation warnings, 553.38 seconds.
+  This final run includes the legacy reservation upgrade guard and both distinct
+  project-iteration execution/learning scenarios.
+- The focused planner/continuity/outcome run passed 15 cases; the subsequent
+  legacy-reservation and existing continuation run passed 3 cases before the
+  final full run. The new input regressions reproduced the earlier failures.
+- Node 24.22.1: `npm --prefix frontend test` passed (12 Node + 314 Vitest checks).
+  `npm --prefix frontend run lint` and `npm --prefix frontend run build` passed,
+  with existing bundle-size and dynamic-import warnings. These frontend checks
+  ran at `7c85abc5f5715c496cf0ebd53057c2b0302dee7b`; the final reservation guard
+  changes only backend code, its test and documentation.
+- `ruff check src/goodteam_os tests/` and `git diff --check`: passed.
+
+The 16 skipped cases need a dedicated disposable PostgreSQL database. No paid
+provider or deployed-browser smoke was run. These local results are not remote
+CI or independent review evidence.
