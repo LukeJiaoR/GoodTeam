@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
@@ -1062,24 +1061,6 @@ def _approval_artifact(item: Mapping[str, Any]) -> str:
             "",
         ]
     )
-
-
-def _structured_review_result(path: Path) -> dict[str, Any] | None:
-    if not path.is_file():
-        return None
-    text = path.read_text(encoding="utf-8", errors="replace")
-    decoder = json.JSONDecoder()
-    candidates: list[dict[str, Any]] = []
-    for index, character in enumerate(text):
-        if character != "{":
-            continue
-        try:
-            value, _end = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict) and value.get("verdict") in {"approve", "request_changes", "escalate"}:
-            candidates.append(value)
-    return candidates[-1] if candidates else None
 
 
 def _contract_requirements(contract):

@@ -1710,17 +1710,6 @@ def _digest_json(value: object) -> str:
     return f"sha256:{hashlib.sha256(_canonical_json(value)).hexdigest()}"
 
 
-def _digest_bytes(value: bytes | list[bytes]) -> str:
-    digest = hashlib.sha256()
-    if isinstance(value, bytes):
-        digest.update(value)
-    else:
-        for item in value:
-            digest.update(len(item).to_bytes(8, "big"))
-            digest.update(item)
-    return f"sha256:{digest.hexdigest()}"
-
-
 def _increment(counts: dict[str, int], reason: str) -> None:
     counts[reason] = counts.get(reason, 0) + 1
 

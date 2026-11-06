@@ -48,89 +48,6 @@
   transform: translateY(0);
 }
 
-.product-shell .product-chrome {
-  position: sticky;
-  z-index: 20;
-  top: 0;
-  background: color-mix(in srgb, var(--product-bg) 92%, transparent);
-  border-bottom: 1px solid var(--product-border);
-  backdrop-filter: blur(14px);
-}
-
-.product-shell .product-chrome__inner {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 2rem;
-  align-items: center;
-  width: min(100% - 3rem, 76rem);
-  min-height: 64px;
-  margin: 0 auto;
-}
-
-.product-shell .product-brand {
-  display: inline-flex;
-  gap: 0.65rem;
-  align-items: center;
-  color: var(--product-text);
-  font-weight: 680;
-  letter-spacing: -0.015em;
-  text-decoration: none;
-}
-
-.product-shell .product-brand__mark {
-  display: inline-grid;
-  width: 1.8rem;
-  height: 1.8rem;
-  place-items: center;
-  color: var(--product-on-accent);
-  background: var(--product-accent-strong);
-  border-radius: 6px;
-  font-size: 0.8rem;
-  font-weight: 760;
-}
-
-.product-shell .product-preferences {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.product-shell .product-language-control select,
-.product-shell .product-appearance-control {
-  min-height: 36px;
-  color: var(--product-text);
-  background: var(--product-surface);
-  border: 1px solid var(--product-border);
-  border-radius: 7px;
-  font: inherit;
-  font-size: 0.82rem;
-}
-
-.product-shell .product-language-control select {
-  padding: 0 1.9rem 0 0.65rem;
-  cursor: pointer;
-}
-
-.product-shell .product-appearance-control {
-  display: inline-flex;
-  gap: 0.45rem;
-  align-items: center;
-  padding: 0 0.7rem;
-  cursor: pointer;
-}
-
-.product-shell .product-language-control select:hover,
-.product-shell .product-appearance-control:hover {
-  background: var(--product-surface-muted);
-}
-
-.product-shell .product-language-control select:focus-visible,
-.product-shell .product-appearance-control:focus-visible,
-.product-shell .product-brand:focus-visible {
-  outline: 3px solid var(--product-focus);
-  outline-offset: 2px;
-}
-
 .product-shell .product-not-found {
   display: grid;
   width: min(100% - 2rem, 38rem);
@@ -844,22 +761,6 @@
   .product-shell .product-inline-notice {
     flex-direction: column;
   }
-
-  .product-shell .product-chrome__inner {
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.75rem;
-    width: min(100% - 2rem, 42rem);
-    padding: 0.7rem 0;
-  }
-
-  .product-shell .product-preferences {
-    grid-column: 1 / -1;
-    justify-content: flex-end;
-  }
-
-  .product-shell .product-appearance-control span {
-    display: none;
-  }
 }
 
 @media (max-width: 767px) {
@@ -1409,7 +1310,6 @@
 }
 
 @media (max-width: 767px) {
-  .product-shell .product-chrome__inner { grid-template-columns: auto minmax(0, 1fr); }
   .product-shell .product-page { width: min(100% - 2rem, 42rem); padding: 2rem 0 3rem; }
   .product-shell .product-page-header { flex-direction: column; }
   .product-shell .product-page-header__meta { justify-content: flex-start; }
@@ -1424,8 +1324,6 @@
 }
 
 @media (max-width: 480px) {
-  .product-shell .product-chrome__inner { width: calc(100% - 1.25rem); }
-  .product-shell .product-brand > span:last-child { display: none; }
   .product-shell .review-editor-actions,
   .product-shell .review-decision-panel .product-button { width: 100%; }
   .product-shell .review-editor-actions { flex-direction: column; }
@@ -1848,16 +1746,6 @@
 /* Shared project chrome and material: workspaceSurface.css. */
 
 /* Project launcher: a direct entry into the Team and Work experience. */
-.product-shell--projects .product-chrome__inner {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
-.product-shell--projects .product-brand__mark {
-  width: 2.35rem;
-  height: 2.35rem;
-  border-radius: 8px;
-}
-
 .product-shell--projects .projects-page {
   width: min(100% - 3rem, 76rem);
   padding: clamp(2.5rem, 7vw, 5rem) 0 5rem;
@@ -2144,18 +2032,6 @@
 }
 
 @media (max-width: 640px) {
-  .product-shell--projects .product-chrome__inner {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .product-shell--projects .product-chrome__spacer { display: none; }
-
-  .product-shell--projects .product-preferences {
-    grid-column: auto;
-  }
-
-  .product-shell--projects .product-language-control { display: none; }
-
   .product-shell--projects .projects-page {
     width: min(100% - 1.5rem, 42rem);
     padding: 2.2rem 0 3rem;

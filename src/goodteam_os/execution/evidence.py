@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from goodteam_os.execution.evidence_manifest import build_evidence_manifest
+from goodteam_os.execution.evidence_manifest_extractors import ci_summary, merge_summary, review_summary
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.memory_provenance import (
     PROVENANCE_HORIZON,
@@ -87,9 +88,9 @@ class ExecutionEvidenceService:
             "issue": issue,
             "pr": _pr_ref(pr_repo, pr_number),
             "events": [_json_ready(event) for event in events],
-            "ci_summary": _ci_summary(events),
-            "review_summary": _review_summary(events),
-            "merge_summary": _merge_summary(events),
+            "ci_summary": ci_summary(events),
+            "review_summary": review_summary(events),
+            "merge_summary": merge_summary(events),
             "final_status": _final_status(run, pr_number, events),
             "timestamp": _evidence_timestamp(run, events),
         }
@@ -189,49 +190,15 @@ def _first_payload_value(events: list[LedgerEvent], key: str) -> object | None:
             return event.payload[key]
     return None
 
-def _ci_summary(events: list[LedgerEvent]) -> dict[str, Any]:
-    for event in reversed(events):
-        if event.payload.get("transition") == "ci_observed":
-            summary = event.payload.get("summary")
-            return dict(summary) if isinstance(summary, dict) else {}
-    return {}
-
-def _review_summary(events: list[LedgerEvent]) -> dict[str, Any]:
-    states: list[str] = []
-    reviews = comments = 0
-    for event in events:
-        transition = event.payload.get("transition")
-        if transition == "review_recorded":
-            reviews += 1
-            state = str(event.payload.get("review_state", "")).strip()
-            if state and state not in states:
-                states.append(state)
-        elif transition == "pr_comment_recorded":
-            comments += 1
-    return {"reviews": reviews, "comments": comments, "states": states}
-
-
-def _merge_summary(events: list[LedgerEvent]) -> dict[str, Any]:
-    for event in reversed(events):
-        if event.payload.get("transition") == "merge_completed":
-            return {
-                "merged": True,
-                "merged_at": event.payload.get("merged_at", ""),
-                "merge_commit_sha": event.payload.get("merge_commit_sha", ""),
-                "merged_by": event.payload.get("merged_by", ""),
-            }
-    return {"merged": False, "merged_at": "", "merge_commit_sha": "", "merged_by": ""}
-
-
 def _final_status(run: Any, pr_number: int | None, events: list[LedgerEvent]) -> str:
     if run.status is ExecutionRunStatus.FAILED:
         return "failed"
     if pr_number is None:
         return "pending"
-    ci = _ci_summary(events)
+    ci = ci_summary(events)
     if ci.get("state") == "failure":
         return "failed"
-    if run.status is ExecutionRunStatus.SUCCEEDED and _merge_summary(events)["merged"]:
+    if run.status is ExecutionRunStatus.SUCCEEDED and merge_summary(events)["merged"]:
         return "completed"
     return "pending"
 

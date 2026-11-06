@@ -232,18 +232,6 @@ def _wait_until_ready(process: subprocess.Popen[bytes], ready_path: Path, ready_
     return False
 
 
-def _terminate_process(process: subprocess.Popen[bytes]) -> None:
-    try:
-        process.terminate()
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=STOP_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
-
-
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
         return
