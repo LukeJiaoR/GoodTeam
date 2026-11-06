@@ -6,6 +6,39 @@ import './providerSettings.css';
 const emptyDraft = () => ({ id: '', agent: 'codex', protocol: 'responses', name: '', base_url: '', api_key: '', model: '' });
 const number = (value) => value == null ? '—' : new Intl.NumberFormat().format(value);
 
+function MemoryRetrievalSettings({ settings, disabled, label, onSave }) {
+  const [providerId, setProviderId] = useState(settings.embeddings?.provider_id || '');
+  const [model, setModel] = useState(settings.embeddings?.model || '');
+  const [models, setModels] = useState([]);
+  const [fetching, setFetching] = useState(false);
+  const [error, setError] = useState('');
+  const fetchModels = async () => {
+    setFetching(true); setError('');
+    try { setModels((await fetchProviderModels({ id: providerId })).models); }
+    catch (failure) { setError(failure.message); }
+    finally { setFetching(false); }
+  };
+  return <form className="provider-settings__form" aria-label={label('memoryTitle')} onSubmit={(event) => {
+    event.preventDefault(); onSave({ provider_id: providerId, model });
+  }}>
+    <h3>{label('memoryTitle')}</h3><p>{label('memoryHint')}</p>
+    <fieldset disabled={disabled || fetching}>
+      <div className="provider-settings__fields">
+        <label>{label('memoryProvider')}<select value={providerId} onChange={(event) => {
+          setProviderId(event.target.value); setModel(''); setModels([]); setError('');
+        }}><option value="">{label('memoryDisabled')}</option>{settings.providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>
+        <label>{label('embeddingModel')}<input required={Boolean(providerId)} disabled={!providerId} maxLength={200} list="memory-embedding-models" value={model} placeholder={label('modelPlaceholder')} onChange={(event) => setModel(event.target.value)} /><datalist id="memory-embedding-models">{models.map((value) => <option key={value} value={value} />)}</datalist></label>
+      </div>
+      {providerId ? <p><small>{label('memoryDataHint')}</small></p> : null}
+      {error ? <p className="provider-settings__error" role="alert">{error}</p> : null}
+      <div className="provider-settings__actions">
+        <button type="submit" className="product-button">{label('saveMemory')}</button>
+        <button type="button" className="product-button product-button--secondary" disabled={!providerId} onClick={fetchModels}>{label(fetching ? 'fetchingModels' : 'fetchModels')}</button>
+      </div>
+    </fieldset>
+  </form>;
+}
+
 export default function ProviderSettings({ t }) {
   const [settings, setSettings] = useState(null);
   const [usage, setUsage] = useState(null);
@@ -53,7 +86,7 @@ export default function ProviderSettings({ t }) {
       const updated = await updateProvider({ action, expected_revision: settings.revision, ...values });
       setSettings(updated); setDeleting('');
       if (action === 'save') { setDraft(null); setClearKey(false); setModels(null); }
-      setNotice(label(action === 'activate' ? 'activated' : action === 'delete' ? 'deleted' : 'saved'));
+      setNotice(label(action === 'configure_embeddings' ? 'memorySaved' : action === 'activate' ? 'activated' : action === 'delete' ? 'deleted' : 'saved'));
     } catch (failure) { setError(failure.message); }
     finally { setPending(''); }
   };
@@ -88,7 +121,7 @@ export default function ProviderSettings({ t }) {
         <div className="provider-settings__identity"><strong>{provider.name}</strong>{active === provider.id ? <span className="provider-settings__badge">{label('active')}</span> : null}<p>{provider.base_url}</p>{provider.id ? <small>OpenAI Responses · {provider.model || label('inheritModel')} · {label(provider.has_api_key ? 'keyStored' : 'noKey')}</small> : null}</div>
         <div className="provider-settings__actions">
           {active !== provider.id ? <button type="button" className="product-button product-button--secondary" disabled={disabled} onClick={() => mutate('activate', { id: provider.id, agent: 'codex' })}>{label('activate')}</button> : null}
-          {provider.id ? <><button type="button" className="product-button product-button--secondary" disabled={disabled} onClick={() => edit(provider)}>{label('edit')}</button><button type="button" className="provider-settings__text-button" disabled={disabled || active === provider.id} onClick={() => setDeleting(provider.id)}>{label('delete')}</button></> : null}
+          {provider.id ? <><button type="button" className="product-button product-button--secondary" disabled={disabled} onClick={() => edit(provider)}>{label('edit')}</button><button type="button" className="provider-settings__text-button" disabled={disabled || active === provider.id || settings.embeddings?.provider_id === provider.id} onClick={() => setDeleting(provider.id)}>{label('delete')}</button></> : null}
         </div>
         {deleting === provider.id && provider.id ? <div className="provider-settings__delete"><p>{label('deleteHint')}</p><button className="product-button" type="button" disabled={disabled} onClick={() => mutate('delete', { id: provider.id })}>{label('confirmDelete')}</button><button className="product-button product-button--secondary" type="button" onClick={() => setDeleting('')}>{label('cancel')}</button></div> : null}
       </article>)}
@@ -109,6 +142,7 @@ export default function ProviderSettings({ t }) {
         <div className="provider-settings__actions"><button type="submit" className="product-button">{label(pending === 'save' ? 'saving' : 'save')}</button><button type="button" className="product-button product-button--secondary" onClick={() => { setDraft(null); setModels(null); }}>{label('cancel')}</button></div>
       </fieldset>
     </form> : null}
+    {settings ? <MemoryRetrievalSettings key={settings.revision} settings={settings} disabled={disabled} label={label} onSave={(values) => mutate('configure_embeddings', values)} /> : null}
     {usage ? <div className="provider-settings__usage">
       <h3>{label('usage')}</h3><p>{label('usageHint')}</p>
       <dl className="provider-settings__totals">{['total_tokens', 'input_tokens', 'cached_input_tokens', 'output_tokens'].map((key) => <div key={key}><dt>{label(key)}</dt><dd>{number(usage.totals[key])}</dd></div>)}</dl>
