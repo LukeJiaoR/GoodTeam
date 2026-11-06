@@ -69,6 +69,7 @@ export const WORK_CONTEXT_TARGETS = {
   preparation: { tab: 'manager', selector: '.team-attention[data-kind="project_preparation"]' },
   draft: { tab: 'manager', selector: '.team-task-proposal' },
   recovery: { tab: 'manager', selector: '.assistant-request' },
+  continuation: { tab: 'manager', selector: '.project-continuation-controls' },
   composer: { tab: 'manager', selector: '.team-manager-dock textarea, .work-start-panel textarea' },
   outcomes: { tab: 'outcomes', selector: '.team-pane--outcomes' },
   execution: { tab: 'execution', selector: '.team-pane--execution' },

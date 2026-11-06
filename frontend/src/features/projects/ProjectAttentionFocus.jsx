@@ -47,6 +47,8 @@ export default function ProjectAttentionFocus({ selection, projectKey, runId, da
         isCurrent: () => current.current?.focusKey === focusKey,
         matches: (node) => result.item.source === 'assistant'
           ? node.dataset.proposalId === result.item.target_id
+          : result.item.source === 'continuation'
+            ? node.dataset.continuationId === result.item.target_id && node.dataset.noticeId === result.item.id
           : result.item.source === 'readiness'
             ? result.target === 'projectMode' ? node.dataset.attentionId === 'project-mode'
               : `readiness:${node.dataset.attentionId?.slice('project-preparation:'.length)}` === result.item.id

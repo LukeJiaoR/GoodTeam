@@ -442,7 +442,12 @@ class TaskAssistantSessionStore:
             lock_descriptor = os.open(self.lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
             try:
                 fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
-                session = operation(self.read())
+                from goodteam_os.project_continuation_notice import append_continuation_notice, project_continuation_notice
+
+                session = self.read()
+                previous_notice = project_continuation_notice(session)
+                session = operation(session)
+                append_continuation_notice(session, previous_notice, created_at=_now())
                 from goodteam_os.context_continuity import compact_conversation
 
                 # Derived and persisted under the same atomic write as its

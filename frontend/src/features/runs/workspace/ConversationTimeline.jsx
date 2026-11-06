@@ -4,6 +4,7 @@ import MarkdownView from '../../../components/ui/MarkdownView';
 import ProjectUnderstandingReply from './ProjectUnderstandingReply';
 import { timelineCopy } from './timelineCopy';
 import { deliveryLabel } from './conversationFeedback';
+import { focusWorkContext } from './currentWorkContext';
 
 function TeamAvatar({ label, manager = false }) {
   const initial = String(label || '').trim().slice(0, 1).toUpperCase() || 'G';
@@ -28,7 +29,7 @@ const SYSTEM_TIMELINE_EVENTS = new Set([
 ]);
 
 
-function TimelineItem({ item, language, t }) {
+function TimelineItem({ item, language, t, continuationNoticeId }) {
   const itemTimestamp = item.timestamp || item.created_at || '';
   const timestamp = Date.parse(itemTimestamp);
   const formatted = Number.isFinite(timestamp)
@@ -36,6 +37,7 @@ function TimelineItem({ item, language, t }) {
     : '';
   const actorLabel = item.actor === 'user' ? t('work.manager.you') : t('work.manager.name');
   const copy = timelineCopy(item, t);
+  const isContinuationHandoff = item.event === 'project_continuation_handoff' && item.details?.phase;
   const isSystem = item.actor === 'system' || (item.actor !== 'user' && SYSTEM_TIMELINE_EVENTS.has(item.event));
   const metadata = formatted ? <details className="conversation-message-details">
     <summary aria-label={`${actorLabel} · ${formatted}`} title={formatted}><Ellipsis size={16} aria-hidden="true" /></summary>
@@ -60,11 +62,15 @@ function TimelineItem({ item, language, t }) {
       <div className="team-manager-event__bubble">
         <strong className="sr-only">{actorLabel}</strong>
         {item.actor === 'user' ? <p>{copy}</p> : <MarkdownView content={copy} interactive language={language} />}
-        {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
+        {item.content && item.event !== 'mission_requested' && !isContinuationHandoff && copy !== item.content ? (
           ['project_understanding_ready', 'project_understanding_incomplete'].includes(item.event)
             ? <ProjectUnderstandingReply content={item.content} scan={item.details?.inventory_scan} t={t} />
             : <MarkdownView content={item.content} interactive language={language} />
         ) : null}
+        {isContinuationHandoff && continuationNoticeId && item.details?.id === continuationNoticeId ? <button type="button"
+          onClick={event => focusWorkContext(event.currentTarget.closest('.product-work-page'), 'continuation', {
+            matches: node => node.dataset.noticeId === continuationNoticeId,
+          })}>{t('work.manager.continuation.open')}</button> : null}
         <div className="team-manager-event__meta">
           {item.delivery_status ? <span role="status">{deliveryLabel(language, item.delivery_status)}</span> : null}
           {metadata}

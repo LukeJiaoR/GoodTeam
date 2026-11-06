@@ -225,7 +225,10 @@ export default function ProjectContinuationControls({ snapshot, session, project
   const statusLabel = value?.discovery && value.reason === 'discovery_no_followup'
     ? (zh ? '本次未发现后续任务' : 'No follow-up proposed') : labels[value?.status] || value?.status;
 
-  return <section aria-label={zh ? '项目自动迭代' : 'Automatic project iteration'}>
+  return <section className="project-continuation-controls" tabIndex={-1}
+    data-continuation-id={value?.id} data-notice-id={session?.project_continuation_notice?.id}
+    data-needs-input={Boolean(session?.project_continuation_notice?.kind)}
+    aria-label={zh ? '项目自动迭代' : 'Automatic project iteration'}>
     <details className="project-iteration-suggestion" open={Boolean(value)}>
       <summary>{zh ? '项目自动迭代' : 'Automatic project iteration'}{value ? ` · ${statusLabel}` : ''}</summary>
       {value ? <>
@@ -243,9 +246,10 @@ export default function ProjectContinuationControls({ snapshot, session, project
           </> : null}
         </> : null}
         {value.status !== 'active' && value.reason ? <p role="status">{reasons[value.reason] || value.reason}</p> : null}
-        {active ? <button type="button" disabled={disabled} onClick={() => onAction({
+        {active || session?.project_continuation_notice?.kind && value.status !== 'stopped' ? <button type="button" disabled={disabled} onClick={() => onAction({
           action: 'stop_project_continuation', continuation_id: value.id,
-        })}>{zh ? '停止后续迭代' : 'Stop future iterations'}</button> : null}
+        })}>{active ? (zh ? '停止后续迭代' : 'Stop future iterations')
+          : (zh ? '保留结果并结束' : 'Keep results and finish')}</button> : null}
       </> : null}
       {!active && tasks.length > 0 ? <ContinuationStartForm tasks={tasks} snapshot={snapshot} value={value}
         onAction={onAction} disabled={disabled} canStart={canStart} zh={zh} /> : null}

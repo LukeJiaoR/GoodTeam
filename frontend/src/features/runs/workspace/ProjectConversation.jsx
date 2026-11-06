@@ -26,7 +26,12 @@ function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, 
     return text.length > 140 ? `${text.slice(0, 139)}…` : text;
   };
   const viewPendingItems = () => {
-    if (hasPendingItems) reading.inspect(conversationRef.current?.querySelector('.project-conversation-attention'));
+    if (hasPendingItems) {
+      const root = conversationRef.current?.closest('.product-work-page');
+      const continuation = root?.querySelector('.project-continuation-controls[data-needs-input="true"]');
+      if (continuation) focusWorkContext(root, 'continuation');
+      else reading.inspect(conversationRef.current?.querySelector('.project-conversation-attention'));
+    }
   };
   return <>
       {reading.paused ? <div className="project-conversation-follow" role="region" aria-label={copy.label}>
@@ -92,14 +97,16 @@ export default function ProjectConversation({
   onClearContext,
 }) {
   const requestStatus = Object.values(assistantState?.assistant_requests || {}).find((request) => request.status !== 'succeeded')?.status;
+  const continuationNotice = iterationSession?.project_continuation_notice;
   const responding = ['message', 'retry_message'].includes(assistantBusy) || assistantState?.status === 'running' || requestStatus === 'running';
   const needsAttention = ['failed', 'interrupted'].includes(requestStatus)
-    || ['pending', 'stale', 'failed'].includes(assistantState?.pending_team_decision?.status);
+    || ['pending', 'stale', 'failed'].includes(assistantState?.pending_team_decision?.status)
+    || Boolean(continuationNotice?.kind);
   const managerTone = responding ? 'active' : needsAttention ? 'warning' : 'neutral';
   const managerStatus = t(responding ? 'assistant.project.responding' : needsAttention ? 'assistant.project.needsAttention' : 'assistant.project.available');
   const deliveryKey = (timeline || []).find((item) => item.delivery_status === 'sending')?.id || '';
   const scope = readingScope(projectKey, mission);
-  const hasPendingItems = Boolean((attention && !(attention.kind === 'blocker' && executionRunning))
+  const hasPendingItems = Boolean(continuationNotice?.kind || (attention && !(attention.kind === 'blocker' && executionRunning))
     || needsAttention || Object.values(assistantState?.assistant_requests || {}).some(request => ['failed', 'interrupted'].includes(request.status))
     || (proposedTask?.needs_clarification && !proposedTask.run_id && proposedTask.status !== 'cancelled'));
   const attentionKey = JSON.stringify([
@@ -108,6 +115,7 @@ export default function ProjectConversation({
     Object.entries(assistantState?.assistant_requests || {}).filter(([, request]) => ['failed', 'interrupted'].includes(request.status))
       .map(([id, request]) => [id, request.status, request.attempt]).sort(),
     proposedTask?.needs_clarification ? [proposedTask.id, proposedTask.revision] : [],
+    continuationNotice?.kind ? continuationNotice.id : '',
   ]);
 
   return (
@@ -148,7 +156,8 @@ export default function ProjectConversation({
         <>
             {error && !(error.code === 'manager_execution_failed' && requestStatus) ? <ProductError error={error} t={t} /> : null}
             <ol className="team-manager-timeline" aria-label={t('assistant.project.history')}>
-              {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t} />)}
+              {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t}
+                continuationNoticeId={continuationNotice?.id} />)}
               {Object.entries(assistantState?.assistant_requests || {}).filter(([, request]) => request.status === 'running').map(([id, request]) => (
                 <AssistantPendingReply key={`${id}:${request.attempt}`} request={request} t={t} />
               ))}
