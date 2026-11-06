@@ -422,7 +422,7 @@
 .product-shell .projects-path-input {
   display: flex;
   min-width: 0;
-  min-height: 40px;
+  min-height: var(--product-control-height, 40px);
   align-items: center;
   gap: 0.55rem;
   padding: 0 0.7rem;
@@ -440,7 +440,7 @@
 .product-shell .projects-path-controls input {
   width: 100%;
   min-width: 0;
-  min-height: 38px;
+  min-height: calc(var(--product-control-height, 40px) - 2px);
   padding: 0;
   color: var(--product-text);
   background: transparent;
@@ -448,7 +448,7 @@
   outline: 0;
   font: inherit;
   font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
-  font-size: 0.84rem;
+  font-size: var(--studio-text-control, 0.84rem);
 }
 
 .product-shell .projects-path-controls input::placeholder {
@@ -464,6 +464,8 @@
   outline: 3px solid var(--product-focus);
   outline-offset: 2px;
 }
+
+.product-shell .projects-path-controls input:focus-visible { outline: 0; }
 
 .product-shell .projects-path-input[data-invalid="true"] {
   border-color: var(--product-danger);
@@ -1967,17 +1969,17 @@
 
 .projects-import-dialog__header {
   display: flex;
-  gap: 1.5rem;
+  gap: 12px;
   align-items: flex-start;
   justify-content: space-between;
-  padding: 1.35rem 1.4rem 1.15rem;
+  padding: 16px;
   border-bottom: 1px solid var(--product-border);
 }
 
 .projects-import-dialog__header h2 {
   margin: 0;
-  font-size: 1.15rem;
-  font-weight: 680;
+  font-size: var(--product-heading-size, 16px);
+  font-weight: 550;
 }
 
 .projects-import-dialog__header p:last-child {
@@ -2015,7 +2017,7 @@
 .projects-import-dialog__body {
   display: grid;
   gap: 1rem;
-  padding: 1.4rem;
+  padding: 16px;
 }
 
 .projects-import-dialog .projects-path-controls {
@@ -2026,7 +2028,7 @@
   display: flex;
   gap: 0.65rem;
   justify-content: flex-end;
-  padding: 1rem 1.4rem;
+  padding: 12px 16px;
   background: color-mix(in srgb, var(--product-surface-muted) 45%, var(--product-surface));
   border-top: 1px solid var(--product-border);
 }
@@ -2058,11 +2060,6 @@
   }
 
   .project-launcher-row__activity { display: none; }
-
-  .project-launcher-row__action {
-    width: 2rem;
-    font-size: 0;
-  }
 
   .projects-import-backdrop {
     place-items: end center;

@@ -12,16 +12,18 @@
   --product-accent-soft: #efeffb;
   --product-focus: #6670d9;
   --product-radius: 12px;
-  --studio-text-small: .75rem;
-  --studio-text-control: .875rem;
-  --studio-text-body: .9375rem;
-  --product-heading-size: 1.5rem;
+  --studio-text-small: 12px;
+  --studio-text-control: 13px;
+  --studio-text-body: 14px;
+  --product-heading-size: 16px;
+  --product-control-height: 32px;
   --product-shadow: 0 3px 10px #23232c05, 0 12px 28px #23232c03;
   --product-sticky-offset: 4.5rem;
   display: grid;
   grid-template-columns: 202px minmax(0, 1fr);
   align-items: start;
   min-height: 100dvh;
+  font-size: var(--studio-text-body);
   letter-spacing: -.012em;
 }
 .dark .product-shell.product-shell--studio {
@@ -68,40 +70,38 @@
 .studio-topbar strong { color: var(--product-text); font-weight: 500; white-space: nowrap; }
 .studio-topbar__label { margin-left: auto; font-size: var(--studio-text-small); letter-spacing: .02em; }
 .product-shell.product-shell--studio :is(.projects-page, .product-knowledge-page, .team-page, .product-review-page, .studio-settings-page) { width: calc(100% - 64px); max-width: 1320px; padding: 28px 0 40px; margin-inline: auto; }
-.product-shell.product-shell--studio .product-page-heading { align-items: end; margin-bottom: 22px; gap: 16px; }
+.product-shell.product-shell--studio .product-page-heading { align-items: center; margin-bottom: 16px; gap: 12px; }
+.product-shell.product-shell--studio .product-page-heading__identity { flex-basis: auto; }
 .product-shell.product-shell--studio .product-page-heading__eyebrow { font-size: var(--studio-text-small); letter-spacing: .03em; margin-bottom: 8px; }
-.product-shell.product-shell--studio .product-page-heading h1 { font-size: var(--product-heading-size); line-height: 1.25; font-weight: 580; letter-spacing: -.035em; }
+.product-shell.product-shell--studio .product-page-heading h1 { font-size: var(--product-heading-size); line-height: 1.5; font-weight: 580; letter-spacing: normal; }
 .product-shell.product-shell--studio .product-page-heading__description { font-size: var(--studio-text-body); margin-top: 6px; max-width: 66ch; }
-.product-shell.product-shell--studio .product-button { min-height: 40px; gap: .5rem; border-radius: 8px; font-size: var(--studio-text-control); padding: 8px 14px; font-weight: 550; box-shadow: none; transform: none; }
+.product-shell.product-shell--studio .product-button { min-height: var(--product-control-height); gap: 6px; border-radius: 6px; font-size: var(--studio-text-control); padding: 5px 10px; font-weight: 500; box-shadow: none; transform: none; }
 .product-shell.product-shell--studio .product-button--primary,
 .product-shell.product-shell--studio button.product-button:not(.product-button--secondary):not(.product-button--danger) { background: var(--product-text); color: var(--product-surface); border-color: var(--product-text); }
 .product-shell.product-shell--studio .product-button--secondary { background: var(--product-surface); border-color: var(--product-border); color: var(--product-text); box-shadow: 0 1px 3px #00000004; }
-.product-shell.product-shell--studio .product-status-badge { border: 0; padding: 4px 9px; border-radius: 999px; font-size: var(--studio-text-small); font-weight: 500; }
-.product-shell.product-shell--studio .collection-toolbar { gap: 12px; }
-.product-shell.product-shell--studio .collection-search { max-width: 320px; min-height: 40px; border-radius: 8px; background: var(--product-surface); border-color: var(--product-border); }
-.product-shell.product-shell--studio .collection-search input { font-size: var(--studio-text-control); }
-.product-shell.product-shell--studio .collection-filters { gap: 3px; padding: 3px; background: var(--product-surface-muted); border-radius: 999px; }
-.product-shell.product-shell--studio .collection-filters button { min-height: 34px; padding: 4px 12px; border: 0; border-radius: 999px; font-size: var(--studio-text-small); color: var(--product-text-muted); background: transparent; }
-.product-shell.product-shell--studio .collection-filters button[aria-pressed=true] { background: var(--product-surface); color: var(--product-accent-strong); font-weight: 650; box-shadow: 0 1px 4px #0000000d; }
+.product-shell.product-shell--studio .product-status-badge { border: 0; padding: 2px 7px; border-radius: 5px; font-size: var(--studio-text-small); font-weight: 500; }
+.product-shell.product-shell--studio .collection-toolbar { gap: 8px; }
+.product-shell.product-shell--studio .collection-search { max-width: 320px; min-height: var(--product-control-height); border-radius: 6px; background: var(--product-surface); border-color: var(--product-border); }
+.product-shell.product-shell--studio .collection-search input { min-height: calc(var(--product-control-height) - 2px); padding: 0; font-size: var(--studio-text-control); }
+.product-shell.product-shell--studio .collection-search button { width: 28px; height: 28px; }
+.product-shell.product-shell--studio .collection-filters { gap: 4px; padding: 0; background: transparent; border-radius: 6px; }
+.product-shell.product-shell--studio .collection-filters button { display: inline-flex; align-items: center; gap: 6px; min-height: var(--product-control-height); padding: 4px 10px; border: 0; border-radius: 6px; font-size: var(--studio-text-control); color: var(--product-text-muted); background: transparent; }
+.product-shell.product-shell--studio .collection-filters button[aria-pressed=true] { background: var(--product-surface-muted); color: var(--product-text); font-weight: 500; box-shadow: none; }
+.collection-filter-count { color: var(--product-text-muted); font-size: var(--studio-text-small); font-variant-numeric: tabular-nums; }
 .product-shell.product-shell--studio .collection-count { font-size: var(--studio-text-small); }
-/* Projects: one project-led overview, then roomy workspace records. */
-.studio-project-overview { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin: 0 0 28px; }
-.studio-project-overview button { display: grid; grid-template-columns: 1fr auto; gap: 12px; text-align: left; border: 1px solid var(--product-border); border-radius: var(--product-radius); background: var(--product-surface); padding: 16px 18px; color: var(--product-text); cursor: pointer; box-shadow: var(--product-shadow); }
-.studio-project-overview button span { font-size: var(--studio-text-control); color: var(--product-text-muted); grid-column: 1/-1; }
-.studio-project-overview strong { font-size: 1.75rem; font-weight: 500; letter-spacing: -.05em; line-height: 1; }
-.studio-project-overview svg { align-self: end; color: var(--product-text-muted); }
-.studio-project-overview button[aria-pressed=true] { border-color: var(--product-accent); }
+/* Projects: a single collection; counts belong to filters and locations to rows. */
 .product-shell.product-shell--studio .projects-launcher { background: transparent; border: 0; box-shadow: none; }
-.product-shell.product-shell--studio .projects-launcher > .projects-launcher__heading { padding: 0 0 14px; background: transparent; }
-.product-shell.product-shell--studio .projects-launcher > .collection-toolbar { padding: 0 0 18px; border-bottom: 0; }
-.product-shell.product-shell--studio .projects-launcher-list { display: grid; gap: 12px; }
-.product-shell.product-shell--studio .project-launcher-entry { background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); overflow: hidden; box-shadow: var(--product-shadow); }
+.product-shell.product-shell--studio .projects-launcher > .collection-toolbar { padding: 0 0 12px; border-bottom: 0; }
+.product-shell.product-shell--studio .projects-launcher-list { display: grid; gap: 0; border: 1px solid var(--product-border); border-radius: 8px; overflow: hidden; }
+.product-shell.product-shell--studio .project-launcher-entry { background: var(--product-surface); border: 0; border-radius: 0; box-shadow: none; }
 .product-shell.product-shell--studio .project-launcher-entry + .project-launcher-entry { border-top: 1px solid var(--product-border); }
-.product-shell.product-shell--studio .project-launcher-row { min-height: 76px; padding: 16px 20px 12px; background: transparent; text-decoration: none; }
-.product-shell.product-shell--studio .project-launcher-row__icon { width: 38px; height: 38px; border-radius: 12px; background: var(--product-bg); }
-.product-shell.product-shell--studio .project-launcher-row__copy strong { font-size: 15px; font-weight: 550; }
-.product-shell.product-shell--studio .project-launcher-row__activity { padding: 5px 9px; border-radius: 999px; background: var(--product-bg); font-size: var(--studio-text-small); }
-.product-shell.product-shell--studio .project-launcher-entry > .file-location { margin-inline: 20px; padding-left: 51px; }
+.product-shell.product-shell--studio .project-launcher-row { grid-template-columns: 28px minmax(0,1fr) minmax(100px,auto) auto; gap: 8px; min-height: 40px; padding: 8px 12px 0; background: transparent; text-decoration: none; }
+.product-shell.product-shell--studio .project-launcher-row__icon { width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; }
+.product-shell.product-shell--studio .project-launcher-row__copy strong { font-size: var(--studio-text-body); font-weight: 550; white-space: normal; overflow-wrap: anywhere; }
+.product-shell.product-shell--studio .project-launcher-row__activity { justify-self: start; background: var(--product-bg); }
+.product-shell.product-shell--studio .project-launcher-row__action { font-size: var(--studio-text-control); }
+.product-shell.product-shell--studio .project-launcher-entry > .file-location { margin: 0 12px 4px; padding: 0 0 0 36px; }
+.product-shell.product-shell--studio .project-launcher-entry > .file-location > summary { min-height: 24px; padding: 2px 0; margin: 0; font-size: var(--studio-text-small); }
 /* Shared records and document surfaces. */
 .product-shell.product-shell--studio :is(.review-queue, .review-artifact, .review-inspector, .knowledge-intro, .knowledge-confirmed-facts, .knowledge-overview > .repository-overview, .knowledge-artifacts > aside, .knowledge-document, .knowledge-memory > aside, .knowledge-memory-workspace, .team-manager, .team-responsibility, .team-worker) { border-radius: var(--product-radius); border: 1px solid var(--product-border); background: var(--product-surface); box-shadow: var(--product-shadow); }
 .product-shell.product-shell--studio .team-summary { display: flex; flex-wrap: wrap; gap: 0; padding: 18px 8px; border: 1px solid var(--product-border); border-radius: 18px; background: var(--product-surface); box-shadow: var(--product-shadow); margin-bottom: 20px; }
@@ -322,19 +322,13 @@
   .studio-sidebar__footer .studio-navigation__link span { display: none; }
   .studio-topbar { height: 40px; padding: 0 16px; font-size: var(--studio-text-small); }
   .product-shell.product-shell--studio :is(.projects-page,.product-knowledge-page,.team-page,.product-review-page,.studio-settings-page) { width: calc(100% - 28px); padding: 24px 0 32px; }
-  .product-shell.product-shell--studio .product-page-heading { gap: 16px; margin-bottom: 22px; }
-  .product-shell.product-shell--studio .product-page-heading h1 { font-size: 1.5rem; }
+  .product-shell.product-shell--studio .product-page-heading { gap: 12px; margin-bottom: 16px; }
   .product-shell.product-shell--studio .product-page-heading__description { font-size: var(--studio-text-body); }
-  .studio-project-overview { gap: 8px; margin-bottom: 24px; }
-  .studio-project-overview button { padding: 14px 12px; border-radius: 14px; }
-  .studio-project-overview button span { font-size: var(--studio-text-small); }
-  .studio-project-overview strong { font-size: 25px; }
-  .studio-project-overview svg { display: none; }
   .product-shell.product-shell--studio .collection-search { max-width: none; }
-  .product-shell.product-shell--studio .project-launcher-row { padding: 16px; grid-template-columns: 32px minmax(0,1fr); gap: 10px; }
-  .product-shell.product-shell--studio .project-launcher-row__activity { grid-column: 2; justify-self: start; }
-  .product-shell.product-shell--studio .project-launcher-row__action { grid-column: 2; grid-row: 3; justify-self: start; }
-  .product-shell.product-shell--studio .project-launcher-entry > .file-location { padding-left: 43px; margin-inline: 16px; }
+  .product-shell.product-shell--studio .project-launcher-row { padding: 8px 12px 0; grid-template-columns: 28px minmax(0,1fr) auto; gap: 4px 8px; }
+  .product-shell.product-shell--studio .project-launcher-row__activity { grid-column: 2; grid-row: 2; justify-self: start; }
+  .product-shell.product-shell--studio .project-launcher-row__action { grid-column: 3; grid-row: 1 / 3; justify-self: end; padding-top: 0; }
+  .product-shell.product-shell--studio .project-launcher-row__action > span { display: none; }
   .product-shell.product-shell--studio .team-summary > div { flex-basis: 30%; padding: 8px 12px; border: 0; }
   .product-shell.product-shell--studio .knowledge-view-switcher { width: 100%; }
   .product-shell.product-shell--studio .knowledge-view-switcher button { flex: 1; min-width: 0; padding-inline: 8px; font-size: var(--studio-text-small); }
@@ -373,13 +367,11 @@
 /* Shared interaction feedback and reading ergonomics across product pages. */
 .product-shell--studio :is(h1, h2, h3) { text-wrap: balance; }
 .product-shell--studio :is(button, a, input, textarea, select, summary) { touch-action: manipulation; }
-.product-shell--studio :is(.studio-project-overview strong, .project-attention__counts dd, .team-summary strong) { font-variant-numeric: tabular-nums; }
+.product-shell--studio :is(.project-attention__counts dd, .team-summary strong) { font-variant-numeric: tabular-nums; }
 .product-shell--studio .product-button:disabled { opacity: .5; cursor: not-allowed; }
 .product-shell--studio .product-button:not(:disabled):hover { filter: brightness(.94); }
 .product-shell--studio .product-button--secondary:not(:disabled):hover { background: var(--product-surface-muted); border-color: var(--product-text-muted); filter: none; }
-.product-shell--studio .studio-project-overview button:hover { background: var(--product-accent-soft); }
-.product-shell--studio .project-launcher-entry:hover { border-color: var(--product-accent); }
-.product-shell--studio .project-launcher-row:hover { background: var(--product-accent-soft); }
+.product-shell--studio .project-launcher-entry:hover { background: var(--product-surface-muted); }
 .product-shell--studio [role="dialog"] { overscroll-behavior: contain; }
 @media (max-width: 767px) {
   .product-shell--studio .studio-sidebar { padding-top: max(10px, env(safe-area-inset-top)); }

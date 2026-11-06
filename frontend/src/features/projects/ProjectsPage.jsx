@@ -8,6 +8,7 @@ import { browseProjects, projectActivity } from './projectBrowse';
 import Button from '../../components/ui/Button';
 import PageState from '../../components/ui/PageState';
 import PageHeading from '../../components/ui/PageHeading';
+import StatusBadge from '../../components/ui/StatusBadge';
 import { translate } from '../../i18n';
 import { routes } from '../../lib/routing/routes';
 import LoadProjectPanel from './LoadProjectPanel';
@@ -55,6 +56,12 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
   const setQuery = value => updateBrowse({ q: value }, true);
   const setFilter = value => updateBrowse({ filter: value });
   const visibleProjects = browseProjects(projects, { query, filter });
+  const filters = ['all', 'attention_required', 'active'].map((key) => [
+    key,
+    t(key === 'all' ? 'collection.all' : `projects.lifecycle.${key}`),
+    status === 'ready' && (key !== 'attention_required' || projects.every(item => item.attention))
+      ? browseProjects(projects, { query: '', filter: key }).length : undefined,
+  ]);
 
   const closeImport = () => {
     setImportOpen(false);
@@ -70,9 +77,7 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
   return (
     <main id="main-content" className="projects-page">
       <PageHeading
-        eyebrow={t('projects.eyebrow')}
         title={t('projects.launcher.title')}
-        description={t('projects.launcher.description')}
         actions={(
           <Button id="projects-add-project" className="projects-add-button" onClick={() => setImportOpen(true)}>
             <Plus aria-hidden="true" size={17} />
@@ -81,30 +86,12 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
         )}
       />
 
-      {status === 'ready' && projects.length > 0 ? <section className="studio-project-overview" aria-label={t('product.studio.projectOverview')}>
-        {[
-          ['all', 'allProjects', projects.length],
-          ['attention_required', 'needAttention', projects.filter(item => projectActivity(item) === 'attention_required').length],
-          ['active', 'activeProjects', projects.filter(item => Boolean(item.active_run)).length],
-        ].filter(([key]) => key !== 'attention_required' || projects.every(item => item.attention)).map(([key, label, count]) => <button type="button" key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}><span>{t(`product.studio.${label}`)}</span><strong>{count}</strong><ArrowRight size={16} aria-hidden="true" /></button>)}
-      </section> : null}
-
-      <ProjectAttentionOverview projects={projects} status={status} onRefresh={refresh} t={t} />
-
       <section className="projects-launcher" aria-labelledby="projects-list-title">
-        <header className="projects-launcher__heading">
-          <div>
-            <h2 id="projects-list-title">{t('projects.launcher.workspaces')}</h2>
-            <p>{t('projects.launcher.workspacesDescription')}</p>
-          </div>
-          {hasProjects && projects.length > 0 ? (
-            <span>{t('projects.launcher.count', { count: projects.length })}</span>
-          ) : null}
-        </header>
+        <h2 id="projects-list-title" className="sr-only">{t('projects.launcher.workspaces')}</h2>
 
         {hasProjects && projects.length > 0 ? (
           <CollectionToolbar label={t('projects.search')} query={query} onQueryChange={setQuery}
-            filters={['all', 'attention_required', 'active'].map((key) => [key, t(key === 'all' ? 'collection.all' : `projects.lifecycle.${key}`)])}
+            filters={filters}
             selected={filter} onSelect={setFilter} count={visibleProjects.length} t={t} />
         ) : null}
         {hasProjects && projects.length > 0 && !visibleProjects.length ? (
@@ -137,6 +124,7 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
           <ul className="projects-launcher-list">
             {visibleProjects.map((item) => {
               const project = item.project;
+              const activity = projectActivity(item);
               return (
                 <li className="project-launcher-entry" key={project.project_key}>
                 <Link
@@ -149,24 +137,25 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
                   </span>
                   <span className="project-launcher-row__copy">
                     <strong>{project.display_name || project.project_key}</strong>
-                    <small>{t('projects.folderLabel', { name: fileName(project.root) })}</small>
                   </span>
-                  {status === 'ready' ? <span className="project-launcher-row__activity" data-state={projectActivity(item)}>
-                    {projectActivity(item) === 'active' ? <Play aria-hidden="true" size={13} /> : null}
-                    {t(projectActivity(item) === 'active' ? 'projects.launcher.active' : `projects.lifecycle.${projectActivity(item)}`)}
-                  </span> : null}
+                  {status === 'ready' ? <StatusBadge className="project-launcher-row__activity" data-state={activity}>
+                    {activity === 'active' ? <Play aria-hidden="true" size={13} /> : null}
+                    {t(activity === 'active' ? 'projects.launcher.active' : `projects.lifecycle.${activity}`)}
+                  </StatusBadge> : null}
                   <span className="project-launcher-row__action">
-                    {t('projects.launcher.enter')}
+                    <span>{t('projects.launcher.enter')}</span>
                     <ArrowRight aria-hidden="true" size={16} />
                   </span>
                 </Link>
-                <FileLocation path={project.root} t={t} />
+                <FileLocation path={project.root} label={t('projects.folderLabel', { name: fileName(project.root) })} t={t} />
                 </li>
               );
             })}
           </ul>
         ) : null}
       </section>
+
+      <ProjectAttentionOverview projects={projects} status={status} onRefresh={refresh} t={t} />
 
       {importOpen ? (
         <LoadProjectPanel
