@@ -50,7 +50,7 @@ def normalize_connection(request, previous=None):
     except ValueError:
         raise ProviderError("invalid_provider_url", "Use an HTTP(S) Base URL without credentials, query or fragment.") from None
     path = url.path.rstrip("/") or "/v1"
-    if path.endswith(("/responses", "/chat/completions", "/models")):
+    if path.endswith(("/responses", "/chat/completions", "/models", "/embeddings")):
         raise ProviderError("invalid_provider_url", "Enter the API base URL, such as https://api.example.com/v1.")
     model = _text(request.get("model", ""), "Model", 200, optional=True)
     if model and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", model) is None:
@@ -87,6 +87,12 @@ class ProviderStore:
                 assert normalize_connection(item) == {k: item[k] for k in normalize_connection(item)}
                 ids.add(item["id"])
             assert all(k == "codex" and v in ids for k, v in data["active"].items())
+            embedding = data.get("embeddings")
+            if embedding is not None:
+                assert set(embedding) == {"provider_id", "model", "revision"}
+                assert embedding["provider_id"] in ids
+                assert type(embedding["revision"]) is int and embedding["revision"] > 0
+                assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", embedding["model"])
             return data
         except (AssertionError, KeyError, ValueError, TypeError):
             raise ProviderError("provider_store_invalid", "GoodTeam provider settings are unreadable.", 500) from None
@@ -102,12 +108,21 @@ class ProviderStore:
         data = self.read()
         return {"configured": database_configured(), "storage": "postgresql",
                 "revision": data["revision"], "active": data["active"],
+                "embeddings": data.get("embeddings"),
                 "providers": [public_connection(p) for p in data["providers"]],
                 "agents": [{"id": "codex", "protocols": ["responses"]}]}
 
     def active(self, agent="codex"):
         data = self.read()
         return next((p for p in data["providers"] if p["id"] == data["active"].get(agent)), None)
+
+    def embedding_connection(self):
+        data = self.read()
+        setting = data.get("embeddings")
+        if setting is None:
+            return None
+        provider = next(p for p in data["providers"] if p["id"] == setting["provider_id"])
+        return {**provider, "model": setting["model"], "embedding_revision": setting["revision"]}
 
     def update(self, request):
         if not database_configured():
@@ -138,14 +153,30 @@ class ProviderStore:
                 else:
                     data["active"]["codex"] = identifier
             elif action == "delete" and previous:
-                if identifier in data["active"].values():
+                if identifier in data["active"].values() or identifier == (data.get("embeddings") or {}).get("provider_id"):
                     raise ProviderError("provider_in_use", "Switch the active provider before deleting it.", 409)
                 data["providers"] = [p for p in data["providers"] if p["id"] != identifier]
+            elif action == "configure_embeddings":
+                provider_id = request.get("provider_id", "")
+                if not isinstance(provider_id, str):
+                    raise ProviderError("invalid_provider", "Choose a saved embedding provider.")
+                if provider_id:
+                    if provider_id not in {p["id"] for p in data["providers"]}:
+                        raise ProviderError("provider_not_found", "Choose a saved embedding provider.", 404)
+                    model = _text(request.get("model", ""), "Embedding model", 200)
+                    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", model) is None:
+                        raise ProviderError("invalid_provider_model", "Enter a model identifier without spaces.")
+                    from goodteam_os.memory_embeddings import ensure_index
+                    ensure_index(conn)
+                    data["embeddings"] = {"provider_id": provider_id, "model": model, "revision": data["revision"] + 1}
+                else:
+                    data["embeddings"] = None
             else:
                 raise ProviderError("invalid_provider_action", "Unknown provider action.")
             data["revision"] += 1
             state_documents.write_json(self.path, data, storage_root=self.root)
             return {"configured": True, "storage": "postgresql", "revision": data["revision"], "active": data["active"],
+                    "embeddings": data.get("embeddings"),
                     "providers": [public_connection(p) for p in data["providers"]]}
 
     def capture(self):

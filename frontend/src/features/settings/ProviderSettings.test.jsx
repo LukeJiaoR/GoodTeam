@@ -34,7 +34,7 @@ test('fetches a model, saves and activates a provider, and preserves an undisclo
   await user.type(screen.getByLabelText('Provider name'), 'Test API');
   await user.type(screen.getByLabelText('Base URL', { exact: false }), 'https://api.example.com/v1');
   await user.type(screen.getByLabelText('API Key', { exact: false }), 'fixture-only-key');
-  await user.click(screen.getByRole('button', { name: 'Fetch models' }));
+  await user.click(within(screen.getByRole('form', { name: 'Add provider' })).getByRole('button', { name: 'Fetch models' }));
   await user.selectOptions(await screen.findByLabelText('Choose a fetched model'), 'model-b');
   await user.click(screen.getByRole('button', { name: 'Save provider' }));
   await screen.findByText('Provider saved. Choose Use provider to activate it.');
@@ -48,4 +48,37 @@ test('fetches a model, saves and activates a provider, and preserves an undisclo
   await user.click(screen.getByRole('button', { name: 'Save provider' }));
   await screen.findByText('Provider saved. Choose Use provider to activate it.');
   expect(updateProvider.mock.lastCall[0]).not.toHaveProperty('api_key');
+});
+
+test('selects an embedding model on a saved connection without switching the coding provider', async () => {
+  const user = userEvent.setup();
+  let state = { configured: true, revision: 3, active: { codex: 'coding' }, embeddings: null,
+    providers: [{ id: 'coding', name: 'Coding API', model: 'coding-model', base_url: 'https://coding.example/v1' },
+      { id: 'local', name: 'Local embeddings', model: '', base_url: 'http://localhost:11434/v1' }] };
+  getProviders.mockResolvedValue(state);
+  getProviderUsage.mockResolvedValue({ totals: { invocations: 0, reported_invocations: 0 }, by_model: [] });
+  fetchProviderModels.mockResolvedValue({ models: ['multilingual-embedding'] });
+  updateProvider.mockImplementation(async (request) => {
+    state = { ...state, revision: state.revision + 1, embeddings: request.provider_id
+      ? { provider_id: request.provider_id, model: request.model } : null };
+    return state;
+  });
+  render(<ProviderSettings t={t} />);
+  let form = await screen.findByRole('form', { name: 'Project memory retrieval' });
+  await user.selectOptions(within(form).getByLabelText('Memory provider'), 'local');
+  await user.click(within(form).getByRole('button', { name: 'Fetch models' }));
+  expect(fetchProviderModels).toHaveBeenLastCalledWith({ id: 'local' });
+  await user.type(within(form).getByLabelText('Embedding model'), 'multilingual-embedding');
+  await user.click(within(form).getByRole('button', { name: 'Save memory retrieval' }));
+  await screen.findByText(en['providers.memorySaved']);
+  expect(updateProvider.mock.lastCall[0]).toEqual({ action: 'configure_embeddings', expected_revision: 3,
+    provider_id: 'local', model: 'multilingual-embedding' });
+  expect(within(screen.getByRole('article', { name: 'Coding API' })).getByText('Active')).toBeVisible();
+  expect(within(screen.getByRole('article', { name: 'Local embeddings' })).getByRole('button', { name: 'Delete' })).toBeDisabled();
+  form = screen.getByRole('form', { name: 'Project memory retrieval' });
+  await user.selectOptions(within(form).getByLabelText('Memory provider'), '');
+  await user.click(within(form).getByRole('button', { name: 'Save memory retrieval' }));
+  await screen.findByText(en['providers.memorySaved']);
+  expect(updateProvider.mock.lastCall[0].provider_id).toBe('');
+  expect(within(screen.getByRole('article', { name: 'Coding API' })).getByText('Active')).toBeVisible();
 });

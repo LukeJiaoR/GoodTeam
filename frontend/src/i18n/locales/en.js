@@ -1,4 +1,12 @@
 export const en = {
+  "providers.memoryTitle": "Project memory retrieval",
+  "providers.memoryHint": "Choose an embedding model independently of the coding model. Requires pgvector in GoodTeam PostgreSQL and an embeddings endpoint on the selected provider.",
+  "providers.memoryProvider": "Memory provider",
+  "providers.memoryDisabled": "Keep existing memory retrieval",
+  "providers.embeddingModel": "Embedding model",
+  "providers.memoryDataHint": "New task pickups send the query and eligible role memory from that project to this service. The index updates on demand; saving these settings starts a new index. Embedding usage is not included in the Codex totals below.",
+  "providers.saveMemory": "Save memory retrieval",
+  "providers.memorySaved": "Memory retrieval saved. New pickups use these settings; existing task inputs remain captured.",
   "providers.title": "Agent providers",
   "providers.description": "Choose the API connection for Codex across GoodTeam projects. New tasks use the active provider.",
   "providers.refresh": "Refresh",
