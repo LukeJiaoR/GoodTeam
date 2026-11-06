@@ -137,7 +137,8 @@ def _packet(workspace, project_key, root, value, outcome):
                                      if task["id"] in value["task_ids"] and task["status"] == "done"
                                      and task.get("delivery_verified") is True],
         "backlog": snapshot, "verified_outcome": outcome,
-        "allowed_source_refs": refs, "repository_understanding": _project_evidence(Path(workspace), project_key, Path(root)),
+        "allowed_source_refs": refs,
+        "repository_understanding": _project_evidence(Path(workspace), project_key, Path(root), inspect_missing=True),
         "memory_pickup": RoleMemoryStore(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
     packet["packet_digest"] = _digest(packet)
     return packet
