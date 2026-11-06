@@ -1,3 +1,11 @@
+> 2026-11-07 follow-up: PR #674 established a tighter workbench baseline. See
+> [cross-page alignment context](plans/2026-11-07-compact-ui-alignment.md) and
+> [Issue #677](https://github.com/LukeJiaoR/GoodTeam/issues/677) for the pending migration.
+> The composition and verification results below describe the earlier redesign;
+> they are not evidence that the new density targets have been applied across pages.
+> Current CI policy is in `AGENTS.md`; the owner-directed CI pause supersedes the
+> historical candidate-publication instructions below.
+
 ## User goal
 Redesign the whole GoodTeam product toward https://www.beautifului.dev/, rather than retaining the existing visual style and making small adjustments. The previously merged shared material and execution inspector work are useful functionality, but do not satisfy this visual redesign.
 
