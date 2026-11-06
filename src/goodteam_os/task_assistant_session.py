@@ -56,6 +56,7 @@ class TaskAssistantSessionStore:
         actor: str,
         content: str,
         run_id: str = "",
+        attachments: list[dict] | None = None,
     ) -> dict[str, object]:
         identifier = str(message_id).strip()
         if not identifier or actor not in {"user", "task_assistant", "system"} or not str(content).strip():
@@ -65,6 +66,8 @@ class TaskAssistantSessionStore:
             timeline = list(session["timeline"])
             existing = next((item for item in timeline if item.get("message_id") == identifier), None)
             expected = {"actor": actor, "content": str(content), "run_id": str(run_id)}
+            if attachments is not None:
+                expected["attachments"] = attachments
             if existing is not None:
                 if all(existing.get(key) == value for key, value in expected.items()):
                     return session

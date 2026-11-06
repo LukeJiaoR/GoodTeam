@@ -52,6 +52,9 @@ export const startRun = (body, options) => jsonPost('/api/start', body, options)
 export const sendTaskAssistantMessage = (projectKey, body, options) => jsonPost(
   `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/messages`, body, options,
 );
+export const uploadConversationAttachment = (projectKey, body, options) => jsonPost(
+  `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/attachments`, body, options,
+);
 export const taskAssistantAction = (projectKey, body, options) => jsonPost(
   `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/actions`, body, options,
 );

@@ -6394,6 +6394,13 @@ def handle_project_api_post(
         result["readiness"] = readiness
         result["capabilities"] = build_capabilities(readiness)
         return (201 if result["created"] else 200), result
+    attachment_upload_match = re.fullmatch(r"/api/projects/([^/]+)/task-assistant/attachments", path)
+    if attachment_upload_match:
+        from goodteam_os.conversation_attachments import upload_attachment
+
+        key = _decode_project_api_key(attachment_upload_match.group(1))
+        key, _target, root = _project_target_and_root(workspace, key)
+        return 201, {"attachment": upload_attachment(workspace, key, root, request)}
     task_assistant_message_match = re.fullmatch(
         r"/api/projects/([^/]+)/task-assistant/messages",
         path,
@@ -6412,6 +6419,7 @@ def handle_project_api_post(
                 message_id=str(request.get("message_id", "")),
                 text=str(request.get("text", "")),
                 context_run_id=request.get("context_run_id", ""),
+                attachments=request.get("attachments", []),
             )
         except ManagerExecutionError as exc:
             raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
@@ -7033,7 +7041,7 @@ def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path in {"/api/projects/import", "/api/settings", "/api/providers", "/api/providers/models"}
         or re.fullmatch(
-            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions)|team/commands)",
+            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions|attachments)|team/commands)",
             path,
         )
         or re.fullmatch(r"/api/projects/[^/]+/runs/[^/]+/skill-reviews/job-skill-[0-9a-f]{64}/(?:retry|cancel)", path)
@@ -7334,6 +7342,30 @@ def _persist_context_sources(project_config: Path, sources: list[dict[str, str]]
         kept.append(f"    kind: {_config_scalar('Context source kind', source['kind'])}")
         kept.append(f"    value: {_config_scalar('Context source value', source['value'])}")
     project_config.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
+
+
+def _send_chat_attachment(handler, workspace, path):
+    match = re.fullmatch(r"/api/projects/([^/]+)/task-assistant/attachments/([0-9a-f]{64})", path)
+    if not match:
+        return False
+    from goodteam_os.conversation_attachments import read_attachment
+
+    try:
+        key, _target, root = _project_target_and_root(workspace, _decode_project_api_key(match.group(1)))
+        metadata, original, _text = read_attachment(workspace, key, root, match.group(2))
+        body = original.read_bytes()
+        handler.send_response(200)
+        handler.send_header("Content-Type", metadata["media_type"])
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "private, no-store")
+        handler.send_header("X-Content-Type-Options", "nosniff")
+        disposition = "inline" if metadata["media_type"].startswith("image/") else "attachment"
+        handler.send_header("Content-Disposition", f"{disposition}; filename*=UTF-8''{quote(metadata['name'], safe='')}")
+        handler.end_headers()
+        handler.wfile.write(body)
+    except Exception as exc:
+        handler._send_api_error(exc)
+    return True
 
 
 def handle_execution_get(path: str, query: dict[str, list[str]]) -> tuple[int, dict[str, object]] | None:
@@ -8029,6 +8061,8 @@ def serve(
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
+            if _send_chat_attachment(self, workspace, parsed.path):
+                return
             query = parse_qs(parsed.query)
             project_key = query.get("project", [""])[0]
             if maybe_send_favicon_response(self, parsed.path):

@@ -4,11 +4,11 @@ import { useRef } from 'react';
 import { readingChangeSummary, readingCopy, readingScope } from './conversationReading';
 import useConversationReading from './useConversationReading';
 import { timelineCopy } from './timelineCopy';
-import { Settings } from 'lucide-react';
+import { ChevronRight, Settings } from 'lucide-react';
 import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
 import { availableChangeTarget } from './conversationChangeContext';
-import { TeamAvatar, TimelineItem } from './ConversationTimeline';
+import { TimelineItem } from './ConversationTimeline';
 import { TaskAttention, ProjectPreparationAttention } from './TaskAttention';
 import AssistantControls from './AssistantControls';
 import AssistantPendingReply from './AssistantPendingReply';
@@ -112,12 +112,12 @@ export default function ProjectConversation({
 
   return (
     <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')} {...sectionProps}>
+      <div className="project-conversation-toolbar">
       <header className="team-pane__header">
         <div className="team-manager-heading">
-          <TeamAvatar label={t('work.manager.name')} manager />
           <div>
             <div className="team-manager-heading__title">
-              <h2 id="team-manager-title">{t('work.manager.name')}</h2>
+              <h2 id="team-manager-title" className="sr-only">{t('work.manager.name')}</h2>
               <StatusBadge tone={managerTone}>{managerStatus}</StatusBadge>
             </div>
             <span className="team-pane__eyebrow">{t('work.manager.subtitle')}</span>
@@ -136,17 +136,28 @@ export default function ProjectConversation({
         <span>{contextTitle ? t('assistant.project.taskContext', { title: contextTitle }) : t('assistant.project.projectContext')}</span>
         {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
       </div>
-      <ProjectIterationSuggestion snapshot={iterationBacklog} choice={iterationChoice}
-        queuedTasks={queuedTasks} onPlan={onAssistantAction} onQueue={onAssistantAction} onInspect={onStart}
-        disabled={!canPlanIteration || Boolean(busy) || Boolean(assistantBusy)} language={language} />
-      <ProjectContinuationControls key={iterationSession?.project_continuation?.id || 'new'}
-        snapshot={iterationBacklog} session={iterationSession} projectKey={projectKey}
-        onAction={onAssistantAction} canStart={canPlanIteration} disabled={Boolean(busy) || Boolean(assistantBusy)} language={language} />
+      </div>
       <ConversationReadingFrame key={scope} scope={scope} timeline={timeline || []} attentionKey={attentionKey}
         deliveryKey={deliveryKey} assistantFocusKey={`${assistantState?.pending_team_decision?.id || ''}:${requestStatus || ''}`}
         visible={!sectionProps?.hidden} language={language} hasPendingItems={hasPendingItems} t={t}>
         <>
+            {(iterationBacklog?.schema_version === 'project_iteration_backlog.v1'
+              || iterationSession?.project_continuation || Object.keys(iterationSession?.project_task_batches || {}).length > 0) ? (
+              <details className="project-conversation-planning">
+                <summary><ChevronRight size={14} aria-hidden="true" /><strong>{t('work.projectPlanning.title')}</strong><span>{t('work.projectPlanning.description')}</span></summary>
+                <ProjectIterationSuggestion snapshot={iterationBacklog} choice={iterationChoice}
+                  queuedTasks={queuedTasks} onPlan={onAssistantAction} onQueue={onAssistantAction} onInspect={onStart}
+                  disabled={!canPlanIteration || Boolean(busy) || Boolean(assistantBusy)} language={language} />
+                <ProjectContinuationControls key={iterationSession?.project_continuation?.id || 'new'}
+                  snapshot={iterationBacklog} session={iterationSession} projectKey={projectKey}
+                  onAction={onAssistantAction} canStart={canPlanIteration} disabled={Boolean(busy) || Boolean(assistantBusy)} language={language} />
+              </details>
+            ) : null}
             {error && !(error.code === 'manager_execution_failed' && requestStatus) ? <ProductError error={error} t={t} /> : null}
+            {!timeline?.length && !hasPendingItems && !responding && !error ? <div className="project-conversation-welcome">
+              <h3>{t('work.conversationWelcome.title')}</h3>
+              <p>{t('work.conversationWelcome.description')}</p>
+            </div> : null}
             <ol className="team-manager-timeline" aria-label={t('assistant.project.history')}>
               {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t} />)}
               {Object.entries(assistantState?.assistant_requests || {}).filter(([, request]) => request.status === 'running').map(([id, request]) => (
@@ -217,6 +228,7 @@ export default function ProjectConversation({
       {!mission?.read_only || onStart ? (
         <footer className="team-manager-dock">
           <ConversationComposer
+            projectKey={projectKey}
             acceptedMessage={acceptedMessage}
             awaitingReply={Object.values(assistantState?.assistant_requests || {}).some(request => request.status === 'running')}
             key={projectKey}

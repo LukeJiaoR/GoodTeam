@@ -80,13 +80,17 @@ export function focusWorkContext(root, target, { reducedMotion = false, isCurren
     ? WORK_CONTEXT_TARGETS.approval : WORK_CONTEXT_TARGETS[target];
   if (!root || !destination || !isCurrent()) return;
   const scope = root.dataset.contextScope;
+  const sidebarTasks = target === 'tasks' ? root.closest('.product-shell')?.querySelector('.studio-sidebar #project-task-navigation') : null;
   const tab = root.querySelector(`#team-tab-${destination.tab}`);
   // The existing mobile controller owns which pane is visible.
-  if (tab && globalThis.matchMedia?.('(max-width: 767px)')?.matches
-      && tab.getAttribute('aria-selected') === 'false') tab.click();
+  if (!sidebarTasks && tab && globalThis.matchMedia?.('(max-width: 1199px)')?.matches
+      && (tab.getAttribute('aria-pressed') === 'false' || tab.getAttribute('aria-selected') === 'false')) tab.click();
+  if (!sidebarTasks && destination.tab === 'outcomes' && root.querySelector('.team-pane--outcomes[hidden]')) {
+    root.querySelector('button[aria-controls="team-panel-outcomes"][aria-expanded="false"]')?.click();
+  }
   globalThis.requestAnimationFrame(() => {
     if (!root.isConnected || root.dataset.contextScope !== scope || !isCurrent()) return;
-    const node = [...root.querySelectorAll(destination.selector)].find(matches);
+    const node = sidebarTasks || [...root.querySelectorAll(destination.selector)].find(matches);
     if (!node || node.closest('[hidden], [inert]')) return;
     // Reveal existing execution details before focusing an actor or blocker.
     // This changes disclosure only; it never dispatches work.

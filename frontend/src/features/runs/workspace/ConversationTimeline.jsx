@@ -4,6 +4,7 @@ import MarkdownView from '../../../components/ui/MarkdownView';
 import ProjectUnderstandingReply from './ProjectUnderstandingReply';
 import { timelineCopy } from './timelineCopy';
 import { deliveryLabel } from './conversationFeedback';
+import { AttachmentList } from './ConversationAttachments';
 
 function TeamAvatar({ label, manager = false }) {
   const initial = String(label || '').trim().slice(0, 1).toUpperCase() || 'G';
@@ -56,9 +57,9 @@ function TimelineItem({ item, language, t }) {
 
   return (
     <li data-reading-id={timelineReadingId(item)} tabIndex={-1} className="team-manager-event" data-actor={item.actor} data-kind={item.kind} data-delivery={item.delivery_status}>
-      <TeamAvatar label={actorLabel} manager={item.actor !== 'user'} />
       <div className="team-manager-event__bubble">
         <strong className="sr-only">{actorLabel}</strong>
+        <AttachmentList files={item.attachments} t={t} />
         {item.actor === 'user' ? <p>{copy}</p> : <MarkdownView content={copy} interactive language={language} />}
         {item.content && item.event !== 'mission_requested' && copy !== item.content ? (
           ['project_understanding_ready', 'project_understanding_incomplete'].includes(item.event)

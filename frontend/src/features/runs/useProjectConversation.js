@@ -31,9 +31,9 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
     }
   };
 
-  const deliver = (name, text, operation, intentId = '') => {
+  const deliver = (name, text, operation, intentId = '', attachments = []) => {
     const next = createConversationDelivery({ projectKey, text, intentId, previous: delivery,
-      contextKey: `${name}:${contextRunId}` });
+      contextKey: `${name}:${contextRunId}`, attachments });
     return perform(name, () => trackConversationDelivery({
       delivery: next, operation: () => operation(next.id), onUpdate: setDelivery,
     }));
@@ -41,9 +41,10 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
 
   return {
     busy, error, delivery, deliver,
-    send: (text) => deliver('message', text, (messageId) => runApi.sendTaskAssistantMessage(projectKey, {
+    send: (text, attachments = []) => deliver('message', text, (messageId) => runApi.sendTaskAssistantMessage(projectKey, {
       message_id: messageId, text, context_run_id: contextRunId,
-    })),
+      ...(attachments.length ? { attachments: attachments.map(item => item.id) } : {}),
+    }), '', attachments),
     queue: (text) => deliver('queue_task', text, (messageId) => runApi.taskAssistantAction(projectKey, {
       action: 'queue_task', message_id: messageId, text,
     })),

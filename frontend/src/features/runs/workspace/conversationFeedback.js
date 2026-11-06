@@ -1,11 +1,13 @@
 // Presentation-only delivery state: it is not a task, approval, or execution status.
-export function createConversationDelivery({ projectKey, runId = '', text, intentId = '', contextKey = '', previous }) {
+export function createConversationDelivery({ projectKey, runId = '', text, intentId = '', contextKey = '', previous, attachments = [] }) {
   const reusable = !intentId && previous?.status === 'unconfirmed'
     && previous.projectKey === projectKey && previous.runId === runId
-    && (previous.contextKey || '') === contextKey && !previous.intentId && previous.text === text;
+    && (previous.contextKey || '') === contextKey && !previous.intentId && previous.text === text
+    && JSON.stringify((previous.attachments || []).map(item => item.id)) === JSON.stringify(attachments.map(item => item.id));
   return {
     id: reusable ? previous.id : globalThis.crypto?.randomUUID?.() || `message-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     projectKey, runId, text, intentId, contextKey,
+    attachments,
     timestamp: new Date().toISOString(),
     status: 'sending',
   };
@@ -50,6 +52,7 @@ export function conversationTimeline(timeline, delivery, { projectKey, runId = '
   return [...timeline, {
     id: delivery.id, actor: 'user', event: 'mission_requested', kind: 'intent',
     content: delivery.text, timestamp: delivery.timestamp, delivery_status: delivery.status,
+    attachments: delivery.attachments,
   }];
 }
 
