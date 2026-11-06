@@ -155,8 +155,10 @@ delivery, and does not complete #419/C3.
 Run the full backend suite with that test URL, backend lint, and related
 frontend unit/lint/build checks. Record actual commands, source SHA, outcomes and
 skipped checks in the change's verification record. GitHub CI is paused: do not
-publish candidate refs or dispatch Actions. No merge, deployment, live business
-budget or additional #668 Reviewer attempt is authorized by this trial.
+publish candidate refs or dispatch Actions. The implementation trial did not
+authorize merge, deployment, live business budget or another #668 Reviewer
+attempt. The subsequent maintainer instruction authorizes preparing this PR
+for merge; deployment and live migration remain separate actions.
 
 Observed local results (2026-11-07), production source
 `01460a2fc2b065d4e210077aba67a59bedf03dc9`, base
@@ -178,8 +180,29 @@ collecting Git evidence at the old deadline. The final test-only wait adjustment
 retains a finite bound and does not change any business execution grant. The
 full suite was not repeated after that test-only adjustment; the 409 other
 passing checks exercised the same production source. This is a full run plus a
-targeted recheck, not a claim of one fully green suite invocation. The PR remains
-Draft without final independent review or real-provider semantic acceptance.
+targeted recheck, not a claim of one fully green suite invocation. Final
+independent review and real-provider semantic acceptance were not performed
+in that implementation trial.
+
+### Merge preparation (2026-11-07)
+
+Synced the candidate with current main
+`06a709a9991b2de685c3508419cac2dccbfa28fa` (PR #671). That change removes an
+unused Dashboard handler and updates documentation. The merge was clean;
+the resulting production source is
+`d00abea8ba11d646369791a177f2c607ba2f145e`.
+
+On that source, the focused command
+`PYTHONPATH=src .venv/bin/python -m pytest tests/test_postgres_manager.py tests/test_project_readiness_web.py tests/test_web_cors.py -q`
+passed all 52 checks in 46.09 seconds against a new dedicated disposable PG
+instance. Backend lint and `git diff --check` also passed. Existing full-suite
+and frontend results above remain bound to their recorded source; no full-suite
+rerun or GitHub Actions dispatch was performed for this base-only sync.
+
+The merge-preparation code inspection found no new blocking issue. It does not
+replace the outstanding independent Reviewer result. Production data and the
+running service have not been changed, and no prior Stop or Reviewer budget
+was reset.
 
 Official package/API references:
 
