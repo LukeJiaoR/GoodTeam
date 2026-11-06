@@ -629,7 +629,7 @@ def _mask_advisory_text(text: object) -> str:
 
 
 def _project_runtime_roots_for_state(*, state: AgileDevState | object | None, workspace: Path, project_key: str) -> list[Path]:
-    project_roots: list[Path] = []
+    project_roots: list[Path | None] = []
     source_ref = str(getattr(state, "source_ref", "") or "") if state is not None else ""
     if source_ref and source_ref != "manual":
         source_path = Path(source_ref)
@@ -657,6 +657,8 @@ def _project_runtime_roots_for_state(*, state: AgileDevState | object | None, wo
     roots: list[Path] = []
     seen_roots: set[Path] = set()
     for root in project_roots:
+        if root is None:
+            continue
         try:
             resolved = root.resolve()
         except Exception:
