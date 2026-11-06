@@ -158,6 +158,29 @@ skipped checks in the change's verification record. GitHub CI is paused: do not
 publish candidate refs or dispatch Actions. No merge, deployment, live business
 budget or additional #668 Reviewer attempt is authorized by this trial.
 
+Observed local results (2026-11-07), production source
+`01460a2fc2b065d4e210077aba67a59bedf03dc9`, base
+`acb673e293f1a2fabdcb09eae28f89cbc5a38d7e`:
+
+| Command / evidence | Observed result |
+| --- | --- |
+| `PYTHONPATH=src .venv/bin/python -m pytest tests -q` with the disposable test DB URL | 409 passed, 1 failed at the 30-second batch test wait; 8 fork deprecation warnings; 563.56 seconds |
+| `tests/test_postgres_manager.py` within that full run | All 6 PG integration cases passed |
+| Focused batch test after changing only its bounded settle wait from 30 to 60 seconds | Passed in 39.71 seconds; provider-overlap deadline, concurrency/isolation/idempotency and evidence assertions retained |
+| `npm --prefix frontend test` | 12 Node and 312 Vitest checks passed |
+| `npm --prefix frontend run lint`, `npm --prefix frontend run build` | Passed; retained bundle-size and ineffective-dynamic-import warnings |
+| `npm --prefix frontend run test:e2e -- project-manager.spec.js business-loop.spec.js` with PG enabled | Both isolated live browser paths passed again in 38.6 seconds |
+| `ruff check src/goodteam_os tests/`, `git diff --check` | Passed |
+
+The same batch test on unmodified main took 30.02 seconds; a separate run on
+the new code passed in 29.29 seconds. Its repeated full-run failures were still
+collecting Git evidence at the old deadline. The final test-only wait adjustment
+retains a finite bound and does not change any business execution grant. The
+full suite was not repeated after that test-only adjustment; the 409 other
+passing checks exercised the same production source. This is a full run plus a
+targeted recheck, not a claim of one fully green suite invocation. The PR remains
+Draft without final independent review or real-provider semantic acceptance.
+
 Official package/API references:
 
 - https://pypi.org/project/langgraph-checkpoint-postgres/
