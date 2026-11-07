@@ -5,12 +5,15 @@ memory text, execution state or authority. Browser memory reads do not invoke it
 """
 from __future__ import annotations
 
+from functools import partial
 from hashlib import sha256
+from http.client import HTTPConnection, HTTPException, HTTPResponse, HTTPSConnection
+from io import BufferedReader, RawIOBase
 import json
 import math
 import time
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, build_opener
+from urllib.request import HTTPHandler, HTTPSHandler, Request, build_opener
 
 import psycopg
 from psycopg import sql
@@ -23,7 +26,59 @@ MAX_NEW_EVENTS = 128
 MAX_TEXT_CHARS = 1600
 MAX_QUERY_CHARS = 4000
 MAX_SECONDS = 30
+MAX_REQUEST_SECONDS = 10
 MAX_DIMENSIONS = 16000
+
+
+class _DeadlineReader(RawIOBase):
+    """Refresh the remaining timeout before every socket read, including headers/chunks."""
+
+    def __init__(self, raw, sock, deadline):
+        self.raw, self.sock, self.deadline = raw, sock, deadline
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Embedding response deadline exceeded")
+        self.sock.settimeout(remaining)
+        return self.raw.readinto(buffer)
+
+    def close(self):
+        try:
+            self.raw.close()
+        finally:
+            super().close()
+
+
+class _DeadlineResponse(HTTPResponse):
+    def __init__(self, sock, *args, deadline, **kwargs):
+        super().__init__(sock, *args, **kwargs)
+        self.fp = BufferedReader(_DeadlineReader(self.fp.detach(), sock, deadline))
+
+
+class _DeadlineHTTPHandler(HTTPHandler, HTTPSHandler):
+    """Keep urllib's proxy, TLS and redirect handling with bounded response reads."""
+
+    def __init__(self, deadline):
+        HTTPSHandler.__init__(self)
+        self.deadline = deadline
+
+    def _open(self, connection_type, request, **kwargs):
+        def connection(*args, **connection_kwargs):
+            result = connection_type(*args, **connection_kwargs)
+            result.response_class = partial(_DeadlineResponse, deadline=self.deadline)
+            return result
+
+        return self.do_open(connection, request, **kwargs)
+
+    def http_open(self, request):
+        return self._open(HTTPConnection, request)
+
+    def https_open(self, request):
+        return self._open(HTTPSConnection, request, context=self._context)
 
 
 def ensure_index(conn):
@@ -74,6 +129,7 @@ class PostgresMemoryRetriever:
 
     def _embed(self, texts, deadline):
         self._require_current()
+        deadline = min(deadline, time.monotonic() + MAX_REQUEST_SECONDS)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ProviderError("embedding_timeout", "Memory indexing reached its time limit. Indexed batches are retained.", 503)
@@ -84,8 +140,10 @@ class PostgresMemoryRetriever:
         request = Request(connection["base_url"] + "/embeddings", headers=headers,
             data=json.dumps({"model": connection["model"], "input": texts, "encoding_format": "float"}).encode())
         try:
-            with build_opener(_NoRedirect).open(request, timeout=min(10, remaining)) as response:
+            with build_opener(_NoRedirect, _DeadlineHTTPHandler(deadline)).open(request, timeout=remaining) as response:
                 raw = response.read(16 * 1024 * 1024 + 1)
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Embedding response deadline exceeded")
             if len(raw) > 16 * 1024 * 1024:
                 raise ValueError
             payload = json.loads(raw)
@@ -108,7 +166,7 @@ class PostgresMemoryRetriever:
         except HTTPError as exc:
             code = "embedding_auth_failed" if exc.code in {401, 403} else "embedding_unavailable"
             raise ProviderError(code, "Embedding request failed. Check the provider, model and embeddings endpoint.", 503) from None
-        except (URLError, TimeoutError, OSError, ValueError, TypeError, KeyError, OverflowError):
+        except (HTTPException, URLError, TimeoutError, OSError, ValueError, TypeError, KeyError, OverflowError):
             raise ProviderError("embedding_unavailable", "The embedding service was unavailable or returned invalid vectors.", 503) from None
 
     def rank(self, root, role_key, query, events, *, identify, minimum_score):
