@@ -60,6 +60,11 @@ event. Each HTTP batch contains at most 32 inputs; a pickup indexes at most 128
 new events, with a 30-second request budget and at most 10 seconds per HTTP
 request. Provider results must have one indexed, finite, nonzero vector per
 input and consistent dimensions. Redirects are rejected; calls are not retried.
+Response reads use the smaller of the remaining pickup budget and the per-request
+limit. The timeout is refreshed before each underlying socket read, including
+status/header lines and chunk framing, so a slowly arriving response cannot keep
+extending an inactivity timeout. Truncated HTTP responses follow the same
+unavailable-retrieval contract as other provider failures.
 
 An oversized initial backlog continues incrementally on subsequent authorized
 pickups. Successfully indexed batches remain cached. Until indexing completes,
@@ -92,6 +97,11 @@ isolation, correction invalidation, visible failure and rejection of redirects.
 It reuses the retained two-delivery production queue/Worker/review/discovery
 fixture, supplying one learned fact after the first verified delivery and
 checking that it reaches the next Manager through PG retrieval.
+The same two-round fixture also exercises a truncated embedding response after
+the first delivery: the next Manager receives `partial/retrieval_unavailable`
+with no retrieved events and completes the original bounded follow-up without
+duplicating Workers or changing delivery authority. Two local HTTP regressions
+cover truncated chunks and a continuously trickling body; they run without PG.
 
 The fixture vectors and Manager decisions are synthetic. These checks establish
 the integration and source boundaries, not real-model recall quality, autonomous
