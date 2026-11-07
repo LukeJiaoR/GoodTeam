@@ -56,6 +56,33 @@ def test_run_bound_preview_route_rejects_stale_and_foreign_targets(tmp_path, api
     assert 409 == api(href)[0]
 
 
+def test_work_and_run_views_keep_pending_review_when_repository_is_unavailable(tmp_path, api):
+    config = tmp_path / "projects" / "demo.local.yaml"
+    config.parent.mkdir()
+    config.write_text(
+        f"key: DEMO\nname: Demo\nrepos:\n  app: {tmp_path / 'missing-repository'}\n"
+        "reviewer_profiles:\n  implementation:\n    - correctness-security\n"
+    )
+    state = create_initial_state("run-one", "DEMO", "Review existing work")
+    state.source_ref = str(config)
+    state.current_node, state.next_node = "staging_review_gate", "await_staging_approval"
+    report = tmp_path / "staging.md"
+    report.write_text("# Staging report\nAwaiting independent review.\n")
+    state.artifacts["staging_report"] = str(report)
+    StateStore(tmp_path).write_project_current(state)
+
+    for path in ("/api/state?project=DEMO", f"/api/projects/DEMO/runs/{state.run_id}"):
+        status, result = api(path)
+
+        assert status == 200
+        assert result["state"]["run_id"] == state.run_id
+        review = next(item for item in result["approval_reviews"] if item["approval"] == "staging")
+        assert review["is_pending"] is True
+        assert review["legacy_reviewer_jobs"] == []
+        assert review["reviewer_provenance"]["badge"]["kind"] == "missing"
+        assert review["recommendation"]["verdict"] != "approve"
+
+
 def test_full_review_content_carries_same_bytes_version(tmp_path):
     from hashlib import sha256
 
