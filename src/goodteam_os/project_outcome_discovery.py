@@ -24,9 +24,14 @@ def _digest(value):
 def normalize_discovery(value):
     if value is None:
         return None
-    if not isinstance(value, dict) or set(value) != {
-            "objective", "allowed_write_domains", "max_new_tasks", "max_planning_calls"}:
+    required = {"objective", "allowed_write_domains", "max_new_tasks", "max_planning_calls"}
+    if (not isinstance(value, dict) or not required.issubset(value)
+            or set(value) - required - {"allow_investigation"}):
         raise ValueError("Confirm an explicit discovery objective, paths and finite task/planning budgets.")
+    if "allow_investigation" in value and type(value["allow_investigation"]) is not bool:
+        raise ValueError("Investigation permission must be an explicit boolean.")
+    # Keep omitted flags omitted: existing grants retain their exact digest and
+    # cannot acquire research authority on upgrade or authorization replay.
     objective = value["objective"]
     domains = normalize_write_domains(value["allowed_write_domains"])
     if (not isinstance(objective, str) or not 20 <= len(objective.strip()) <= 2000
@@ -127,7 +132,7 @@ def _remember(root, outcome):
         source="execution:project-delivery:" + receipt["receipt_id"] + ":final_provenance")
 
 
-def _packet(workspace, project_key, root, value, outcome):
+def _packet(workspace, project_key, root, value, outcome, *, project_config=None):
     from goodteam_os.memory import runtime_role_memory_store
     from goodteam_os.project_iteration_planner import _project_evidence
 
@@ -144,6 +149,16 @@ def _packet(workspace, project_key, root, value, outcome):
         "allowed_source_refs": refs,
         "repository_understanding": _project_evidence(Path(workspace), project_key, Path(root), inspect_missing=True),
         "memory_pickup": runtime_role_memory_store(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
+    if value["discovery"].get("allow_investigation") is True:
+        from goodteam_os.team_control_plane import team_view_for_config
+
+        team = team_view_for_config(Path(workspace), project_key, project_config) or {}
+        role = next((item for item in team.get("roles", []) if item.get("role") == "research"), {})
+        packet["investigation_capability"] = {
+            "role": "research", "execution_policy": "read_only",
+            "dispatchable": role.get("state") == "enabled"
+                and any(worker.get("dispatchable") is True for worker in role.get("workers", [])),
+        }
     packet["packet_digest"] = _digest(packet)
     return packet
 
@@ -159,12 +174,23 @@ def validate_discovered_task(packet, response):
     if task is None:
         return {"new_task": None, "rationale": reason.strip()}
     fields = {"title", "description", "acceptance_criteria", "write_domains", "dependencies", "source_refs"}
-    if (not isinstance(task, dict) or set(task) != fields
+    investigation_allowed = packet["discovery"].get("allow_investigation") is True
+    optional = {"task_type"} if investigation_allowed else set()
+    if (not isinstance(task, dict) or not fields.issubset(task) or set(task) - fields - optional
             or not isinstance(task["title"], str) or not 5 <= len(task["title"].strip()) <= 240
             or not isinstance(task["description"], str) or not 20 <= len(task["description"].strip()) <= 4000):
         raise ValueError("A follow-up needs an explicit bounded task, not runtime commands or new permissions.")
+    task_type = task.get("task_type", "implementation")
+    if task_type not in ("implementation", "investigation"):
+        raise ValueError("Discovery task type must be implementation or investigation.")
+    investigation = task_type == "investigation"
+    if investigation and (not investigation_allowed
+            or (packet.get("investigation_capability") or {}).get("dispatchable") is not True):
+        raise ValueError("Investigation requires explicit authority and an available Researcher.")
+    if investigation and task["write_domains"] != []:
+        raise ValueError("An investigation must be read-only and declare no write domains.")
     criteria = task["acceptance_criteria"]
-    domains = normalize_write_domains(task["write_domains"])
+    domains = [] if investigation else normalize_write_domains(task["write_domains"])
     allowed = packet["discovery"]["allowed_write_domains"]
     if (not isinstance(criteria, list) or not 1 <= len(criteria) <= 12
             or any(not isinstance(item, str) or not 5 <= len(item.strip()) <= 500 for item in criteria)
@@ -183,6 +209,19 @@ def validate_discovered_task(packet, response):
     return {"new_task": {**task, "title": task["title"].strip(), "description": task["description"].strip(),
                          "acceptance_criteria": [item.strip() for item in criteria], "write_domains": domains},
             "rationale": reason.strip()}
+
+
+def _discovered_task_intent(packet, selection, creation_ref):
+    """Host-owned execution profile; model text never selects permissions."""
+    task = validate_discovered_task(packet, selection)["new_task"]
+    if task is None:
+        raise ValueError("No follow-up task was proposed.")
+    investigation = task.get("task_type") == "investigation"
+    intent = {key: task[key] for key in ("title", "description", "acceptance_criteria", "write_domains", "dependencies")}
+    intent.update(role="research" if investigation else "implementation", priority="medium",
+                  execution_policy="read_only" if investigation else "workspace_write",
+                  external_refs=[creation_ref, *task["source_refs"]], artifact_refs=list(task["source_refs"]))
+    return intent
 
 
 def _creation_ref(value, packet):
@@ -249,7 +288,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
             return store._mutate(full)["project_continuation"]
         if outcome["delivery"]["receipt_id"] in value.get("discovery_consumed", []):
             raise ValueError("This accepted delivery already supplied its bounded follow-up.")
-        packet = _packet(workspace, project_key, root, value, outcome)
+        packet = _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config))
         pending = {"packet": packet, "packet_digest": packet["packet_digest"], "backlog_version": packet["backlog"]["version"]}
         def reserve(session):
             current = _current(session, value)
@@ -282,11 +321,8 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
                                 "rationale": selection["rationale"]})
             return session
         return store._mutate(finished)["project_continuation"]
-    task = selection["new_task"]
     creation_ref = _creation_ref(value, pending["packet"])
-    intent = {key: task[key] for key in ("title", "description", "acceptance_criteria", "write_domains", "dependencies")}
-    intent.update(role="implementation", priority="medium", execution_policy="workspace_write",
-                  external_refs=[creation_ref, *task["source_refs"]], artifact_refs=list(task["source_refs"]))
+    intent = _discovered_task_intent(pending["packet"], selection, creation_ref)
     def publish(session):
         current = _current(session, value)
         _revalidate(workspace, project_key, root, project_config, current, pending)
