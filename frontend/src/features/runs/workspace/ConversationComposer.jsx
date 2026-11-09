@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp } from 'lucide-react';
 import Button from '../../../components/ui/Button';
 import ProductError from '../../../components/ui/ProductError';
@@ -74,6 +74,14 @@ function Composer({
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
   }, [scopeKey, changeIntent?.status]);
+
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const nextHeight = Math.min(Math.max(el.scrollHeight, 52), 180);
+    el.style.height = `${nextHeight}px`;
+  }, [goal, scopeKey]);
 
   const submit = async (event) => {
     event.preventDefault();
