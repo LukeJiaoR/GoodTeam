@@ -77,6 +77,83 @@ start's reconciliation remains allowed; a different active run blocks startup.
 This adds future-work collection, not parallel execution or mid-Worker steering.
 Builtin/fake responses are recorded snapshots, not real-model capability evidence.
 
+## Manager assignment and result return
+
+Project outcome: a concrete user request reaches the appropriate Worker with
+its original scope, and actual results return for the Manager's next judgment.
+The observed gap was chat classification ending at a draft or the Manager
+reading README itself. The smallest change adds a queue action and report
+publication to existing services, without changing the execution owner.
+
+Project import only registers the directory and records its identity. It does
+not classify the repository, create an inventory, call a model or start a task.
+Opening or polling the conversation also does not start inspection or turn old
+inventory artifacts into new replies. The `project_understanding` intent and
+its pending-inspection/resume and template-report path have been removed.
+Existing inspection messages remain readable as history.
+
+Project-question routing follows the evidence needed, not whether the user used
+a question mark. For example, “这个项目是干嘛的” is a ready read-only Researcher
+task when supplied evidence does not already explain the project. The Manager
+uses the same `queue_task` action; it must not read README/source files itself to
+turn missing research into a `project_question` answer. Questions already answered
+by supplied evidence or retained Worker reports remain ordinary conversation.
+A bounded Git-presence fact retains its existing single-command inspection path.
+
+Research and repository-analysis deliverables use ordinary `work_request`
+intake and its existing task confirmation/queue. The Manager coordinates the
+team's Researcher instead of doing broad research during classification.
+Research methods belong to loaded task Skills; this change adds no special
+research dispatcher or replacement inspection workflow. Shared explicit
+readiness APIs and task-start checks retain their identity and approval gates.
+The chat Manager can now return a callable `task_action` with `kind: queue_task`,
+a dispatchable Team role, execution policy, declared write paths and acceptance
+criteria. The host binds the selected exact user messages to one original
+LocalTaskStore card and one existing queue item. A source-bound retry reuses that
+card; a changed assignment fails instead of creating another task. Existing drafts
+retain their revision flow. Read-only advice and history never call this action.
+Skills can instruct the Manager to use this same action; Skill text cannot grant
+execution or review authority.
+
+The conversation displays the original task, role, read/write scope and criteria
+before the existing `start_queued_task_batch` confirmation. This initial confirmation
+retains model-charge and readiness gates. The ordinary isolated `dispatch_tracks`
+pool chooses the configured Worker and captures task methods using existing paths;
+there is no research runner or second task state machine. Batch settlement returns
+actual readable Worker reports, limitations and outstanding independent review to
+the conversation, with idempotent publication per batch/recovery attempt. Source
+reports remain separately inspectable. Worker completion never marks delivery done.
+
+In the database-backed Manager dialogue, `advance_continuation` calls the existing
+continuation adapter only for the exact current active grant. It runs after the
+conversation lock is released and passes no model-chosen task, command, budget or
+confirmation. Stopped grants and repeated messages cannot spend another attempt.
+The existing continuation service still owns scope, budgets, recovery and gates.
+
+This is a connection of assignment, execution and return paths, not acceptance of
+autonomous multi-round research. New chat work does not inherit an unrelated
+project grant. Without an applicable grant, its first execution still needs the
+existing confirmation. Arbitrary partial research results are not yet automatically
+converted into bounded follow-up tasks or independent research acceptance. Existing
+continuation can proceed only where its approved inventory and delivery/recovery
+contracts permit it. A Worker report is not proof that the full user goal is met.
+
+This is a partial implementation toward #686. The bounded Git-presence exception
+remains, and prompt routing does not prove tool-level isolation. The full delegated
+investigation → renewed project decision loop remains unaccepted under #419.
+The Decisions API proposal in #686 is documentation only; no API dependency or
+paid decision invocation is introduced here.
+
+Tier 3 validation: `test_manager_assignment.py` exercises original source binding,
+explicit confirmation, isolated Research subprocess execution, visible results and
+idempotent replay without delivery promotion. `test_manager_dialogue.py` covers
+active-grant follow-up outside the conversation lock and refusal after Stop.
+`test_task_assistant.py` and the project Manager browser regression cover passive
+import and ordinary research intake. The existing
+`test_project_iteration_continuation.py` remains the representative pick → execute
+→ verified delivery → pick a different task contract. These fixture checks do not
+establish real-model research quality or the complete #686 loop.
+
 ## Archiving the displayed task (#417)
 
 `POST /api/terminate` (and `/terminate`) requires `project_key` and a nonempty

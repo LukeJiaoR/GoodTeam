@@ -173,30 +173,18 @@ def handle_draft_action(service, *, project_key, root, request):
         elif request["action"] == "resolve_draft":
             resolve_draft(store, request)
         else:
-            confirm_mode_and_resume(service, store, root=root, mode=request.get("mode"))
+            confirm_mode(service, store, root=root, mode=request.get("mode"))
         return response(service, project_key, root)
 
 
-def confirm_mode_and_resume(service, store, *, root, mode):
+def confirm_mode(service, store, *, root, mode):
     if mode not in {"new_project", "existing_project"}:
         raise ValueError("Choose new_project or existing_project.")
     state = service._readiness_state(store.project_key, root)
     if state.get("project_mode") not in {"unconfirmed", mode}:
         raise ValueError("Project mode changed. Reload before continuing.")
     if state.get("project_mode") == "unconfirmed":
-        state = service.confirm_mode(service.workspace, store.project_key, root, mode)
-    pending = store.read().get("pending_inspection")
-    if pending:
-        resume_inspection(service, store, root=root, state=state, pending=pending)
-
-
-def resume_inspection(service, store, *, root, state, pending):
-    if state.get("lifecycle") != "ready" and not isinstance(state.get("execution"), dict):
-        state = service.readiness.start(store.project_key, root, {}, idempotency_key=f"task-assistant:{pending['message_id']}")
-    store.append_event(f"inspection:{pending['message_id']}", "project_inspection_started",
-                       details={"manager_execution": pending.get("manager_execution", {})})
-    store._mutate(lambda session: {**session, "pending_inspection": None})
-    return state
+        service.confirm_mode(service.workspace, store.project_key, root, mode)
 
 
 def confirm_and_prepare(service, *, project_key, root, request):

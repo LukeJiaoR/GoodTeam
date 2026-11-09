@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from goodteam_os import graph, web
-from goodteam_os.project_import import import_project
+from goodteam_os.project_import import confirm_project_mode, import_project
 from goodteam_os.projects import write_project_config
 from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.task_assistant import TaskAssistantService
@@ -19,6 +19,7 @@ def test_empty_project_can_prepare_git_and_resume_the_same_confirmed_draft(tmp_p
     workspace, root = tmp_path / "workspace", tmp_path / "stockflow"
     root.mkdir()
     key = import_project(workspace, str(root))["project"]["project_key"]
+    confirm_project_mode(workspace, key, root, "new_project")
     config = web._project_config_for_key(workspace, key)
     monkeypatch.setattr(web.ProjectReadinessExecutor, "_dispatch",
                         lambda _self, key, root, eid, attempt, runner, _background: runner(key, root, eid, attempt))

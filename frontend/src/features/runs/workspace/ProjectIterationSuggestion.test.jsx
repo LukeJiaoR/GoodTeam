@@ -70,3 +70,19 @@ describe('project iteration recommendation', () => {
     expect(screen.getByText(/Previous recommendation is stale/)).toBeInTheDocument();
   });
 });
+
+it('shows a chat assignment scope and uses the existing exact-revision batch confirmation', () => {
+  const onQueue = vi.fn();
+  render(<ProjectIterationSuggestion snapshot={snapshot} onQueue={onQueue} queuedTasks={[{
+    id: 'chat-task', revision: 3, project_task_id: 'DEMO-8', source: 'manager_conversation', status: 'queued',
+    exact_request: 'Research the entry point.', assignment: { role: 'research', execution_policy: 'read_only',
+      write_domains: [], acceptance_criteria: ['Cite the actual entry point.'] },
+  }]} />);
+  expect(screen.getByText('Research the entry point.')).toBeInTheDocument();
+  expect(screen.getByText('Cite the actual entry point.')).toBeInTheDocument();
+  expect(screen.getByText(/Read only; no project file changes/)).toBeInTheDocument();
+  expect(onQueue).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm scope and model charges and run this task' }));
+  expect(onQueue).toHaveBeenCalledExactlyOnceWith({ action: 'start_queued_task_batch', proposal_ids: ['chat-task'],
+    expected_revisions: { 'chat-task': 3 }, confirmed: true });
+});

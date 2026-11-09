@@ -5,6 +5,13 @@ import pytest
 from goodteam_os import manager_execution
 
 
+def test_retired_inspection_intent_cannot_start_a_manager_action():
+    with pytest.raises(manager_execution.ManagerExecutionError):
+        manager_execution._parse_chat_turn(json.dumps({
+            "intent": "project_understanding", "response": "Inspecting the repository.",
+        }))
+
+
 def _project_config(tmp_path: Path) -> Path:
     project_root = tmp_path / "project"
     project_root.mkdir()

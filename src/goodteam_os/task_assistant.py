@@ -42,18 +42,18 @@ _WORK_TERMS = (
     "remove ",
     "build ",
     "create ",
-)
-_UNDERSTANDING_TERMS = (
-    "看一下",
-    "看看",
-    "了解",
-    "分析",
-    "介绍",
-    "当前项目",
-    "项目结构",
-    "understand",
-    "inspect",
-    "summarize",
+    "梳理",
+    "调研",
+    "分析项目",
+    "分析当前项目",
+    "了解当前项目",
+    "了解一下当前项目",
+    "帮我了解",
+    "看一下当前项目",
+    "看看当前项目",
+    "understand this project",
+    "inspect this project",
+    "summarize this project",
     "review this project",
 )
 
@@ -110,7 +110,7 @@ class TaskAssistantService:
         if goal_limit is not None:
             session["goal_page"] = goal_page or {"next_before": ""}
         if not session["timeline"]:
-            opening = initial_task_assistant_session(project_key, assess_project_mode(root))
+            opening = initial_task_assistant_session(project_key, {"mode": "unconfirmed", "confidence": "low", "evidence": []})
             session.update({key: opening[key] for key in ("timeline", "status", "project_mode_hint", "suggestions")})
         session["runtime"] = runtime_view(self.project_config, session)
         try:
@@ -119,14 +119,6 @@ class TaskAssistantService:
             if not str(exc).startswith("No readiness found for project:"):
                 raise
             return self._with_team_decision_status({**session, "goals": goals}, project_key)
-        session = self._append_completed_understanding(
-            store,
-            session,
-            readiness,
-            project_key,
-            root,
-        )
-        session["runtime"] = runtime_view(self.project_config, session)
         session["goals"] = goals
         if goal_limit is not None:
             session["goal_page"] = goal_page or {"next_before": ""}
@@ -201,6 +193,7 @@ class TaskAssistantService:
         team_commands: list[dict[str, object]] = []
         team_authorization = ""
         task_intake = None
+        task_action = None
         detection = detect_team_commands(text, team_view)
         if str(text).strip() in _DISCOVERY_STARTERS:
             intent = "ambiguous"
@@ -233,6 +226,7 @@ class TaskAssistantService:
             team_commands = [dict(item) for item in turn.get("team_commands") or [] if isinstance(item, dict)]
             team_authorization = str(turn.get("team_authorization", ""))
             task_intake = turn.get("task_intake")
+            task_action = turn.get("task_action")
         else:
             # Deterministic path: builtin manager runtime (fake/noop/human)
             # cannot classify language, so the bounded classifier owns intent
@@ -294,38 +288,7 @@ class TaskAssistantService:
                 details={"scope": "task", "note": "Task-scoped preference; persistent Team configuration was not changed."},
             )
 
-        if intent == "project_understanding":
-            state = self._resolve_confident_mode(project_key, root, state, mode_hint)
-            if state.get("project_mode") == "unconfirmed":
-                store._mutate(lambda session: {**session, "pending_inspection": {
-                    "message_id": message_id, "manager_execution": manager_execution,
-                }})
-                store.append_event(f"reply:{message_id}", "project_mode_requested")
-                return assistant_requests.response(self, project_key, root, intent=intent)
-            if str(state.get("lifecycle")) != "ready" and not isinstance(state.get("execution"), dict):
-                state = self.readiness.start(
-                    project_key,
-                    root,
-                    {},
-                    idempotency_key=f"task-assistant:{message_id}",
-                )
-            session = store.append_event(
-                f"reply:{message_id}",
-                "project_inspection_started",
-                content=manager_response,
-                details={
-                    "readiness_lifecycle": str(state.get("lifecycle", "")),
-                    "manager_execution": manager_execution,
-                },
-            )
-            session = self._append_completed_understanding(
-                store,
-                session,
-                state,
-                project_key,
-                root,
-            )
-        elif intent == "project_question":
+        if intent == "project_question":
             session = store.append_event(
                 f"reply:{message_id}",
                 "project_question_answered",
@@ -333,7 +296,27 @@ class TaskAssistantService:
                 details={"manager_execution": manager_execution},
             )
         elif intent == "work_request":
+            if (task_action and draft_sources and not is_conversation_only(text)
+                    and (not store.read().get("proposed_task")
+                         or store.read()["proposed_task"].get("status") == "cancelled")):
+                from goodteam_os.manager_assignment import queue_assignment
+
+                queued = queue_assignment(self, store=store, root=root, message_id=message_id,
+                                          sources=draft_sources, action=task_action)
+                self._resolve_confident_mode(project_key, root, state, mode_hint)
+                chinese = bool(re.search(r"[\u4e00-\u9fff]", text))
+                session = store.append_event(
+                    f"reply:{message_id}", "conversation_replied",
+                    content=(f"已将任务交入 {task_action['role']} 的执行队列。确认本次范围和模型费用后，将在隔离工作区执行；结果会返回这里。"
+                             if chinese else f"Queued the task for {task_action['role']}. Confirm its scope and model charges to run in isolation; results will return here."),
+                    details={"proposal_id": queued["id"], "project_task_id": queued["project_task_id"],
+                             "manager_execution": manager_execution, "actions_applied": True},
+                )
+                return {"session": session, "task_assistant_session": session, "intent": intent,
+                        "workflow_started": False, "run_id": ""}
             event = stage_draft(store, text=str(text), message_id=message_id, source_messages=draft_sources)
+            if event in {"task_proposed", "task_revised"}:
+                self._resolve_confident_mode(project_key, root, state, mode_hint)
             session = store.read()
             session = store.append_event(
                 f"reply:{message_id}",
@@ -511,69 +494,6 @@ class TaskAssistantService:
         )
         return dict(imported["readiness"])
 
-    def _append_completed_understanding(
-        self,
-        store: TaskAssistantSessionStore,
-        session: dict[str, object],
-        readiness: dict[str, object],
-        project_key: str,
-        root: Path,
-    ) -> dict[str, object]:
-        step = next(
-            (
-                item for item in readiness.get("steps", [])
-                if isinstance(item, dict)
-                and item.get("id") == "repository_understanding"
-                and (
-                    item.get("status") == "complete"
-                    or (item.get("status") == "failed" and
-                        dict(item.get("error") or {}).get("code") == "repository_inventory_incomplete")
-                )
-            ),
-            None,
-        )
-        if not isinstance(step, dict):
-            return session
-        artifact_refs = list(step.get("artifact_refs", []) or [])
-        if not artifact_refs:
-            return session
-        artifact_ref = str(artifact_refs[-1])
-        pending = [
-            item for item in session.get("timeline", [])
-            if isinstance(item, dict) and item.get("event") == "project_inspection_started"
-        ]
-        completed_sources = {
-            str(dict(item.get("details") or {}).get("source_message_id", ""))
-            for item in session.get("timeline", [])
-            if isinstance(item, dict) and (
-                item.get("event") == "project_understanding_ready"
-                or (item.get("event") == "project_understanding_incomplete"
-                    and dict(item.get("details") or {}).get("artifact_ref") == artifact_ref)
-            )
-        }
-        unanswered = [item for item in pending if str(item.get("message_id", "")) not in completed_sources]
-        if not unanswered:
-            return session
-        artifact = self.readiness.artifact(project_key, root, artifact_ref)
-        inventory = dict(artifact.get("content") or {})
-        scan = dict(inventory.get("scan") or {})
-        incomplete = step.get("status") == "failed" or scan.get("truncated") is True or scan.get("complete") is False
-        event = "project_understanding_incomplete" if incomplete else "project_understanding_ready"
-        content = _format_repository_understanding(inventory)
-        for item in unanswered:
-            source_message_id = str(item.get("message_id", ""))
-            session = store.append_event(
-                f"understanding:{source_message_id}:{artifact_ref}",
-                event,
-                content=content,
-                details={
-                    "source_message_id": source_message_id,
-                    "artifact_ref": artifact_ref,
-                    "inventory_scan": scan,
-                },
-            )
-        return session
-
     def _resolve_confident_mode(
         self,
         project_key: str,
@@ -595,9 +515,7 @@ class TaskAssistantService:
         readiness: dict[str, object],
     ) -> dict[str, object]:
         proposal = session.get("proposed_task") or {}
-        if session.get("pending_inspection") or (
-            readiness.get("project_mode") == "unconfirmed" and proposal and proposal.get("status") != "cancelled"
-        ):
+        if readiness.get("project_mode") == "unconfirmed" and proposal and proposal.get("status") != "cancelled":
             return {**session, "attention_request": {"id": "project-mode", "kind": "project_mode"}}
         execution = readiness.get("execution")
         if proposal.get("confirmed") and not proposal.get("run_id") and (
@@ -634,8 +552,6 @@ def classify_task_assistant_intent(text: str) -> str:
     normalized = f" {str(text).strip().lower()} "
     if any(term in normalized for term in _WORK_TERMS):
         return "work_request"
-    if any(term in normalized for term in _UNDERSTANDING_TERMS):
-        return "project_understanding"
     return "ambiguous"
 
 
@@ -905,31 +821,6 @@ def detect_task_scoped_team_preference(text: str) -> bool:
         for alias in aliases
     )
     return scoped and mentions_capability
-
-
-def _format_repository_understanding(content: dict[str, object]) -> str:
-    def strings(values: object, *, key: str = "") -> list[str]:
-        if not isinstance(values, list):
-            return []
-        result: list[str] = []
-        for value in values[:12]:
-            if isinstance(value, dict) and key:
-                text = str(value.get(key, "") or "").strip()
-            else:
-                text = str(value or "").strip()
-            if text:
-                result.append(text)
-        return result
-
-    sections = [
-        ("技术栈 / Stack", strings(content.get("technology_stack"))),
-        ("入口 / Entry points", strings(content.get("entry_points"))),
-        ("命令 / Commands", strings(content.get("commands"), key="command")),
-        ("约束 / Constraints", strings(content.get("constraints"))),
-        ("风险 / Risks", strings(content.get("risks"))),
-    ]
-    lines = [f"{label}: {', '.join(values)}" for label, values in sections if values]
-    return "\n".join(lines) or "项目扫描已完成，但没有发现可总结的项目元数据。"
 
 
 def _manager_chat_context(

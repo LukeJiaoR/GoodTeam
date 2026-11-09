@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from goodteam_os import web
-from goodteam_os.project_import import ProjectImportError, import_project
+from goodteam_os.project_import import ProjectImportError, confirm_project_mode, import_project
 
 
 def _sync_dispatch(
@@ -50,6 +50,7 @@ def test_existing_readiness_api_runs_confirms_and_unlocks_real_workflow_bridge(
     )
     imported = import_project(workspace, str(root))
     key = imported["project"]["project_key"]
+    confirm_project_mode(workspace, key, root, "existing_project")
 
     start_status, started = web.handle_project_api_post(
         workspace,
@@ -107,6 +108,7 @@ def test_new_project_api_persists_brief_and_never_writes_target(
     root = tmp_path / "empty"
     root.mkdir()
     key = import_project(workspace, str(root))["project"]["project_key"]
+    confirm_project_mode(workspace, key, root, "new_project")
 
     status, home = web.handle_project_api_post(
         workspace,
@@ -138,6 +140,7 @@ def test_readiness_step_artifact_api_uses_step_id_not_a_filesystem_path(
     root.mkdir()
     (root / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
     key = import_project(workspace, str(root))["project"]["project_key"]
+    confirm_project_mode(workspace, key, root, "existing_project")
     web.handle_project_api_post(
         workspace,
         f"/api/projects/{key}/readiness/start",
@@ -179,6 +182,7 @@ def test_ready_workflow_bridge_rejects_same_path_root_replacement(
     root = tmp_path / "empty"
     root.mkdir()
     key = import_project(workspace, str(root))["project"]["project_key"]
+    confirm_project_mode(workspace, key, root, "new_project")
     web.handle_project_api_post(
         workspace,
         f"/api/projects/{key}/readiness/start",
@@ -288,6 +292,7 @@ def test_partial_inventory_api_retains_evidence_and_blocks_workflow(
     (root / "main.py").write_text("print('ok')\n")
     (root / "large.py").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
     key = import_project(workspace, str(root))["project"]["project_key"]
+    confirm_project_mode(workspace, key, root, "existing_project")
     status, response = web.handle_project_api_post(
         workspace, f"/api/projects/{key}/readiness/start", {"inputs": {}},
     )

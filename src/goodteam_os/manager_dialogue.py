@@ -194,6 +194,8 @@ def run_dialogue(service, *, store, project_key, root, text, message_id, attempt
             '{"kind":"explain","target_id":"exact continuation id"}. '
             'For a request to confirm this batch delivery, use kind confirm_delivery and the exact continuation id. '
             'For an explicit request to stop automatic continuation, use kind stop_continuation and the exact continuation id. '
+            'To follow up unfinished work under an active existing grant, call kind advance_continuation with its exact id. '
+            'This invokes only the existing bounded continuation service, cannot add tasks or budget, and stops at existing review gates. '
             'These are proposals; the server performs all validation. No budget/reviewer reset, new grant, merge, landing or deployment is available. '
             'Questions and ended grants never authorize continuation. Answer actual status and reasons from the fresh snapshot. '
             'All other messages keep the existing task intake and Team JSON contract.'
@@ -208,6 +210,17 @@ def run_dialogue(service, *, store, project_key, root, text, message_id, attempt
         if snapshot["continuation"] and operation.get("kind") and operation.get("target_id") != snapshot["continuation"].get("id"):
             raise ManagerExecutionError("The Manager returned a stale project operation target.")
         execution = (turn or {}).get("manager_execution") or {}
+        if operation.get("kind") == "advance_continuation":
+            grant = snapshot["continuation"]
+            if grant.get("status") != "active" or not grant.get("id"):
+                return {"pending": pending, "result": _reply(store, turn_input,
+                        _status(snapshot, chinese=chinese), execution=execution)}
+            result = _reply(store, turn_input,
+                "将按原授权检查并推进未完成工作；原有预算与审查门槛保持有效。" if chinese else
+                "Following up unfinished work within the existing grant and its budget and review gates.",
+                execution=execution)
+            result["advance_continuation"] = grant["id"]
+            return {"pending": pending, "result": result}
         if operation.get("kind") == "stop_continuation" and phrase in _STOP:
             from goodteam_os.project_iteration_continuation import stop_project_continuation
 
