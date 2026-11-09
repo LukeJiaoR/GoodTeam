@@ -116,8 +116,8 @@ class ProjectReadinessStore:
 
     def initialize(self, project_key: str, root: Path) -> dict[str, object]:
         key = normalize_project_key(project_key)
-        project_mode = classify_project_mode(root)
-        mode_confirmed = project_mode != "unconfirmed"
+        # Import records the directory identity only. Inspection and project
+        # preparation begin after a user request, never as part of registration.
         root_stat = root.stat()
         readiness: dict[str, object] = {
             "schema_version": 1,
@@ -127,24 +127,19 @@ class ProjectReadinessStore:
                 "device": root_stat.st_dev,
                 "inode": root_stat.st_ino,
             },
-            "project_mode": project_mode,
-            "lifecycle": "preparing" if mode_confirmed else "attention_required",
+            "project_mode": "unconfirmed",
+            "lifecycle": "preparing",
             "steps": [
                 {"id": "project_record", "status": "complete", "required": True},
                 {"id": "safe_preflight", "status": "complete", "required": True},
                 {
                     "id": "project_mode",
-                    "status": "complete" if mode_confirmed else "needs_input",
+                    "status": "pending",
                     "required": True,
                 },
             ],
             "updated_at": _now(),
         }
-        if mode_confirmed:
-            readiness["steps"] = [
-                *readiness["steps"],
-                *_pending_steps(MODE_STEPS[project_mode]),
-            ]
         self._write(key, readiness)
         return readiness
 

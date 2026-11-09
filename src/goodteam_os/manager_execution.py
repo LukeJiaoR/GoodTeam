@@ -396,18 +396,18 @@ def _manager_chat_task(text: str) -> str:
             "For example, 'a product-image Web app for online merchants with photo-realistic promotional images' still leaves the initial product category/use case, uploaded input, output, and product-fidelity standard open. Ask which product/use case to serve first and whether the flow is upload a real product photo and change its scene while preserving its appearance, or generate from text. In later turns clarify the smallest useful workflow and what quality would count as success; do not ask everything at once.",
             "A narrow existing-project fix or clearly scoped deliverable can be ready immediately. Do not force a product questionnaire on 'change this button label' or on a request explicitly limited to writing an MVP proposal. Distinguish a planning deliverable from permission to build the product.",
             "When the user says the idea/draft is not specific enough, continue discovery with concrete missing decisions. Do not defend the previous readiness judgment or repeat the same draft. Resolve short follow-up answers using the preceding question and retain the earlier goal and constraints.",
-            "Use intent project_understanding for a broad request to inspect or explain the current project.",
-            "Use intent project_question for a factual question about the current project (Git, framework, files, commands). Answer it directly using read-only inspection or supplied evidence; do not start preparation or propose a task.",
-            "Only when the server context explicitly supplies fresh continuation operations, continuation questions and proposals may use intent project_operation with project_operation containing exactly kind (explain, confirm_delivery or stop_continuation) and target_id (the exact continuation id). Follow the server context's operation contract. These interpretations are proposals, never proof that an action was applied. Without that context, use the normal intents.",
+            "Project research, repository analysis and project summaries are deliverables: use work_request when the requested outcome is clear enough to draft. Plan this work for the team's Researcher through the existing task flow; do not do the research in this classification turn or replace it with a directory inventory. Research methods belong to the task's loaded Skills.",
+            "Use intent project_question only when supplied project evidence or a retained Worker result already answers the question. Explain that evidence directly without launching work. A question's grammatical form does not make it conversation-only: when answering requires reading repository documents or code, discovering its purpose, architecture, framework, files or commands, that is a concrete research deliverable. Use work_request and call task_action queue_task for role research with execution_policy read_only and no write_domains. For example, '这个项目是干嘛的' or 'what does this project do?' with no supplied research result is a ready research task; preserve that exact user question as its source, without asking the user to restate it as an assignment or inventing development scope.",
+            "Only when the server context explicitly supplies fresh continuation operations, continuation questions and proposals may use intent project_operation with project_operation containing exactly kind (explain, confirm_delivery, stop_continuation or advance_continuation) and target_id (the exact continuation id). Follow the server context's operation contract. These interpretations are proposals, never proof that an action was applied. Without that context, use the normal intents.",
             "Resolve short references such as 'it', 'this', '它' or '他' to the current project when conversation context supports that reading. For example '他有git吗' asks whether this project uses Git, not whether a Worker can operate Git.",
-            "For project_question, inspect the current checkout when evidence is missing, using read-only tools. For Git presence use git rev-parse --is-inside-work-tree; do not initialize, fetch, commit, or modify the repository. If inspection is unavailable, say what could not be verified instead of guessing.",
+            "You coordinate business research; the Researcher reads repository documents and source code. Do not inspect README, AGENTS, manifests or source files in this classification turn to answer a research question yourself, and do not infer purpose from a project name or directory inventory. Use the supplied evidence or queue the research task. A single bounded Git-presence fact may use git rev-parse --is-inside-work-tree; do not initialize, fetch, commit or modify the repository. Unavailable evidence remains unknown; never replace an unavailable Researcher with your own broad inspection.",
             "Ask a clarifying question only when a materially different interpretation remains after using the project and recent conversation context. Do not append execution-confirmation boilerplate to factual answers.",
             "Use intent team_management only for a persistent Team composition change (enable/disable a capability, add/pause/release a worker, change a worker's runtime or role).",
             "Use intent ambiguous when a safe clarifying question is required.",
             "Acknowledgements, greetings, hypothetical discussion and cancellation are not work requests. Use ambiguous and respond without claiming any action happened.",
-            "Only an explicit request to inspect the repository is project_understanding; discussing the task draft does not request inspection.",
-            "For work requests, preserve the user's original wording. Existing drafts are revised, not silently replaced. Execution and preparation require separate user confirmation.",
-            'The JSON shape must be: {"intent": "work_request|project_understanding|project_question|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
+            "For ready work requests, call the existing queue action by returning task_action with exactly kind=queue_task, role (an enabled dispatchable Team role), execution_policy (read_only or workspace_write), write_domains (empty for read_only; explicit project-relative allowed paths for writes), acceptance_criteria (1-8 observable criteria supported by the user's goal). Use Research for research deliverables via role research. This is a real server action that creates the original task card and queues its exact user source messages; do not merely promise assignment. Do not call it for discussion, recommendations or missing scope. It does not authorize charges, execute Workers, approve results, merge or deploy. Existing authorizations and execution gates retain authority. If a current draft needs revision, use the existing draft flow instead of queuing a duplicate.",
+            "For work requests, preserve the user's original wording. Existing drafts are revised, not silently replaced. Execution and preparation require separate user confirmation unless an existing bounded authorization already covers the work.",
+            'The JSON shape must be: {"intent": "work_request|project_question|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
             'For product discovery and every work_request, also include "task_intake": {"ready": true|false, "missing_decisions": ["concrete user-facing question in the user\'s language"], "source_message_ids": ["exact user message ID"]}. A ready task has no missing_decisions; otherwise ready must be false and include at least one focused question.',
             "For a ready task, select all relevant exact user message IDs from Task intake source messages, including the current message, earlier goal and clarifications. Do not select assistant suggestions, unrelated questions or earlier tasks. When refining an existing draft, select all relevant follow-up messages including the current one; the existing draft is already preserved by revision controls. Never invent IDs or replace source text with a model summary.",
             "For a ready task, the response must summarize the agreed goal, first-version scope, constraints and observable acceptance criteria in a short readable outline. Only include supported or explicitly delegated decisions. The visible draft will retain the selected user messages verbatim; do not merely say the direction is specific enough.",
@@ -447,13 +447,32 @@ def _parse_chat_turn(output: str, *, require_task_intake: bool = True) -> dict[s
         raise ManagerExecutionError("The configured Task Assistant did not return a structured chat response.")
     intent = str(payload.get("intent", "") or "").strip()
     response = str(payload.get("response", "") or "").strip()
-    if intent not in {"work_request", "project_understanding", "project_question", "team_management", "project_operation", "ambiguous"} or not response or len(response) > 4_000:
+    if intent not in {"work_request", "project_question", "team_management", "project_operation", "ambiguous"} or not response or len(response) > 4_000:
         raise ManagerExecutionError("The configured Task Assistant returned an invalid structured chat response.")
     parsed: dict[str, object] = {"intent": intent, "response": response}
+    if "task_action" in payload:
+        action = payload["task_action"]
+        from goodteam_os.team_control_plane import ROLE_KEYS
+        from goodteam_os.project_iteration import normalize_write_domains
+
+        if (intent != "work_request" or not isinstance(action, dict)
+                or set(action) != {"kind", "role", "execution_policy", "write_domains", "acceptance_criteria"}
+                or action.get("kind") != "queue_task" or action.get("role") not in ROLE_KEYS
+                or action.get("execution_policy") not in {"read_only", "workspace_write"}
+                or not isinstance(action.get("write_domains"), list)
+                or (action["write_domains"] and normalize_write_domains(action["write_domains"]) is None)
+                or (action["execution_policy"] == "read_only" and action["write_domains"])
+                or (action["execution_policy"] == "workspace_write" and not action["write_domains"])
+                or not isinstance(action.get("acceptance_criteria"), list)
+                or not 1 <= len(action["acceptance_criteria"]) <= 8
+                or any(not isinstance(item, str) or not item.strip() or len(item) > 400
+                       for item in action["acceptance_criteria"])):
+            raise ManagerExecutionError("The Manager returned an invalid task action.")
+        parsed["task_action"] = action
     if intent == "project_operation":
         operation = payload.get("project_operation")
         if (not isinstance(operation, dict) or set(operation) != {"kind", "target_id"}
-                or operation.get("kind") not in {"explain", "confirm_delivery", "stop_continuation"}
+                or operation.get("kind") not in {"explain", "confirm_delivery", "stop_continuation", "advance_continuation"}
                 or not isinstance(operation.get("target_id"), str) or len(operation["target_id"]) > 256):
             raise ManagerExecutionError("The Task Assistant returned an invalid project operation.")
         parsed["project_operation"] = operation

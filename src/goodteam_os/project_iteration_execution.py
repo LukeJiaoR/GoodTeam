@@ -319,9 +319,49 @@ def _settle_batch(workspace, project_key, root, batch, report=None, error=""):
         return session
 
     TaskAssistantSessionStore(workspace, project_key)._mutate(persist)
+    _publish_batch_result(workspace, project_key, root, batch, report, status)
     return {"run_id": batch["run_id"], "dispatch_run_id": effective_dispatch_id(batch), "status": status,
             "workflow_started": False, "execution_started": True, "report": report,
             "task_assistant_session": TaskAssistantSessionStore(workspace, project_key).read()}
+
+
+def _publish_batch_result(workspace, project_key, root, batch, report, status):
+    """Return actual Worker output to chat without promoting it to delivery.
+
+    Publication is replayable after settlement; reading/polling starts no work.
+    Result paths are derived from bound job IDs, never trusted from a report.
+    """
+    from goodteam_os.memory_storage import read_bytes
+    import re
+
+    store = TaskAssistantSessionStore(workspace, project_key)
+    proposals = [item for item in store.read().get("queued_task_proposals", [])
+                 if item.get("run_id") == batch["run_id"]]
+    chinese = any(re.search(r"[\u3400-\u9fff]", item["exact_request"]) for item in proposals)
+    content = [("Worker 结果已返回，尚未完成独立审查与交付确认。" if chinese else
+                "Worker results returned; independent review and delivery remain outstanding.") if status == "review" else
+               ("任务未完成，执行已阻塞。保留的结果如下；没有自动增加重试或模型预算。" if chinese else
+                "Work remains incomplete and execution is blocked. Retained results follow; no retry or model budget was added.")]
+    evidence = []
+    for job in (report or {}).get("jobs", []):
+        job_id = str(job.get("job_id", ""))
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", job_id):
+            continue
+        raw = read_bytes(Path(root) / ".goodteam" / "workers" / "jobs" / job_id / "result.md",
+                         maximum=2 * 1024 * 1024)
+        result = raw.decode("utf-8", errors="replace").strip() if raw else ""
+        label = str(job.get("role", "Worker"))
+        content.append(f"\n{label}\n\n" + (result[:16000] if result else (
+            "未保留可读报告，不能确认成果。" if chinese else "No readable report was retained; results cannot be confirmed.")))
+        if len(result) > 16000:
+            content.append("报告较长，此处为节选。" if chinese else "The report above is an excerpt.")
+        evidence.append({"role": label, "summary": result})
+    if not (report or {}).get("jobs"):
+        content.append("尚无可核实的 Worker 报告。" if chinese else "No verifiable Worker report is available yet.")
+    store.append_event("batch-result:" + batch["run_id"] + ":" + str(batch.get("current_recovery_attempt", "initial")),
+                       "conversation_replied", content="\n\n".join(content),
+                       details={"run_id": batch["run_id"], "actions_applied": False,
+                                "source_evidence": {"worker_results": evidence}})
 
 
 def _execute_batch(*, workspace, project_key, root, batch):

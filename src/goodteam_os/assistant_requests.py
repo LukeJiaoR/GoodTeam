@@ -148,7 +148,23 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
         update_request(store, message_id, status="succeeded", intent=result["intent"])
         if not result.get("model_call_skipped"):
             record_runtime(store, snapshot, _verification_status(snapshot))
-        return response(service, project_key, root, intent=result["intent"])
+    # The existing continuation adapter takes Workflow/queue locks itself.
+    # Release the conversation lock before invoking it; never mint a grant or
+    # pass model-selected commands, tasks, budgets or confirmation flags.
+    advance = result.get("advance_continuation")
+    if advance and not context_run_id:
+        grant = store.read().get("project_continuation") or {}
+        if grant.get("id") == advance and grant.get("status") == "active":
+            from goodteam_os.project_iteration_continuation import tick_project_continuation
+
+            outcome = tick_project_continuation(workspace=service.workspace, project_key=project_key,
+                                                root=root, project_config=service.project_config)
+            from goodteam_os.manager_dialogue import _status
+
+            store.append_event("continuation-followup:" + message_id, "conversation_replied",
+                content=_status({"continuation": outcome}, chinese=any("\u3400" <= char <= "\u9fff" for char in text)),
+                details={"operation": "advance_continuation", "actions_applied": True})
+    return response(service, project_key, root, intent=result["intent"])
 
 
 def _next_attempt(previous, text, expected_attempt):

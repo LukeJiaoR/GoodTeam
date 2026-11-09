@@ -2,6 +2,32 @@ import { test, expect, importProject } from './fixtures.js';
 import { Buffer } from 'node:buffer';
 import { clickMutation, decisions, prepareFirstTask, sendTask, snapshot, workState } from './business-loop-helpers.js';
 
+test('project import waits for the user and research uses ordinary task intake', async ({ page, fixture }) => {
+  const automaticWork = [];
+  page.on('request', request => {
+    if (request.method() === 'POST' && /\/task-assistant\/messages$|\/readiness\/(start|retry)$/.test(new URL(request.url()).pathname)) {
+      automaticWork.push(new URL(request.url()).pathname);
+    }
+  });
+  const imported = await importProject(page, fixture);
+  expect(imported.readiness.project_mode).toBe('unconfirmed');
+  expect(imported.readiness.execution).toBeFalsy();
+  const before = await workState(page, fixture.key);
+  expect(before.project_assistant.timeline).toHaveLength(1);
+  expect(before.project_assistant.proposed_task).toBeFalsy();
+  expect(before.state).toBeNull();
+  expect(automaticWork).toEqual([]);
+
+  const text = 'Summarize this project’s architecture, key flows, and open work. Research only; do not modify code.';
+  const proposal = await sendTask(page, fixture, text);
+  const after = await workState(page, fixture.key);
+  expect(after.project_assistant.proposed_task.id).toBe(proposal.id);
+  expect(after.project_assistant.timeline.some(item => item.event?.startsWith('project_understanding')
+    || item.event === 'project_inspection_started')).toBe(false);
+  expect(after.state).toBeNull();
+  expect(automaticWork).toEqual([`/api/projects/${fixture.key}/task-assistant/messages`]);
+});
+
 test('project Manager keeps chatting across tasks and saves future work without assigning it to itself', async ({ page, fixture }, testInfo) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const evidence = [];

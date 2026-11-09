@@ -21,7 +21,7 @@ from goodteam_os import web
 from goodteam_os.execution.task_snapshot_store import store_for_project
 from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.project_iteration import project_iteration_backlog
-from goodteam_os.project_import import import_project
+from goodteam_os.project_import import confirm_project_mode, import_project
 from goodteam_os.project_iteration_quality import prepare_project_batch_quality
 from goodteam_os.project_outcome_discovery import validate_discovered_task
 from goodteam_os.project_readiness_executor import ProjectReadinessExecutor
@@ -162,6 +162,7 @@ def test_verified_outcome_creates_once_then_delivers_next_iteration_within_froze
     source = tmp_path / "source"
     source.mkdir()
     import_project(tmp_path, str(source), requested_key="DEMO")
+    confirm_project_mode(tmp_path, "DEMO", source, "new_project")
     ready = ProjectReadinessExecutor(tmp_path, preflight=lambda _key: {
         "status": "ready", "mode": "offline_fixture", "external_invocation": False,
     }).start("DEMO", source, inputs={

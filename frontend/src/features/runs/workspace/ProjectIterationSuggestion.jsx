@@ -28,6 +28,7 @@ export default function ProjectIterationSuggestion({
   const activeBatch = (queuedTasks || []).some(item => item.batch_run_id && item.status === 'running');
   const activeQueue = (queuedTasks || []).filter(item => item.batch_run_id && item.status === 'running');
   const batchProgress = (queuedTasks || []).filter(item => item.batch_run_id && ['running', 'review', 'blocked'].includes(item.status));
+  const assignments = queuedTasks.filter(item => item.source === 'manager_conversation' && item.status === 'queued');
   const unavailable = snapshot.status === 'unavailable';
   const label = zh ? '下一轮项目迭代' : 'Next project iteration';
   const hint = unavailable
@@ -53,6 +54,17 @@ export default function ProjectIterationSuggestion({
       <strong>{label}</strong>
       <span>{hint}</span>
     </div>
+    {assignments.map(item => <div key={item.id}>
+      <p>{item.exact_request}</p>
+      <p>{item.assignment?.role} · {item.assignment?.execution_policy === 'read_only'
+        ? (zh ? '只读研究，不修改项目文件' : 'Read only; no project file changes')
+        : (item.assignment?.write_domains || []).join(', ')}</p>
+      <ul>{(item.assignment?.acceptance_criteria || []).map((criterion, index) => <li key={index}>{criterion}</li>)}</ul>
+      <button type="button" disabled={disabled || activeBatch} onClick={() => onQueue?.({
+        action: 'start_queued_task_batch', proposal_ids: [item.id],
+        expected_revisions: { [item.id]: item.revision }, confirmed: true,
+      })}>{zh ? '确认范围与模型费用并执行此任务' : 'Confirm scope and model charges and run this task'}</button>
+    </div>)}
     {current ? (
       <div className="project-iteration-suggestion__choice">
         <strong>{batch ? (zh ? 'Manager 建议并行任务组' : 'Manager recommends parallel tasks')

@@ -535,12 +535,7 @@ def _opening_presentation(mode: str) -> tuple[str, tuple[str, ...]]:
             "create-foundation",
             "custom-request",
         )
-    return "welcome_ambiguous_project", (
-        "confirm-new-project",
-        "confirm-existing-project",
-        "inspect-directory",
-        "custom-request",
-    )
+    return "welcome_ambiguous_project", ("custom-request",)
 
 
 def initial_task_assistant_session(
