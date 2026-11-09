@@ -101,10 +101,11 @@ def test_model_fetch_uses_saved_key_and_rejects_redirects():
 
         connection = {"base_url": f"http://127.0.0.1:{server.server_port}/v1", "api_key": "fixture-key"}
         assert fetch_models(connection)["models"] == ["model-a", "model-z"]
+        connection["api_key"] = ""
         with pytest.raises(ProviderError) as error:
             fetch_models(connection)
         assert "fixture-key" not in str(error.value)
-        assert requests == [("/v1/models", "Bearer fixture-key")] * 2
+        assert requests == [("/v1/models", "Bearer fixture-key"), ("/v1/models", None)]
     finally:
         server.shutdown()
         thread.join(5)

@@ -99,6 +99,9 @@ def test_sdk_embedding_request_preserves_vectors_and_rejects_invalid_responses(t
     assert requests[0] == {"model": "fixture-embedding", "input": ["memory", "colors"],
                            "encoding_format": "float", "path": "/v1/embeddings",
                            "authorization": "Bearer fixture-only-secret"}
+    connection["api_key"] = ""
+    assert retriever._embed(["memory"], time.monotonic() + 5) == [[1.0, 0.0]]
+    assert requests[-1]["authorization"] is None
     for failure in ("invalid", "redirect"):
         mode.update(invalid=failure == "invalid", redirect=failure == "redirect")
         count = len(requests)
