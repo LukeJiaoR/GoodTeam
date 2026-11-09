@@ -12,7 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import httpx
-from openai import APIError, APIStatusError, OpenAI
+from openai import APIError, APIStatusError, OpenAI, omit
 
 from goodteam_os.database import database_configured
 from goodteam_os import state_documents
@@ -207,10 +207,12 @@ def fetch_models(connection):
     try:
         # Explicit transport settings preserve the credential/redirect boundary.
         # Disable SDK retries so discovery stays a single bounded request.
-        with OpenAI(base_url=connection["base_url"], api_key=connection["api_key"] or "",
+        with OpenAI(base_url=connection["base_url"], api_key=connection["api_key"] or "unused",
                     max_retries=0, timeout=10,
                     http_client=httpx.Client(follow_redirects=False, timeout=10)) as client:
-            with client.models.with_streaming_response.list() as response:
+            with client.models.with_streaming_response.list(
+                extra_headers={} if connection["api_key"] else {"Authorization": omit},
+            ) as response:
                 raw = bytearray()
                 for chunk in response.iter_bytes():
                     raw.extend(chunk)

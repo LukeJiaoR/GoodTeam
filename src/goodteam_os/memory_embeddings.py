@@ -12,7 +12,7 @@ import math
 import time
 
 import httpx
-from openai import APIError, APIStatusError, AsyncOpenAI
+from openai import APIError, APIStatusError, AsyncOpenAI, omit
 import psycopg
 from psycopg import sql
 
@@ -35,12 +35,13 @@ async def _request_embeddings(connection, texts, deadline):
         raise TimeoutError("Embedding response deadline exceeded")
     async with asyncio.timeout(remaining):
         async with AsyncOpenAI(
-            base_url=connection["base_url"], api_key=connection["api_key"] or "",
+            base_url=connection["base_url"], api_key=connection["api_key"] or "unused",
             max_retries=0, timeout=remaining,
             http_client=httpx.AsyncClient(follow_redirects=False, timeout=remaining),
         ) as client:
             async with client.embeddings.with_streaming_response.create(
                 model=connection["model"], input=texts, encoding_format="float",
+                extra_headers={} if connection["api_key"] else {"Authorization": omit},
             ) as response:
                 raw = bytearray()
                 async for chunk in response.iter_bytes():
