@@ -8,10 +8,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
+
+import httpx
+from openai import APIError, APIStatusError, OpenAI
 
 from goodteam_os.database import database_configured
 from goodteam_os import state_documents
@@ -202,21 +203,19 @@ class ProviderStore:
         return fetch_models(connection)
 
 
-class _NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
 def fetch_models(connection):
-    headers = {"Accept": "application/json"}
-    if connection["api_key"]:
-        headers["Authorization"] = "Bearer " + connection["api_key"]
-    request = Request(connection["base_url"] + "/models", headers=headers)
     try:
-        with build_opener(_NoRedirect).open(request, timeout=10) as response:
-            raw = response.read(1024 * 1024 + 1)
-        if len(raw) > 1024 * 1024:
-            raise ValueError
+        # Explicit transport settings preserve the credential/redirect boundary.
+        # Disable SDK retries so discovery stays a single bounded request.
+        with OpenAI(base_url=connection["base_url"], api_key=connection["api_key"] or "",
+                    max_retries=0, timeout=10,
+                    http_client=httpx.Client(follow_redirects=False, timeout=10)) as client:
+            with client.models.with_streaming_response.list() as response:
+                raw = bytearray()
+                for chunk in response.iter_bytes():
+                    raw.extend(chunk)
+                    if len(raw) > 1024 * 1024:
+                        raise ValueError
         payload = json.loads(raw)
         values = payload.get("data", payload.get("models"))
         if not isinstance(values, list):
@@ -225,10 +224,10 @@ def fetch_models(connection):
                and isinstance(v.get("id", v.get("slug")), str)}
         models = sorted(v for v in ids if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}", v))
         return {"models": models[:2000], "source": "provider"}
-    except HTTPError as exc:
-        code = "provider_auth_failed" if exc.code in {401, 403} else "provider_models_unavailable"
+    except APIStatusError as exc:
+        code = "provider_auth_failed" if exc.status_code in {401, 403} else "provider_models_unavailable"
         raise ProviderError(code, "Model discovery failed. Check the Base URL and API Key.", 400) from None
-    except (URLError, TimeoutError, OSError, ValueError, AttributeError):
+    except (APIError, httpx.HTTPError, TimeoutError, OSError, ValueError, AttributeError):
         raise ProviderError("provider_models_unavailable", "Could not read the model list. You can enter a model ID manually.", 400) from None
 
 

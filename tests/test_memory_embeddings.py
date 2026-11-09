@@ -90,6 +90,25 @@ def embedding_service(tmp_path, monkeypatch, embedding_http_service):
     return store, provider, configure, requests, mode
 
 
+def test_sdk_embedding_request_preserves_vectors_and_rejects_invalid_responses(tmp_path, embedding_http_service):
+    base_url, requests, mode = embedding_http_service
+    connection = {"id": "fixture", "revision": 1, "embedding_revision": 1,
+                  "model": "fixture-embedding", "base_url": base_url, "api_key": "fixture-only-secret"}
+    retriever = PostgresMemoryRetriever(SimpleNamespace(root=tmp_path, embedding_connection=lambda: connection), connection)
+    assert retriever._embed(["memory", "colors"], time.monotonic() + 5) == [[1.0, 0.0], [0.0, 1.0]]
+    assert requests[0] == {"model": "fixture-embedding", "input": ["memory", "colors"],
+                           "encoding_format": "float", "path": "/v1/embeddings",
+                           "authorization": "Bearer fixture-only-secret"}
+    for failure in ("invalid", "redirect"):
+        mode.update(invalid=failure == "invalid", redirect=failure == "redirect")
+        count = len(requests)
+        with pytest.raises(ProviderError) as caught:
+            retriever._embed(["memory"], time.monotonic() + 5)
+        assert len(requests) == count + 1
+        assert requests[-1]["path"] == "/v1/embeddings"
+        assert "fixture-only-secret" not in str(caught.value)
+
+
 @pytest.mark.parametrize("failure", ["truncated", "slow"])
 def test_http_failure_respects_deadline_and_provider_error_contract(tmp_path, embedding_http_service, failure):
     base_url, requests, mode = embedding_http_service
