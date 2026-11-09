@@ -186,6 +186,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
     """One bounded automatic step; retries retain the same queued batch identity."""
     from goodteam_os.project_iteration_execution import run_queued_iteration_batch
     from goodteam_os.project_outcome_discovery import DiscoveryPublicationPending, discover_next_iteration
+    from goodteam_os.project_investigation_feedback import is_observed_investigation, observe_pending_investigation
 
     workspace, root, project_config = Path(workspace), Path(root), Path(project_config)
     store = TaskAssistantSessionStore(workspace, project_key)
@@ -218,9 +219,15 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                       or not recovering and any(task["status"] == "blocked" for task in batch_tasks)):
                     raise ValueError("The current batch is blocked; inspect its retained execution result.")
                 elif all(task["status"] == "review" for task in batch_tasks):
-                    return value
+                    observed = observe_pending_investigation(workspace=workspace, project_key=project_key,
+                        root=root, project_config=project_config, value=value)
+                    if observed is None:
+                        return value
+                    value, pending = observed, None
             if (value.get("discovery") and pending is None and (value.get("discovery_pending")
-                    or all(task["status"] == "done" and task.get("delivery_verified") is True for task in selected))):
+                    or value.get("investigation_pending")
+                    or all((task["status"] == "done" and task.get("delivery_verified") is True)
+                           or is_observed_investigation(value, task) for task in selected))):
                 value = discover_next_iteration(workspace=workspace, project_key=project_key, root=root,
                     project_config=project_config, value=value, manager_runner=manager_runner)
                 pending = value.get("pending_batch")
@@ -443,7 +450,7 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
     store = TaskAssistantSessionStore(workspace, project_key)
     tasks = LocalTaskStore(root, project_key)
     with goal_guard(workspace, project_key):
-        batch = store.read().get("project_task_batches", {}).get(run_id)
+        batch = store.read().get("project_task_batches", {}).get(run_id, {})
         if not batch or batch.get("project_root") != str(root.resolve()) or batch.get("status") == "abandoned":
             raise ValueError("The delivery does not belong to this project batch.")
         receipt = {"producer": "human_confirmed_candidate_delivery", "run_id": run_id,
