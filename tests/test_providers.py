@@ -74,7 +74,7 @@ def test_pg_connections_restart_revision_and_secret_boundary(provider_store, tmp
         store.view()
 
 
-def test_model_fetch_uses_saved_key_and_rejects_redirects(provider_store):
+def test_model_fetch_uses_saved_key_and_rejects_redirects():
     requests = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -97,10 +97,12 @@ def test_model_fetch_uses_saved_key_and_rejects_redirects(provider_store):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        saved = save(provider_store, base_url=f"http://127.0.0.1:{server.server_port}", api_key="fixture-key")
-        assert provider_store.fetch_models({"id": saved["id"]})["models"] == ["model-a", "model-z"]
+        from goodteam_os.providers import fetch_models
+
+        connection = {"base_url": f"http://127.0.0.1:{server.server_port}/v1", "api_key": "fixture-key"}
+        assert fetch_models(connection)["models"] == ["model-a", "model-z"]
         with pytest.raises(ProviderError) as error:
-            provider_store.fetch_models({"id": saved["id"]})
+            fetch_models(connection)
         assert "fixture-key" not in str(error.value)
         assert requests == [("/v1/models", "Bearer fixture-key")] * 2
     finally:
