@@ -41,10 +41,15 @@ const SYSTEM_TIMELINE_EVENTS = new Set([
   'work_retry_blocked',
   'work_retry_ambiguous',
   'team_decision_failed',
+  'project_continuation_authorized',
+  'project_continuation_batch_started',
 ]);
 
 function getSystemEventMeta(event, kind) {
   switch (event) {
+    case 'project_continuation_authorized':
+    case 'project_continuation_batch_started':
+      return { Icon: Layers, tone: 'info', category: 'continuation' };
     case 'work_dispatched':
     case 'work_progressed':
     case 'mission_organized':
@@ -91,6 +96,8 @@ function extractSystemDetails(item, copy) {
   }
   if (details.attempt_count) entries.push({ label: 'Attempts', value: String(details.attempt_count) });
   if (details.retry_count) entries.push({ label: 'Retries', value: String(details.retry_count) });
+  if (details.max_batches != null) entries.push({ label: 'Max Batches', value: String(details.max_batches) });
+  if (details.max_manager_calls != null) entries.push({ label: 'Max Calls', value: String(details.max_manager_calls) });
   const extraContent = (item.content && item.content.trim() && item.content.trim() !== String(copy || '').trim())
     ? item.content : null;
   return { entries, extraContent, hasDetails: entries.length > 0 || Boolean(extraContent) };
@@ -106,7 +113,7 @@ function SystemTimelineItem({ item, copy, metadata }) {
       <span className="team-manager-system-chip__icon" aria-hidden="true">
         <Icon size={12} strokeWidth={2.2} />
       </span>
-      <span className="team-manager-system-chip__text">{copy}</span>
+      <span className="team-manager-system-chip__text" title={copy}>{copy}</span>
       {item.details?.pr_number ? (
         <span className="team-system-tag">#{item.details.pr_number}</span>
       ) : null}
@@ -134,6 +141,9 @@ function SystemTimelineItem({ item, copy, metadata }) {
           {chipContent}
         </summary>
         <div className="team-system-card__body">
+          {copy ? (
+            <p className="team-system-card__summary-text">{copy}</p>
+          ) : null}
           {entries.length > 0 ? (
             <dl className="team-system-card__params">
               {entries.map(({ label, value }) => (
@@ -172,7 +182,7 @@ function TimelineItem({ item, language, t, continuationNoticeId }) {
       <time className="conversation-message-time" dateTime={itemTimestamp} title={`${actorLabel} · ${formatted}`}>{timeOnly || formatted}</time>
     </div>
   ) : null;
-  const hasDoubleContent = Boolean(item.content && copy && !isContinuationHandoff && copy !== item.content);
+  const hasDoubleContent = Boolean(item.content && copy && !isContinuationHandoff && !isUnderstanding && copy !== item.content);
 
   if (isSystem) {
     return (

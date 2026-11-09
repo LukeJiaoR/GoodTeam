@@ -114,6 +114,8 @@
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card { display: block; width: 100%; max-width: 100%; background: var(--product-surface-muted); border: 1px solid color-mix(in srgb, var(--product-border) 60%, transparent); border-radius: 8px; overflow: hidden; transition: border-color 140ms ease, box-shadow 140ms ease; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card:hover { border-color: var(--product-border); }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card[open] { background: var(--product-surface); border-color: var(--product-border); box-shadow: 0 2px 8px #00000008; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-system-card[open] .team-manager-system-chip__text { white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; line-height: 1.5; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-system-card__summary-text { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--product-text); word-break: break-word; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card__summary { display: flex; align-items: center; cursor: pointer; list-style: none; user-select: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card__summary::-webkit-details-marker { display: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card__summary .team-manager-system-chip { width: 100%; border: 0; background: transparent; border-radius: 0; padding: 6px 10px; }
