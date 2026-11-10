@@ -321,6 +321,8 @@ function TeamWorkspace({
   onClearContext,
   onQueueTask,
   onAssistantAction,
+  onAnswerQuestion,
+  questionBoard,
   busy,
   data,
   error,
@@ -541,6 +543,8 @@ function TeamWorkspace({
             ? conversationDelivery : null}
           assistantState={assistant}
           onAssistantAction={onAssistantAction}
+          onAnswerQuestion={onAnswerQuestion}
+          questionBoard={questionBoard ?? data.task_assistant_session?.question_board}
           attention={workspace.attention_request}
           busy={busy}
           error={assistantError || error}

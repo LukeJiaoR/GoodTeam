@@ -48,6 +48,49 @@ it('offers a current bilingual Manager handoff through existing controls without
   expect(resolve()).toMatchObject({ status: 'current', target: 'continuation' });
   view.rerender(ui('en'));
   expect(screen.getByText(/This does not mean the project is complete/)).toBeInTheDocument();
+  // Questions remain visible alongside the actual review handoff. Displaying
+  // their answer syntax neither starts work nor gives an old notice actions.
+  const questions = [
+    { id: `human-${'a'.repeat(32)}`, question: 'Should the client support internal staff or external users?',
+      why_human: 'The supported audience is a business decision.' },
+    { id: `human-${'b'.repeat(32)}`, question: 'Which support team owns the client contract?',
+      why_human: 'Team ownership needs an explicit decision.' },
+  ];
+  const answerCommand = question => `/answer ${question.id} <your answer>`;
+  const humanNotice = { ...notice, id: 'continuation:grant:question', phase: 'human_required',
+    reason: 'human_question_pending', human_questions: questions, next_action: answerCommand(questions[0]) };
+  const handoff = (details, language = 'en', currentId = details.id) => <ol>
+    <TimelineItem item={{ ...item, id: details.id, details }} language={language}
+      t={(key, params) => translate(language, key, params)} continuationNoticeId={currentId} />
+  </ol>;
+  view.rerender(handoff(humanNotice, 'zh-CN'));
+  expect(screen.getByText(/其他已授权工作可按其判断继续/)).toBeInTheDocument();
+  expect(screen.getByText(/具体项目问题等待你的回答/)).toBeInTheDocument();
+  for (const question of questions) {
+    expect(screen.getByText(`待决问题：${question.question}`)).toBeInTheDocument();
+    expect(screen.getByText(`为什么需要你决定：${question.why_human}`)).toBeInTheDocument();
+    expect(screen.getAllByText(answerCommand(question))).toHaveLength(1);
+  }
+  // Previously retained singular question records remain readable too.
+  view.rerender(handoff({ ...humanNotice, human_questions: undefined,
+    human_question_id: questions[0].id, human_question: questions[0] }));
+  expect(screen.getByText(/Other authorized work can continue according to its decisions/)).toBeInTheDocument();
+  expect(screen.getByText(`Question: ${questions[0].question}`)).toBeInTheDocument();
+  expect(screen.getAllByText(answerCommand(questions[0]))).toHaveLength(1);
+  const reviewNotice = { ...humanNotice, id: 'continuation:grant:review', phase: 'review_required',
+    reason: 'independent_review_and_delivery_required', next_action: '' };
+  view.rerender(handoff(reviewNotice));
+  expect(screen.getByText(/needs independent review and delivery confirmation/)).toBeInTheDocument();
+  expect(screen.getByText(/Next step: inspect the candidate, independently review it/)).toBeInTheDocument();
+  for (const question of questions) {
+    expect(screen.getByText(`Question: ${question.question}`)).toBeInTheDocument();
+    expect(screen.getByText(`Why your input is needed: ${question.why_human}`)).toBeInTheDocument();
+    expect(screen.getAllByText(answerCommand(question))).toHaveLength(1);
+  }
+  expect(onAction).toHaveBeenCalledTimes(1);
+  view.rerender(handoff(humanNotice, 'en', 'continuation:new:notice'));
+  expect(screen.getByText(answerCommand(questions[0]))).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'View iteration and actions' })).not.toBeInTheDocument();
   // A resolved or replaced grant cannot offer an action through an old message/link.
   data.task_assistant_session = { ...session, project_continuation_notice: null };
   expect(resolve()).toEqual({ status: 'changed' });

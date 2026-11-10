@@ -248,7 +248,7 @@ export default function ProjectContinuationControls({ snapshot, session, project
           </> : null}
         </> : null}
         {value.status !== 'active' && value.reason ? <p role="status">{reasons[value.reason] || value.reason}</p> : null}
-        {active || canFinish ? <button type="button" disabled={disabled} onClick={() => onAction({
+        {active || canFinish ? <button type="button" onClick={() => onAction({
           action: 'stop_project_continuation', continuation_id: value.id,
         })}>{active ? (zh ? '停止后续迭代' : 'Stop future iterations')
           : (zh ? '保留结果并结束' : 'Keep results and finish')}</button> : null}

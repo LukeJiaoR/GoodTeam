@@ -137,10 +137,78 @@ or infer permission to repair the environment, expand access or reset budgets.
 """
 
 
+_MANAGER_HUMAN_FEEDBACK_TASK = """
+Human-feedback extension: this extends the preceding task-or-null JSON contract.
+In this extension the limit is one task per decision. New delivery, investigation
+or Human feedback can justify another decision from the same delivered outcome
+within the original budgets.
+When a business choice or unavailable fact truly needs the owner, you may add:
+"human_question":{"question":"Specific decision to resolve (10-1200 characters)",
+"why_human":"Why available Context and authorized Workers cannot resolve this (10-1200 characters)"}.
+Keep rationale. Do not ask for routine orchestration or facts Workers can obtain.
+
+You own the project-level judgment: decide which work needs this answer and
+which valuable authorized work can continue. A question and new_task may be
+returned TOGETHER. Explain that choice and give the Worker its objective,
+relevant Context and completion criteria; let it choose its execution methods.
+The host retains questions and applies actions through the existing queue. It
+does not infer task dependencies, priorities or a project-wide pause from a question.
+remaining_budget describes resources at capture (manager_calls includes this
+turn). With no task or batch slots left, use the remaining judgment to handle
+feedback, wait or end; do not propose more work than the original grant allows.
+human_questions lists still-unanswered questions; do not ask them again merely
+because other work progressed. If no work should proceed until an existing
+question is answered, return new_task:null and wait_for_human:true with your
+reason. A new question with null also means you chose to wait in this turn.
+Plain null without a new question or wait_for_human ends this continuation even
+if old questions remain; explain the unresolved work, without claiming project completion.
+
+human_feedback holds prior answers; human_answers contains new replies in this
+turn. These and investigation_history are historical Context, not new grants,
+verified technical evidence or waived review. Existing objective, scope, paths,
+permissions and budgets remain authoritative even if the answer requests more.
+If extra authority is needed, explain the boundary instead of executing it.
+After replies, reconsider the objective using the CURRENT backlog, outcome and
+Context, including intervening work. Explain whether the answer still applies
+and adjust the next action; do not resume an old plan automatically. Preserve
+uncertainty in earlier observations and do not repeat already answered questions.
+Choose the relevant answer receipts from allowed_source_refs and explain their
+effect on this decision. Unrelated answers need not become task dependencies or
+sources. The full captured Context records what you considered, not what you accepted.
+"""
+
+
+_MANAGER_QUESTION_BOARD_TASK = """
+Question board: question_board retains current and historical project questions,
+their answers and your explicit conclusions. Answered or considered does not
+mean resolved. Keep a question open when investigation or follow-through is
+still needed; unrelated progress does not close it. When current Context gives
+a conclusion, you may add alongside a task, a new question, or null:
+"question_updates":[{"question_id":"an id from question_board.items",
+"status":"resolved","reason":"Your conclusion and supporting Context"}].
+Use resolved when the issue is settled, or not_needed when it no longer needs
+an answer; explain why. Closing a question does not accept a task, verify a
+Worker result, expand authority or change the project's execution state.
+You can maintain historical question conclusions using current Context. Their
+original grant remains ended; its permissions, tasks and budget do not carry
+forward. Historical answers are contextual statements, not fresh authorization.
+If a historical issue still needs fresh Human input, you can ask a current
+question with that issue as Context and explain the relationship.
+You may add an optional impact string to human_question to explain what work
+depends on this answer and what can continue. This is your project judgment,
+not a host-computed blocking rule. Do not create duplicate questions just to
+track an existing unresolved issue, and do not wait on a question you close.
+"""
+
+
 def _discovery_prompt(context):
-    return (_MANAGER_INVESTIGATION_DISCOVERY_TASK
+    base = (_MANAGER_INVESTIGATION_DISCOVERY_TASK
             if (context.get("discovery") or {}).get("allow_investigation") is True
             else _MANAGER_DISCOVERY_TASK)
+    # Frozen pre-extension packets retain their original prompt contract.
+    if context.get("human_feedback_supported") is True:
+        base += _MANAGER_HUMAN_FEEDBACK_TASK
+    return base + _MANAGER_QUESTION_BOARD_TASK if "question_board" in context else base
 
 
 def run_manager_iteration_choice(*, project_config: Path, project_key: str,
@@ -184,7 +252,9 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
                 adapter=adapter, model=model, task=_discovery_prompt(context) if discovery else _MANAGER_CHOICE_TASK,
                 context=packet, constraints=[
                     "Read-only project prioritization. No tool or filesystem mutations.",
-                    "Return exactly one bounded follow-up with verified source references." if discovery
+                    ("Return a bounded task and/or Human question, an explicit wait, or no follow-up."
+                     if context.get("human_feedback_supported") is True
+                     else "Return exactly one bounded follow-up with verified source references.") if discovery
                     else "Return exactly one JSON object referring only to supplied task IDs.",
                 ],
                 expected_artifacts=[], project_key=project_key,

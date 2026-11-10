@@ -1185,6 +1185,8 @@ export default function WorkPage() {
     onStart: sendTaskAssistantMessage,
     onQueueTask: conversation.queue,
     onAssistantAction: handleAssistantAction,
+    onAnswerQuestion: conversation.answer,
+    questionBoard: latestData?.task_assistant_session?.question_board,
     contextTitle: runId ? contextTitle : '',
     onClearContext: () => selectTask(''),
     taskManagementOpen,
@@ -1292,6 +1294,11 @@ export default function WorkPage() {
         <p>{t('work.retry.refreshRequired')}</p>
         <Button variant="secondary" onClick={() => { void handleRefreshContext(); }}>{t('work.retry.refresh')}</Button>
       </section> : null}
+      {interactionsPaused && latestData?.task_assistant_session?.project_continuation?.status === 'active' ? (
+        <Button variant="secondary" onClick={() => handleAssistantAction({
+          action: 'stop_project_continuation', continuation_id: latestData.task_assistant_session.project_continuation.id,
+        })}>{String(language).startsWith('zh') ? '停止后续迭代' : 'Stop future iterations'}</Button>
+      ) : null}
       <fieldset className="work-interaction-scope" disabled={interactionsPaused}>
       {!hasProjectedWorkspace ? <><GitRecoveryPanel projectKey={projectKey} language={language} />{executionContext}{historyContext}</> : null}
       {hasProjectedWorkspace ? (

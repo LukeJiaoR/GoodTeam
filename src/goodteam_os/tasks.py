@@ -185,9 +185,12 @@ class LocalTaskStore:
 
         if (not isinstance(creation_ref, str) or not creation_ref.startswith("project-discovery:")
                 or len(creation_ref) > 256 or not isinstance(intent, dict) or set(intent) != required
-                or intent["role"] != "implementation" or intent["priority"] != "medium"
-                or intent["execution_policy"] != "workspace_write"
-                or normalize_write_domains(intent["write_domains"]) != intent["write_domains"]
+                or intent["priority"] != "medium"
+                or not (intent["role"] == "research" and intent["execution_policy"] == "read_only"
+                        and intent["write_domains"] == []
+                        or intent["role"] == "implementation" and intent["execution_policy"] == "workspace_write"
+                        and normalize_write_domains(intent["write_domains"]) is not None
+                        and normalize_write_domains(intent["write_domains"]) == intent["write_domains"])
                 or creation_ref not in intent["external_refs"]):
             raise ValueError("A fixed project discovery task intent is required.")
         ledger = self._read()

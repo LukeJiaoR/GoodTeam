@@ -1,4 +1,4 @@
-# Project-loop investigation: delegation and result/failure feedback (#686)
+# Project Loop: investigation, feedback and retained question board (#686)
 
 An explicitly authorized discovery turn may delegate a read-only investigation
 when a material fact is missing. The existing continuation can then observe a
@@ -46,6 +46,10 @@ No Worker is silently substituted by the Manager.
 Create-once publication, the Task Assistant queue, isolated dispatch, scope and
 source validation, Stop and budgets retain their original owners. Initial manual
 chat research without an applicable grant still needs its normal confirmation.
+The original task ledger accepts the two host-owned discovery profiles:
+implementation with scoped workspace writes, and investigation with
+`research/read_only` and no write paths. Publication replay keeps the original
+task identity and progress for both profiles.
 
 ## L2: report observation is not task acceptance or Git delivery
 
@@ -125,6 +129,199 @@ silently replacing its input. Stopped or already-blocked continuation grants are
 not reactivated by this upgrade; their normal recovery/authorization remains
 explicit. The new path is considered only by an already-active continuation.
 
+## L4: retained Human questions and Manager-owned continuation
+
+Newly captured discovery packets advertise `human_feedback_supported`. Manager
+decides which work needs a Human answer and which valuable authorized work can
+continue. The existing response accepts `new_task`, `rationale` and an optional
+question together:
+
+```json
+{
+  "new_task": {
+    "title": "Verify the existing entry-point behavior",
+    "description": "Verify the current entry-point behavior and report its limitations without changing the intended audience.",
+    "acceptance_criteria": ["Return the observed entry behavior and remaining uncertainty"],
+    "task_type": "investigation",
+    "write_domains": [],
+    "dependencies": ["PROJECT-1"],
+    "source_refs": ["<actual delivery receipt>", "<actual observation receipt>"]
+  },
+  "rationale": "The audience decision needs Human input; the authorized investigation can establish current behavior meanwhile.",
+  "human_question": {
+    "question": "Should this entry target internal staff or external API clients?",
+    "why_human": "The intended audience is a business choice not established by current evidence.",
+    "impact": "Audience-specific changes need this answer; observing current behavior can continue."
+  }
+}
+```
+
+The example references must be replaced with supplied receipts, and an
+investigation still requires the original investigation permission and an
+available Researcher. This extends the normal response, not the execution path.
+The host enforces the existing grant, paths, budget, task identity, execution
+isolation and review boundaries. It does not compute question-to-task blocking
+rules, infer dependencies or choose priorities. Routine facts that authorized
+Workers can obtain should not be escalated to Human.
+
+| Manager output | Effect through the existing continuation |
+| --- | --- |
+| `new_task` plus `human_question` | Persist the question and queue the selected work in the same decision. |
+| `new_task: null` plus a new question | Ask and choose no work in this turn; retain the grant for new feedback. |
+| `new_task: null, wait_for_human: true` | Explicitly wait for an already retained question, with a rationale. |
+| Plain `new_task: null` | End this grant with `discovery_no_followup`, even if historical questions remain; this is not whole-project completion. |
+
+The existing session's `human_questions` map retains each exact planning packet,
+selection, execution identity and host-generated `human-...` ID. There is no
+global pending-question gate. In-flight batches continue to be reconciled;
+their results, later deliveries and answers can all prompt a new judgment. A
+Manager-chosen wait has `reason: awaiting_human_decision`; unchanged feedback
+does not buy another model call. Asking is an output, not a self-triggering event.
+The existing notice displays outstanding questions alongside the current batch's
+review/quality/delivery handoff, without hiding that actual execution state.
+No separate question store, scheduler or dialogue engine is introduced.
+
+The packet includes `remaining_budget`. Manager calls, task creation and batches
+keep their own existing limits: exhausted task capacity does not suppress an
+otherwise authorized judgment about a new answer. Manager can use that turn to
+wait or end; the host still refuses a task that exceeds the remaining resources.
+
+The **Work page question board** offers a direct answer on each current open
+question. It uses the existing project message endpoint and exact question ID.
+The composer also accepts the command displayed in the handoff:
+
+```text
+/answer human-<host-generated-id> Internal staff only; keep existing access limits.
+```
+
+This explicit identifier avoids treating arbitrary chat, a late reply or a generic
+"continue" as consent to whichever question happens to be current. Several
+questions may remain open and each answer names its own ID. This does not claim
+natural-language reply routing. Board answers always use project-level Context,
+including when the user is viewing an old run. Historical-task messages,
+attachments and runtime retries keep their existing unrelated meaning.
+
+The handler validates the current grant, target/task authorization, question
+identity and effective configuration, then atomically records the answer receipt,
+original user message and visible acknowledgement. It does not require an idle
+project or equality with the question's old HEAD, backlog or investigation files.
+Unrelated progress does not invalidate the question. The handler performs **no
+model call or Worker dispatch**. The existing active-continuation service
+consumes the answer when its current execution can safely advance, using a new
+packet with the latest Context. The owner does not need another Start/continue
+command; the original service must be running. GET does not advance it.
+Answer ingestion uses one existing session mutation, without holding the
+conversation or continuation guards. It can save a receipt during a Manager
+call; its response projects the session without recovering other conversations,
+so it does not contend with the existing task queue. Identity,
+idempotency, current authority and Stop are checked in that atomic mutation.
+A same-grant checkpoint preserves answers received during the call. Stop
+remains atomic and takes precedence over a late decision or checkpoint.
+
+The answer is contextual information, not a new grant, completed task or verified
+technical fact. Manager chooses which answers are relevant to its task sources;
+the full decision packet retains all captured replies. A subsequent proposal must
+still satisfy the original sources, paths, dependencies, role, budget and review rules.
+An answer requesting extra permissions cannot change those limits; use the normal
+separately confirmed authorization/change flow. A changed goal/grant, revoked
+authority or Stop still rejects new actions; a reply cannot revive a finished
+grant. Manager judges whether a reply still applies to the current project and
+what work is now useful, rather than restoring the plan from the question's date.
+
+Packets expose unanswered `human_questions`, all retained `human_feedback`, new
+`human_answers`, and historical `investigation_history`. Historical observations
+retain their original revision and uncertainty; they are not recertified as
+current truth. The existing `discovery_consumed` receipt ledger coalesces captured
+delivery, investigation and answer feedback in one decision. Consumption records
+that the feedback entered a judgment, not that Manager accepted it or made every
+answer a task dependency. New answers that
+arrive after a decision was captured remain available to the following judgment.
+If an old null decision settles after a new answer arrived, that unconsumed
+receipt keeps the same grant active for the next service tick, within its
+remaining Manager budget. It does not silently end before that answer can enter
+current Context. Stop still takes precedence.
+
+Repeated submission of the same message returns its receipt. Reusing an ID with
+different text is rejected. Question persistence leaves the original discovery
+outbox intact, so an interrupted combined action reuses its decision, task
+creation reference and queue identity. Replay never clears an answer already
+recorded. Frozen decisions still undergo their original input/authorization
+checks before dispatch; recording an answer is distinct from executing old advice.
+Stop is never undone by reply/replay, and budgets are not replenished.
+
+### Question board: retained issues and explicit Manager conclusions
+
+The Work page projects `question_board` from the original `human_questions`
+records. The board groups pending answers, answered issues that still need
+handling, and closed issues. Each card shows the question, why Human input is
+needed, optional Manager-described impact, the answer and any closing reason.
+`considered` means an answer entered a decision; it does not mean the underlying
+issue was resolved. Answering while other work runs is allowed by the same
+authorization checks as the existing message endpoint. A failed send keeps its
+text and retry identity. Refreshing or opening the board has no execution effect.
+
+New Manager packets include the project's current and historical questions.
+In the same decision as `new_task`, a new question, a wait or a stopping reason,
+Manager can return:
+
+```json
+{
+  "new_task": null,
+  "rationale": "The owner confirmed the intended audience; the authorized scope is settled.",
+  "question_updates": [
+    {
+      "question_id": "<an exact ID captured in question_board.items>",
+      "status": "resolved",
+      "reason": "The confirmed audience answers this decision; the implementation has its own task acceptance."
+    }
+  ]
+}
+```
+
+`resolved` records a settled issue; `not_needed` records why an answer is no longer
+needed. The host validates the captured question identity and retains the
+Manager's reason and original decision evidence. No answer, receipt consumption,
+unrelated progress or new grant automatically closes a question. Closing an issue
+does not mark a task done or accept a Worker result. `impact` is explanatory text,
+not a second dependency or blocking-rule system. These outputs are applied through
+the original discovery outbox; replay does not append another conclusion event,
+spend a model turn or duplicate task publication. Frozen older decisions keep
+their original response contract.
+
+When a new grant replaces one with questions, the original grant is retained in
+the same session's `project_continuation_history`. Its unresolved and closed
+questions remain visible. Current Manager decisions may update their conclusions
+using current Context; the original record retains which current grant made that
+decision. Its old status, answers, tasks, permissions and budgets stay unchanged.
+Historical questions cannot accept new answers under an ended grant. Replaying
+an older authorization command returns that retained original grant without replacing or restarting the current
+one. The board reads the latest project session even while viewing historical run
+details; it introduces no separate question store or scheduler.
+
+Ordinary Manager conversation receives current continuation state and this
+board once, rather than each question's nested frozen planning packets. Pending
+decision identity, selection and evidence references remain available. The
+original source snapshots and their versions still own action validation and
+replay; this projection changes only the text sent to the conversation model.
+
+### Manager decisions and the existing Planner gap
+
+Manager owns project-level judgment, delegation and continuation. The Planner
+role owns concrete task decomposition from approved artifacts: inputs, outputs,
+dependencies, acceptance criteria and handoff notes. The existing
+`project_iteration_planner.py` name and persisted `planning` fields refer to
+Manager decision calls; its actual Worker role is `orchestrator`, not `planner`.
+
+This discovery adapter currently publishes only implementation or read-only
+investigation tasks. It does not delegate a planning task to Planner. The legacy
+Workflow's `planner` node also renders a `task_breakdown` template before its
+UI/implementation/QA jobs; the node name is not evidence of a Planner invocation.
+These are pre-existing role-wiring gaps, not completed by the question board.
+Do not report Planner participation or full Manager/Worker separation from the
+board, task-publication or receipt regressions. A future correction should let
+Manager delegate planning when needed through the existing Worker path, rather
+than making every project action pass through another mandatory stage.
+
 ## Replay, Stop and deliberate remaining limits
 
 Report capture and pending judgment are one session write. Publication replay
@@ -139,31 +336,60 @@ termination and unchanged-workspace checks.
 This L3 slice is restricted to single, grant-discovered read-only investigations.
 Failed writing tasks, mixed batches and uncaptured failures keep the original
 recovery behavior; general partial-execution handling remains unfinished L3.
-Human decision wait/resume and more expressive stopping choices remain L4. It does not independently accept the
-research task or claim that the full user goal is met. Manager tool-level isolation,
+The L4 slice supports explicit question/answer continuation, not arbitrary
+natural-language approval or automatic goal/permission changes. More expressive
+stopping choices beyond the bounded action contract remain open. This does not
+independently accept the research task or claim that the full user goal is met. Manager tool-level isolation,
 UI opt-in and real-model two-delivery acceptance remain unverified/open.
 
 ## Validation boundary
 
-`test_project_discovery_investigation.py` retains the L1 pure protocol contract.
+`test_project_discovery_investigation.py` exercises the L1 protocol through the
+real task ledger, including read-only publication and replay without resetting
+progress. Its Manager input and prior delivery are explicit fixtures.
 `test_project_investigation_feedback.py` adds one representative result-to-decision
 case using explicit in-memory storage, terminal-evidence and model/dispatch
-fixtures, extended in place for terminal failures and missing/empty reports. It covers the production continuation/observation/discovery connection,
+fixtures, extended in place for terminal failures and missing/empty reports. It
+covers the production continuation/observation/discovery connection,
 queue-publication interruption/replay, no delivery promotion, changed report,
 Stop during decision, exhausted allowance, unknown termination, file mutation,
 failed partial/missing/empty output, failure-preserving follow-up or stop,
 unattributable output, invalid UTF-8 and source/dependency restrictions.
-The same failed-feedback scenario rejects progress on the preceding L2 code and
-reaches re-decision on this candidate under those fixtures.
-
 These fixtures are not real database durability, Worker/process isolation, actual
 Git checks, independent review or live model evidence. Run the normal tests in a
 complete checkout plus the existing outcome/assignment/continuation integration
 cases and required control-plane checks before claiming those properties. The
-local source-subset runner imports the complete candidate modules with explicit
-dependency substitutes. It is supplemental evidence for an environment without
-full dependencies, not the normal repository test entry point or real integration.
-Earlier AST-subset results remain historical evidence only.
+normal `pytest` entry now exercises complete production-module imports with the
+declared dependencies installed. Earlier source-subset and AST-subset runs are
+historical evidence only; the PR records the actual commands, version, results
+and environment limitations of each validation run.
 
 All product results remain under #419. CI stays paused. This code does not start
 StockFlow, enable production services, call paid models or restore old Stop/grants.
+
+The same representative fixture covers L4 via the complete production message
+entry: question plus work, publication and answer acknowledgement loss, batch
+progress and review while questions remain open, answers during execution,
+coalesced replies with current Context, explicit waiting versus no-followup,
+question history, exhausted budget and Stop. It preserves the distinction
+between unrelated Context progress and changed authorization. Full imports do
+not change the fixture boundary: no PostgreSQL restart, browser or real-model
+quality claim follows from these tests.
+
+`test_project_question_board.py` exercises the board through real file-backed
+session/task stores and authorization/answer handlers with explicit Manager
+decision fixtures: answers remain open after consumption, explicit conclusions
+retain evidence, replay is stable, and grant replacement preserves history that
+current Manager decisions can explicitly conclude without reviving old authority.
+Its real threaded check also records duplicate answers once while the
+continuation and conversation guards are held, and prevents an older
+whole-grant checkpoint from losing the answer.
+The existing result-to-decision fixture also closes questions while
+queuing work. Frontend tests exercise the current board inside the conversation,
+answer failure/retry, answering from a historical-run view, and Stop while an
+answer request remains pending, including a stale page that pauses other
+interactions. The ordinary conversation representative checks
+that the model receives the board without nested frozen packets, while the
+authoritative snapshot remains unchanged. These establish
+the bounded application contract, not live-model judgment or full project Loop
+acceptance.

@@ -38,10 +38,23 @@ def _save(store, value):
     retained = dict(value)
     def write(session):
         current = session.get(_FIELD) or {}
-        # Stop uses the short session mutation lock, even while a Manager call
-        # holds the continuation guard. A late result must not reactivate it.
-        if current.get("id") == value.get("id") and current.get("status") == "stopped":
-            retained.update(status="stopped", reason="owner_stopped")
+        if current.get("id") == value.get("id"):
+            # Answers use the short session lock while planning holds the
+            # continuation guard. A whole-grant checkpoint cannot overwrite them.
+            if "human_questions" in current:
+                retained["human_questions"] = current["human_questions"]
+            if current.get("status") == "stopped":
+                retained.update(status="stopped", reason="owner_stopped")
+            elif current.get("status") == "active" and retained.get("status") == "completed":
+                from goodteam_os.project_human_feedback import human_feedback
+
+                if any(item["receipt_id"] not in retained.get("discovery_consumed", [])
+                       for item in human_feedback(current)):
+                    retained.update(status="active", reason="human_answer_received")
+        if current.get("id") != value.get("id") and current.get("human_questions"):
+            # Retain the original grant as history in the same session. Its
+            # questions stay visible without carrying its authority forward.
+            session.setdefault("project_continuation_history", {})[current["id"]] = current
         return {**session, _FIELD: retained}
     store._mutate(write)
     return retained
@@ -97,16 +110,18 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     from goodteam_os.workflow_recovery import confirm_parent
 
     with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
-        current = store.read().get(_FIELD) or {}
-        if current.get("id") == identity:
-            if (current.get("seed_task_ids", current.get("task_ids")) != ids or current.get("max_batches") != maximum
-                    or current.get("discovery") != discovery
-                    or current.get("approved_backlog_version") != request.get("expected_backlog_version")
-                    or ({key: current["workflow_recovery"].get(key) for key in ("run_id", "version")}
-                        if current.get("workflow_recovery") else None) != recovery):
+        session = store.read()
+        current = session.get(_FIELD) or {}
+        original = current if current.get("id") == identity else (session.get("project_continuation_history") or {}).get(identity)
+        if original:
+            if (original.get("seed_task_ids", original.get("task_ids")) != ids or original.get("max_batches") != maximum
+                    or original.get("discovery") != discovery
+                    or original.get("approved_backlog_version") != request.get("expected_backlog_version")
+                    or ({key: original["workflow_recovery"].get(key) for key in ("run_id", "version")}
+                        if original.get("workflow_recovery") else None) != recovery):
                 raise ValueError("Continuation command was already used with different scope or limits.")
-            return current
-        pending = pending_project_batch(store.read(), root, project_key)
+            return original
+        pending = pending_project_batch(session, root, project_key)
         if current.get("status") == "active" or pending:
             raise ValueError("Stop the existing continuation and settle its current batch first.")
         if recovery is not None:
@@ -187,6 +202,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
     from goodteam_os.project_iteration_execution import run_queued_iteration_batch
     from goodteam_os.project_outcome_discovery import DiscoveryPublicationPending, discover_next_iteration
     from goodteam_os.project_investigation_feedback import is_observed_investigation, observe_pending_investigation
+    from goodteam_os.project_human_feedback import human_feedback
 
     workspace, root, project_config = Path(workspace), Path(root), Path(project_config)
     store = TaskAssistantSessionStore(workspace, project_key)
@@ -228,7 +244,8 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 elif not recovering and any(task["status"] == "blocked" for task in batch_tasks):
                     raise ValueError("The current batch is blocked; inspect its retained execution result.")
             if (value.get("discovery") and pending is None and (value.get("discovery_pending")
-                    or value.get("investigation_pending")
+                    or value.get("investigation_pending") or value.get("reason") == "awaiting_human_decision"
+                    or any(item["receipt_id"] not in value.get("discovery_consumed", []) for item in human_feedback(value))
                     or all((task["status"] == "done" and task.get("delivery_verified") is True)
                            or is_observed_investigation(value, task) for task in selected))):
                 value = discover_next_iteration(workspace=workspace, project_key=project_key, root=root,

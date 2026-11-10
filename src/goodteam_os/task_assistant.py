@@ -83,11 +83,13 @@ class TaskAssistantService:
         self.project_config = Path(project_config) if project_config is not None else None
         self.manager_turn = manager_turn
 
-    def session(self, project_key: str, root: Path, *, goal_limit: int | None = None) -> dict[str, object]:
+    def session(self, project_key: str, root: Path, *, goal_limit: int | None = None,
+                recover_requests: bool = True) -> dict[str, object]:
         from goodteam_os.goal_continuation import goal_views
 
         store = TaskAssistantSessionStore(self.workspace, project_key)
-        assistant_requests.recover_interrupted(store)
+        if recover_requests:
+            assistant_requests.recover_interrupted(store)
         session = store.read()
         from goodteam_os.project_iteration_recovery import project_batch_recovery_evidence
 
@@ -126,8 +128,10 @@ class TaskAssistantService:
 
     def _with_team_decision_status(self, session, project_key):
         from goodteam_os.project_continuation_notice import project_continuation_notice
+        from goodteam_os.project_human_feedback import question_board
 
-        session = {**session, "project_continuation_notice": project_continuation_notice(session)}
+        session = {**session, "project_continuation_notice": project_continuation_notice(session),
+                   "question_board": question_board(session)}
         pending = dict(session.get("pending_team_decision") or {})
         if pending.get("status") != "pending":
             return session

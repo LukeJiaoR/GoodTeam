@@ -1,7 +1,7 @@
 """One contract: explicit investigation authority maps to a read-only Worker.
 
-This is a pure contract regression, not a real model or dispatch acceptance test.
-The existing outcome and assignment integration cases still own those paths.
+This crosses the production task ledger; Manager input and delivery are fixtures,
+not a real model or dispatch acceptance test.
 """
 from copy import deepcopy
 
@@ -14,9 +14,10 @@ from goodteam_os.project_outcome_discovery import (
     _creation_ref, _current, _discovered_task_intent, authorization_digest,
     normalize_discovery, validate_discovered_task,
 )
+from goodteam_os.tasks import LocalTaskStore
 
 
-def test_investigation_opt_in_keeps_legacy_authority_and_host_execution_profile():
+def test_investigation_opt_in_keeps_legacy_authority_and_host_execution_profile(tmp_path):
     legacy = {"objective": "Check the delivered import flow before choosing its next improvement.",
               "allowed_write_domains": ["src/import", "tests/import"],
               "max_new_tasks": 2, "max_planning_calls": 3}
@@ -57,6 +58,25 @@ def test_investigation_opt_in_keeps_legacy_authority_and_host_execution_profile(
     assert _discovered_task_intent(packet, deepcopy(selected), creation_ref) == intent
     assert grant["discovery"] == legacy  # No implicit migration of old grants.
 
+    ledger = LocalTaskStore(tmp_path, "APP")
+    seed = ledger.create_task(title="Delivered import seed", description="The prior delivery is a fixture.",
+                             role="implementation", write_domains=["src/import"])
+    assert seed["id"] == "APP-1"
+    ledger.update_task(seed["id"], status="done", delivery_verified=True)
+    research = ledger.create_task_once(creation_ref=creation_ref, intent=intent)
+    assert research["role"] == "research" and research["execution_policy"] == "read_only"
+    assert research["write_domains"] == []
+    ledger.update_task(research["id"], status="review")
+    before_replay = ledger.path.read_bytes()
+    assert ledger.create_task_once(creation_ref=creation_ref, intent=deepcopy(intent))["status"] == "review"
+    assert ledger.path.read_bytes() == before_replay and len(ledger.list_tasks()) == 2
+    with pytest.raises(ValueError, match="fixed project discovery"):
+        ledger.create_task_once(creation_ref=creation_ref,
+            intent={**intent, "execution_policy": "workspace_write", "write_domains": ["src/import"]})
+    with pytest.raises(ValueError, match="fixed project discovery"):
+        ledger.create_task_once(creation_ref=creation_ref, intent={**intent, "write_domains": ["src/import"]})
+    assert ledger.path.read_bytes() == before_replay
+
     invalid = [
         {**proposed, "new_task": {**task, "write_domains": ["src/import"]}},
         {**proposed, "new_task": {**task, "role": "implementation"}},
@@ -83,6 +103,9 @@ def test_investigation_opt_in_keeps_legacy_authority_and_host_execution_profile(
     for context in (packet, {**packet, "discovery": legacy}):
         accepted = _discovered_task_intent(context, {**proposed, "new_task": writing}, creation_ref)
         assert accepted["role"] == "implementation" and accepted["execution_policy"] == "workspace_write"
+    writing_ref = creation_ref + ":implementation"
+    writing_intent = _discovered_task_intent(packet, {**proposed, "new_task": writing}, writing_ref)
+    assert ledger.create_task_once(creation_ref=writing_ref, intent=writing_intent)["role"] == "implementation"
     stop = {"new_task": None, "rationale": "No further authorized work is justified by the supplied evidence."}
     assert validate_discovered_task(packet, stop) == stop
     with pytest.raises(ValueError, match="No follow-up"):
