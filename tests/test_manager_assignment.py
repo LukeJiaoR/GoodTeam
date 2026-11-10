@@ -13,6 +13,8 @@ from goodteam_os.project_iteration_execution import run_queued_iteration_batch
 from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
+from goodteam_os.team_control_plane import ensure_team_state, execute_team_commands, resolve_worker_from_state
+from goodteam_os.workers import WorkerJobStore
 from test_dispatch_isolation import repository
 
 
@@ -20,7 +22,8 @@ def test_manager_assignment_returns_isolated_research_output_once(tmp_path, monk
     source = repository(tmp_path / 'source')
     config = tmp_path / 'projects/demo.local.yaml'
     config.parent.mkdir()
-    config.write_text(f'key: DEMO\nsource_type: existing_project\nrepos:\n  root: {source}\nworker_backend:\n  mode: codex\n')
+    config.write_text(f'key: DEMO\nsource_type: existing_project\nrepos:\n  root: {source}\nworker_backend:\n  mode: codex\n'
+                      'worker_type_settings:\n  research:\n    desired_instances: 2\n')
     binary_dir = tmp_path / 'bin'
     binary_dir.mkdir()
     binary = binary_dir / 'codex'
@@ -31,22 +34,35 @@ if '--version' in sys.argv:
     raise SystemExit()
 prompt = sys.stdin.read()
 assert '这个项目是干嘛的' in prompt
+assert 'NAMED_RESEARCHER_B' in prompt and 'DEFAULT_RESEARCHER_A' not in prompt
+assert sys.argv[sys.argv.index('--model') + 1] == 'worker-b-fixture'
 Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed greeting in README. Remaining: independent review.\\n')
 ''')
     binary.chmod(0o755)
     monkeypatch.setenv('PATH', str(binary_dir) + os.pathsep + os.environ['PATH'])
+    team = ensure_team_state(tmp_path, 'DEMO', config)
+    assert resolve_worker_from_state(team, 'research')['worker_id'] == 'research-a'
+    execute_team_commands(tmp_path, 'DEMO', [
+        {'kind': 'change_worker_runtime', 'worker_id': 'research-a', 'additional_prompt': 'DEFAULT_RESEARCHER_A'},
+        {'kind': 'change_worker_runtime', 'worker_id': 'research-b', 'model': 'worker-b-fixture',
+         'additional_prompt': 'NAMED_RESEARCHER_B'},
+    ], actor='user', surface='team_ui', config_path=config)
+    team = ensure_team_state(tmp_path, 'DEMO', config)
+    assert resolve_worker_from_state(team, 'research', worker_id='research-b')['model'] == 'worker-b-fixture'
+    with pytest.raises(ValueError, match='requested Worker'):
+        resolve_worker_from_state(team, 'research', worker_id='missing-worker')
+    with pytest.raises(ValueError, match='does not provide'):
+        resolve_worker_from_state(team, 'research', worker_id='planner-a')
     calls = []
     def manager(**kwargs):
         calls.append(kwargs)
         return _parse_chat_turn(json.dumps({
             'intent': 'work_request', 'response': 'Assigning this research.',
             'task_intake': {'ready': True, 'missing_decisions': [], 'source_message_ids': ['research']},
-            'task_action': {'kind': 'queue_task', 'role': 'research', 'execution_policy': 'read_only',
+            'task_action': {'kind': 'queue_task', 'role': 'research', 'worker_id': 'research-b', 'execution_policy': 'read_only',
                             'write_domains': [], 'acceptance_criteria': ['Identify the greeting and remaining uncertainty.']},
         }))
     service = TaskAssistantService(tmp_path, project_config=config, manager_turn=manager)
-    monkeypatch.setattr(service, 'team_view', lambda _: {'roles': [
-        {'role': 'research', 'state': 'enabled', 'workers': [{'dispatchable': True}]}]})
     # Keep this legacy isolated configuration free of readiness preparation.
     monkeypatch.setattr(service, '_readiness_state', lambda *_: {'project_mode': 'existing_project', 'lifecycle': 'ready'})
     monkeypatch.setattr(service, 'session', lambda *_: TaskAssistantSessionStore(tmp_path, 'DEMO').read())
@@ -57,6 +73,7 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed
     assert len(queued) == len(LocalTaskStore(source, 'DEMO').list_tasks()) == 1
     task = LocalTaskStore(source, 'DEMO').get_task(queued[0]['project_task_id'])
     assert task['role'] == 'research' and task['execution_policy'] == 'read_only'
+    assert task['worker_id'] == queued[0]['assignment']['worker_id'] == 'research-b'
     assert task['description'] == queued[0]['exact_request'] == request['text']
     assert not queued[0]['confirmed']
     service.send_message(**request)
@@ -65,15 +82,30 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed
                 proposal_ids=[queued[0]['id']], expected_revisions={queued[0]['id']: 1})
     with pytest.raises(ValueError, match='Confirm'):
         run_queued_iteration_batch(**args)
+    from goodteam_os import dispatch
+
+    created_jobs = []
+    create = dispatch._create_track_job
+    def observe_creation(*args, **kwargs):
+        actual = create(*args, **kwargs)
+        assert actual['worker_id'] == 'research-b'
+        assert actual['model'] == 'worker-b-fixture' and actual['additional_prompt'] == 'NAMED_RESEARCHER_B'
+        persisted = next(item for item in WorkerJobStore(source).list_jobs() if item['id'] == actual['id'])
+        assert persisted['worker_id'] == actual['worker_id']
+        created_jobs.append(actual['id'])
+        return actual
+    monkeypatch.setattr(dispatch, '_create_track_job', observe_creation)
     result = run_queued_iteration_batch(**args, confirmed=True)
     assert result['status'] == 'review', result
     job = result['report']['jobs'][0]
     assert job['role'] == 'research' and job['write_scope_verified']
+    assert created_jobs == [job['job_id']] and job['worker_id'] == 'research-b'
     timeline = TaskAssistantSessionStore(tmp_path, 'DEMO').read()['timeline']
     replies = [item for item in timeline if item['message_id'].startswith('batch-result:')]
     assert len(replies) == 1
     assert 'Observed greeting in README' in replies[0]['content']
     assert 'independent review' in replies[0]['content']
+    assert replies[0]['details']['source_evidence']['worker_results'][0]['worker_id'] == 'research-b'
     run_queued_iteration_batch(**args, confirmed=True)
     assert TaskAssistantSessionStore(tmp_path, 'DEMO').read()['timeline'] == timeline
     assert LocalTaskStore(source, 'DEMO').get_task(task['id'])['status'] == 'review'

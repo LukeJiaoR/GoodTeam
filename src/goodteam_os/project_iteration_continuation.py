@@ -18,12 +18,10 @@ from goodteam_os.manager_execution import ManagerExecutionError
 from goodteam_os.project_iteration import _internal, project_iteration_backlog, rank_project_backlog
 from goodteam_os.project_iteration_planner import plan_next_iteration
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
-from goodteam_os.tasks import LocalTaskStore, task_evidence_digest
+from goodteam_os.tasks import LocalTaskStore, project_task_intent, task_evidence_digest
 
 
 _FIELD = "project_continuation"
-_INTENT_FIELDS = ("id", "title", "description", "role", "dependencies", "acceptance_criteria",
-                  "write_domains", "execution_policy", "external_refs")
 
 
 def _digest(value):
@@ -31,7 +29,7 @@ def _digest(value):
 
 
 def _intent(task):
-    return _digest({key: task.get(key) for key in _INTENT_FIELDS})
+    return _digest(project_task_intent(task))
 
 
 def _save(store, value):
@@ -491,7 +489,7 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
                               and task.get("delivery_receipt") == receipt for task in before))
             originals = {item["task_id"]: item.get("task_intent") for item in batch["task_bindings"]}
             if not replay and (not before or len(before) != len(originals)
-                    or any({key: task.get(key) for key in _INTENT_FIELDS} != originals.get(task["id"])
+                    or any(project_task_intent(task) != originals.get(task["id"])
                            for task in before)):
                 raise ValueError("The original task scope changed after batch confirmation.")
             expected_tasks = {task["id"]: task_evidence_digest(task) for task in before}

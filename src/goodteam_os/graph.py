@@ -2008,6 +2008,7 @@ def _worker_job_fields(
     state: AgileDevState,
     *,
     model_fallback: Callable[[], str] | None = None,
+    worker_id: str | None = None,
 ) -> dict[str, object]:
     """Resolve the dispatching Worker for a role, enforcing Team gates.
 
@@ -2024,7 +2025,7 @@ def _worker_job_fields(
         fallback_model = model_fallback()
     else:
         fallback_model = worker_model_for_role(state, role)
-    resolution = resolve_worker_for_role(target, role)
+    resolution = resolve_worker_for_role(target, role, worker_id=worker_id)
     if resolution is None:
         return {
             "adapter": resolve_role_adapter(target, role),

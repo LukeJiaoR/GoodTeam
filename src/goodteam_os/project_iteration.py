@@ -103,12 +103,12 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
     dependency_ids = {dep for task in relevant for dep in _items(task.get("dependencies"), 64, 120)}
     fingerprint = {
         "tasks": [
-            {key: task.get(key) for key in (
+            {**{key: task.get(key) for key in (
                 "id", "title", "description", "status", "priority", "role",
                 "dependencies", "acceptance_criteria", "external_refs",
                 "artifact_refs", "source_evidence_refs", "review_gaps", "updated_at",
                 "write_domains", "execution_policy",
-            )}
+            )}, **({"worker_id": task["worker_id"]} if "worker_id" in task else {})}
             for task in sorted(relevant, key=lambda row: str(row.get("id", "")))
         ],
         "dependencies": {dep: known.get(dep, {}).get("status") for dep in sorted(dependency_ids)},
@@ -136,6 +136,7 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
             "title": _text(task.get("title"), 180),
             "description": _text(task.get("description"), 1200),
             "role": _text(task.get("role"), 100),
+            **({"worker_id": task["worker_id"]} if "worker_id" in task else {}),
             "priority": _text(task.get("priority"), 32) or "medium",
             "status": status,
             "dependencies": dependencies,

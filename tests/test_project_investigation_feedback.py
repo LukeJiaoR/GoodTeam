@@ -16,7 +16,6 @@ from goodteam_os import project_iteration_continuation as continuation
 from goodteam_os import project_outcome_discovery as discovery
 from goodteam_os import project_iteration_planner as planner
 from goodteam_os import assistant_queue, dispatch_workspace, goal_continuation, memory, memory_storage
-from goodteam_os import project_iteration_execution as execution
 from goodteam_os import project_iteration_recovery as recovery
 from goodteam_os import task_assistant_session, tasks, team_control_plane, workflow_recovery
 
@@ -28,8 +27,6 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     config.write_text("key: DEMO\n")
     run_id, dispatch_id = "task-batch-" + "a" * 64, "dispatch-" + "b" * 64
     head, authority = "c" * 40, {"fixture": "original-authority"}
-    fields = continuation._INTENT_FIELDS
-    monkeypatch.setattr(execution, "TASK_INTENT_FIELDS", fields)
     seed = dict(id="DEMO-1", title="Delivered seed", description="The first real delivery is a supplied fixture.",
                 role="implementation", dependencies=[], acceptance_criteria=["Seed exists"],
                 write_domains=["src"], execution_policy="workspace_write", external_refs=[],
@@ -56,7 +53,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     batch = dict(run_id=run_id, dispatch_run_id=dispatch_id, confirmed=True, status="review",
                  project_root=str(root), expected_continuation_id=value["id"], expected_authority=authority,
                  task_ids=[research["id"]], task_bindings=[dict(task_id=research["id"],
-                 task_intent={key: research.get(key) for key in fields})],
+                 task_intent=tasks.project_task_intent(research))],
                  tracks=[dict(project_task_id=research["id"], role="research", execution_policy="read_only")])
     state = dict(project_continuation=deepcopy(value), project_task_batches={run_id: deepcopy(batch)},
                  timeline=[], queued_task_proposals=[])

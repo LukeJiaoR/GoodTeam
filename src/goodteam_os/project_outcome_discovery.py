@@ -70,7 +70,7 @@ def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
     """
     from goodteam_os.dispatch_workspace import _git
     from goodteam_os.project_iteration_continuation import _verify_landed_batch
-    from goodteam_os.project_iteration_execution import TASK_INTENT_FIELDS
+    from goodteam_os.tasks import project_task_intent
 
     batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
     eligible = [batch for batch in batches.values() if batch.get("status") == "delivered"
@@ -91,10 +91,11 @@ def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
         task = known.get(binding["task_id"], {})
         if (task.get("status") != "done" or task.get("delivery_verified") is not True
                 or task.get("run_id") != batch["run_id"] or task.get("delivery_receipt") != receipt
-                or {key: task.get(key) for key in TASK_INTENT_FIELDS} != binding["task_intent"]):
+                or project_task_intent(task) != binding["task_intent"]):
             raise ValueError("The delivered task's original intent or result changed.")
-        tasks.append({key: task.get(key) for key in (
-            "id", "title", "description", "acceptance_criteria", "write_domains", "dependencies", "status", "delivery_verified")})
+        tasks.append({**{key: task.get(key) for key in (
+            "id", "title", "description", "acceptance_criteria", "write_domains", "dependencies", "status", "delivery_verified")},
+            **({"worker_id": task["worker_id"]} if "worker_id" in task else {})})
     head = _head(root)
     if _git(Path(root), ["merge-base", "--is-ancestor", receipt["landed_commit"], head], check=False).returncode:
         raise ValueError("The accepted delivery is no longer in this project's current history.")
@@ -135,6 +136,7 @@ def _remember(root, outcome):
 def _packet(workspace, project_key, root, value, outcome, *, project_config=None):
     from goodteam_os.memory import runtime_role_memory_store
     from goodteam_os.project_iteration_planner import _project_evidence
+    from goodteam_os.team_control_plane import team_view_for_config
 
     snapshot = rank_project_backlog(LocalTaskStore(root, project_key).list_tasks(), project_key, limit=None)
     refs = [outcome["delivery"]["receipt_id"]]
@@ -152,10 +154,15 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         "allowed_source_refs": refs,
         "repository_understanding": _project_evidence(Path(workspace), project_key, Path(root), inspect_missing=True),
         "memory_pickup": runtime_role_memory_store(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
+    team = team_view_for_config(Path(workspace), project_key, project_config) or {}
+    allowed_roles = {"implementation", "research"} if value["discovery"].get("allow_investigation") is True else {"implementation"}
+    packet["worker_capabilities"] = [
+        {"role": role["role"], "worker_id": worker["id"], "worker_name": worker.get("name", worker["id"]),
+         "dispatchable": role.get("state") == "enabled" and worker.get("dispatchable") is True}
+        for role in team.get("roles", []) if role.get("role") in allowed_roles
+        for worker in role.get("workers", []) if worker.get("id")
+    ]
     if value["discovery"].get("allow_investigation") is True:
-        from goodteam_os.team_control_plane import team_view_for_config
-
-        team = team_view_for_config(Path(workspace), project_key, project_config) or {}
         role = next((item for item in team.get("roles", []) if item.get("role") == "research"), {})
         packet["investigation_capability"] = {
             "role": "research", "execution_policy": "read_only",
@@ -247,6 +254,8 @@ def validate_discovered_task(packet, response):
     fields = {"title", "description", "acceptance_criteria", "write_domains", "dependencies", "source_refs"}
     investigation_allowed = packet["discovery"].get("allow_investigation") is True
     optional = {"task_type"} if investigation_allowed else set()
+    if "worker_capabilities" in packet:
+        optional.add("worker_id")
     if (not isinstance(task, dict) or not fields.issubset(task) or set(task) - fields - optional
             or not isinstance(task["title"], str) or not 5 <= len(task["title"].strip()) <= 240
             or not isinstance(task["description"], str) or not 20 <= len(task["description"].strip()) <= 4000):
@@ -260,6 +269,13 @@ def validate_discovered_task(packet, response):
         raise ValueError("Investigation requires explicit authority and an available Researcher.")
     if investigation and task["write_domains"] != []:
         raise ValueError("An investigation must be read-only and declare no write domains.")
+    if "worker_id" in task:
+        worker_id = task["worker_id"]
+        role = "research" if investigation else "implementation"
+        if (not isinstance(worker_id, str) or not worker_id.strip() or worker_id != worker_id.strip() or len(worker_id) > 256
+                or not any(item.get("worker_id") == worker_id and item.get("role") == role and item.get("dispatchable") is True
+                           for item in packet.get("worker_capabilities", []))):
+            raise ValueError("The requested Worker is unavailable for this authorized task; no replacement was selected.")
     criteria = task["acceptance_criteria"]
     domains = [] if investigation else normalize_write_domains(task["write_domains"])
     allowed = packet["discovery"]["allowed_write_domains"]
@@ -292,6 +308,8 @@ def _discovered_task_intent(packet, selection, creation_ref):
         raise ValueError("No follow-up task was proposed.")
     investigation = task.get("task_type") == "investigation"
     intent = {key: task[key] for key in ("title", "description", "acceptance_criteria", "write_domains", "dependencies")}
+    if "worker_id" in task:
+        intent["worker_id"] = task["worker_id"]
     intent.update(role="research" if investigation else "implementation", priority="medium",
                   execution_policy="read_only" if investigation else "workspace_write",
                   external_refs=[creation_ref, *task["source_refs"]], artifact_refs=list(task["source_refs"]))

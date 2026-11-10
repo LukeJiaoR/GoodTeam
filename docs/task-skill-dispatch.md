@@ -1,5 +1,24 @@
 # Task Skill production boundaries (S4b / #461)
 
+## Current project dispatch scope (#696)
+
+New bounded direct/project dispatches capture only the subjects of their actual
+tracks, using the existing Role-to-subject mapping. A custom binding on an
+unrelated role cannot enroll an ordinary isolated batch in Skill execution.
+Existing direct-task receipts retain their original subject inventory and exact
+confirmed inputs on replay, including historical captures with wider inventories.
+They are not narrowed or downgraded to legacy work by this change.
+
+Role-to-Skill is already many-to-many; `required` / `on_demand` are binding
+properties. The default mode's empty item list currently selects legacy behavior,
+not a fully materialized base-Skill package for every role. Ordinary custom-Skill
+Runtime delivery remains #445; an actual participating custom role still reaches
+its original unsupported boundary. The separately admitted Code Review path is
+described in `skills/review-protocol.md`. The historical S4b snapshot below does
+not establish current all-role Runtime support.
+
+## Historical S4b boundary
+
 This change continues #460 without adding a new Agent runtime. #444 remains the
 aggregate S4 acceptance contract; #445 is content loading, #440 is separately
 authorized live Runtime conformance, and #446 is actual custom-method review.

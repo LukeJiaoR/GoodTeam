@@ -1718,7 +1718,7 @@ def active_workers_for_role(state: dict[str, object], role: str) -> list[dict[st
     ]
 
 
-def resolve_worker_for_role(target: dict[str, object], role: str) -> dict[str, object] | None:
+def resolve_worker_for_role(target: dict[str, object], role: str, *, worker_id: str | None = None) -> dict[str, object] | None:
     """Resolve the Worker that will execute a role, enforcing dispatch gates.
 
     One resolution carries the **complete execution runtime** (adapter, model,
@@ -1733,15 +1733,19 @@ def resolve_worker_for_role(target: dict[str, object], role: str) -> dict[str, o
     """
     state = attached_team_state(target)
     if state is None:
+        if worker_id is not None:
+            raise TeamDispatchBlocked("team_worker_unavailable", "A named Worker requires the project's configured Team.", role=role)
         return None
-    return resolve_worker_from_state(state, role)
+    return resolve_worker_from_state(state, role, worker_id=worker_id)
 
 
-def resolve_worker_from_state(state: dict[str, object], role: str) -> dict[str, object] | None:
+def resolve_worker_from_state(state: dict[str, object], role: str, *, worker_id: str | None = None) -> dict[str, object] | None:
     """Resolve a dispatching Worker directly from team state (gates included)."""
     if role == MANAGER_ROLE:
         # The Task Assistant is the single logical primary owner. It is not a
         # TeamRole and is never gated by role membership.
+        if worker_id is not None:
+            raise TeamDispatchBlocked("team_worker_role_mismatch", "Manager coordination is not a named Worker assignment.", role=role)
         return _manager_resolution(state)
     roles_state = _roles(state)
     team_role = dict(roles_state.get(role) or {"state": "enabled"})
@@ -1751,6 +1755,15 @@ def resolve_worker_from_state(state: dict[str, object], role: str) -> dict[str, 
             f"The {role_label(role)} capability is disabled for this team. Enable it before dispatching work.",
             role=role,
         )
+    if worker_id is not None:
+        worker = next((item for item in _workers(state) if item["id"] == worker_id), None)
+        if worker is None:
+            raise TeamDispatchBlocked("team_worker_unavailable", f"The requested Worker {worker_id!r} is unavailable.", role=role)
+        if worker["role"] != role:
+            raise TeamDispatchBlocked("team_worker_role_mismatch", f"The requested Worker {worker_id!r} does not provide the {role_label(role)} role.", role=role)
+        if worker["lifecycle"] not in DISPATCHABLE_LIFECYCLES or not worker_runtime_eligible(dict(worker["runtime"]).get("provider")):
+            raise TeamDispatchBlocked("team_worker_unavailable", f"The requested Worker {worker_id!r} is not active and runtime-eligible.", role=role)
+        return _worker_resolution(worker)
     active = active_workers_for_role(state, role)
     eligible = [
         worker

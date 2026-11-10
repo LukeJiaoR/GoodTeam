@@ -212,6 +212,95 @@ def test_registered_legacy_dispatch_rejects_changed_request_instead_of_old_succe
     assert len(WorkerJobStore(source).list_jobs()) == 1
 
 
+def test_registered_dispatch_captures_only_its_roles_and_preserves_skill_replay(tmp_path, monkeypatch):
+    """Real bindings and job publication; stop before the Git/Runtime seam."""
+    import goodteam_os.dispatch_workspace as workspaces
+    import goodteam_os.skills.task_start as starts
+    from goodteam_os.service import service_state_dir
+    from goodteam_os.skills.library import SkillLibraryService
+    from goodteam_os.skills.task_locks import TaskSkillIdentity
+    from goodteam_os.team_control_plane import TeamControlPlaneStore
+
+    source = repository(tmp_path / "source")
+    workspace = tmp_path / "workspace"
+    config = workspace / "projects/demo.local.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("project_key: DEMO\n")
+    ProjectRegistry().register_project(config, root=source, key="DEMO")
+    team = TeamControlPlaneStore(workspace, "DEMO")
+    team.load_or_migrate(legacy_target={})
+    package = tmp_path / "task-handoff"
+    package.mkdir()
+    (package / "SKILL.md").write_text(
+        "---\nname: task-handoff\ndescription: Explain task results and unfinished work.\n---\n"
+        "Report observed results, evidence and remaining questions.\n")
+    library = SkillLibraryService(service_state_dir())
+    installed = library.install(library.preview_local(str(package), command_key="shared-method")["proposal_id"])
+    binding = {key: installed["installed"][key] for key in ("skill_id", "version_id")}
+
+    def bind(role):
+        current = team.read()
+        team.execute([{"kind": "set_role_skills", "role": role, "mode": "custom",
+                       "expected_binding_revision": current["skill_bindings"]["role:" + role]["binding_revision"],
+                       "bindings": [{**binding, "activation": "required", "enabled": True}]}],
+                     actor="user", surface="team_ui", expected_revision=current["revision"],
+                     command_key="bind-" + role)
+
+    bind("planner")
+    planner_binding = team.read()["skill_bindings"]["role:planner"]
+    captured = []
+    original_capture = starts.capture_task_start
+
+    def capture(**kwargs):
+        context = original_capture(**kwargs)
+        captured.append((kwargs.get("subjects"), context))
+        return context
+
+    class ReachedIsolation(Exception):
+        pass
+
+    published = []
+
+    def before_isolation(_root, _run_id, job_ids, **_kwargs):
+        published.append(job_ids)
+        raise ReachedIsolation
+
+    monkeypatch.setattr(starts, "capture_task_start", capture)
+    monkeypatch.setattr(workspaces, "prepare_dispatch_workspace", before_isolation)
+    request = dict(project_root=source, tracks=[track()], logical_task_id="unrelated-planner-method",
+                   require_isolation=True)
+    for _attempt in range(2):
+        with pytest.raises(ReachedIsolation):
+            dispatch_tracks(**request)
+    assert captured == [(("role:implementation",), {}), (("role:implementation",), {})]
+    assert published[0] == published[1]
+    assert len(WorkerJobStore(source).list_jobs()) == 1
+    assert team.read()["skill_bindings"]["role:planner"] == planner_binding
+
+    # The same package can serve another Role. Its actual use must retain the
+    # protected Skill context and honest unsupported Runtime result, not legacy fallback.
+    bind("implementation")
+    protected = {**request, "logical_task_id": "implementation-method"}
+    for _attempt in range(2):
+        with pytest.raises(ValueError, match="Project batches require ordinary isolated Workers"):
+            dispatch_tracks(**protected)
+    assert captured[-2][0] == captured[-1][0] == ("role:implementation",)
+    assert captured[-2][1] and captured[-2][1] == captured[-1][1]
+    assert len(published) == 2
+
+    # A task captured before role scoping keeps its old inventory on replay.
+    old_id = "previous-broad-method-capture"
+    old_context = original_capture(workspace=workspace, project_key="DEMO", worker_root=source,
+        task=TaskSkillIdentity("direct_task", "DEMO", old_id), command_key="direct-start:DEMO:" + old_id,
+        confirmed_input={"tracks": [track()], "constraints": [], "verify_commands": {},
+                         "constraints_source": "", "research_report_source": ""})
+    with pytest.raises(ValueError, match="Project batches require ordinary isolated Workers"):
+        dispatch_tracks(**{**request, "logical_task_id": old_id})
+    assert set(captured[-1][0]) > {"role:implementation", "role:planner"}
+    assert captured[-1][1] == old_context
+    assert len(published) == 2
+
+
 def test_recovery_rejects_workspace_drift_after_successful_verification(tmp_path, cli_fixture):
     source = repository(tmp_path / "source")
     verify_calls = tmp_path / "verification-count"

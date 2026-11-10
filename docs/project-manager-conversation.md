@@ -108,7 +108,14 @@ research dispatcher or replacement inspection workflow. Shared explicit
 readiness APIs and task-start checks retain their identity and approval gates.
 The chat Manager can now return a callable `task_action` with `kind: queue_task`,
 a dispatchable Team role, execution policy, declared write paths and acceptance
-criteria. The host binds the selected exact user messages to one original
+criteria. It may also set `worker_id` to the exact configured Worker shown in
+the Team Context. The host validates that this Worker belongs to the requested
+role and is dispatchable, then carries that target through the original task,
+queue, isolated job and result. An unavailable explicit target is reported; it
+is never silently replaced by the role's default Worker. Calls without a target
+retain the existing role-based selection. Runtime, model and prompt settings
+come from the selected Worker's configuration, not model-authored commands.
+The host binds the selected exact user messages to one original
 LocalTaskStore card and one existing queue item. A source-bound retry reuses that
 card; a changed assignment fails instead of creating another task. Existing drafts
 retain their revision flow. Read-only advice and history never call this action.
@@ -118,11 +125,30 @@ execution or review authority.
 The conversation displays the original task, role, read/write scope and criteria
 before the existing `start_queued_task_batch` confirmation. This initial confirmation
 retains model-charge and readiness gates. The ordinary isolated `dispatch_tracks`
-pool chooses the configured Worker and captures task methods using existing paths;
+pool resolves the configured Worker and captures only the participating roles'
+task methods using existing paths;
 there is no research runner or second task state machine. Batch settlement returns
 actual readable Worker reports, limitations and outstanding independent review to
 the conversation, with idempotent publication per batch/recovery attempt. Source
 reports remain separately inspectable. Worker completion never marks delivery done.
+
+The task's explicit Worker target is part of its existing execution intent.
+Queue confirmation, continuation, quality checks and recovery retain that target;
+old tasks without a target keep their original intent representation. Worker
+reports and conversation result metadata include the actual Worker ID and name.
+The bounded implementation/investigation discovery path also accepts an optional
+Worker target from its captured Team capability. This does not add new roles or
+permissions to an old discovery grant; automatic Planner result reentry remains
+part of #696.
+
+Role base Skills use the existing many-to-many bindings: each role can select
+several methods, and a method can serve several roles. `required` and `on_demand`
+belong to each binding. Only this task's roles are captured for a new direct
+dispatch; another role's custom methods cannot opt this task into Skill execution.
+An existing task still uses its original captured subjects and methods on replay.
+The current default binding retains legacy behavior; explicit base-method
+packages and ordinary custom-Skill Runtime delivery remain infra work under
+#438/#445. A saved binding is not evidence that a method executed.
 
 In the database-backed Manager dialogue, `advance_continuation` calls the existing
 continuation adapter only for the exact current active grant. It runs after the
