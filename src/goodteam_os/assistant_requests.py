@@ -76,8 +76,9 @@ def recover_interrupted(store):
         pass
 
 
-def response(service, project_key, root, *, intent="ambiguous"):
-    session = service.session(project_key, root)
+def response(service, project_key, root, *, intent="ambiguous", recover_requests=True):
+    session = (service.session(project_key, root) if recover_requests
+               else service.session(project_key, root, recover_requests=False))
     return {"session": session, "task_assistant_session": session,
             "intent": intent, "workflow_started": False, "run_id": ""}
 

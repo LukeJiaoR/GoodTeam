@@ -83,11 +83,13 @@ class TaskAssistantService:
         self.project_config = Path(project_config) if project_config is not None else None
         self.manager_turn = manager_turn
 
-    def session(self, project_key: str, root: Path, *, goal_limit: int | None = None) -> dict[str, object]:
+    def session(self, project_key: str, root: Path, *, goal_limit: int | None = None,
+                recover_requests: bool = True) -> dict[str, object]:
         from goodteam_os.goal_continuation import goal_views
 
         store = TaskAssistantSessionStore(self.workspace, project_key)
-        assistant_requests.recover_interrupted(store)
+        if recover_requests:
+            assistant_requests.recover_interrupted(store)
         session = store.read()
         from goodteam_os.project_iteration_recovery import project_batch_recovery_evidence
 

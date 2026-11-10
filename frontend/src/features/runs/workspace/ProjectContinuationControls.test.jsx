@@ -32,6 +32,16 @@ it('binds explicit scoped continuation and reviewed landed delivery to visible e
   fireEvent.click(accept);
   expect(action.mock.calls[2][0]).toEqual({ action: 'accept_project_batch_delivery', run_id: batch.run_id,
     candidate_commit: 'b'.repeat(40), landed_commit: 'c'.repeat(40), reviewed: true, confirmed: true });
+  // Revoking an active grant remains available while an answer or other
+  // conversation request is unresolved. Execution/acceptance controls do not.
+  view.rerender(<ProjectContinuationControls snapshot={snapshot} projectKey="APP" onAction={action} canStart disabled
+    session={{ project_continuation: { id: 'approved-1', status: 'active', batches_started: 1, max_batches: 3,
+      manager_calls: 1, max_manager_calls: 3 }, project_task_batches: { [batch.run_id]: batch } }} />);
+  const stop = screen.getByRole('button', { name: 'Stop future iterations' });
+  expect(stop).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Verify version and accept delivery' })).toBeDisabled();
+  fireEvent.click(stop);
+  expect(action).toHaveBeenLastCalledWith({ action: 'stop_project_continuation', continuation_id: 'approved-1' });
 });
 
 it('opts into bounded outcome discovery with exact consent and shows the observed task origin', () => {

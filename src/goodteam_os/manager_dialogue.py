@@ -61,6 +61,20 @@ def current_context(store, root):
     return snapshot
 
 
+def _model_context(snapshot, session):
+    """Project current facts once; keep complete decision evidence in storage."""
+    from goodteam_os.project_human_feedback import question_board
+
+    grant = {key: value for key, value in snapshot["continuation"].items() if key != "human_questions"}
+    if grant.get("discovery_pending"):
+        # Its selection, execution identity and packet reference describe the
+        # reserved action. The frozen packet contains earlier board snapshots.
+        grant["discovery_pending"] = {key: value for key, value in grant["discovery_pending"].items()
+                                      if key != "packet"}
+    return {**snapshot, "continuation": grant,
+            "question_board": question_board({**session, "project_continuation": snapshot["continuation"]})}
+
+
 def _reply(store, incoming, content, *, operation=None, receipt=None, execution=None):
     from goodteam_os.assistant_requests import update_request
 
@@ -187,7 +201,8 @@ def run_dialogue(service, *, store, project_key, root, text, message_id, attempt
                                         team_view=service.team_view(project_key), current_message_id=turn_input["message_id"])
         context += service.attachment_context(project_key, root, session, turn_input["message_id"])
         context += "\nFresh task context: " + json.dumps(scope, ensure_ascii=False, default=str)
-        context += "\nFresh continuation/batch/attention (read-only, never authorization): " + json.dumps(snapshot, ensure_ascii=False)
+        context += "\nFresh continuation/batch/attention (read-only, never authorization): " + json.dumps(
+            _model_context(snapshot, session), ensure_ascii=False)
         context += "\nPending conversation question (not authority): " + json.dumps(pending, ensure_ascii=False)
         context += (
             '\nFor a question about this continuation, use intent project_operation and project_operation '

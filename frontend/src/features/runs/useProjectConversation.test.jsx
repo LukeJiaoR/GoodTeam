@@ -3,7 +3,7 @@ import { expect, test, vi } from 'vitest';
 import { runApi } from './runApi';
 import useProjectConversation from './useProjectConversation';
 
-vi.mock('./runApi', () => ({ runApi: { sendTaskAssistantMessage: vi.fn() } }));
+vi.mock('./runApi', () => ({ runApi: { sendTaskAssistantMessage: vi.fn(), taskAssistantAction: vi.fn() } }));
 
 test('transport failure releases the composer before refresh and keeps resend identity', async () => {
   let releaseRefresh;
@@ -49,4 +49,24 @@ test('transport failure releases the composer before refresh and keeps resend id
   await act(async () => { await result.current.answer(questionId, 'Internal staff only.'); });
   expect(runApi.sendTaskAssistantMessage.mock.lastCall[1]).toEqual(answer);
   expect(result.current.delivery.status).toBe('recorded');
+
+  // An unresolved answer request must not prevent revocation. Other mutations
+  // stay serialized, including after Stop finishes while the answer is pending.
+  let rejectAnswer, confirmStop;
+  runApi.sendTaskAssistantMessage.mockImplementationOnce(() => new Promise((_, reject) => { rejectAnswer = reject; }));
+  runApi.taskAssistantAction.mockImplementationOnce(() => new Promise(resolve => { confirmStop = resolve; }));
+  let pendingAnswer, pendingStop;
+  await act(async () => { pendingAnswer = result.current.answer(`human-${'c'.repeat(32)}`, 'No new access.'); });
+  expect(result.current.busy).toBe('answer_question');
+  await act(async () => { expect(await result.current.act({ action: 'start_project_continuation' })).toBe(false); });
+  const stop = { action: 'stop_project_continuation', continuation_id: 'current-grant' };
+  await act(async () => { pendingStop = result.current.act(stop); });
+  expect(runApi.taskAssistantAction).toHaveBeenCalledExactlyOnceWith('DEMO', stop);
+  await act(async () => { expect(await result.current.act(stop)).toBe(false); });
+  await act(async () => { confirmStop({ project_continuation: { status: 'stopped' } }); await pendingStop; });
+  expect(result.current.busy).toBe('answer_question');
+  await act(async () => { expect(await result.current.act({ action: 'start_project_continuation' })).toBe(false); });
+  expect(runApi.taskAssistantAction).toHaveBeenCalledTimes(1);
+  await act(async () => { rejectAnswer(new Error('The original continuation was stopped.')); await pendingAnswer; });
+  expect(result.current.busy).toBe('');
 });

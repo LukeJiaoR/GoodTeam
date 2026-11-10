@@ -201,7 +201,7 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
 
     Persist the answer and visible acknowledgement together. An interruption
     after this commit is resumed by the existing active-continuation service.
-    Never invoke a model or acquire the queue while holding conversation locks.
+    Receipt validation and persistence use only the short session mutation lock.
     """
     if context_run_id or attachments or expected_attempt is not None:
         raise ValueError("Answer the current project question without a historical task, attachment or runtime retry.")
@@ -212,23 +212,32 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
     if not isinstance(message_id, str) or not 1 <= len(message_id.strip()) <= 256:
         raise ValueError("A stable answer message ID is required.")
     message_id = message_id.strip()
-    from goodteam_os.assistant_requests import conversation_lock, response
-    from goodteam_os.goal_continuation import authority_snapshot, goal_guard
+    from goodteam_os.assistant_requests import response
+    from goodteam_os.goal_continuation import authority_snapshot
     from goodteam_os.project_iteration_continuation import _scope_tasks
     from goodteam_os.project_outcome_discovery import _current, _digest
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
     from goodteam_os.tasks import LocalTaskStore
 
     store = TaskAssistantSessionStore(service.workspace, project_key)
-    with goal_guard(service.workspace, project_key), conversation_lock(store):
-        session = store.read()
+    def replay(session):
         previous = session.get("assistant_requests", {}).get(message_id)
         if previous is not None:
             if (previous.get("human_question_id") == identifier and previous.get("text") == text
                     and previous.get("status") == "succeeded"):
-                # A receipt replay after Stop is read-only, never a new tick.
-                return response(service, project_key, root, intent="project_question")
+                return True
             raise ValueError("message_id is already used with different content or context")
+        return False
+
+    # A saved receipt replay after Stop stays read-only. A concurrent first
+    # receipt is checked again inside the atomic write, alongside all identity,
+    # task-scope and authority checks; no planning/queue operation lock is held.
+    if replay(store.read()):
+        return response(service, project_key, root, intent="project_question", recover_requests=False)
+
+    def save(session):
+        if replay(session):
+            return session
         if any(item.get("message_id") in {message_id, "human-answer:" + message_id}
                for item in session.get("timeline", [])):
             raise ValueError("message_id is already present in project history")
@@ -251,32 +260,24 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
                   "question": question, "source_packet_digest": record["planning"]["packet_digest"],
                   "message_id": message_id, "text": answer_text, "authority_changed": False, "received_at": now}
         answer["receipt_id"] = _digest(answer)
+        value["human_questions"][identifier]["answer"] = answer
+        value["reason"] = "human_answer_received"
+        session.setdefault("assistant_requests", {})[message_id] = {
+            "text": text, "context_run_id": "", "attachments": [], "attempt": 1,
+            "status": "succeeded", "phase": "applying", "intent": "project_question",
+            "human_question_id": identifier, "human_answer_receipt": answer["receipt_id"], "updated_at": now}
+        session["timeline"].append({"message_id": message_id, "actor": "user", "content": text,
+            "run_id": "", "created_at": now, "details": {"human_question_id": identifier}})
+        chinese = any("\u3400" <= char <= "\u9fff" for char in text + question["question"])
+        session["timeline"].append({"message_id": "human-answer:" + message_id,
+            "actor": "task_assistant", "event": "conversation_replied", "run_id": "", "created_at": now,
+            "content": ("回答已关联原问题。原项目循环将按剩余授权继续判断；未增加权限或额度。" if chinese else
+                        "Answer linked to its original question. The existing project loop can resume within remaining authority; no scope or budget was added."),
+            "details": {"question_id": identifier, "answer_receipt_id": answer["receipt_id"], "actions_applied": False}})
+        return session
 
-        def save(current_session):
-            current = _current(current_session, value)
-            if (current.get("human_questions") or {}).get(identifier) != record:
-                raise ValueError("The Human question changed while recording the answer.")
-            if current["authority"] != authority_snapshot(service.workspace, project_key,
-                                                          Path(service.project_config), Path(root)):
-                raise ValueError("The current project authority changed before recording the answer.")
-            current["human_questions"][identifier]["answer"] = answer
-            current["reason"] = "human_answer_received"
-            current_session.setdefault("assistant_requests", {})[message_id] = {
-                "text": text, "context_run_id": "", "attachments": [], "attempt": 1,
-                "status": "succeeded", "phase": "applying", "intent": "project_question",
-                "human_question_id": identifier, "human_answer_receipt": answer["receipt_id"], "updated_at": now}
-            current_session["timeline"].append({"message_id": message_id, "actor": "user", "content": text,
-                "run_id": "", "created_at": now, "details": {"human_question_id": identifier}})
-            chinese = any("\u3400" <= char <= "\u9fff" for char in text + question["question"])
-            current_session["timeline"].append({"message_id": "human-answer:" + message_id,
-                "actor": "task_assistant", "event": "conversation_replied", "run_id": "", "created_at": now,
-                "content": ("回答已关联原问题。原项目循环将按剩余授权继续判断；未增加权限或额度。" if chinese else
-                            "Answer linked to its original question. The existing project loop can resume within remaining authority; no scope or budget was added."),
-                "details": {"question_id": identifier, "answer_receipt_id": answer["receipt_id"], "actions_applied": False}})
-            return current_session
-
-        store._mutate(save)
+    store._mutate(save)
     # Do not issue a second chat-model call here. Existing periodic ticks consume
     # unconsumed answer receipts with the latest Context, even after a process
     # restart or a lost HTTP response. A replay cannot add another turn.
-    return response(service, project_key, root, intent="project_question")
+    return response(service, project_key, root, intent="project_question", recover_requests=False)

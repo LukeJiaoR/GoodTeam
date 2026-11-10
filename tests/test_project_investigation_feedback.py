@@ -389,7 +389,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     monkeypatch.setattr(assistant_requests, "conversation_lock", lambda *_: nullcontext())
     monkeypatch.setattr(goal_continuation, "goal_guard", lambda *_: nullcontext())
     service = SimpleNamespace(workspace=tmp_path, project_config=config,
-                              session=lambda *_: deepcopy(state))
+                              session=lambda *_, **__: deepcopy(state))
     mode = ["ask"]
     question = {"question": "Should the documented entry target internal staff or external API clients?",
                 "why_human": "The intended audience is a business choice not established by repository evidence."}

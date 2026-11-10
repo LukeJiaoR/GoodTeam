@@ -38,10 +38,19 @@ def _save(store, value):
     retained = dict(value)
     def write(session):
         current = session.get(_FIELD) or {}
-        # Stop uses the short session mutation lock, even while a Manager call
-        # holds the continuation guard. A late result must not reactivate it.
-        if current.get("id") == value.get("id") and current.get("status") == "stopped":
-            retained.update(status="stopped", reason="owner_stopped")
+        if current.get("id") == value.get("id"):
+            # Answers use the short session lock while planning holds the
+            # continuation guard. A whole-grant checkpoint cannot overwrite them.
+            if "human_questions" in current:
+                retained["human_questions"] = current["human_questions"]
+            if current.get("status") == "stopped":
+                retained.update(status="stopped", reason="owner_stopped")
+            elif current.get("status") == "active" and retained.get("status") == "completed":
+                from goodteam_os.project_human_feedback import human_feedback
+
+                if any(item["receipt_id"] not in retained.get("discovery_consumed", [])
+                       for item in human_feedback(current)):
+                    retained.update(status="active", reason="human_answer_received")
         if current.get("id") != value.get("id") and current.get("human_questions"):
             # Retain the original grant as history in the same session. Its
             # questions stay visible without carrying its authority forward.

@@ -46,6 +46,10 @@ No Worker is silently substituted by the Manager.
 Create-once publication, the Task Assistant queue, isolated dispatch, scope and
 source validation, Stop and budgets retain their original owners. Initial manual
 chat research without an applicable grant still needs its normal confirmation.
+The original task ledger accepts the two host-owned discovery profiles:
+implementation with scoped workspace writes, and investigation with
+`research/read_only` and no write paths. Publication replay keeps the original
+task identity and progress for both profiles.
 
 ## L2: report observation is not task acceptance or Git delivery
 
@@ -206,6 +210,13 @@ model call or Worker dispatch**. The existing active-continuation service
 consumes the answer when its current execution can safely advance, using a new
 packet with the latest Context. The owner does not need another Start/continue
 command; the original service must be running. GET does not advance it.
+Answer ingestion uses one existing session mutation, without holding the
+conversation or continuation guards. It can save a receipt during a Manager
+call; its response projects the session without recovering other conversations,
+so it does not contend with the existing task queue. Identity,
+idempotency, current authority and Stop are checked in that atomic mutation.
+A same-grant checkpoint preserves answers received during the call. Stop
+remains atomic and takes precedence over a late decision or checkpoint.
 
 The answer is contextual information, not a new grant, completed task or verified
 technical fact. Manager chooses which answers are relevant to its task sources;
@@ -287,6 +298,30 @@ an older authorization command returns that retained original grant without repl
 one. The board reads the latest project session even while viewing historical run
 details; it introduces no separate question store or scheduler.
 
+Ordinary Manager conversation receives current continuation state and this
+board once, rather than each question's nested frozen planning packets. Pending
+decision identity, selection and evidence references remain available. The
+original source snapshots and their versions still own action validation and
+replay; this projection changes only the text sent to the conversation model.
+
+### Manager decisions and the existing Planner gap
+
+Manager owns project-level judgment, delegation and continuation. The Planner
+role owns concrete task decomposition from approved artifacts: inputs, outputs,
+dependencies, acceptance criteria and handoff notes. The existing
+`project_iteration_planner.py` name and persisted `planning` fields refer to
+Manager decision calls; its actual Worker role is `orchestrator`, not `planner`.
+
+This discovery adapter currently publishes only implementation or read-only
+investigation tasks. It does not delegate a planning task to Planner. The legacy
+Workflow's `planner` node also renders a `task_breakdown` template before its
+UI/implementation/QA jobs; the node name is not evidence of a Planner invocation.
+These are pre-existing role-wiring gaps, not completed by the question board.
+Do not report Planner participation or full Manager/Worker separation from the
+board, task-publication or receipt regressions. A future correction should let
+Manager delegate planning when needed through the existing Worker path, rather
+than making every project action pass through another mandatory stage.
+
 ## Replay, Stop and deliberate remaining limits
 
 Report capture and pending judgment are one session write. Publication replay
@@ -309,7 +344,9 @@ UI opt-in and real-model two-delivery acceptance remain unverified/open.
 
 ## Validation boundary
 
-`test_project_discovery_investigation.py` retains the L1 pure protocol contract.
+`test_project_discovery_investigation.py` exercises the L1 protocol through the
+real task ledger, including read-only publication and replay without resetting
+progress. Its Manager input and prior delivery are explicit fixtures.
 `test_project_investigation_feedback.py` adds one representative result-to-decision
 case using explicit in-memory storage, terminal-evidence and model/dispatch
 fixtures, extended in place for terminal failures and missing/empty reports. It
@@ -344,8 +381,15 @@ session/task stores and authorization/answer handlers with explicit Manager
 decision fixtures: answers remain open after consumption, explicit conclusions
 retain evidence, replay is stable, and grant replacement preserves history that
 current Manager decisions can explicitly conclude without reviving old authority.
+Its real threaded check also records duplicate answers once while the
+continuation and conversation guards are held, and prevents an older
+whole-grant checkpoint from losing the answer.
 The existing result-to-decision fixture also closes questions while
 queuing work. Frontend tests exercise the current board inside the conversation,
-answer failure/retry and answering from a historical-run view. These establish
+answer failure/retry, answering from a historical-run view, and Stop while an
+answer request remains pending, including a stale page that pauses other
+interactions. The ordinary conversation representative checks
+that the model receives the board without nested frozen packets, while the
+authoritative snapshot remains unchanged. These establish
 the bounded application contract, not live-model judgment or full project Loop
 acceptance.

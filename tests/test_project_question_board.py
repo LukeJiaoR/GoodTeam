@@ -4,11 +4,11 @@ The initial decision packets are fixtures; no model, Git dispatch or delivery is
 claimed. Answer/receipt, closure, grant archival and read projection are real.
 """
 from copy import deepcopy
-from types import SimpleNamespace
+from threading import Event, Thread
 
 import pytest
 
-from goodteam_os.assistant_requests import execute_message
+from goodteam_os.assistant_requests import conversation_lock, execute_message
 from goodteam_os.goal_continuation import goal_guard
 from goodteam_os.project_continuation_notice import project_continuation_notice
 from goodteam_os.project_human_feedback import (
@@ -16,8 +16,9 @@ from goodteam_os.project_human_feedback import (
     record_human_question, record_question_updates,
 )
 from goodteam_os.project_iteration import project_iteration_backlog
-from goodteam_os.project_iteration_continuation import configure_project_continuation, stop_project_continuation
+from goodteam_os.project_iteration_continuation import _save, configure_project_continuation, stop_project_continuation
 from goodteam_os.project_outcome_discovery import _current, _digest, validate_discovered_task
+from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
 
@@ -33,8 +34,7 @@ def test_question_board_requires_manager_closure_and_retains_prior_grant_history
         role="implementation", write_domains=["docs"], acceptance_criteria=["Document the agreed API audience."])
     original_tasks = tasks.path.read_bytes()
     store = TaskAssistantSessionStore(tmp_path, "DEMO")
-    service = SimpleNamespace(workspace=tmp_path, project_config=config,
-        session=lambda project_key, _root: TaskAssistantSessionStore(tmp_path, project_key).read())
+    service = TaskAssistantService(tmp_path, project_config=config)
 
     def authorize(key):
         return configure_project_continuation(workspace=tmp_path, project_key="DEMO", root=root,
@@ -88,9 +88,48 @@ def test_question_board_requires_manager_closure_and_retains_prior_grant_history
     assert all(item["status"] == "awaiting_answer" and item["can_answer"]
                for item in question_board(store.read())["items"])
 
-    execute_message(service, project_key="DEMO", root=root,
-        text=f"/answer {first} Keep the first release internal.", message_id="owner-answer")
+    # A paused turn holds the real continuation and queue/conversation guards.
+    # Answer receipt must persist before it finishes, and its older whole-grant save
+    # must retain both the answer and the next judgment's responsibility.
+    captured, release = Event(), Event()
+    answered = [Event(), Event()]
+    failures, settled = [], []
+    def paused_turn():
+        try:
+            with goal_guard(tmp_path, "DEMO"), conversation_lock(store):
+                old = store.read()["project_continuation"]
+                captured.set()
+                assert release.wait(5)
+                settled.append(_save(store, {**old, "status": "completed", "discovery_pending": None,
+                                             "reason": "discovery_no_followup"}))
+        except Exception as exc:
+            failures.append(exc)
+    def answer_during_turn(done):
+        try:
+            execute_message(service, project_key="DEMO", root=root,
+                text=f"/answer {first} Keep the first release internal.", message_id="owner-answer")
+        except Exception as exc:
+            failures.append(exc)
+        finally:
+            done.set()
+    manager_thread = Thread(target=paused_turn)
+    answer_threads = [Thread(target=answer_during_turn, args=(done,)) for done in answered]
+    manager_thread.start()
+    assert captured.wait(5)
+    for thread in answer_threads:
+        thread.start()
+    try:
+        received_before_settlement = all(done.wait(1) for done in answered)
+    finally:
+        release.set()
+        manager_thread.join(5)
+        for thread in answer_threads:
+            thread.join(5)
+    assert received_before_settlement and not failures
+    assert settled[0]["status"] == "active" and settled[0]["reason"] == "human_answer_received"
     grant = TaskAssistantSessionStore(tmp_path, "DEMO").read()["project_continuation"]
+    for message_id in ("owner-answer", "human-answer:owner-answer"):
+        assert len([item for item in store.read()["timeline"] if item.get("message_id") == message_id]) == 1
     answer = human_feedback(grant)[0]
     store._mutate(lambda session: {**session, "project_continuation": {
         **session["project_continuation"], "discovery_consumed": [answer["receipt_id"]]}})
