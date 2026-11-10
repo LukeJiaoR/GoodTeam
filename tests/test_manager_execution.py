@@ -47,6 +47,8 @@ def test_manager_chat_turn_runs_configured_orchestrator_and_returns_decision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
+    action = {"kind": "queue_task", "role": "research", "execution_policy": "read_only",
+              "write_domains": [], "acceptance_criteria": ["Identify the cause with project evidence."]}
 
     class FakeStore:
         def __init__(self, project_root: Path) -> None:
@@ -65,6 +67,7 @@ def test_manager_chat_turn_runs_configured_orchestrator_and_returns_decision(
                         "intent": "work_request",
                         "response": "我会先把登录问题整理成一个可确认的任务。",
                         "task_intake": {"ready": True, "missing_decisions": [], "source_message_ids": ["message-1"]},
+                        "task_action": action,
                     },
                     ensure_ascii=False,
                 ),
@@ -99,6 +102,9 @@ def test_manager_chat_turn_runs_configured_orchestrator_and_returns_decision(
     assert turn["intent"] == "work_request"
     assert turn["response"] == "我会先把登录问题整理成一个可确认的任务。"
     assert turn["manager_execution"]["job_id"] == "job-chat"
+    assert turn["task_action"] == action
+    with pytest.raises(manager_execution.ManagerExecutionError, match="invalid task action"):
+        manager_execution._parse_chat_turn(json.dumps({**turn, "task_action": {**action, "worker_id": "research-a"}}))
 
 
 def test_manager_chat_turn_reuses_completed_job_for_message_retry(

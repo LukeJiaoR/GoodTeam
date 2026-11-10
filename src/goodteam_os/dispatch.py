@@ -450,7 +450,9 @@ def _create_track_job(
 ) -> dict[str, Any]:
     from goodteam_os.skills.worker_requests import WORKER_METADATA_LOADER, subject_for_role
 
-    fields = {"idempotency_key": command_key}
+    fields = {"idempotency_key": command_key, "project_key": project_key,
+              "track_id": str(track.get("track_id") or track["role"]),
+              "project_task_id": str(track.get("project_task_id") or "")}
     if method_context:
         fields = {"task_skill_context": method_context, "skill_subject": subject_for_role(str(track["role"])),
                   "skill_loader_version": WORKER_METADATA_LOADER, "project_key": project_key,
@@ -584,6 +586,7 @@ def _job_report(
         **{key: job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref") if key in job},
         **{key: status[key] for key in ("skill_error_code", "skill_preflight_status", "skill_runtime_status", "invocation_evidence") if key in status},
         "job_id": str(job["id"]),
+        **{key: job[key] for key in ("project_task_id", "track_id") if job.get(key)},
         **{key: job[key] for key in ("worker_id", "worker_name") if job.get(key)},
         "role": str(job["role"]),
         "adapter": str(job["adapter"]),

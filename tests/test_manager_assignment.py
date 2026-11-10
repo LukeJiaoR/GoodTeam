@@ -34,8 +34,8 @@ if '--version' in sys.argv:
     raise SystemExit()
 prompt = sys.stdin.read()
 assert '这个项目是干嘛的' in prompt
-assert 'NAMED_RESEARCHER_B' in prompt and 'DEFAULT_RESEARCHER_A' not in prompt
-assert sys.argv[sys.argv.index('--model') + 1] == 'worker-b-fixture'
+assert 'RESEARCH_ROLE_RUNTIME' in prompt
+assert sys.argv[sys.argv.index('--model') + 1] == 'research-role-fixture'
 Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed greeting in README. Remaining: independent review.\\n')
 ''')
     binary.chmod(0o755)
@@ -43,23 +43,16 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed
     team = ensure_team_state(tmp_path, 'DEMO', config)
     assert resolve_worker_from_state(team, 'research')['worker_id'] == 'research-a'
     execute_team_commands(tmp_path, 'DEMO', [
-        {'kind': 'change_worker_runtime', 'worker_id': 'research-a', 'additional_prompt': 'DEFAULT_RESEARCHER_A'},
-        {'kind': 'change_worker_runtime', 'worker_id': 'research-b', 'model': 'worker-b-fixture',
-         'additional_prompt': 'NAMED_RESEARCHER_B'},
+        {'kind': 'change_worker_runtime', 'worker_id': 'research-a', 'model': 'research-role-fixture',
+         'additional_prompt': 'RESEARCH_ROLE_RUNTIME'},
     ], actor='user', surface='team_ui', config_path=config)
-    team = ensure_team_state(tmp_path, 'DEMO', config)
-    assert resolve_worker_from_state(team, 'research', worker_id='research-b')['model'] == 'worker-b-fixture'
-    with pytest.raises(ValueError, match='requested Worker'):
-        resolve_worker_from_state(team, 'research', worker_id='missing-worker')
-    with pytest.raises(ValueError, match='does not provide'):
-        resolve_worker_from_state(team, 'research', worker_id='planner-a')
     calls = []
     def manager(**kwargs):
         calls.append(kwargs)
         return _parse_chat_turn(json.dumps({
             'intent': 'work_request', 'response': 'Assigning this research.',
             'task_intake': {'ready': True, 'missing_decisions': [], 'source_message_ids': ['research']},
-            'task_action': {'kind': 'queue_task', 'role': 'research', 'worker_id': 'research-b', 'execution_policy': 'read_only',
+            'task_action': {'kind': 'queue_task', 'role': 'research', 'execution_policy': 'read_only',
                             'write_domains': [], 'acceptance_criteria': ['Identify the greeting and remaining uncertainty.']},
         }))
     service = TaskAssistantService(tmp_path, project_config=config, manager_turn=manager)
@@ -73,7 +66,7 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed
     assert len(queued) == len(LocalTaskStore(source, 'DEMO').list_tasks()) == 1
     task = LocalTaskStore(source, 'DEMO').get_task(queued[0]['project_task_id'])
     assert task['role'] == 'research' and task['execution_policy'] == 'read_only'
-    assert task['worker_id'] == queued[0]['assignment']['worker_id'] == 'research-b'
+    assert 'worker_id' not in task and 'worker_id' not in queued[0]['assignment']
     assert task['description'] == queued[0]['exact_request'] == request['text']
     assert not queued[0]['confirmed']
     service.send_message(**request)
@@ -88,8 +81,8 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed
     create = dispatch._create_track_job
     def observe_creation(*args, **kwargs):
         actual = create(*args, **kwargs)
-        assert actual['worker_id'] == 'research-b'
-        assert actual['model'] == 'worker-b-fixture' and actual['additional_prompt'] == 'NAMED_RESEARCHER_B'
+        assert actual['role'] == 'research' and actual['id'] != actual['worker_id']
+        assert actual['model'] == 'research-role-fixture' and actual['additional_prompt'] == 'RESEARCH_ROLE_RUNTIME'
         persisted = next(item for item in WorkerJobStore(source).list_jobs() if item['id'] == actual['id'])
         assert persisted['worker_id'] == actual['worker_id']
         created_jobs.append(actual['id'])
@@ -99,13 +92,14 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed
     assert result['status'] == 'review', result
     job = result['report']['jobs'][0]
     assert job['role'] == 'research' and job['write_scope_verified']
-    assert created_jobs == [job['job_id']] and job['worker_id'] == 'research-b'
+    assert created_jobs == [job['job_id']]
     timeline = TaskAssistantSessionStore(tmp_path, 'DEMO').read()['timeline']
     replies = [item for item in timeline if item['message_id'].startswith('batch-result:')]
     assert len(replies) == 1
     assert 'Observed greeting in README' in replies[0]['content']
     assert 'independent review' in replies[0]['content']
-    assert replies[0]['details']['source_evidence']['worker_results'][0]['worker_id'] == 'research-b'
+    returned = replies[0]['details']['source_evidence']['worker_results'][0]
+    assert returned['job_id'] == job['job_id'] and 'worker_id' not in returned
     run_queued_iteration_batch(**args, confirmed=True)
     assert TaskAssistantSessionStore(tmp_path, 'DEMO').read()['timeline'] == timeline
     assert LocalTaskStore(source, 'DEMO').get_task(task['id'])['status'] == 'review'

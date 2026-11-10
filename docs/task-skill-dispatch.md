@@ -2,6 +2,13 @@
 
 ## Current project dispatch scope (#696)
 
+Manager submits Role, task and related Context. A generic execution resource
+loads that invocation's Role methods; its existing job ID is returned after
+creation for supervision and result readback. Execution completion releases the
+resource while retaining the job record. Resource reuse across tasks must not
+reuse another task's Role, method snapshot, private Context or authority. The
+current executor shares slots across Roles; ordinary CLI jobs use fresh processes.
+
 New bounded direct/project dispatches capture only the subjects of their actual
 tracks, using the existing Role-to-subject mapping. A custom binding on an
 unrelated role cannot enroll an ordinary isolated batch in Skill execution.

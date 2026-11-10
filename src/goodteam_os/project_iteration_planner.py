@@ -210,7 +210,18 @@ def _discovery_prompt(context):
         base += _MANAGER_HUMAN_FEEDBACK_TASK
     if "question_board" in context:
         base += _MANAGER_QUESTION_BOARD_TASK
-    if "worker_capabilities" in context:
+    if "role_capabilities" in context:
+        base += """
+Role dispatch: choose the authorized task type and work from role_capabilities
+(implementation -> implementation; investigation -> research). Do not supply
+worker_id or choose a persistent Team member. The execution layer allocates a
+generic Worker and loads this task's Role context and supported methods. After
+job creation, its job_id is the execution handle for observing that invocation;
+completed handles refer to history and cannot receive a new assignment.
+The original task types, scope, permissions and budgets are unchanged.
+"""
+    elif "worker_capabilities" in context:
+        # Keep a frozen historical attempt's exact prompt and target contract.
         base += """
 Worker selection extension: a new_task may include optional worker_id naming an
 exact dispatchable Worker from worker_capabilities for its authorized task type

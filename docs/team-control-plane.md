@@ -26,8 +26,23 @@ Three different kinds of truth are stored separately:
 2. **Decision/Event History** — `state/projects/<KEY>/team-events.jsonl`
    (append-only ledger).
 3. **Execution Snapshot** — bound per durable run in the run state
-   (`team_snapshot`) and in every worker job record (`worker_id`,
-   `worker_name`, adapter, model, reasoning depth).
+   (`team_snapshot`) and in every worker job record (configuration provenance
+   `worker_id`, `worker_name`, adapter, model, reasoning depth).
+
+### Configuration identity and invocation identity
+
+Team member records retain Role/runtime configuration and its history. Their
+`active` lifecycle means the configuration is enabled; it does not establish that
+a process is running or a pool slot is idle. The execution layer already accepts
+different Roles through a generic dispatch pool and materializes each job's
+Role, task and Context independently.
+
+Manager assignments submit a Role and task. After creation, the existing job ID
+is the returned invocation handle for current state and result readback. When
+execution ends, the handle remains in the task record and the resource is
+released. New work receives a new job ID; an exact replay keeps the original.
+Persisted Team member IDs continue to identify configuration changes and old
+execution provenance, and are not new Manager assignment inputs.
 
 ### Role Definition vs TeamRole vs Worker
 
@@ -123,7 +138,7 @@ workers.
 
 `resolve_worker_for_role` gates every project dispatch path
 (implementation trio, artifact generation, reviewer dispatch) and returns the
-**complete execution runtime** of the exact Worker that will run — identity,
+**complete execution runtime configuration** used by the new job — source identity,
 provider, model, reasoning depth, prompt, pi thinking level, and instance
 count come from one resolution, so a job can never mix one Worker's identity
 with another Worker's settings. Reviewer jobs (code review / release
@@ -135,13 +150,12 @@ fallback for unmigrated targets:
   worker id is passed directly or the planner still references the worker.
 - No active, runtime-eligible Worker → `TeamDispatchBlocked(team_worker_unavailable)`.
 
-Manager task assignment can supply an optional `worker_id` alongside the role.
-An explicit target resolves that exact member's complete runtime, after checking
-its role, lifecycle and runtime eligibility. A missing, mismatched or unavailable
-target fails with its cause; resolution never falls back to another member.
-Without a target, existing role-based selection remains unchanged. The target
-is carried in the original task intent and queue confirmation, while actual job
-and report records preserve the executing Worker ID and name.
+New Manager task assignments and discovery packets use Role capabilities. The
+low-level resolver retains explicit configuration targets for previously saved
+tasks and frozen inputs; their exact replay identity is not rewritten. It still
+checks role, lifecycle and runtime eligibility and does not replace a saved
+explicit target silently. Current invocation state and returned results use the
+actual job ID, which is distinct from this historical configuration target.
 
 Released/deleted worker identity is never physically removed, so historical
 runs, artifacts, reviews, and provenance keep resolving.
@@ -153,8 +167,8 @@ runs, artifacts, reviews, and provenance keep resolving.
 identity/lifecycle/runtime, the manager runtime, and the team revision at
 start. Later changes — runtime edits, lifecycle moves, role changes,
 renames, deletes — never rewrite a historical run's snapshot. Worker job
-records additionally carry `worker_id`/`worker_name` for the executing
-worker.
+records additionally carry `worker_id`/`worker_name` for the captured configuration
+source; their own `id` identifies the execution invocation.
 
 ## Migration from the legacy worker model
 
