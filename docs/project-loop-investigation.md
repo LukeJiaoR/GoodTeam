@@ -1,4 +1,4 @@
-# Project-loop investigation: delegation and result/failure feedback (#686)
+# Project Loop: investigation, feedback and bound Human decisions (#686)
 
 An explicitly authorized discovery turn may delegate a read-only investigation
 when a material fact is missing. The existing continuation can then observe a
@@ -125,6 +125,75 @@ silently replacing its input. Stopped or already-blocked continuation grants are
 not reactivated by this upgrade; their normal recovery/authorization remains
 explicit. The new path is considered only by an already-active continuation.
 
+## L4 first slice: a bound Human question is a wait, not completion
+
+Newly captured discovery packets advertise `human_feedback_supported`. If a
+specific business choice or unavailable fact truly needs the owner, Manager may
+return `new_task: null`, its normal `rationale`, and:
+
+```json
+{
+  "human_question": {
+    "question": "Should this entry target internal staff or external API clients?",
+    "why_human": "The intended audience is a business choice not established by current evidence."
+  }
+}
+```
+
+This is an addition to the normal response, not a separate API request. The host
+rejects simultaneous work plus a question. Existing frozen packets without the
+capability keep their original output/prompt contract. Grant normalization and
+its scope digest do not change: asking does not authorize any extra Worker work.
+Routine facts that authorized Workers can obtain should not be escalated to Human.
+
+The existing continuation session retains the exact planning packet, selection,
+execution identity and a host-generated `human-...` question ID. Its grant remains
+active with `reason: awaiting_human_decision`; the existing handoff projection
+shows `phase: human_required`, the actual question and why it needs the owner.
+The original continuation tick returns while no answer exists. Polling/reopening
+is passive, and waiting does not buy new Manager calls or create tasks. No extra
+question store, scheduler or dialogue engine is introduced.
+
+The first supported response surface is the **existing project message endpoint
+and composer**, using the exact command displayed in that handoff:
+
+```text
+/answer human-<host-generated-id> Internal staff only; keep existing access limits.
+```
+
+This explicit identifier avoids treating arbitrary chat, a late reply or a generic
+"continue" as consent to whichever question happens to be current. This slice has
+no new dedicated answer button and does not claim natural-language reply routing.
+Historical-task messages, attachments and runtime retries cannot answer this
+project-level question. They keep their existing unrelated meaning.
+
+The handler validates the original grant, target/task intents, source evidence,
+question and effective configuration, then atomically records the answer receipt,
+original user message and visible acknowledgement. It performs **no model call or
+Worker dispatch**. The existing active-continuation service consumes the answer
+on its next tick, including after a process restart or lost HTTP response. The
+owner does not need another Start/continue command; the original service must be
+running, as for all existing automatic continuation. GET does not advance it.
+
+The answer is contextual information, not a new grant, completed task or verified
+technical fact. A subsequent work proposal must cite the actual answer and still
+satisfy the original sources, paths, dependencies, role, budget and review rules.
+An answer requesting extra permissions cannot change those limits; use the normal
+separately confirmed authorization/change flow. If the original target, backlog,
+report or authority changed, the answer is rejected rather than silently retargeted.
+That stale-question recovery is still explicit in this first slice.
+
+Prior replies remain available to later planning within the same continuation.
+An additional question gets a new bound ID; it cannot absorb an old answer.
+Repeated submission of the same message returns its receipt without another
+planning call. Reusing an ID with different text is rejected. A question publication
+whose acknowledgement is lost remains a wait; an answer committed before a crash
+remains pending for the original service. Queue-publication replay continues to
+reuse the same reserved decision and task. Stop is never undone by reply/replay;
+exhausted budgets do not get replenished. Plain `new_task:null` still means no
+follow-up, not whole-project completion; broader stopping categories are not
+claimed implemented here.
+
 ## Replay, Stop and deliberate remaining limits
 
 Report capture and pending judgment are one session write. Publication replay
@@ -139,8 +208,10 @@ termination and unchanged-workspace checks.
 This L3 slice is restricted to single, grant-discovered read-only investigations.
 Failed writing tasks, mixed batches and uncaptured failures keep the original
 recovery behavior; general partial-execution handling remains unfinished L3.
-Human decision wait/resume and more expressive stopping choices remain L4. It does not independently accept the
-research task or claim that the full user goal is met. Manager tool-level isolation,
+The L4 slice below supports explicit question/answer continuation, not arbitrary
+natural-language approval or automatic goal/permission changes. More expressive
+stopping choices remain open. This does not independently accept the research
+task or claim that the full user goal is met. Manager tool-level isolation,
 UI opt-in and real-model two-delivery acceptance remain unverified/open.
 
 ## Validation boundary
@@ -167,3 +238,10 @@ Earlier AST-subset results remain historical evidence only.
 
 All product results remain under #419. CI stays paused. This code does not start
 StockFlow, enable production services, call paid models or restore old Stop/grants.
+
+The same representative fixture now covers L4 via the complete production message
+entry: durable question, passive waiting, bound answer, next-tick re-decision,
+question/answer acknowledgement loss, duplicate and stale replies, source/goal
+changes, history retention, exhausted budget and Stop. The preceding L3 discovery
+rejects the question response in the corresponding RED run. No real PostgreSQL
+restart, browser or model quality claim follows from these substituted dependencies.

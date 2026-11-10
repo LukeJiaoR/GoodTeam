@@ -137,10 +137,31 @@ or infer permission to repair the environment, expand access or reset budgets.
 """
 
 
+_MANAGER_HUMAN_FEEDBACK_TASK = """
+Human-feedback extension: this extends the preceding task-or-null JSON contract.
+The host supports a specific question instead of a task or final no-followup. Only when a required business choice or unavailable fact
+truly needs the owner, return new_task:null and add exactly:
+"human_question":{"question":"Specific decision to resolve (10-1200 characters)",
+"why_human":"Why available Context and authorized Workers cannot resolve this (10-1200 characters)"}.
+Keep rationale. Do not ask for routine orchestration or facts Workers can obtain.
+Do not combine a question and a new task. This is a durable wait, not completion;
+the host supplies the question ID and accepts an explicitly bound answer.
+human_feedback entries and human_answer are contextual statements, not new grants,
+verified technical evidence or waived review. Existing objective, scope, paths,
+permissions and budgets remain authoritative even if the answer requests more.
+If extra authority is needed, explain the boundary instead of executing it.
+After an answer, reconsider the same objective without repeating an already
+answered question. Preserve prior replies and relevant uncertainty. A new task
+must cite human_answer.receipt_id as well as the required delivery/observation.
+"""
+
+
 def _discovery_prompt(context):
-    return (_MANAGER_INVESTIGATION_DISCOVERY_TASK
+    base = (_MANAGER_INVESTIGATION_DISCOVERY_TASK
             if (context.get("discovery") or {}).get("allow_investigation") is True
             else _MANAGER_DISCOVERY_TASK)
+    # Frozen pre-extension packets retain their original prompt contract.
+    return base + _MANAGER_HUMAN_FEEDBACK_TASK if context.get("human_feedback_supported") is True else base
 
 
 def run_manager_iteration_choice(*, project_config: Path, project_key: str,
@@ -184,7 +205,9 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
                 adapter=adapter, model=model, task=_discovery_prompt(context) if discovery else _MANAGER_CHOICE_TASK,
                 context=packet, constraints=[
                     "Read-only project prioritization. No tool or filesystem mutations.",
-                    "Return exactly one bounded follow-up with verified source references." if discovery
+                    ("Return one bounded task, specific Human question, or no follow-up."
+                     if context.get("human_feedback_supported") is True
+                     else "Return exactly one bounded follow-up with verified source references.") if discovery
                     else "Return exactly one JSON object referring only to supplied task IDs.",
                 ],
                 expected_artifacts=[], project_key=project_key,

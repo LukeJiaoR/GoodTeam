@@ -83,6 +83,14 @@ def response(service, project_key, root, *, intent="ambiguous"):
 
 
 def execute_message(service, *, project_key, root, text, message_id, expected_attempt=None, context_run_id="", attachments=None):
+    # Exact question IDs make this an explicit reply, not inferred approval.
+    # Route before the ordinary conversation lock/model path in both stores.
+    if isinstance(text, str) and text.strip().split(maxsplit=1)[:1] == ["/answer"]:
+        from goodteam_os.project_human_feedback import handle_answer_message
+
+        return handle_answer_message(service, project_key=project_key, root=root, text=text,
+            message_id=message_id, context_run_id=context_run_id, attachments=attachments,
+            expected_attempt=expected_attempt)
     from goodteam_os.conversation_attachments import resolve_attachments
 
     attachment_ids = [] if attachments is None else attachments

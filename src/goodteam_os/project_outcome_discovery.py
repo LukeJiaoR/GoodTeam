@@ -165,18 +165,40 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         feedback = pending_investigation_feedback(workspace=workspace, project_key=project_key, root=root, value=value)
         packet["investigation_feedback"] = feedback
         packet["allowed_source_refs"].append(feedback["receipt_id"])
+    from goodteam_os.project_human_feedback import human_feedback, pending_question
+
+    packet["human_feedback_supported"] = True
+    answers = human_feedback(value)
+    if answers:
+        packet["human_feedback"] = answers
+        packet["allowed_source_refs"].extend(item["receipt_id"] for item in answers)
+    human = pending_question(value)
+    if human is not None:
+        if human["answer"] is None:
+            raise ValueError("The current Human question still awaits an answer.")
+        packet["human_answer"] = human["answer"]
     packet["packet_digest"] = _digest(packet)
     return packet
 
 
 def validate_discovered_task(packet, response):
     """Validate advice against the frozen grant; no storage or execution effects."""
-    if not isinstance(response, dict) or set(response) != {"new_task", "rationale"}:
+    fields = {"new_task", "rationale"}
+    optional = {"human_question"} if packet.get("human_feedback_supported") is True else set()
+    if not isinstance(response, dict) or not fields.issubset(response) or set(response) - fields - optional:
         raise ValueError("Discovery must return one bounded follow-up or an evidence-based stopping reason.")
     reason = response["rationale"]
     if not isinstance(reason, str) or not 20 <= len(reason.strip()) <= 1600:
         raise ValueError("Discovery requires a concrete outcome-based rationale.")
     task = response["new_task"]
+    if "human_question" in response:
+        question = response["human_question"]
+        if (task is not None or not isinstance(question, dict) or set(question) != {"question", "why_human"}
+                or any(not isinstance(question[key], str) or not 10 <= len(question[key].strip()) <= 1200
+                       for key in ("question", "why_human"))):
+            raise ValueError("A Human question needs a specific question and why only Human input can resolve it; no simultaneous task.")
+        return {"new_task": None, "rationale": reason.strip(),
+                "human_question": {key: item.strip() for key, item in question.items()}}
     if task is None:
         return {"new_task": None, "rationale": reason.strip()}
     fields = {"title", "description", "acceptance_criteria", "write_domains", "dependencies", "source_refs"}
@@ -215,6 +237,9 @@ def validate_discovered_task(packet, response):
     feedback = packet.get("investigation_feedback")
     if feedback and feedback["receipt_id"] not in sources:
         raise ValueError("A report-driven follow-up must reference the captured investigation observation.")
+    answer = packet.get("human_answer")
+    if answer and answer["receipt_id"] not in sources:
+        raise ValueError("An answer-driven follow-up must reference the captured Human answer.")
     return {"new_task": {**task, "title": task["title"].strip(), "description": task["description"].strip(),
                          "acceptance_criteria": [item.strip() for item in criteria], "write_domains": domains},
             "rationale": reason.strip()}
@@ -238,7 +263,10 @@ def _creation_ref(value, packet):
 
 
 def _revalidate(workspace, project_key, root, config, value, pending):
+    from goodteam_os.project_human_feedback import validate_human_input
+
     packet = pending["packet"]
+    validate_human_input(value, packet)
     if packet["packet_digest"] != _digest({key: item for key, item in packet.items() if key != "packet_digest"}):
         raise ValueError("The frozen discovery input changed.")
     if value["authority"] != authority_snapshot(workspace, project_key, Path(config), Path(root)):
@@ -267,6 +295,15 @@ def discover_next_iteration(*, workspace, project_key, root, project_config, val
         saved = TaskAssistantSessionStore(workspace, project_key).read().get("project_continuation") or {}
         if saved.get("id") == value["id"] and saved.get("discovery_pending"):
             raise DiscoveryPublicationPending("The same reserved discovery input awaits publication replay.") from exc
+        if (saved.get("id") == value["id"] and saved.get("status") == "active"
+                and saved.get("reason") == "awaiting_human_decision"):
+            from goodteam_os.project_human_feedback import pending_question
+
+            human = pending_question(saved)
+            if human is not None and human["answer"] is None:
+                # The atomic question/handoff committed before its caller lost
+                # the acknowledgement. Preserve the wait, not another model turn.
+                return saved
         last = saved.get("discovery_last") or {}
         if (saved.get("id") == value["id"] and saved.get("reason") == "outcome_followup_queued"
                 and (saved.get("pending_batch") or {}).get("task_ids") == [last.get("task_id")]
@@ -285,6 +322,12 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
     from goodteam_os.project_iteration_planner import _require_planning_idle, run_manager_iteration_choice
 
     store = TaskAssistantSessionStore(workspace, project_key)
+    from goodteam_os.project_human_feedback import pending_question, record_human_question
+
+    human = pending_question(value)
+    if human is not None and human["answer"] is None:
+        _current(store.read(), value)
+        return value
     pending = value.get("discovery_pending")
     if pending is None:
         outcome = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value)
@@ -302,7 +345,8 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
                 return session
             return store._mutate(full)["project_continuation"]
         packet = _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config))
-        trigger_ref = (packet.get("investigation_feedback") or {}).get("receipt_id", outcome["delivery"]["receipt_id"])
+        trigger_ref = (packet.get("human_answer") or packet.get("investigation_feedback") or {}).get(
+            "receipt_id", outcome["delivery"]["receipt_id"])
         if trigger_ref in value.get("discovery_consumed", []):
             raise ValueError("This outcome already supplied its bounded follow-up.")
         pending = {"packet": packet, "packet_digest": packet["packet_digest"],
@@ -330,11 +374,13 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
     selection = validate_discovered_task(pending["packet"], pending["selection"])
     receipt_id = pending["packet"]["verified_outcome"]["delivery"]["receipt_id"]
     trigger_ref = pending.get("trigger_ref", receipt_id)
+    if selection.get("human_question"):
+        return record_human_question(store, value, pending)
     if selection["new_task"] is None:
         def finished(session):
             current = _current(session, value)
             current.update(status="completed", reason="discovery_no_followup", discovery_pending=None,
-                investigation_pending=None,
+                investigation_pending=None, human_pending=None,
                 discovery_consumed=[*current.get("discovery_consumed", []), trigger_ref],
                 discovery_last={"status": "no_followup", "task_id": "", "outcome_receipt_id": receipt_id,
                                 "trigger_ref": trigger_ref,
@@ -382,7 +428,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         current = _current(session, value)
         current.update(pending_batch={"task_ids": [identifier], "proposal_ids": ids,
             "expected_revisions": {item: proposals[item]["revision"] for item in ids}, "run_id": ""},
-            discovery_pending=None, investigation_pending=None, batches_started=current["batches_started"] + 1,
+            discovery_pending=None, investigation_pending=None, human_pending=None, batches_started=current["batches_started"] + 1,
             discovery_consumed=[*current.get("discovery_consumed", []), trigger_ref], reason="outcome_followup_queued")
         return session
     return store._mutate(queued_batch)["project_continuation"]

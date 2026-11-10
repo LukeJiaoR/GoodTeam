@@ -204,6 +204,11 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             if active_project_run(workspace, project_key) and parent is None:
                 raise ValueError("Another Workflow owns the project; continuation is paused.")
             known, selected = _scope_tasks(value, LocalTaskStore(root, project_key).list_tasks())
+            from goodteam_os.project_human_feedback import pending_question
+
+            human = pending_question(value)
+            if human is not None and human["answer"] is None:
+                return value  # No changed input: no repeated Manager call.
             pending = value.get("pending_batch")
             if pending and pending.get("run_id"):
                 batch_tasks = [known[identifier] for identifier in pending["task_ids"]]
@@ -228,7 +233,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 elif not recovering and any(task["status"] == "blocked" for task in batch_tasks):
                     raise ValueError("The current batch is blocked; inspect its retained execution result.")
             if (value.get("discovery") and pending is None and (value.get("discovery_pending")
-                    or value.get("investigation_pending")
+                    or value.get("investigation_pending") or value.get("human_pending")
                     or all((task["status"] == "done" and task.get("delivery_verified") is True)
                            or is_observed_investigation(value, task) for task in selected))):
                 value = discover_next_iteration(workspace=workspace, project_key=project_key, root=root,

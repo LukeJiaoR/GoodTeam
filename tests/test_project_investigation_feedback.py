@@ -366,3 +366,193 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     selection["new_task"]["dependencies"].append(research["id"])
     with pytest.raises(ValueError, match="dependencies"):
         discovery.validate_discovered_task(packet, selection)
+
+
+    # L4: the same project discovery can ask a bound Human question, sleep
+    # without extra model calls, and consume an explicit answer through the
+    # production conversation entry. Stores/locks/runtime remain fixtures.
+    from goodteam_os import assistant_requests, project_continuation_notice as notices
+    from goodteam_os import conversation_attachments
+    from goodteam_os.project_human_feedback import human_feedback
+
+    monkeypatch.setattr(assistant_requests, "TaskAssistantSessionStore", Session)
+    monkeypatch.setattr(assistant_requests, "conversation_lock", lambda *_: nullcontext())
+    monkeypatch.setattr(goal_continuation, "goal_guard", lambda *_: nullcontext())
+    service = SimpleNamespace(workspace=tmp_path, project_config=config,
+                              session=lambda *_: deepcopy(state))
+    original_manager = manager
+    ask_again = [False]
+
+    def manager(**kwargs):
+        context = kwargs["context"]
+        if not context.get("human_answer") or ask_again[0]:
+            calls.append(deepcopy(context))
+            return {"selection": {"new_task": None,
+                "rationale": "The research cannot establish the owner's intended supported client audience.",
+                "human_question": {"question": "Should the documented entry target internal staff or external API clients?",
+                    "why_human": "The intended audience is a business choice not established by repository evidence."}}}
+        response = original_manager(**kwargs)
+        response["selection"]["new_task"]["source_refs"].append(context["human_answer"]["receipt_id"])
+        return response
+
+    def ask():
+        reset()
+        waiting = tick()
+        assert waiting["reason"] == "awaiting_human_decision", waiting
+        assert waiting["status"] == "active" and len(calls) == 1 and not starts
+        assert len(rows) == 2 and waiting["manager_calls"] == 3
+        identifier = waiting["human_pending"]
+        notice = notices.project_continuation_notice(state)
+        assert notice["phase"] == "human_required" and notice["human_question_id"] == identifier
+        assert "/answer " + identifier in notices.notice_content(notice)
+        assert "external API clients" in notices.notice_content(notice)
+        before = deepcopy(state)
+        tick(); tick()
+        assert state == before and len(calls) == 1  # No repeated question/cost.
+        return identifier
+
+    def answer(identifier, text="Internal staff only; retain the existing access limits.", message_id="owner-answer", **kw):
+        return assistant_requests.execute_message(service, project_key="DEMO", root=root,
+            text="/answer " + identifier + " " + text, message_id=message_id, **kw)
+
+    identifier = ask()
+    frozen = deepcopy(state["project_continuation"])
+    reply = answer(identifier)
+    assert reply["intent"] == "project_question" and len(calls) == 1 and not starts
+    grant = state["project_continuation"]
+    assert grant["authorization_digest"] == frozen["authorization_digest"]
+    assert grant["discovery"] == frozen["discovery"] and grant["manager_calls"] == 3
+    assert notices.project_continuation_notice(state) is None
+    receipt = human_feedback(grant)[-1]
+    assert receipt["authority_changed"] is False and receipt["question_id"] == identifier
+    answer(identifier)  # Lost HTTP reply: one answer and no second model call.
+    assert len(human_feedback(state["project_continuation"])) == 1
+    assert sum(row["message_id"] == "owner-answer" for row in state["timeline"]) == 1
+    with pytest.raises(ValueError, match="message_id"):
+        answer(identifier, text="A different choice.")
+    with pytest.raises(ValueError, match="answered|current"):
+        answer(identifier, message_id="duplicate-new-id")
+    fail_publication[0] = True
+    assert tick()["reason"] == "discovery_publication_pending"
+    assert len(calls) == 2 and len(rows) == 3 and not starts
+    assert calls[-1]["human_answer"] == receipt
+    assert calls[-1]["human_feedback"] == [receipt]
+    assert receipt["receipt_id"] in calls[-1]["allowed_source_refs"]
+    resumed = tick()
+    assert len(calls) == 2 and len(starts) == 1 and resumed["manager_calls"] == 4
+    assert resumed["human_pending"] is None and rows[1] == research
+    assert receipt in human_feedback(resumed)  # History survives task dispatch.
+    answer(identifier)
+    assert len(calls) == 2 and len(starts) == 1
+    bad = deepcopy(calls[-1])
+    response = original_manager(context=bad)["selection"]
+    with pytest.raises(ValueError, match="Human answer"):
+        discovery.validate_discovered_task(bad, response)
+    response["new_task"]["source_refs"].append(receipt["receipt_id"])
+    response["new_task"]["write_domains"] = ["production/secrets"]
+    with pytest.raises(ValueError, match="paths"):
+        discovery.validate_discovered_task(bad, response)
+
+    # Original source/authority/target changes reject stale answers. Ordinary
+    # chat does not get silently interpreted as an answer to the latest question.
+    identifier = ask()
+    def ordinary_route(*_):
+        raise RuntimeError("ordinary conversation route reached")
+    monkeypatch.setattr(conversation_attachments, "resolve_attachments", ordinary_route)
+    before = deepcopy(state)
+    with pytest.raises(RuntimeError, match="ordinary conversation"):
+        assistant_requests.execute_message(service, project_key="DEMO", root=root, text="继续", message_id="ordinary")
+    assert state == before
+    for kwargs in ({"context_run_id": "historical-run"}, {"attachments": ["file"]}, {"expected_attempt": 1}):
+        with pytest.raises(ValueError, match="historical"):
+            answer(identifier, **kwargs)
+    with pytest.raises(ValueError, match="current"):
+        answer("human-" + "0" * 32)
+    assert state == before
+    authority["changed"] = True
+    with pytest.raises(ValueError, match="authority"):
+        answer(identifier)
+    authority.pop("changed")
+    outcome["project_head"] = "different-head"
+    with pytest.raises(ValueError, match="revision"):
+        answer(identifier)
+    outcome.pop("project_head")
+    state["project_continuation"]["discovery"]["objective"] += " changed goal"
+    with pytest.raises(ValueError, match="identity|scope"):
+        answer(identifier)
+    assert not starts
+
+    identifier = ask()
+    state["project_continuation"].update(status="stopped", reason="owner_stopped")
+    with pytest.raises(ValueError, match="stopped"):
+        answer(identifier)
+    assert tick()["status"] == "stopped" and len(calls) == 1 and not starts
+    identifier = ask()
+    answer(identifier)
+    state["project_continuation"]["manager_calls"] = 5
+    assert tick()["status"] == "exhausted" and len(calls) == 1 and not starts
+    assert human_feedback(state["project_continuation"])
+
+    # A second question has a new identity, preserves the earlier reply and
+    # cannot consume a late response to the first as a new decision.
+    identifier = ask()
+    answer(identifier)
+    ask_again[0] = True
+    second = tick()["human_pending"]
+    ask_again[0] = False
+    assert second != identifier and len(calls) == 2
+    assert len(human_feedback(state["project_continuation"])) == 1
+    with pytest.raises(ValueError, match="current"):
+        answer(identifier, message_id="late-answer")
+    answer(second, message_id="second-answer")
+    tick()
+    assert len(calls) == 3 and len(starts) == 1
+    assert len(calls[-1]["human_feedback"]) == 2
+
+
+    # Question and answer publication can commit before the caller sees the
+    # reply. Reopening the same session preserves responsibility and budget.
+    reset()
+    original_mutate = Session._mutate
+    lose = ["question"]
+    def commit_then_lose(self, operation):
+        observed = original_mutate(self, operation)
+        grant = observed["project_continuation"]
+        wanted = {"question": "awaiting_human_decision", "answer": "human_answer_received"}
+        if lose[0] and grant.get("reason") == wanted[lose[0]]:
+            lose[0] = ""
+            raise OSError("fixture: state committed before acknowledgement")
+        return observed
+    monkeypatch.setattr(Session, "_mutate", commit_then_lose)
+    waiting = tick()
+    assert waiting["reason"] == "awaiting_human_decision" and len(calls) == 1
+    identifier = waiting["human_pending"]
+    tick()
+    assert len(calls) == 1
+    lose[0] = "answer"
+    with pytest.raises(OSError, match="committed"):
+        answer(identifier)
+    assert state["project_continuation"]["reason"] == "human_answer_received"
+    answer(identifier)  # Request retry sees the committed answer, not a new one.
+    tick()
+    assert len(calls) == 2 and len(starts) == 1
+    state["project_continuation"].update(status="stopped", reason="owner_stopped")
+    answer(identifier)  # Historical exact replay does not reactivate Stop.
+    assert tick()["status"] == "stopped" and len(calls) == 2 and len(starts) == 1
+    monkeypatch.setattr(Session, "_mutate", original_mutate)
+
+    identifier = ask()
+    result.write_text("A changed report must not silently retarget an old question.")
+    with pytest.raises(ValueError):
+        answer(identifier)
+    assert len(calls) == 1 and not starts
+    identifier = ask()
+    state["timeline"].append({"message_id": "human-answer:owner-answer"})
+    with pytest.raises(ValueError, match="history"):
+        answer(identifier)
+    assert not human_feedback(state["project_continuation"])
+    identifier = ask()
+    answer(identifier)
+    stored = state["project_continuation"]["human_questions"][identifier]["answer"]
+    stored["text"] = "tampered answer"
+    assert tick()["status"] == "blocked" and len(calls) == 1 and not starts
