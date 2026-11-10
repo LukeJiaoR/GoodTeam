@@ -151,16 +151,21 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     monkeypatch.setattr(recovery, "project_batch_recovery_evidence", lambda **_: deepcopy(terminal))
     monkeypatch.setattr(recovery, "effective_dispatch_id", lambda row: row["dispatch_run_id"])
     initial, original_rows = deepcopy(state), deepcopy(rows)
+    original_report, original_terminal = deepcopy(report), deepcopy(terminal)
     calls, starts = [], []
     fail_publication = [False]
     stop_during_decision = [False]
     change_during_decision = [False]
+    stop_after_feedback = [False]
 
     def manager(**kwargs):
         calls.append(deepcopy(kwargs["context"]))
         packet = kwargs["context"]
         observation = packet["investigation_feedback"]
-        assert "api.py" in observation["report"]
+        if observation.get("report_status") in {"missing", "empty"}:
+            assert not observation["report"].strip()
+        else:
+            assert "api.py" in observation["report"]
         assert observation["task_acceptance"] == "not_assessed" and not observation["delivery_verified"]
         assert packet["authorized_done_task_ids"] == [seed["id"]]
         assert observation["receipt_id"] in packet["allowed_source_refs"]
@@ -168,6 +173,16 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
             state["project_continuation"].update(status="stopped", reason="owner_stopped")
         if change_during_decision[0]:
             result.write_text("A replaced report must invalidate the reserved decision.")
+        if stop_after_feedback[0]:
+            return {"selection": {"new_task": None, "rationale":
+                    "The retained failure has no useful authorized follow-up; the project is not declared complete."}}
+        if observation.get("worker_status") == "failed" or observation.get("report_status") in {"missing", "empty"}:
+            return {"selection": {"new_task": dict(title="Resolve the unverified entry question", description=
+                    "Use an alternative read-only method to resolve the entry point; prior failed or absent output is not proof.",
+                    acceptance_criteria=["Return current entry evidence and any unresolved limitations"],
+                    task_type="investigation", write_domains=[], dependencies=[seed["id"]],
+                    source_refs=["delivery-seed", observation["receipt_id"]]),
+                    "rationale": "The incomplete investigation requires a focused alternative, not a blind retry of the old job."}}
         return {"selection": {"new_task": dict(title="Improve observed HTTP entry", description=
                 "Use the unverified investigation finding about api.py to improve and verify the bounded HTTP entry.",
                 acceptance_criteria=["The current HTTP entry is verified"], write_domains=["src/api.py"],
@@ -219,7 +234,90 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
         rows[:] = deepcopy(original_rows)
         calls.clear()
         starts.clear()
+        report.clear()
+        report.update(deepcopy(original_report))
+        (artifacts / "report.json").write_text(json.dumps(report))
+        terminal.clear()
+        terminal.update(deepcopy(original_terminal))
+        captured["changed_files"] = []
         result.write_text("The observed HTTP entry point is api.py; independent verification remains outstanding.\n")
+
+    def fail_investigation(report_status="partial"):
+        reset()
+        rows[1]["status"] = "blocked"
+        state["project_task_batches"][run_id]["status"] = "blocked"
+        report["all_ok"] = False
+        report["jobs"][0].update(status="failed", outcome="needs_human",
+                                 summary="The Researcher exited with an error after partial observation.")
+        (artifacts / "report.json").write_text(json.dumps(report))
+        terminal.update(preserved_task_ids=[], retryable_task_ids=[research["id"]], version="failed-terminal-fixture-v1")
+        if report_status == "missing":
+            result.unlink()
+        elif report_status == "empty":
+            result.write_text("")
+
+    # A terminal failed research attempt is feedback, not success and not an
+    # implicit retry. The original failure, delivered seed and reports survive.
+    for report_status in ("partial", "missing", "empty"):
+        fail_investigation(report_status)
+        before_rows, before_batch = deepcopy(rows), deepcopy(state["project_task_batches"][run_id])
+        fail_publication[0] = True
+        assert tick()["reason"] == "discovery_publication_pending"
+        assert len(calls) == 1 and not starts
+        observed = calls[0]["investigation_feedback"]
+        assert observed["worker_status"] == "failed" and observed["task_status"] == "blocked"
+        assert observed["worker_outcome"] == "needs_human" and observed["report_status"] == report_status
+        if report_status == "missing":
+            assert observed["report_digest"] is None
+        else:
+            assert observed["report_digest"].startswith("sha256:")
+        resumed = tick()
+        assert resumed["status"] == "active" and len(calls) == len(starts) == 1
+        assert rows[:2] == before_rows and state["project_task_batches"][run_id] == before_batch
+        assert rows[-1]["role"] == "research" and rows[-1]["execution_policy"] == "read_only"
+        assert rows[-1]["dependencies"] == [seed["id"]]
+        assert feedback.is_observed_investigation(resumed, rows[1])
+        assert resumed["manager_calls"] == 3 and resumed["new_tasks_created"] == 2
+        tick()
+        assert len(calls) == len(starts) == 1 and len(rows) == 3
+
+    fail_investigation()
+    stop_after_feedback[0] = True
+    assert tick()["reason"] == "discovery_no_followup" and len(calls) == 1 and not starts
+    assert rows[1]["status"] == "blocked" and not rows[1]["delivery_verified"]
+    tick()
+    assert len(calls) == 1
+    stop_after_feedback[0] = False
+
+    # Failed feedback cannot manufacture process retirement, replace captured
+    # workspace evidence, bypass quality work or revive stopped grants.
+    fail_investigation()
+    terminal["unknown_task_ids"] = [research["id"]]
+    assert tick()["status"] == "blocked" and not calls and not starts
+    fail_investigation()
+    captured["changed_files"] = ["README.md"]
+    assert tick()["status"] == "blocked" and not calls and not starts
+    fail_investigation()
+    report["jobs"][0]["attribution_status"] = "unknown"
+    (artifacts / "report.json").write_text(json.dumps(report))
+    assert tick()["status"] == "blocked" and not calls and not starts
+    fail_investigation()
+    terminal["can_abandon"] = False  # A quality/verification process is not quiescent.
+    assert tick()["status"] == "blocked" and not calls and not starts
+    fail_investigation()
+    state["project_continuation"]["manager_calls"] = 5
+    assert tick()["status"] == "exhausted" and not calls and not starts
+    fail_investigation()
+    state["project_continuation"].update(status="stopped", reason="owner_stopped")
+    assert tick()["status"] == "stopped" and not calls and not starts
+    fail_investigation()
+    stop_during_decision[0] = True
+    assert tick()["status"] == "stopped" and len(calls) == 1 and not starts and len(rows) == 2
+    stop_during_decision[0] = False
+    fail_investigation()
+    change_during_decision[0] = True
+    assert tick()["status"] == "blocked" and len(calls) == 1 and not starts and len(rows) == 2
+    change_during_decision[0] = False
 
     reset()
     change_during_decision[0] = True
@@ -245,8 +343,14 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     captured["changed_files"] = []
     reset()
     result.unlink()
+    # A completed Worker without a report proves termination, not findings.
+    assert tick()["status"] == "active" and len(calls) == len(starts) == 1
+    assert calls[0]["investigation_feedback"]["report_status"] == "missing"
+    assert calls[0]["investigation_feedback"]["report"] == ""
+    assert rows[:2] == original_rows  # No path promotes research to done.
+    reset()
+    result.write_bytes(b"\xff")
     assert tick()["status"] == "blocked" and not calls and not starts
-    assert rows == original_rows  # No path turns research into done/delivered.
 
     # Observation references inform decisions; they never count as completed
     # task dependencies or permit a response to omit the actual new feedback.

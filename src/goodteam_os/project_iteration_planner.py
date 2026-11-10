@@ -127,6 +127,13 @@ next Worker receives the needed context. Do not repeat the same investigation
 without a specific new question. Do not claim tests, review or delivery passed
 merely because the report returned. The existing host continuation can act on
 this decision within the original grant; it never turns the report into done.
+Feedback may explicitly report worker_status=failed and report_status=partial,
+missing or empty. Preserve those limitations: absent output proves no research
+finding, and failed execution does not prove the task's criteria were satisfied.
+Use partial observations cautiously, delegate a specific unresolved question or
+an alternative method when useful, or give an evidence-based stopping reason.
+Never silently retry the old job, repeat an ineffective investigation unchanged,
+or infer permission to repair the environment, expand access or reset budgets.
 """
 
 

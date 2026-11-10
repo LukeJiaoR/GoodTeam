@@ -215,15 +215,18 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 if all(task["status"] == "done" and task.get("delivery_verified") is True for task in batch_tasks):
                     value = _save(store, {**value, "pending_batch": None, "reason": "delivery_verified"})
                     pending = None
-                elif (any(task["status"] == "canceled" for task in batch_tasks)
-                      or not recovering and any(task["status"] == "blocked" for task in batch_tasks)):
-                    raise ValueError("The current batch is blocked; inspect its retained execution result.")
-                elif all(task["status"] == "review" for task in batch_tasks):
+                elif any(task["status"] == "canceled" for task in batch_tasks):
+                    raise ValueError("The current batch was canceled; no automatic follow-up is authorized.")
+                elif not recovering and all(task["status"] in {"review", "blocked"} for task in batch_tasks):
                     observed = observe_pending_investigation(workspace=workspace, project_key=project_key,
                         root=root, project_config=project_config, value=value)
                     if observed is None:
+                        if any(task["status"] == "blocked" for task in batch_tasks):
+                            raise ValueError("The current batch is blocked; inspect its retained execution result.")
                         return value
                     value, pending = observed, None
+                elif not recovering and any(task["status"] == "blocked" for task in batch_tasks):
+                    raise ValueError("The current batch is blocked; inspect its retained execution result.")
             if (value.get("discovery") and pending is None and (value.get("discovery_pending")
                     or value.get("investigation_pending")
                     or all((task["status"] == "done" and task.get("delivery_verified") is True)
