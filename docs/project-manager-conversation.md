@@ -108,13 +108,12 @@ research dispatcher or replacement inspection workflow. Shared explicit
 readiness APIs and task-start checks retain their identity and approval gates.
 The chat Manager can now return a callable `task_action` with `kind: queue_task`,
 a dispatchable Team role, execution policy, declared write paths and acceptance
-criteria. It may also set `worker_id` to the exact configured Worker shown in
-the Team Context. The host validates that this Worker belongs to the requested
-role and is dispatchable, then carries that target through the original task,
-queue, isolated job and result. An unavailable explicit target is reported; it
-is never silently replaced by the role's default Worker. Calls without a target
-retain the existing role-based selection. Runtime, model and prompt settings
-come from the selected Worker's configuration, not model-authored commands.
+criteria. New assignments select the Role; the execution layer allocates the
+generic execution resource and supplies the configured runtime. The Manager
+does not preselect a persistent Team member ID. Once an actual job is created,
+its existing `job_id` identifies this invocation for status and result readback.
+The Role, task Context and methods belong to that invocation. Completing it
+releases execution resources while retaining its task and result records.
 The host binds the selected exact user messages to one original
 LocalTaskStore card and one existing queue item. A source-bound retry reuses that
 card; a changed assignment fails instead of creating another task. Existing drafts
@@ -125,21 +124,36 @@ execution or review authority.
 The conversation displays the original task, role, read/write scope and criteria
 before the existing `start_queued_task_batch` confirmation. This initial confirmation
 retains model-charge and readiness gates. The ordinary isolated `dispatch_tracks`
-pool resolves the configured Worker and captures only the participating roles'
+pool resolves the Role's runtime configuration and captures only the participating roles'
 task methods using existing paths;
 there is no research runner or second task state machine. Batch settlement returns
 actual readable Worker reports, limitations and outstanding independent review to
 the conversation, with idempotent publication per batch/recovery attempt. Source
 reports remain separately inspectable. Worker completion never marks delivery done.
 
-The task's explicit Worker target is part of its existing execution intent.
-Queue confirmation, continuation, quality checks and recovery retain that target;
-old tasks without a target keep their original intent representation. Worker
-reports and conversation result metadata include the actual Worker ID and name.
-The bounded implementation/investigation discovery path also accepts an optional
-Worker target from its captured Team capability. This does not add new roles or
-permissions to an old discovery grant; automatic Planner result reentry remains
-part of #696.
+The Manager receives current invocation facts from the original Worker jobs:
+the job ID, recorded task association, Role and saved execution state. A queued
+job has an identity but has not yet started. A terminal job remains historical
+evidence; its ID cannot be treated as a reusable, idle member. A new task creates
+a new invocation, while an exact replay retains the original job. Reports and
+conversation result metadata include the actual `job_id`; persistent Team member
+IDs remain configuration provenance.
+
+Status readback does not imply that every backend accepts live instructions.
+Pi has existing session controls; ordinary CLI Workers do not have the same
+steer/follow-up RPC. This context projection does not introduce a universal
+control action or claim that recording a message delivers it to a running job.
+
+New implementation/investigation discovery packets expose Role capabilities.
+Previously frozen packets and saved named-target intents retain their original
+identity for replay, and already-published historical results remain intact.
+This correction does not expand old authorization to new roles; automatic
+Planner result reentry remains part of #696.
+
+The existing shared executor accepts jobs from different Roles and releases
+its slots as they finish. Ordinary CLI execution uses a fresh process and job
+Context. This is execution-resource reuse, not a cross-task warm model-session
+pool. A later Role must not inherit another task's private Context or authority.
 
 Role base Skills use the existing many-to-many bindings: each role can select
 several methods, and a method can serve several roles. `required` and `on_demand`

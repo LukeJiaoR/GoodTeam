@@ -1096,6 +1096,8 @@ class WorkerJobStore:
         execution_policy: str = "standard",
         worker_id: str = "",
         worker_name: str = "",
+        project_task_id: str = "",
+        track_id: str = "",
         task_skill_context: object = _NO_TASK_SKILL_CONTEXT,
         skill_subject: str = "",
         skill_loader_version: str = "goodteam.worker-metadata.v1",
@@ -1105,6 +1107,12 @@ class WorkerJobStore:
         workflow_workspace: dict[str, Any] | None = None,
         provider_connection: object = _CAPTURE_PROVIDER_CONNECTION,
     ) -> dict[str, Any]:
+        associations = {"project_task_id": project_task_id, "track_id": track_id}
+        if any(not isinstance(value, str) or value != value.strip() or len(value) > 256
+               for value in associations.values()):
+            raise ValueError("Worker task associations must be exact task/track identifiers.")
+        if any(associations.values()) and (task_skill_context is not _NO_TASK_SKILL_CONTEXT or task_input is not None):
+            raise ValueError("Protected Workers retain their original task association protocol.")
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
             if provider_connection is not _CAPTURE_PROVIDER_CONNECTION:
                 raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
@@ -1116,6 +1124,8 @@ class WorkerJobStore:
             skill_request = locals().copy()
             skill_request.pop("workflow_workspace")
             skill_request.pop("provider_connection")
+            for key in ("project_task_id", "track_id", "associations"):
+                skill_request.pop(key)
             from goodteam_os.skills.worker_requests import create_skill_worker_job
 
             return create_skill_worker_job(self, skill_request)[0]
@@ -1175,6 +1185,9 @@ class WorkerJobStore:
             "desired_instances": desired_instances,
             "execution_policy": execution_policy,
         }
+        if task_input is None:
+            job.update({key: value for key, value in associations.items() if value})
+            job["task_summary"] = str(task).strip().split("\n", 1)[0][:240]
         if max_attempts is not None:
             job["max_attempts"] = max_attempts
             job["cli_timeout_seconds"] = cli_timeout
@@ -1297,6 +1310,8 @@ class WorkerJobStore:
             bound = inspect.signature(type(self).create_job).bind(self, **job_spec)
             bound.apply_defaults()
             values = dict(bound.arguments)
+            if values.pop("project_task_id") or values.pop("track_id"):
+                raise ValueError("Protected Workers retain their original task association protocol.")
             if values.pop("provider_connection") is not _CAPTURE_PROVIDER_CONNECTION:
                 raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
             if values.pop("workflow_workspace") is not None:
@@ -1319,6 +1334,9 @@ class WorkerJobStore:
             if existing is not None:
                 if is_skill_job_id(existing.get("id")) or has_skill_fields(existing):
                     raise ValueError("A Skill-backed job cannot be replayed as legacy input.")
+                if any(key in existing and existing[key] != job_spec.get(key, "")
+                       for key in ("project_task_id", "track_id")):
+                    raise ValueError("The original Worker invocation belongs to another task or track.")
                 if (job_spec.get("workflow_workspace") is not None
                         or existing.get("workflow_workspace") is not None):
                     from goodteam_os.workflow_workspace import WorkflowWorkspaceError, validate_workflow_job_context
@@ -1438,6 +1456,33 @@ class WorkerJobStore:
                     job = reconcile_stale_job(job, status_payload)
             jobs.append(job)
         return jobs
+
+    def invocation_context(self, *, project_key: str, run_ids: set[str]) -> dict[str, Any]:
+        """Read existing invocation records; no dispatch, control or liveness claim."""
+        rows = []
+        for job in self.list_jobs():
+            if (job.get("run_id") not in run_ids or job.get("role") == "orchestrator"
+                    or job.get("project_key") not in {None, "", project_key}):
+                continue
+            rows.append({"job_id": str(job["id"]), "run_id": str(job.get("run_id", "")),
+                         "role": str(job.get("role", "")), "status": str(job.get("status", "unknown")),
+                         "adapter": str(job.get("adapter", "")),
+                         "task_summary": str(job.get("task_summary", ""))[:240],
+                         "task_association": "recorded" if job.get("project_task_id") else "unavailable_legacy_or_direct",
+                         **{key: job[key] for key in ("project_task_id", "track_id", "updated_at", "heartbeat_at") if job.get(key)},
+                         "summary": str(job.get("summary", ""))[:500]})
+        rows.sort(key=lambda row: (row.get("updated_at", ""), row["job_id"]), reverse=True)
+        terminal = {"completed", "failed", "review_received", "needs_review", "cancelled", "aborted"}
+        current = [row for row in rows if row["status"] not in terminal]
+        history = [row for row in rows if row["status"] in terminal]
+        return {"available": True, "read_only": True, "source": "WorkerJobStore",
+                "current": current[:50], "recent_history": history[:10],
+                "omitted_current": max(0, len(current) - 50), "omitted_history": max(0, len(history) - 10),
+                "notice": "job_id identifies one created invocation, not a reusable Team member. Current lists nonterminal "
+                          "records, including work blocked before startup; it does not assert scheduling or capacity use. Queued is not running; "
+                          "persisted running status and heartbeat do not prove the process is alive. "
+                          "History includes returned results awaiting review, not just successful work. "
+                          "Ended invocations remain historical records. This context provides no mutating job-control action."}
 
     def run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
         from goodteam_os.skills.worker_requests import is_skill_job_id

@@ -335,7 +335,20 @@ def _publish_batch_result(workspace, project_key, root, batch, report, status):
     import re
 
     store = TaskAssistantSessionStore(workspace, project_key)
-    proposals = [item for item in store.read().get("queued_task_proposals", [])
+    event_id = "batch-result:" + batch["run_id"] + ":" + str(batch.get("current_recovery_attempt", "initial"))
+    session = store.read()
+    previous = next((item for item in session.get("timeline", []) if item.get("message_id") == event_id), None)
+    if previous is not None:
+        if previous.get("event") != "conversation_replied" or previous.get("details", {}).get("run_id") != batch["run_id"]:
+            raise ValueError("The batch result event belongs to another publication.")
+        old_evidence = previous.get("details", {}).get("source_evidence", {})
+        old_results = old_evidence.get("worker_results")
+        if ("schema_version" not in old_evidence and isinstance(old_results, list)
+                and all(isinstance(item, dict) and "job_id" not in item for item in old_results)):
+            # Only the pre-handle format retains its original bytes across this
+            # upgrade. New publications still require an exact replay below.
+            return
+    proposals = [item for item in session.get("queued_task_proposals", [])
                  if item.get("run_id") == batch["run_id"]]
     chinese = any(re.search(r"[\u3400-\u9fff]", item["exact_request"]) for item in proposals)
     content = [("Worker 结果已返回，尚未完成独立审查与交付确认。" if chinese else
@@ -350,21 +363,21 @@ def _publish_batch_result(workspace, project_key, root, batch, report, status):
         raw = read_bytes(Path(root) / ".goodteam" / "workers" / "jobs" / job_id / "result.md",
                          maximum=2 * 1024 * 1024)
         result = raw.decode("utf-8", errors="replace").strip() if raw else ""
-        label = str(job.get("role", "Worker"))
-        if job.get("worker_id"):
-            label += f" · {job.get('worker_name') or job['worker_id']} ({job['worker_id']})"
+        label = f"{job.get('role', 'Worker')} · {job_id}"
         content.append(f"\n{label}\n\n" + (result[:16000] if result else (
             "未保留可读报告，不能确认成果。" if chinese else "No readable report was retained; results cannot be confirmed.")))
         if len(result) > 16000:
             content.append("报告较长，此处为节选。" if chinese else "The report above is an excerpt.")
-        evidence.append({"role": str(job.get("role", "Worker")), "summary": result,
-                         **{key: job[key] for key in ("worker_id", "worker_name") if job.get(key)}})
+        evidence.append({"job_id": job_id, "role": str(job.get("role", "Worker")),
+                         "status": str(job.get("status", "unknown")), "summary": result,
+                         **{key: job[key] for key in ("project_task_id", "dispatch_run_id") if job.get(key)}})
     if not (report or {}).get("jobs"):
         content.append("尚无可核实的 Worker 报告。" if chinese else "No verifiable Worker report is available yet.")
-    store.append_event("batch-result:" + batch["run_id"] + ":" + str(batch.get("current_recovery_attempt", "initial")),
+    store.append_event(event_id,
                        "conversation_replied", content="\n\n".join(content),
                        details={"run_id": batch["run_id"], "actions_applied": False,
-                                "source_evidence": {"worker_results": evidence}})
+                                "source_evidence": {"schema_version": "worker_invocation_results.v1",
+                                                    "worker_results": evidence}})
 
 
 def _execute_batch(*, workspace, project_key, root, batch):

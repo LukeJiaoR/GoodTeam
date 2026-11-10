@@ -50,6 +50,16 @@ def test_investigation_opt_in_keeps_legacy_authority_and_host_execution_profile(
               "investigation_capability": {"role": "research", "execution_policy": "read_only", "dispatchable": True}}
     assert _discovery_prompt(packet) == _MANAGER_INVESTIGATION_DISCOVERY_TASK
     selected = validate_discovered_task(packet, proposed)
+    role_packet = {**packet, "role_capabilities": [{"role": "research", "dispatchable": True}]}
+    assert validate_discovered_task(role_packet, proposed) == selected
+    assert "Role dispatch:" in _discovery_prompt(role_packet)
+    named = {**proposed, "new_task": {**task, "worker_id": "research-a"}}
+    with pytest.raises(ValueError, match="bounded task"):
+        validate_discovered_task(role_packet, named)
+    frozen_member_packet = {**packet, "worker_capabilities": [
+        {"role": "research", "worker_id": "research-a", "dispatchable": True}]}
+    assert "Worker selection extension:" in _discovery_prompt(frozen_member_packet)
+    assert validate_discovered_task(frozen_member_packet, named)["new_task"]["worker_id"] == "research-a"
     creation_ref = _creation_ref(grant, packet)
     intent = _discovered_task_intent(packet, selected, creation_ref)
     assert intent["role"] == "research" and intent["execution_policy"] == "read_only"
