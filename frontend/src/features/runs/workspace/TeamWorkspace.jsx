@@ -55,12 +55,23 @@ function executionStatusReason(actor, t) {
   return reason ? translated(t, `work.team.reasons.${reason}`, reason) : '';
 }
 
-function ExecutionPane({ actors, blocker, controls, context, onInspectAttempt, onClose, reducedMotion, sectionProps, t }) {
+function ExecutionPane({ actors, blocker, controls, context, onInspectAttempt, onClose, onSwitchToOutcomes, outcomesCount, reducedMotion, sectionProps, t }) {
   const [selectedId, setSelectedId] = useState('');
   const selected = actors.find(actor => actor.id === selectedId);
   return <section className="team-pane team-pane--execution" aria-label={t('work.team.workerStatus')} {...sectionProps}>
     <header className="team-pane__header">
-      <div className="team-execution-heading"><strong id="team-execution-title">{t('work.team.workerStatus')}</strong><span className="team-pane__eyebrow">{t('work.team.workerCount', { count: actors.length })}</span></div>
+      {onSwitchToOutcomes ? (
+        <div className="team-right-panel-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected="true" className="team-right-panel-tab is-active">
+            {t('work.team.workerStatus')} {actors.length ? `(${actors.length})` : ''}
+          </button>
+          <button type="button" role="tab" aria-selected="false" className="team-right-panel-tab" onClick={onSwitchToOutcomes}>
+            {t('work.team.historyDelivery')} {outcomesCount ? `(${outcomesCount})` : ''}
+          </button>
+        </div>
+      ) : (
+        <div className="team-execution-heading"><strong id="team-execution-title">{t('work.team.workerStatus')}</strong><span className="team-pane__eyebrow">{t('work.team.workerCount', { count: actors.length })}</span></div>
+      )}
       {onClose ? <button type="button" className="team-panel-close" aria-label={t('work.navigation.closePanel')} onClick={onClose}><X size={15} /></button> : null}
     </header>
     {blocker}
@@ -97,6 +108,8 @@ function ExecutionPane({ actors, blocker, controls, context, onInspectAttempt, o
 function OutcomesPane({
   navigation,
   onClose,
+  onSwitchToExecution,
+  actorsCount,
   historyContext,
   approval,
   mission,
@@ -118,10 +131,21 @@ function OutcomesPane({
   return (
     <section className="team-pane team-pane--outcomes" aria-label={t('work.team.outcomes')} {...sectionProps}>
       <header className="team-pane__header">
-        <div>
-          <h2 id="team-outcomes-title">{t('work.team.historyDelivery')}</h2>
-          <span className="team-pane__eyebrow">{t('work.team.resultsHelp')}</span>
-        </div>
+        {onSwitchToExecution ? (
+          <div className="team-right-panel-tabs" role="tablist">
+            <button type="button" role="tab" aria-selected="false" className="team-right-panel-tab" onClick={onSwitchToExecution}>
+              {t('work.team.workerStatus')} {actorsCount ? `(${actorsCount})` : ''}
+            </button>
+            <button type="button" role="tab" aria-selected="true" className="team-right-panel-tab is-active">
+              {t('work.team.historyDelivery')} {outcomes.length ? `(${outcomes.length})` : ''}
+            </button>
+          </div>
+        ) : (
+          <div>
+            <h2 id="team-outcomes-title">{t('work.team.historyDelivery')}</h2>
+            <span className="team-pane__eyebrow">{t('work.team.resultsHelp')}</span>
+          </div>
+        )}
         {onClose ? <button type="button" className="team-panel-close" aria-label={t('work.navigation.closePanel')} onClick={onClose}><X size={15} /></button> : null}
       </header>
       <div className="team-outcomes-scroll">
@@ -555,6 +579,8 @@ function TeamWorkspace({
         <ExecutionPane
           onInspectAttempt={onInspectAttempt}
           onClose={mobileWorkspace ? () => setMobileTab('manager') : undefined}
+          onSwitchToOutcomes={!mobileWorkspace ? () => setEvidenceVisibility({ context: evidenceContext, open: true }) : undefined}
+          outcomesCount={outcomes.length}
           blocker={attention?.kind === 'blocker' ? <TaskAttention attention={attention} activeJobs={activeJobs} error={error} jobs={data.worker_jobs || []} projectKey={projectKey} busy={busy} onRetry={readOnly ? undefined : onRetry} retry={retry} t={t} /> : null}
           context={executionContext}
           controls={!readOnly && (workspace.capabilities || []).some((item) => item.action === 'cancel_mission')
@@ -566,6 +592,8 @@ function TeamWorkspace({
         />
         <OutcomesPane
           onClose={() => { setEvidenceVisibility({ context: evidenceContext, open: false }); setMobileTab('manager'); }}
+          onSwitchToExecution={!mobileWorkspace ? () => setEvidenceVisibility({ context: evidenceContext, open: false }) : undefined}
+          actorsCount={(workspace.execution_actors || []).filter((actor) => actor.role !== 'orchestrator').length}
           navigation={taskNavigation}
           historyContext={historyContext}
           mission={mission}
