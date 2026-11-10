@@ -159,6 +159,12 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
             "dispatchable": role.get("state") == "enabled"
                 and any(worker.get("dispatchable") is True for worker in role.get("workers", [])),
         }
+    if value.get("investigation_pending"):
+        from goodteam_os.project_investigation_feedback import pending_investigation_feedback
+
+        feedback = pending_investigation_feedback(workspace=workspace, project_key=project_key, root=root, value=value)
+        packet["investigation_feedback"] = feedback
+        packet["allowed_source_refs"].append(feedback["receipt_id"])
     packet["packet_digest"] = _digest(packet)
     return packet
 
@@ -206,6 +212,9 @@ def validate_discovered_task(packet, response):
             or len(set(sources)) != len(sources) or not set(sources).issubset(packet["allowed_source_refs"])
             or packet["verified_outcome"]["delivery"]["receipt_id"] not in sources):
         raise ValueError("Follow-up dependencies and source references must name authorized delivered facts.")
+    feedback = packet.get("investigation_feedback")
+    if feedback and feedback["receipt_id"] not in sources:
+        raise ValueError("A report-driven follow-up must reference the captured investigation observation.")
     return {"new_task": {**task, "title": task["title"].strip(), "description": task["description"].strip(),
                          "acceptance_criteria": [item.strip() for item in criteria], "write_domains": domains},
             "rationale": reason.strip()}
@@ -238,6 +247,12 @@ def _revalidate(workspace, project_key, root, config, value, pending):
                                 run_id=packet["verified_outcome"]["batch_run_id"])
     if observed != packet["verified_outcome"]:
         raise ValueError("The source revision or accepted outcome changed during discovery.")
+    if packet.get("investigation_feedback"):
+        from goodteam_os.project_investigation_feedback import pending_investigation_feedback
+
+        feedback = pending_investigation_feedback(workspace=workspace, project_key=project_key, root=root, value=value)
+        if feedback != packet["investigation_feedback"]:
+            raise ValueError("The pending investigation no longer matches the reserved Manager input.")
     ref = _creation_ref(value, packet)
     original_tasks = [task for task in LocalTaskStore(root, project_key).list_tasks() if ref not in task.get("external_refs", [])]
     if rank_project_backlog(original_tasks, project_key, limit=None)["version"] != pending["backlog_version"]:
@@ -255,7 +270,7 @@ def discover_next_iteration(*, workspace, project_key, root, project_config, val
         last = saved.get("discovery_last") or {}
         if (saved.get("id") == value["id"] and saved.get("reason") == "outcome_followup_queued"
                 and (saved.get("pending_batch") or {}).get("task_ids") == [last.get("task_id")]
-                and last.get("outcome_receipt_id") in saved.get("discovery_consumed", [])):
+                and last.get("trigger_ref", last.get("outcome_receipt_id")) in saved.get("discovery_consumed", [])):
             # The atomic session replacement may have committed before a later
             # I/O error. Observe its already-queued identity; do not block or
             # reserve another planning turn because the caller lost the reply.
@@ -286,10 +301,12 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
                 current.update(status="exhausted", reason="discovery_task_budget_used")
                 return session
             return store._mutate(full)["project_continuation"]
-        if outcome["delivery"]["receipt_id"] in value.get("discovery_consumed", []):
-            raise ValueError("This accepted delivery already supplied its bounded follow-up.")
         packet = _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config))
-        pending = {"packet": packet, "packet_digest": packet["packet_digest"], "backlog_version": packet["backlog"]["version"]}
+        trigger_ref = (packet.get("investigation_feedback") or {}).get("receipt_id", outcome["delivery"]["receipt_id"])
+        if trigger_ref in value.get("discovery_consumed", []):
+            raise ValueError("This outcome already supplied its bounded follow-up.")
+        pending = {"packet": packet, "packet_digest": packet["packet_digest"],
+                   "backlog_version": packet["backlog"]["version"], "trigger_ref": trigger_ref}
         def reserve(session):
             current = _current(session, value)
             current.update(discovery_pending=pending, manager_calls=current["manager_calls"] + 1, reason="outcome_discovery_reserved")
@@ -312,12 +329,15 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         pending = value["discovery_pending"]
     selection = validate_discovered_task(pending["packet"], pending["selection"])
     receipt_id = pending["packet"]["verified_outcome"]["delivery"]["receipt_id"]
+    trigger_ref = pending.get("trigger_ref", receipt_id)
     if selection["new_task"] is None:
         def finished(session):
             current = _current(session, value)
             current.update(status="completed", reason="discovery_no_followup", discovery_pending=None,
-                discovery_consumed=[*current.get("discovery_consumed", []), receipt_id],
+                investigation_pending=None,
+                discovery_consumed=[*current.get("discovery_consumed", []), trigger_ref],
                 discovery_last={"status": "no_followup", "task_id": "", "outcome_receipt_id": receipt_id,
+                                "trigger_ref": trigger_ref,
                                 "rationale": selection["rationale"]})
             return session
         return store._mutate(finished)["project_continuation"]
@@ -334,7 +354,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
             current["new_tasks_created"] += 1
         current["discovery_pending"]["task_id"] = created["id"]
         current["discovery_last"] = {"status": "task_created", "task_id": created["id"],
-            "outcome_receipt_id": receipt_id, "rationale": selection["rationale"]}
+            "outcome_receipt_id": receipt_id, "trigger_ref": trigger_ref, "rationale": selection["rationale"]}
         return session
     try:
         value = store._mutate(publish)["project_continuation"]
@@ -362,7 +382,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         current = _current(session, value)
         current.update(pending_batch={"task_ids": [identifier], "proposal_ids": ids,
             "expected_revisions": {item: proposals[item]["revision"] for item in ids}, "run_id": ""},
-            discovery_pending=None, batches_started=current["batches_started"] + 1,
-            discovery_consumed=[*current.get("discovery_consumed", []), receipt_id], reason="outcome_followup_queued")
+            discovery_pending=None, investigation_pending=None, batches_started=current["batches_started"] + 1,
+            discovery_consumed=[*current.get("discovery_consumed", []), trigger_ref], reason="outcome_followup_queued")
         return session
     return store._mutate(queued_batch)["project_continuation"]
