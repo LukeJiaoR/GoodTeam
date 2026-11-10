@@ -118,6 +118,15 @@ def require_queued_project_task(root, project_key, proposal):
     Ordinary human-typed drafts have no project_task_id and remain unchanged.
     A model recommendation is never an independent execution authorization.
     """
+    named_worker_error = (
+        "Tasks with a named Worker cannot use a single-draft Workflow; "
+        "use queued batch execution for the original assignment."
+    )
+    # Human edits can remove the ledger binding while retaining assignment
+    # metadata. They must not silently turn an explicit target into a default.
+    assignment = proposal.get("assignment")
+    if isinstance(assignment, dict) and assignment.get("worker_id"):
+        raise ValueError(named_worker_error)
     task_id = proposal.get("project_task_id")
     if not task_id:
         return None
@@ -139,6 +148,11 @@ def require_queued_project_task(root, project_key, proposal):
         raise ValueError("The Manager-selected task has unfinished dependencies.")
     if task.get("execution_policy") == "read_only":
         raise ValueError("Read-only Manager work cannot enter a code-writing Workflow.")
+    if task.get("worker_id"):
+        # Single-draft Workflows resolve Workers by Role and cannot preserve
+        # this exact target. Leave the original queue/task identity intact so
+        # the existing batch path can execute it without silently switching.
+        raise ValueError(named_worker_error)
     return task
 
 

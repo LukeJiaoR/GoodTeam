@@ -6752,14 +6752,15 @@ def handle_project_api_post(
                 "run_id": "",
             }
         project_config = _project_config_for_key(workspace, key)
-        if proposal.get("project_task_id"):
-            # The Manager's queue item is the SAME task the existing Workflow
-            # will run. Claim its ledger identity BEFORE any Worker side effect.
-            from goodteam_os.assistant_queue import require_no_active_project_goal, require_queued_project_task
+        # Recheck even previously confirmed human-edited drafts: they may have
+        # retained a named assignment after their ledger binding was removed.
+        from goodteam_os.assistant_queue import require_no_active_project_goal, require_queued_project_task
 
-            try:
+        try:
+            require_queued_project_task(root, key, proposal)
+            if proposal.get("project_task_id"):
+                # Claim the original ledger identity BEFORE any Worker effect.
                 require_no_active_project_goal(workspace, key)
-                require_queued_project_task(root, key, proposal)
                 existing = StateStore(workspace).read_project_current(key)
                 if existing and is_active_run(existing) and existing.run_id != start_run_id:
                     raise ValueError("Another project Workflow owns the execution slot.")
@@ -6768,10 +6769,10 @@ def handle_project_api_post(
                     expected_digest=str(proposal["project_task_digest"]),
                     run_id=start_run_id,
                 )
-            except ValueError as exc:
-                store.release_workflow_start(proposal_id, claim_id)
-                raise ProjectApiError("iteration_task_changed", str(exc), 409,
-                                      recovery=["reload_project"]) from exc
+        except ValueError as exc:
+            store.release_workflow_start(proposal_id, claim_id)
+            raise ProjectApiError("iteration_task_changed", str(exc), 409,
+                                  recovery=["reload_project"]) from exc
         try:
             result = start_workflow(
                 workspace=workspace,

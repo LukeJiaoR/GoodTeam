@@ -132,6 +132,15 @@ actual readable Worker reports, limitations and outstanding independent review t
 the conversation, with idempotent publication per batch/recovery attempt. Source
 reports remain separately inspectable. Worker completion never marks delivery done.
 
+Named Worker assignments use the existing queued batch execution path, including
+a one-item batch. Single-draft Workflows currently resolve by Role and do not
+carry an exact Worker target; selection, confirmation and start reject named
+assignments rather than silently switching to the default Worker. The original
+queued task remains available for batch execution. Previously edited drafts
+that still retain a named assignment are also rejected at start; they are not
+silently converted into default-Worker execution. Ordinary unnamed drafts keep
+their existing single-draft Workflow behavior.
+
 The task's explicit Worker target is part of its existing execution intent.
 Queue confirmation, continuation, quality checks and recovery retain that target;
 old tasks without a target keep their original intent representation. Worker
