@@ -35,7 +35,9 @@ def is_observed_investigation(value, task):
             and receipt.get("task_intent_digest") == value["task_intents"].get(task["id"])
             and receipt.get("batch_run_id") == task.get("run_id")
             and task.get("role") == "research" and task.get("execution_policy") == "read_only"
-            and task.get("write_domains") == [] and task.get("status") == "review"
+            and task.get("write_domains") == []
+            and receipt.get("task_status", "review") in {"review", "blocked"}
+            and task.get("status") == receipt.get("task_status", "review")
             and task.get("delivery_verified") is not True)
 
 
@@ -61,10 +63,13 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
     task = tasks.get(task_id, {})
     bindings = batch.get("task_bindings") or []
     tracks = batch.get("tracks") or []
-    if (batch.get("confirmed") is not True or batch.get("status") != "review"
+    task_status = task.get("status")
+    failed = task_status == "blocked"
+    if (batch.get("confirmed") is not True or task_status not in {"review", "blocked"}
+            or batch.get("status") != task_status
             or batch.get("project_root") != str(root) or batch.get("expected_continuation_id") != value["id"]
             or batch.get("expected_authority") != value["authority"] or batch.get("task_ids") != [task_id]
-            or task.get("status") != "review" or task.get("role") != "research"
+            or task.get("role") != "research"
             or task.get("execution_policy") != "read_only" or task.get("write_domains") != []
             or task.get("delivery_verified") is True or task.get("run_id") != run_id
             or task.get("execution_origin") != "task_assistant_batch"
@@ -75,7 +80,11 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
             or tracks[0].get("role") != "research" or tracks[0].get("execution_policy") != "read_only"):
         raise ValueError("Investigation feedback does not match its original confirmed task.")
     evidence = project_batch_recovery_evidence(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
-    if (evidence["unknown_task_ids"] or evidence["preserved_task_ids"] != [task_id]
+    # Recovery proves the original process ended; a blocked label or a timeout
+    # alone cannot release its slot. Failed output also needs the unchanged,
+    # attributable workspace receipt checked below. No retry is executed here.
+    settled = evidence.get("retryable_task_ids" if failed else "preserved_task_ids")
+    if (evidence["unknown_task_ids"] or settled != [task_id]
             or evidence.get("can_abandon") is not True):
         raise ValueError("Investigation termination or retained result is unverified; preserve its execution slot.")
     dispatch_id = effective_dispatch_id(batch)
@@ -85,15 +94,17 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
         raise ValueError("The investigation dispatch report is invalid.")
     jobs = report.get("jobs") or []
     if (report.get("run_id") != dispatch_id or report.get("project_root") != str(root)
-            or report.get("all_ok") is not True or not isinstance(jobs, list) or len(jobs) != 1
+            or report.get("all_ok") is not (not failed) or not isinstance(jobs, list) or len(jobs) != 1
             or not isinstance(jobs[0], dict)):
-        raise ValueError("Investigation requires one successful attributable terminal report.")
+        raise ValueError("Investigation requires one attributable terminal dispatch report.")
     job = jobs[0]
     job_id = job.get("job_id")
     if (not isinstance(job_id, str) or re.fullmatch(r"[A-Za-z0-9_-]+", job_id) is None
             or job.get("project_task_id") != task_id or job.get("role") != "research"
             or job.get("dispatch_run_id", dispatch_id) != dispatch_id
-            or job.get("outcome") != "ok" or job.get("attribution_status") != "captured"
+            or job.get("outcome") != ("needs_human" if failed else "ok")
+            or failed and job.get("status") != "failed"
+            or job.get("attribution_status") != "captured"
             or task.get("dispatch_job_id") != job_id or task.get("dispatch_run_id") != dispatch_id):
         raise ValueError("Investigation output belongs to another task or attempt.")
     captured = verify_dispatch_result(root, {**job, "dispatch_run_id": dispatch_id})
@@ -107,18 +118,26 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
     # Never read a path supplied by the model or report. The bound job identity
     # selects the existing safe storage reader; oversized output is not truncated.
     raw = read_bytes(root / ".goodteam" / "workers" / "jobs" / job_id / "result.md", maximum=_MAX_REPORT_BYTES)
-    if raw is None or not raw.strip():
-        raise ValueError("The investigation has no readable report; no result is fabricated.")
-    content = raw.decode("utf-8")
+    # Missing or empty text is itself feedback, never a fabricated report.
+    # Read errors, oversized data and malformed UTF-8 still fail closed.
+    content = raw.decode("utf-8") if raw is not None else ""
+    report_status = ("missing" if raw is None else "empty" if not content.strip()
+                     else "partial" if failed else "present")
     receipt = {"schema_version": _SCHEMA, "continuation_id": value["id"],
                "authorization_digest": value["authorization_digest"], "project_key": project_key,
                "project_root": str(root), "project_head": head, "task_id": task_id,
                "task_intent_digest": _intent(task), "batch_run_id": run_id,
                "dispatch_run_id": dispatch_id, "job_id": job_id, "recovery_version": evidence["version"],
                "dispatch_report_digest": "sha256:" + sha256(report_raw).hexdigest(),
-               "report_digest": "sha256:" + sha256(raw).hexdigest(), "report": content,
+               "report_digest": "sha256:" + sha256(raw).hexdigest() if raw is not None else None, "report": content,
                "task_acceptance": "not_assessed", "review_status": "not_attested_by_observation",
                "delivery_verified": False}
+    # Keep successful, nonempty L2 observations byte-compatible: a pending
+    # reserved decision must not be invalidated merely by upgrading the host.
+    if failed or report_status != "present":
+        receipt.update(task_status=task_status, worker_status="failed" if failed else "completed",
+                       worker_outcome=job["outcome"], report_status=report_status,
+                       execution_summary=str(job.get("summary") or "")[:2000])
     receipt["receipt_id"] = _digest(receipt)
     return receipt
 

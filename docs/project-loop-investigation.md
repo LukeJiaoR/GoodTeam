@@ -1,4 +1,4 @@
-# Project-loop investigation: L1 delegation and L2 result feedback (#686)
+# Project-loop investigation: delegation and result/failure feedback (#686)
 
 An explicitly authorized discovery turn may delegate a read-only investigation
 when a material fact is missing. The existing continuation can then observe a
@@ -49,22 +49,23 @@ chat research without an applicable grant still needs its normal confirmation.
 
 ## L2: report observation is not task acceptance or Git delivery
 
-The existing continuation tick handles a successful settled single investigation
-created by this grant. It binds the original task intent, confirmed batch and
+The existing continuation tick handles a settled single investigation created
+by this grant, including the verified terminal-failure slice described below. It binds the original task intent, confirmed batch and
 read-only track to the retained dispatch and exact Worker report. Before releasing
 its pending scheduling slot, it requires:
 
 - original project, grant, authority, task, batch, dispatch and job identities;
 - existing recovery evidence showing the original process/result is known, with
   no unknown work or unresolved quality execution;
-- an attributable successful output and retained workspace with no changed files;
+- an attributable dispatch result and a retained workspace with no changed files;
 - the same source HEAD and a clean source checkout;
-- a nonempty UTF-8 report read from the bound job path, not a model-supplied path.
-  Reports larger than 64 KiB stop explicitly instead of silently truncating facts.
+- report bytes read from the bound job path, not a model-supplied path. Missing
+  or empty output is recorded explicitly, not replaced with invented findings.
+  Malformed UTF-8 or reports larger than 64 KiB block rather than silently losing facts.
 
 The session atomically retains a source-bound observation and pending re-decision
 responsibility. It clears only `pending_batch`: the research task and batch stay
-`review`, `delivery_verified` stays false, and no Git commit, delivery receipt,
+`review` or `blocked` as originally recorded, `delivery_verified` stays false, and no Git commit, delivery receipt,
 review approval or task-acceptance result is fabricated. The observation says
 `task_acceptance: not_assessed` and `review_status: not_attested_by_observation`.
 
@@ -93,18 +94,52 @@ observed research card for scheduling, but it remains unaccepted and cannot sati
 normal done-task dependencies. The observation is not a fresh attestation after
 later code changes.
 
+## L3 first slice: terminal failure and incomplete report feedback
+
+A failed read-only investigation may re-enter the same Manager decision path if
+it belongs to this active grant and the existing recovery service proves the
+original Worker ended. `blocked` or an elapsed timeout is not termination proof.
+The retained result must still be attributable and its workspace unchanged; an
+uncaptured exception, unknown process, changed files or unresolved quality work
+keeps the scheduling slot blocked. This slice does not relax those checks.
+
+The observation distinguishes failed execution from report availability:
+`worker_status: failed`, `task_status: blocked`, and `report_status: partial`,
+`missing` or `empty`. A missing report has `report_digest: null` and empty report
+text. An empty file has its actual digest. A successfully terminated Worker with
+no readable report also supplies explicit missing/empty feedback, not a finding.
+Storage errors, unsafe reads and invalid encoding remain blockers.
+
+Manager can choose a bounded, purposeful follow-up using the original queue or
+explain why no useful authorized work follows. It may not infer that an absent
+report proves the project is fine, repeat the old job implicitly, or grant itself
+environment repair/access rights. New work consumes the same task/batch/call
+allowances. No automatic retry service, new failure queue or task-status writer
+is introduced. The original failed card and batch remain blocked and visible;
+accepted seed results and existing recovery history are untouched.
+
+Successful nonempty L2 observations retain their existing structure and digest.
+New failure/empty-output fields are only added when applicable. A report that
+appears or changes after capture invalidates the reserved decision rather than
+silently replacing its input. Stopped or already-blocked continuation grants are
+not reactivated by this upgrade; their normal recovery/authorization remains
+explicit. The new path is considered only by an already-active continuation.
+
 ## Replay, Stop and deliberate remaining limits
 
 Report capture and pending judgment are one session write. Publication replay
 reuses the original input, task and reserved call; it does not create another
 card or spend another planning turn. Stop/replacement is checked in existing
 mutation boundaries and again before dispatch. Waiting/read endpoints do not
-run models. Unknown termination, missing output, mutated source/receipt or actual
-file writes remain blockers, not reasons to launch a competing Worker.
+run models. Unknown termination, unverified output attribution, mutated
+source/receipt or actual file writes remain blockers, not reasons to launch a
+competing Worker. Missing/empty report text can be feedback only after the same
+termination and unchanged-workspace checks.
 
-This slice handles successful terminal investigation reports. Failed/blocked
-attempts, arbitrary partial executions, Human decision wait/resume and more
-expressive stopping choices remain L3/L4. It does not independently accept the
+This L3 slice is restricted to single, grant-discovered read-only investigations.
+Failed writing tasks, mixed batches and uncaptured failures keep the original
+recovery behavior; general partial-execution handling remains unfinished L3.
+Human decision wait/resume and more expressive stopping choices remain L4. It does not independently accept the
 research task or claim that the full user goal is met. Manager tool-level isolation,
 UI opt-in and real-model two-delivery acceptance remain unverified/open.
 
@@ -112,18 +147,23 @@ UI opt-in and real-model two-delivery acceptance remain unverified/open.
 
 `test_project_discovery_investigation.py` retains the L1 pure protocol contract.
 `test_project_investigation_feedback.py` adds one representative result-to-decision
-case using explicitly in-memory storage, terminal-evidence and model/dispatch
-fixtures. It covers the production continuation/observation/discovery connection,
+case using explicit in-memory storage, terminal-evidence and model/dispatch
+fixtures, extended in place for terminal failures and missing/empty reports. It covers the production continuation/observation/discovery connection,
 queue-publication interruption/replay, no delivery promotion, changed report,
 Stop during decision, exhausted allowance, unknown termination, file mutation,
-missing output and source/dependency restrictions.
+failed partial/missing/empty output, failure-preserving follow-up or stop,
+unattributable output, invalid UTF-8 and source/dependency restrictions.
+The same failed-feedback scenario rejects progress on the preceding L2 code and
+reaches re-decision on this candidate under those fixtures.
 
 These fixtures are not real database durability, Worker/process isolation, actual
 Git checks, independent review or live model evidence. Run the normal tests in a
 complete checkout plus the existing outcome/assignment/continuation integration
 cases and required control-plane checks before claiming those properties. The
-local AST-subset runner is only supplemental evidence for an environment without
-full dependencies; it is not the normal repository test entry point.
+local source-subset runner imports the complete candidate modules with explicit
+dependency substitutes. It is supplemental evidence for an environment without
+full dependencies, not the normal repository test entry point or real integration.
+Earlier AST-subset results remain historical evidence only.
 
 All product results remain under #419. CI stays paused. This code does not start
 StockFlow, enable production services, call paid models or restore old Stop/grants.
