@@ -156,11 +156,11 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         "memory_pickup": runtime_role_memory_store(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
     team = team_view_for_config(Path(workspace), project_key, project_config) or {}
     allowed_roles = {"implementation", "research"} if value["discovery"].get("allow_investigation") is True else {"implementation"}
-    packet["worker_capabilities"] = [
-        {"role": role["role"], "worker_id": worker["id"], "worker_name": worker.get("name", worker["id"]),
-         "dispatchable": role.get("state") == "enabled" and worker.get("dispatchable") is True}
+    packet["role_capabilities"] = [
+        {"role": role["role"], "state": role.get("state"), "capability": role.get("capability", ""),
+         "dispatchable": role.get("state") == "enabled"
+             and any(worker.get("dispatchable") is True for worker in role.get("workers", []))}
         for role in team.get("roles", []) if role.get("role") in allowed_roles
-        for worker in role.get("workers", []) if worker.get("id")
     ]
     if value["discovery"].get("allow_investigation") is True:
         role = next((item for item in team.get("roles", []) if item.get("role") == "research"), {})
@@ -254,7 +254,9 @@ def validate_discovered_task(packet, response):
     fields = {"title", "description", "acceptance_criteria", "write_domains", "dependencies", "source_refs"}
     investigation_allowed = packet["discovery"].get("allow_investigation") is True
     optional = {"task_type"} if investigation_allowed else set()
-    if "worker_capabilities" in packet:
+    # Only frozen packets from the former member-selection contract accept
+    # that field. Newly captured Role capabilities never select an instance.
+    if "worker_capabilities" in packet and "role_capabilities" not in packet:
         optional.add("worker_id")
     if (not isinstance(task, dict) or not fields.issubset(task) or set(task) - fields - optional
             or not isinstance(task["title"], str) or not 5 <= len(task["title"].strip()) <= 240

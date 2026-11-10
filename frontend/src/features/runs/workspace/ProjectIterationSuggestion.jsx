@@ -56,7 +56,7 @@ export default function ProjectIterationSuggestion({
     </div>
     {assignments.map(item => <div key={item.id}>
       <p>{item.exact_request}</p>
-      {item.assignment?.worker_id && <p>{zh ? '指定 Worker' : 'Selected Worker'}: <strong>{item.assignment.worker_id}</strong></p>}
+      {item.assignment?.worker_id && <p>{zh ? '原任务指定成员' : 'Original assignment member'}: <strong>{item.assignment.worker_id}</strong></p>}
       <p>{item.assignment?.role} · {item.assignment?.execution_policy === 'read_only'
         ? (zh ? '只读研究，不修改项目文件' : 'Read only; no project file changes')
         : (item.assignment?.write_domains || []).join(', ')}</p>
