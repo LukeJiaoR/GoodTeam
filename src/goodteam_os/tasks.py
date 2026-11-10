@@ -71,6 +71,16 @@ def task_evidence_digest(task: dict[str, Any]) -> str:
     ).hexdigest()
 
 
+TASK_INTENT_FIELDS = ("id", "title", "description", "role", "dependencies", "acceptance_criteria",
+                      "write_domains", "execution_policy", "external_refs")
+
+
+def project_task_intent(task: dict[str, Any]) -> dict[str, Any]:
+    """Bind an explicit Worker target while keeping historical intents unchanged."""
+    return {**{key: task.get(key) for key in TASK_INTENT_FIELDS},
+            **({"worker_id": task["worker_id"]} if "worker_id" in task else {})}
+
+
 class LocalTaskStore:
     def __init__(self, project_root: Path, project_key: str = ""):
         self.project_root = project_root
@@ -101,11 +111,15 @@ class LocalTaskStore:
         external_refs: list[str] | None = None,
         write_domains: list[str] | None = None,
         execution_policy: str = "workspace_write",
+        worker_id: str | None = None,
     ) -> dict[str, Any]:
         if role == "orchestrator":
             raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
         if execution_policy not in {"read_only", "workspace_write"}:
             raise ValueError("Project task execution policy must be read_only or workspace_write.")
+        if worker_id is not None and (not isinstance(worker_id, str) or not worker_id.strip()
+                                      or worker_id != worker_id.strip() or len(worker_id) > 256):
+            raise ValueError("A Worker target must name an exact configured Worker id.")
         if write_domains is not None:
             from goodteam_os.project_iteration import normalize_write_domains
 
@@ -127,6 +141,7 @@ class LocalTaskStore:
             "title": title,
             "description": description,
             "role": role,
+            **({"worker_id": worker_id} if worker_id is not None else {}),
             "status": "todo",
             "priority": priority,
             "dependencies": dependencies or [],
@@ -148,6 +163,9 @@ class LocalTaskStore:
     def update_task(self, task_id: str, **updates: Any) -> dict[str, Any]:
         if updates.get("role") == "orchestrator":
             raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
+        if "worker_id" in updates and (not isinstance(updates["worker_id"], str) or not updates["worker_id"].strip()
+                or updates["worker_id"] != updates["worker_id"].strip() or len(updates["worker_id"]) > 256):
+            raise ValueError("A Worker target must name an exact configured Worker id.")
         ledger = self._read()
         tasks = list(ledger.get("tasks", []))
         new_id = str(updates.get("id", task_id)).strip()
@@ -184,7 +202,10 @@ class LocalTaskStore:
         from goodteam_os.project_iteration import normalize_write_domains
 
         if (not isinstance(creation_ref, str) or not creation_ref.startswith("project-discovery:")
-                or len(creation_ref) > 256 or not isinstance(intent, dict) or set(intent) != required
+                or len(creation_ref) > 256 or not isinstance(intent, dict) or not required.issubset(intent)
+                or set(intent) - required - {"worker_id"}
+                or "worker_id" in intent and (not isinstance(intent["worker_id"], str) or not intent["worker_id"].strip()
+                    or intent["worker_id"] != intent["worker_id"].strip() or len(intent["worker_id"]) > 256)
                 or intent["priority"] != "medium"
                 or not (intent["role"] == "research" and intent["execution_policy"] == "read_only"
                         and intent["write_domains"] == []
@@ -196,7 +217,8 @@ class LocalTaskStore:
         ledger = self._read()
         matches = [task for task in ledger["tasks"] if creation_ref in task.get("external_refs", [])]
         if matches:
-            if len(matches) != 1 or any(matches[0].get(key) != value for key, value in intent.items()):
+            if (len(matches) != 1 or any(matches[0].get(key) != value for key, value in intent.items())
+                    or matches[0].get("worker_id") != intent.get("worker_id")):
                 raise ValueError("The discovered task identity already owns a different intent.")
             return dict(matches[0])
         def fingerprint(task):

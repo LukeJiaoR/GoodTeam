@@ -257,6 +257,7 @@ def _dispatch_tracks(
     from goodteam_os.skills.models import content_digest
     from goodteam_os.skills.task_locks import TaskSkillIdentity
     from goodteam_os.skills.task_start import capture_task_start, registered_project_scope
+    from goodteam_os.skills.worker_requests import subject_for_role
 
     logical_id = logical_task_id or str(uuid4())
     run_id = "dispatch-" + content_digest(logical_id.encode("utf-8"))[7:]
@@ -265,13 +266,32 @@ def _dispatch_tracks(
     key = ""
     if scope is not None:
         workspace, key = scope
+        task_identity = TaskSkillIdentity("direct_task", key, logical_id)
+        command_key = f"direct-start:{key}:{logical_id}"
+        subjects = tuple(sorted({subject_for_role(str(track["role"])) for track in tracks}))
+        # A historical capture keeps its exact inventory; only new tasks scope
+        # methods to the Roles they actually dispatch. capture_task_start still
+        # validates the original confirmation before replaying that receipt.
+        from goodteam_os.service import service_state_dir
+        from goodteam_os.skills.task_service import ProjectTaskSkillService
+
+        if (Path(service_state_dir()).expanduser().resolve() / "skills" / "task-locks").exists():
+            previous = ProjectTaskSkillService(workspace, key, worker_roots=(project_root,)).locks.find_task(
+                task=task_identity, command_key=command_key)
+            if previous is not None:
+                start = previous["lock"].get("start_input")
+                if not isinstance(start, dict) or start.get("schema_version") != "task_skill_start_input.v1":
+                    from goodteam_os.skills.models import SkillError
+
+                    raise SkillError("task_start_input_missing", "The original task confirmation is unavailable.")
+                subjects = tuple(start["request"]["subjects"])
         context = capture_task_start(
             workspace=workspace, project_key=key, worker_root=project_root,
-            task=TaskSkillIdentity("direct_task", key, logical_id), command_key=f"direct-start:{key}:{logical_id}",
+            task=task_identity, command_key=command_key, subjects=subjects,
             confirmed_input={"tracks": tracks, "constraints": constraints, "verify_commands": verify_commands or {},
                              "constraints_source": str(constraints_file) if constraints_file else "",
                              "research_report_source": str(research_report_file) if research_report_file else ""},
-            **({"subjects": ("role:code_review",), "protocol_only_review": True} if local_review else {}),
+            **({"protocol_only_review": True} if local_review else {}),
         )
     if local_review and not context:
         raise ValueError("Local execution requires a registered project and its captured task protocol.")
@@ -326,7 +346,8 @@ def _dispatch_tracks(
                 results_by_id[str(job["id"])] = future.result()
             except Exception as exc:
                 results_by_id[str(job["id"])] = {**_exception_report(role=str(job["role"]), error=exc),
-                                                "job_id": str(job["id"])}
+                                                "job_id": str(job["id"]),
+                                                **{key: job[key] for key in ("worker_id", "worker_name") if job.get(key)}}
 
     jobs = [results_by_id.get(str(job["id"]), _exception_report(role=str(job["role"]), error=RuntimeError("missing result"))) for job in jobs_by_role]
     for result, track_id, track in zip(jobs, track_ids, tracks):
@@ -563,6 +584,7 @@ def _job_report(
         **{key: job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref") if key in job},
         **{key: status[key] for key in ("skill_error_code", "skill_preflight_status", "skill_runtime_status", "invocation_evidence") if key in status},
         "job_id": str(job["id"]),
+        **{key: job[key] for key in ("worker_id", "worker_name") if job.get(key)},
         "role": str(job["role"]),
         "adapter": str(job["adapter"]),
         "status": str(status.get("status", "")),

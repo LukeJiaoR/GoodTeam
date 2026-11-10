@@ -18,12 +18,11 @@ from goodteam_os.dispatch import dispatch_tracks
 from goodteam_os.dispatch_workspace import dispatch_artifact_root, prepare_dispatch_workspace
 from goodteam_os.project_iteration import _internal, _validate_parallel_group, rank_project_backlog
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
-from goodteam_os.tasks import LocalTaskStore, task_evidence_digest
+from goodteam_os.tasks import LocalTaskStore, project_task_intent, task_evidence_digest
+from goodteam_os.tasks import TASK_INTENT_FIELDS as TASK_INTENT_FIELDS
 from goodteam_os.workflow_mutations import workflow_guard
 
 
-TASK_INTENT_FIELDS = ("id", "title", "description", "role", "dependencies", "acceptance_criteria",
-                      "write_domains", "execution_policy", "external_refs")
 _BACKGROUND_THREADS = {}
 _BACKGROUND_LOCK = threading.Lock()
 
@@ -116,7 +115,8 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
     )
     return [{
         "track_id": task["id"], "project_task_id": task["id"], "role": task["role"],
-        **_worker_job_fields(target, str(task["role"]), state),
+        **_worker_job_fields(target, str(task["role"]), state,
+                             **({"worker_id": task["worker_id"]} if "worker_id" in task else {})),
         "task": proposal["exact_request"], "task_source": "task_assistant_queue",
         "context": "Execute only this confirmed project task in the assigned isolated repository. "
                    "Do not merge, deploy or change shared project state. Results require independent review.",
@@ -138,7 +138,7 @@ def _claim_tasks(root, project_key, batch):
                 raise ValueError("A selected project task is unavailable.")
             if task.get("run_id") == batch["run_id"]:
                 if (task.get("batch_source_digest") != binding["digest"]
-                        or {key: task.get(key) for key in TASK_INTENT_FIELDS} != binding["task_intent"]):
+                        or project_task_intent(task) != binding["task_intent"]):
                     raise ValueError("The task belongs to a different batch confirmation.")
                 continue
             if task.get("run_id") or task.get("status") != "todo" or task_evidence_digest(task) != binding["digest"]:
@@ -223,7 +223,7 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
         batch = {"run_id": run_id, "dispatch_run_id": dispatch_id, "proposal_ids": list(proposal_ids),
             "task_ids": [task["id"] for task in tasks], "expected_revisions": expected_revisions,
             "task_bindings": [{"task_id": task["id"], "digest": item["project_task_digest"],
-                               "task_intent": {key: task.get(key) for key in TASK_INTENT_FIELDS}}
+                               "task_intent": project_task_intent(task)}
                               for task, item in zip(tasks, proposals)],
             "project_root": str(Path(root).resolve()), "project_config": str(Path(project_config).resolve()),
             "expected_authority": expected_authority,
@@ -295,7 +295,7 @@ def _settle_batch(workspace, project_key, root, batch, report=None, error=""):
                     continue
             # Successful isolated task output can be reviewed even when a
             # sibling failed. The batch's blocked fan-in still prevents delivery.
-            intent_matches = {key: task.get(key) for key in TASK_INTENT_FIELDS} == bindings[task["id"]]["task_intent"]
+            intent_matches = project_task_intent(task) == bindings[task["id"]]["task_intent"]
             reviewable = intent_matches and job.get("outcome") == "ok" and job.get("attribution_status") == "captured"
             task.update(status="review" if reviewable else "blocked", dispatch_job_id=job.get("job_id", ""),
                         dispatch_run_id=job.get("dispatch_run_id", effective_dispatch_id(batch)),
@@ -351,11 +351,14 @@ def _publish_batch_result(workspace, project_key, root, batch, report, status):
                          maximum=2 * 1024 * 1024)
         result = raw.decode("utf-8", errors="replace").strip() if raw else ""
         label = str(job.get("role", "Worker"))
+        if job.get("worker_id"):
+            label += f" · {job.get('worker_name') or job['worker_id']} ({job['worker_id']})"
         content.append(f"\n{label}\n\n" + (result[:16000] if result else (
             "未保留可读报告，不能确认成果。" if chinese else "No readable report was retained; results cannot be confirmed.")))
         if len(result) > 16000:
             content.append("报告较长，此处为节选。" if chinese else "The report above is an excerpt.")
-        evidence.append({"role": label, "summary": result})
+        evidence.append({"role": str(job.get("role", "Worker")), "summary": result,
+                         **{key: job[key] for key in ("worker_id", "worker_name") if job.get(key)}})
     if not (report or {}).get("jobs"):
         content.append("尚无可核实的 Worker 报告。" if chinese else "No verifiable Worker report is available yet.")
     store.append_event("batch-result:" + batch["run_id"] + ":" + str(batch.get("current_recovery_attempt", "initial")),

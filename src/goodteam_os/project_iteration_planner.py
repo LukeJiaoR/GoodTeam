@@ -208,7 +208,19 @@ def _discovery_prompt(context):
     # Frozen pre-extension packets retain their original prompt contract.
     if context.get("human_feedback_supported") is True:
         base += _MANAGER_HUMAN_FEEDBACK_TASK
-    return base + _MANAGER_QUESTION_BOARD_TASK if "question_board" in context else base
+    if "question_board" in context:
+        base += _MANAGER_QUESTION_BOARD_TASK
+    if "worker_capabilities" in context:
+        base += """
+Worker selection extension: a new_task may include optional worker_id naming an
+exact dispatchable Worker from worker_capabilities for its authorized task type
+(implementation -> implementation; investigation -> research). Preserve a
+specifically requested Worker; explain an unavailable target rather than silently
+substituting another. Omit worker_id to use the role's configured default selection.
+This selects an existing Worker; its configured runtime remains host-owned and
+the original task types, scope, permissions and budgets are unchanged.
+"""
+    return base
 
 
 def run_manager_iteration_choice(*, project_config: Path, project_key: str,

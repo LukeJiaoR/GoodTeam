@@ -135,6 +135,14 @@ fallback for unmigrated targets:
   worker id is passed directly or the planner still references the worker.
 - No active, runtime-eligible Worker → `TeamDispatchBlocked(team_worker_unavailable)`.
 
+Manager task assignment can supply an optional `worker_id` alongside the role.
+An explicit target resolves that exact member's complete runtime, after checking
+its role, lifecycle and runtime eligibility. A missing, mismatched or unavailable
+target fails with its cause; resolution never falls back to another member.
+Without a target, existing role-based selection remains unchanged. The target
+is carried in the original task intent and queue confirmation, while actual job
+and report records preserve the executing Worker ID and name.
+
 Released/deleted worker identity is never physically removed, so historical
 runs, artifacts, reviews, and provenance keep resolving.
 

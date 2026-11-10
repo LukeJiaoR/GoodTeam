@@ -51,7 +51,8 @@ def _batch(workspace, project_key, root, run_id):
 
 
 def _input(workspace, project_key, root, batch):
-    from goodteam_os.project_iteration_execution import TASK_INTENT_FIELDS, iteration_batch_report
+    from goodteam_os.project_iteration_execution import iteration_batch_report
+    from goodteam_os.tasks import project_task_intent
 
     report = iteration_batch_report(workspace=workspace, project_key=project_key, root=root, run_id=batch["run_id"])
     integration, jobs = report.get("integration", {}), report.get("jobs", [])
@@ -64,7 +65,7 @@ def _input(workspace, project_key, root, batch):
     for binding in batch["task_bindings"]:
         task = known.get(binding["task_id"], {})
         if (task.get("run_id") != batch["run_id"]
-                or {key: task.get(key) for key in TASK_INTENT_FIELDS} != binding["task_intent"]):
+                or project_task_intent(task) != binding["task_intent"]):
             raise TaskInputError("batch_quality_task_changed")
     candidate = Path(str(integration.get("candidate_path", ""))).absolute()
     if (candidate.resolve() != candidate or candidate.name != "candidate"

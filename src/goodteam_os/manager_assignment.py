@@ -17,6 +17,9 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
     role = next((item for item in team.get("roles", []) if item.get("role") == action["role"]), {})
     if role.get("state") != "enabled" or not any(worker.get("dispatchable") for worker in role.get("workers", [])):
         raise ValueError("The requested Worker capability is unavailable; no assignment was queued.")
+    if "worker_id" in action and not any(worker.get("id") == action["worker_id"] and worker.get("dispatchable")
+                                         for worker in role.get("workers", [])):
+        raise ValueError("The requested Worker is unavailable for this role; no replacement was queued.")
     text = "\n\n".join(item["content"] for item in sources)
     if not 1 <= len(text) <= 8000:
         raise ValueError("The assignment exceeds the existing task queue input limit.")
@@ -32,10 +35,12 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
         title=text.splitlines()[0][:180], description=text, role=action["role"],
         acceptance_criteria=action["acceptance_criteria"], external_refs=[reference],
         execution_policy=action["execution_policy"], write_domains=action["write_domains"] or None,
+        **({"worker_id": action["worker_id"]} if "worker_id" in action else {}),
     )
     if (task["description"] != text or task["role"] != action["role"]
             or task.get("execution_policy", "workspace_write") != action["execution_policy"]
             or task.get("write_domains", []) != action["write_domains"]
+            or task.get("worker_id") != action.get("worker_id")
             or task["acceptance_criteria"] != action["acceptance_criteria"]):
         raise ValueError("Assignment retry differs from its original task input.")
     proposal = {"id": proposal_id, "exact_request": text, "revision": 1,
@@ -43,7 +48,7 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
         "source_event_id": "reply:" + message_id, "status": "queued", "confirmed": False,
         "run_id": "", "created_at": datetime.now(UTC).isoformat(), "project_task_id": task["id"],
         "project_task_digest": task_evidence_digest(task), "source": "manager_conversation",
-        "assignment": {key: action[key] for key in ("role", "execution_policy", "write_domains", "acceptance_criteria")}}
+        "assignment": {key: action[key] for key in ("role", "execution_policy", "write_domains", "acceptance_criteria", "worker_id") if key in action}}
 
     def append(session):
         queue = session.setdefault("queued_task_proposals", [])

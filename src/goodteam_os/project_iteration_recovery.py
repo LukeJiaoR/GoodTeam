@@ -226,7 +226,7 @@ def retire_project_batch_worker(*, workspace, project_key, root, run_id, job_id,
 
 def reconcile_recovery_tasks(root, project_key, batch, command):
     """Finish the admitted session command's LocalTaskStore projection once."""
-    from goodteam_os.project_iteration_execution import TASK_INTENT_FIELDS
+    from goodteam_os.tasks import project_task_intent
 
     retry = command["request"]["action"] == "retry_project_batch"
     selected = command["request"].get("retry_task_ids", []) if retry else batch["task_ids"]
@@ -238,7 +238,7 @@ def reconcile_recovery_tasks(root, project_key, batch, command):
             task = known.get(binding["task_id"], {})
             if (task.get("run_id") != batch["run_id"] or task.get("delivery_verified")
                     or retry and task.get("status") == "canceled"
-                    or {field: task.get(field) for field in TASK_INTENT_FIELDS} != binding["task_intent"]):
+                    or project_task_intent(task) != binding["task_intent"]):
                 raise ValueError("The original project task claim or scope changed.")
         changed = False
         for identifier in selected:
@@ -277,8 +277,9 @@ def _resume_command(workspace, project_key, root, batch, command_id):
 def recover_project_batch(*, workspace, project_key, root, request):
     """Confirm one retry/abandon against current evidence, preserving originals."""
     from goodteam_os.assistant_requests import conversation_lock
+    from goodteam_os.tasks import project_task_intent
     from goodteam_os.project_iteration_execution import (
-        TASK_INTENT_FIELDS, _require_execution_slot, _require_authority,
+        _require_execution_slot, _require_authority,
     )
     action, key = request.get("action"), request.get("idempotency_key")
     if (action not in {"retry_project_batch", "abandon_project_batch"} or request.get("confirmed") is not True
@@ -331,7 +332,7 @@ def recover_project_batch(*, workspace, project_key, root, request):
                     task = known.get(binding["task_id"], {})
                     if (task.get("run_id") != batch["run_id"] or task.get("delivery_verified")
                             or retry and task.get("status") == "canceled"
-                            or {field: task.get(field) for field in TASK_INTENT_FIELDS} != binding["task_intent"]):
+                            or project_task_intent(task) != binding["task_intent"]):
                         raise ValueError("The original project task claim or scope changed.")
                 command = {"request": request, "created_at": datetime.now(UTC).isoformat()}
                 if retry:

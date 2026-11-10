@@ -47,7 +47,7 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
     )
     from goodteam_os.memory_storage import read_bytes
     from goodteam_os.project_iteration_continuation import _intent, _require_clean_checkout
-    from goodteam_os.project_iteration_execution import TASK_INTENT_FIELDS
+    from goodteam_os.tasks import project_task_intent
     from goodteam_os.project_iteration_recovery import effective_dispatch_id, project_batch_recovery_evidence
     from goodteam_os.project_outcome_discovery import _head
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
@@ -75,9 +75,10 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
             or task.get("execution_origin") != "task_assistant_batch"
             or _intent(task) != value["task_intents"].get(task_id)
             or len(bindings) != 1 or bindings[0].get("task_id") != task_id
-            or bindings[0].get("task_intent") != {key: task.get(key) for key in TASK_INTENT_FIELDS}
+            or bindings[0].get("task_intent") != project_task_intent(task)
             or len(tracks) != 1 or tracks[0].get("project_task_id") != task_id
-            or tracks[0].get("role") != "research" or tracks[0].get("execution_policy") != "read_only"):
+            or tracks[0].get("role") != "research" or tracks[0].get("execution_policy") != "read_only"
+            or "worker_id" in task and tracks[0].get("worker_id") != task["worker_id"]):
         raise ValueError("Investigation feedback does not match its original confirmed task.")
     evidence = project_batch_recovery_evidence(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
     # Recovery proves the original process ended; a blocked label or a timeout
@@ -105,7 +106,8 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
             or job.get("outcome") != ("needs_human" if failed else "ok")
             or failed and job.get("status") != "failed"
             or job.get("attribution_status") != "captured"
-            or task.get("dispatch_job_id") != job_id or task.get("dispatch_run_id") != dispatch_id):
+            or task.get("dispatch_job_id") != job_id or task.get("dispatch_run_id") != dispatch_id
+            or "worker_id" in task and job.get("worker_id") != task["worker_id"]):
         raise ValueError("Investigation output belongs to another task or attempt.")
     captured = verify_dispatch_result(root, {**job, "dispatch_run_id": dispatch_id})
     if captured.get("changed_files") != []:
@@ -128,6 +130,7 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
                "project_root": str(root), "project_head": head, "task_id": task_id,
                "task_intent_digest": _intent(task), "batch_run_id": run_id,
                "dispatch_run_id": dispatch_id, "job_id": job_id, "recovery_version": evidence["version"],
+               **({"worker_id": task["worker_id"]} if "worker_id" in task else {}),
                "dispatch_report_digest": "sha256:" + sha256(report_raw).hexdigest(),
                "report_digest": "sha256:" + sha256(raw).hexdigest() if raw is not None else None, "report": content,
                "task_acceptance": "not_assessed", "review_status": "not_attested_by_observation",
