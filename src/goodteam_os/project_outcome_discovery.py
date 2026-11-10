@@ -169,7 +169,7 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         packet["investigation_feedback"] = feedback
         packet["allowed_source_refs"].append(feedback["receipt_id"])
     from goodteam_os.project_investigation_feedback import _valid_receipt
-    from goodteam_os.project_human_feedback import human_feedback, question_context
+    from goodteam_os.project_human_feedback import human_feedback, question_board, question_context
 
     # Earlier observations remain historical Context after their trigger has
     # been consumed. They do not assert the current HEAD or task acceptance.
@@ -182,6 +182,10 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
                                             if item["receipt_id"] not in packet["allowed_source_refs"])
     packet["human_feedback_supported"] = True
     packet["human_questions"] = question_context(value)
+    packet["question_board"] = question_board({**TaskAssistantSessionStore(workspace, project_key).read(),
+                                              "project_continuation": value})
+    packet["allowed_source_refs"].extend(item["answer"]["receipt_id"]
+        for item in packet["question_board"]["items"] if not item["current"] and item["answer"])
     answers = human_feedback(value)
     if answers:
         packet["human_feedback"] = answers
@@ -196,6 +200,8 @@ def validate_discovered_task(packet, response):
     """Validate advice against the frozen grant; no storage or execution effects."""
     fields = {"new_task", "rationale"}
     optional = {"human_question", "wait_for_human"} if packet.get("human_feedback_supported") is True else set()
+    if "question_board" in packet:
+        optional.add("question_updates")
     if not isinstance(response, dict) or not fields.issubset(response) or set(response) - fields - optional:
         raise ValueError("Discovery must return one bounded follow-up or an evidence-based stopping reason.")
     reason = response["rationale"]
@@ -205,14 +211,35 @@ def validate_discovered_task(packet, response):
     actions = {}
     if "human_question" in response:
         question = response["human_question"]
-        if (not isinstance(question, dict) or set(question) != {"question", "why_human"}
+        question_fields = {"question", "why_human"}
+        optional_fields = {"impact"} if "question_board" in packet else set()
+        if (not isinstance(question, dict) or not question_fields.issubset(question)
+                or set(question) - question_fields - optional_fields
                 or any(not isinstance(question[key], str) or not 10 <= len(question[key].strip()) <= 1200
-                       for key in ("question", "why_human"))):
+                       for key in question_fields)
+                or "impact" in question and (not isinstance(question["impact"], str)
+                                              or not 1 <= len(question["impact"].strip()) <= 1200)):
             raise ValueError("A Human question needs a specific question and why only Human input can resolve it.")
         actions["human_question"] = {key: item.strip() for key, item in question.items()}
+    updated = set()
+    if "question_updates" in response:
+        updates = response["question_updates"]
+        captured = {item["id"] for item in packet["question_board"]["items"]}
+        if not isinstance(updates, list):
+            raise ValueError("Question updates must list explicit conclusions for captured questions.")
+        actions["question_updates"] = []
+        for update in updates:
+            if (not isinstance(update, dict) or set(update) != {"question_id", "status", "reason"}
+                    or not isinstance(update["question_id"], str) or update["question_id"] not in captured
+                    or update["question_id"] in updated or update["status"] not in ("resolved", "not_needed")
+                    or not isinstance(update["reason"], str) or not 1 <= len(update["reason"].strip()) <= 1600):
+                raise ValueError("A question conclusion needs a captured identity, resolved/not_needed status and reason.")
+            updated.add(update["question_id"])
+            actions["question_updates"].append({**update, "reason": update["reason"].strip()})
     if "wait_for_human" in response:
         if (type(response["wait_for_human"]) is not bool
-                or response["wait_for_human"] and not (actions or packet.get("human_questions"))):
+                or response["wait_for_human"] and not (actions.get("human_question")
+                    or any(item["id"] not in updated for item in packet.get("human_questions", [])))):
             raise ValueError("Waiting for Human input requires a retained or newly proposed question.")
         actions["wait_for_human"] = response["wait_for_human"]
     if task is None:
@@ -336,6 +363,15 @@ def discover_next_iteration(*, workspace, project_key, root, project_config, val
                 # The atomic question/handoff committed before its caller lost
                 # the acknowledgement. Preserve the wait, not another model turn.
                 return saved
+        if (saved.get("id") == value["id"] and saved.get("status") == "active"
+                and saved.get("reason") == "human_answer_received"
+                and (saved.get("discovery_last") or {}).get("status") in {"no_followup", "waiting_for_human"}):
+            # The old decision settled before acknowledgement was lost. Its
+            # newer answer still belongs to the next existing service tick.
+            from goodteam_os.project_human_feedback import human_feedback
+
+            if any(item["receipt_id"] not in saved.get("discovery_consumed", []) for item in human_feedback(saved)):
+                return saved
         last = saved.get("discovery_last") or {}
         if (saved.get("id") == value["id"] and saved.get("reason") == "outcome_followup_queued"
                 and (saved.get("pending_batch") or {}).get("task_ids") == [last.get("task_id")]
@@ -354,7 +390,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
     from goodteam_os.project_iteration_planner import _require_planning_idle, run_manager_iteration_choice
 
     store = TaskAssistantSessionStore(workspace, project_key)
-    from goodteam_os.project_human_feedback import record_human_question
+    from goodteam_os.project_human_feedback import human_feedback, record_human_question, record_question_updates
 
     pending = value.get("discovery_pending")
     if pending is None:
@@ -395,15 +431,19 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
     trigger_ref = pending.get("trigger_ref", receipt_id)
     if selection.get("human_question"):
         value = record_human_question(store, value, pending)
+    value = record_question_updates(store, value, pending)
     inputs = _input_receipts(pending["packet"])
     if selection["new_task"] is None:
         waiting = bool(selection.get("human_question") or selection.get("wait_for_human"))
         def finished(session):
             current = _current(session, value)
-            current.update(status="active" if waiting else "completed",
-                reason="awaiting_human_decision" if waiting else "discovery_no_followup", discovery_pending=None,
+            consumed = list(dict.fromkeys([*current.get("discovery_consumed", []), *inputs, trigger_ref]))
+            newer_answers = any(item["receipt_id"] not in consumed for item in human_feedback(current))
+            current.update(status="active" if waiting or newer_answers else "completed",
+                reason=("human_answer_received" if newer_answers else
+                        "awaiting_human_decision" if waiting else "discovery_no_followup"), discovery_pending=None,
                 investigation_pending=None,
-                discovery_consumed=list(dict.fromkeys([*current.get("discovery_consumed", []), *inputs, trigger_ref])),
+                discovery_consumed=consumed,
                 discovery_last={"status": "waiting_for_human" if waiting else "no_followup",
                                 "task_id": "", "outcome_receipt_id": receipt_id,
                                 "trigger_ref": trigger_ref,

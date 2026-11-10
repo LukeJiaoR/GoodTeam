@@ -416,11 +416,19 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
                 choice["human_question"] = {
                     "question": "Which internal support team owns the documented client contract?",
                     "why_human": "Ownership is an organizational decision unavailable in the current project evidence."}
+            else:
+                choice["question_updates"] = [{"question_id": item["id"], "status": "resolved",
+                    "reason": "The owner confirmed the audience and team; the next task can document this settled choice."}
+                    for item in context["question_board"]["items"]]
             return {"selection": choice}
-        if mode[0] in {"wait", "finish"}:
+        if mode[0] in {"wait", "finish", "retire"}:
             choice = {"new_task": None, "rationale": "The latest result is retained; the remaining business decision is owned by Human."}
             if mode[0] == "wait":
                 choice["wait_for_human"] = True
+            elif mode[0] == "retire":
+                choice["question_updates"] = [{"question_id": item["id"], "status": "not_needed",
+                    "reason": "The current scope no longer requires this audience-specific change."}
+                    for item in context["question_board"]["items"]]
             return {"selection": choice}
         if context.get("human_answers"):
             return {"selection": task_choice(context, "Document the internal client contract")}
@@ -576,6 +584,10 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     assert any(item["task_id"] == "OTHER-1" for item in current["backlog"]["candidates"])
     assert rows[-1]["title"] == "Document the current internal client contract"
     assert all(item["receipt_id"] in state["project_continuation"]["discovery_consumed"] for item in answers)
+    assert all(item["status"] == "answered" for item in current["question_board"]["items"])
+    assert all(item["resolution"]["status"] == "resolved"
+               for item in state["project_continuation"]["human_questions"].values())
+    assert len([event for event in state["timeline"] if event.get("event") == "project_questions_updated"]) == 1
     assert rows[1] == research  # Neither feedback nor Human promoted the research card.
     answer(identifier)
     tick()
@@ -593,6 +605,38 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     outcome["delivery"]["receipt_id"] = "delivery-final-context"
     assert tick()["reason"] == "discovery_no_followup" and len(calls) == 3
     assert pending_questions(state["project_continuation"])[0]["id"] == identifier
+
+    # A legal answer can arrive after a stopping decision is retained but before
+    # its outbox replays. It must still reach a fresh judgment, not be stranded
+    # behind the old decision's completion (including a lost settlement ACK).
+    identifier = ask()
+    mode[0] = "retire"
+    outcome["delivery"]["receipt_id"] = "delivery-retiring-question"
+    lose_selection, lose_settlement = [True], [True]
+    def commit_retirement_then_lose(self, operation):
+        observed = real_mutate(self, operation)
+        grant = observed["project_continuation"]
+        pending = grant.get("discovery_pending") or {}
+        if lose_selection[0] and (pending.get("selection") or {}).get("question_updates"):
+            lose_selection[0] = False
+            raise OSError("fixture: retirement selection saved before publication")
+        if lose_settlement[0] and not pending and grant.get("reason") == "human_answer_received":
+            lose_settlement[0] = False
+            raise OSError("fixture: new feedback responsibility committed before acknowledgement")
+        return observed
+    monkeypatch.setattr(Session, "_mutate", commit_retirement_then_lose)
+    assert tick()["reason"] == "discovery_publication_pending" and len(calls) == 2
+    answer(identifier, message_id="late-answer")
+    late = human_feedback(state["project_continuation"])[0]
+    resumed = tick()
+    assert resumed["status"] == "active" and resumed["reason"] == "human_answer_received"
+    assert len(calls) == 2 and late["receipt_id"] not in resumed["discovery_consumed"]
+    assert not lose_settlement[0]
+    assert tick()["status"] == "completed" and len(calls) == 3
+    assert calls[-1]["human_answers"] == [late]
+    assert late["receipt_id"] in state["project_continuation"]["discovery_consumed"]
+    assert not starts
+    monkeypatch.setattr(Session, "_mutate", real_mutate)
 
     # Ordinary conversation is not an answer. Identity and actual authorization
     # remain enforced, whereas storing a valid answer does not spend a model turn.

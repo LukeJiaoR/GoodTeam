@@ -16,6 +16,7 @@ import ConversationComposer from './ConversationComposer';
 import TaskDraftControls, { ProjectModeControl } from './TaskDraftControls';
 import ProjectIterationSuggestion from './ProjectIterationSuggestion';
 import ProjectContinuationControls from './ProjectContinuationControls';
+import ProjectQuestionBoard from './ProjectQuestionBoard';
 
 function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, assistantFocusKey, visible, language, hasPendingItems, hasPendingAttention, t, children }) {
   const conversationRef = useRef(null);
@@ -64,6 +65,8 @@ export default function ProjectConversation({
   taskManagementOpen = false, onManageTasks,
   assistantState,
   onAssistantAction,
+  onAnswerQuestion,
+  questionBoard,
   attention, acceptedMessage,
   busy,
   assistantBusy = busy,
@@ -146,6 +149,8 @@ export default function ProjectConversation({
         {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
       </div>
       </div>
+      <ProjectQuestionBoard board={questionBoard ?? iterationSession?.question_board}
+        onAnswerQuestion={onAnswerQuestion} t={t} />
       <ConversationReadingFrame key={scope} scope={scope} timeline={timeline || []} attentionKey={attentionKey}
         deliveryKey={deliveryKey} assistantFocusKey={`${assistantState?.pending_team_decision?.id || ''}:${requestStatus || ''}`}
         visible={!sectionProps?.hidden} language={language} hasPendingItems={hasPendingItems}

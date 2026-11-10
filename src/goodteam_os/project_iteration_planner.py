@@ -178,12 +178,37 @@ sources. The full captured Context records what you considered, not what you acc
 """
 
 
+_MANAGER_QUESTION_BOARD_TASK = """
+Question board: question_board retains current and historical project questions,
+their answers and your explicit conclusions. Answered or considered does not
+mean resolved. Keep a question open when investigation or follow-through is
+still needed; unrelated progress does not close it. When current Context gives
+a conclusion, you may add alongside a task, a new question, or null:
+"question_updates":[{"question_id":"an id from question_board.items",
+"status":"resolved","reason":"Your conclusion and supporting Context"}].
+Use resolved when the issue is settled, or not_needed when it no longer needs
+an answer; explain why. Closing a question does not accept a task, verify a
+Worker result, expand authority or change the project's execution state.
+You can maintain historical question conclusions using current Context. Their
+original grant remains ended; its permissions, tasks and budget do not carry
+forward. Historical answers are contextual statements, not fresh authorization.
+If a historical issue still needs fresh Human input, you can ask a current
+question with that issue as Context and explain the relationship.
+You may add an optional impact string to human_question to explain what work
+depends on this answer and what can continue. This is your project judgment,
+not a host-computed blocking rule. Do not create duplicate questions just to
+track an existing unresolved issue, and do not wait on a question you close.
+"""
+
+
 def _discovery_prompt(context):
     base = (_MANAGER_INVESTIGATION_DISCOVERY_TASK
             if (context.get("discovery") or {}).get("allow_investigation") is True
             else _MANAGER_DISCOVERY_TASK)
     # Frozen pre-extension packets retain their original prompt contract.
-    return base + _MANAGER_HUMAN_FEEDBACK_TASK if context.get("human_feedback_supported") is True else base
+    if context.get("human_feedback_supported") is True:
+        base += _MANAGER_HUMAN_FEEDBACK_TASK
+    return base + _MANAGER_QUESTION_BOARD_TASK if "question_board" in context else base
 
 
 def run_manager_iteration_choice(*, project_config: Path, project_key: str,

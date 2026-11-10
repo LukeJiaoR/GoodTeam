@@ -126,8 +126,10 @@ class TaskAssistantService:
 
     def _with_team_decision_status(self, session, project_key):
         from goodteam_os.project_continuation_notice import project_continuation_notice
+        from goodteam_os.project_human_feedback import question_board
 
-        session = {**session, "project_continuation_notice": project_continuation_notice(session)}
+        session = {**session, "project_continuation_notice": project_continuation_notice(session),
+                   "question_board": question_board(session)}
         pending = dict(session.get("pending_team_decision") or {})
         if pending.get("status") != "pending":
             return session

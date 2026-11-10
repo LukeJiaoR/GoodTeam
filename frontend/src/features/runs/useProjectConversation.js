@@ -7,6 +7,9 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
   const [error, setError] = useState(null);
   const [delivery, setDelivery] = useState(null);
   const pending = useRef(false);
+  // Keep unconfirmed request receipts per question: another answer or chat
+  // message must not replace the identity needed for an explicit retry.
+  const answerDeliveries = useRef(new Map());
 
   const perform = async (name, operation) => {
     if (pending.current) return false;
@@ -31,11 +34,16 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
     }
   };
 
-  const deliver = (name, text, operation, intentId = '', attachments = []) => {
-    const next = createConversationDelivery({ projectKey, text, intentId, previous: delivery,
-      contextKey: `${name}:${contextRunId}`, attachments });
+  const deliver = (name, text, operation, intentId = '', attachments = [], questionId = '') => {
+    const next = createConversationDelivery({ projectKey, text, intentId,
+      previous: questionId ? answerDeliveries.current.get(questionId) : delivery,
+      contextKey: questionId ? `answer_question:${questionId}` : `${name}:${contextRunId}`, attachments });
     return perform(name, () => trackConversationDelivery({
-      delivery: next, operation: () => operation(next.id), onUpdate: setDelivery,
+      delivery: next, operation: () => operation(next.id), onUpdate: updated => {
+        setDelivery(updated);
+        if (questionId && updated.status === 'unconfirmed') answerDeliveries.current.set(questionId, updated);
+        if (questionId && updated.status === 'recorded') answerDeliveries.current.delete(questionId);
+      },
     }));
   };
 
@@ -45,6 +53,12 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
       message_id: messageId, text, context_run_id: contextRunId,
       ...(attachments.length ? { attachments: attachments.map(item => item.id) } : {}),
     }), '', attachments),
+    answer: (questionId, text) => {
+      const message = `/answer ${questionId} ${text}`;
+      return deliver('answer_question', message, (messageId) => runApi.sendTaskAssistantMessage(projectKey, {
+        message_id: messageId, text: message, context_run_id: '',
+      }), '', [], questionId);
+    },
     queue: (text) => deliver('queue_task', text, (messageId) => runApi.taskAssistantAction(projectKey, {
       action: 'queue_task', message_id: messageId, text,
     })),

@@ -1,4 +1,4 @@
-# Project Loop: investigation, feedback and bound Human decisions (#686)
+# Project Loop: investigation, feedback and retained question board (#686)
 
 An explicitly authorized discovery turn may delegate a read-only investigation
 when a material fact is missing. The existing continuation can then observe a
@@ -146,7 +146,8 @@ question together:
   "rationale": "The audience decision needs Human input; the authorized investigation can establish current behavior meanwhile.",
   "human_question": {
     "question": "Should this entry target internal staff or external API clients?",
-    "why_human": "The intended audience is a business choice not established by current evidence."
+    "why_human": "The intended audience is a business choice not established by current evidence.",
+    "impact": "Audience-specific changes need this answer; observing current behavior can continue."
   }
 }
 ```
@@ -181,8 +182,9 @@ keep their own existing limits: exhausted task capacity does not suppress an
 otherwise authorized judgment about a new answer. Manager can use that turn to
 wait or end; the host still refuses a task that exceeds the remaining resources.
 
-The first supported response surface is the **existing project message endpoint
-and composer**, using the exact command displayed in that handoff:
+The **Work page question board** offers a direct answer on each current open
+question. It uses the existing project message endpoint and exact question ID.
+The composer also accepts the command displayed in the handoff:
 
 ```text
 /answer human-<host-generated-id> Internal staff only; keep existing access limits.
@@ -190,10 +192,10 @@ and composer**, using the exact command displayed in that handoff:
 
 This explicit identifier avoids treating arbitrary chat, a late reply or a generic
 "continue" as consent to whichever question happens to be current. Several
-questions may remain open and each answer names its own ID. This slice has
-no new dedicated answer button and does not claim natural-language reply routing.
-Historical-task messages, attachments and runtime retries cannot answer this
-project-level question. They keep their existing unrelated meaning.
+questions may remain open and each answer names its own ID. This does not claim
+natural-language reply routing. Board answers always use project-level Context,
+including when the user is viewing an old run. Historical-task messages,
+attachments and runtime retries keep their existing unrelated meaning.
 
 The handler validates the current grant, target/task authorization, question
 identity and effective configuration, then atomically records the answer receipt,
@@ -223,6 +225,10 @@ delivery, investigation and answer feedback in one decision. Consumption records
 that the feedback entered a judgment, not that Manager accepted it or made every
 answer a task dependency. New answers that
 arrive after a decision was captured remain available to the following judgment.
+If an old null decision settles after a new answer arrived, that unconsumed
+receipt keeps the same grant active for the next service tick, within its
+remaining Manager budget. It does not silently end before that answer can enter
+current Context. Stop still takes precedence.
 
 Repeated submission of the same message returns its receipt. Reusing an ID with
 different text is rejected. Question persistence leaves the original discovery
@@ -231,6 +237,55 @@ creation reference and queue identity. Replay never clears an answer already
 recorded. Frozen decisions still undergo their original input/authorization
 checks before dispatch; recording an answer is distinct from executing old advice.
 Stop is never undone by reply/replay, and budgets are not replenished.
+
+### Question board: retained issues and explicit Manager conclusions
+
+The Work page projects `question_board` from the original `human_questions`
+records. The board groups pending answers, answered issues that still need
+handling, and closed issues. Each card shows the question, why Human input is
+needed, optional Manager-described impact, the answer and any closing reason.
+`considered` means an answer entered a decision; it does not mean the underlying
+issue was resolved. Answering while other work runs is allowed by the same
+authorization checks as the existing message endpoint. A failed send keeps its
+text and retry identity. Refreshing or opening the board has no execution effect.
+
+New Manager packets include the project's current and historical questions.
+In the same decision as `new_task`, a new question, a wait or a stopping reason,
+Manager can return:
+
+```json
+{
+  "new_task": null,
+  "rationale": "The owner confirmed the intended audience; the authorized scope is settled.",
+  "question_updates": [
+    {
+      "question_id": "<an exact ID captured in question_board.items>",
+      "status": "resolved",
+      "reason": "The confirmed audience answers this decision; the implementation has its own task acceptance."
+    }
+  ]
+}
+```
+
+`resolved` records a settled issue; `not_needed` records why an answer is no longer
+needed. The host validates the captured question identity and retains the
+Manager's reason and original decision evidence. No answer, receipt consumption,
+unrelated progress or new grant automatically closes a question. Closing an issue
+does not mark a task done or accept a Worker result. `impact` is explanatory text,
+not a second dependency or blocking-rule system. These outputs are applied through
+the original discovery outbox; replay does not append another conclusion event,
+spend a model turn or duplicate task publication. Frozen older decisions keep
+their original response contract.
+
+When a new grant replaces one with questions, the original grant is retained in
+the same session's `project_continuation_history`. Its unresolved and closed
+questions remain visible. Current Manager decisions may update their conclusions
+using current Context; the original record retains which current grant made that
+decision. Its old status, answers, tasks, permissions and budgets stay unchanged.
+Historical questions cannot accept new answers under an ended grant. Replaying
+an older authorization command returns that retained original grant without replacing or restarting the current
+one. The board reads the latest project session even while viewing historical run
+details; it introduces no separate question store or scheduler.
 
 ## Replay, Stop and deliberate remaining limits
 
@@ -283,3 +338,14 @@ question history, exhausted budget and Stop. It preserves the distinction
 between unrelated Context progress and changed authorization. Full imports do
 not change the fixture boundary: no PostgreSQL restart, browser or real-model
 quality claim follows from these tests.
+
+`test_project_question_board.py` exercises the board through real file-backed
+session/task stores and authorization/answer handlers with explicit Manager
+decision fixtures: answers remain open after consumption, explicit conclusions
+retain evidence, replay is stable, and grant replacement preserves history that
+current Manager decisions can explicitly conclude without reviving old authority.
+The existing result-to-decision fixture also closes questions while
+queuing work. Frontend tests exercise the current board inside the conversation,
+answer failure/retry and answering from a historical-run view. These establish
+the bounded application contract, not live-model judgment or full project Loop
+acceptance.

@@ -1185,6 +1185,8 @@ export default function WorkPage() {
     onStart: sendTaskAssistantMessage,
     onQueueTask: conversation.queue,
     onAssistantAction: handleAssistantAction,
+    onAnswerQuestion: conversation.answer,
+    questionBoard: latestData?.task_assistant_session?.question_board,
     contextTitle: runId ? contextTitle : '',
     onClearContext: () => selectTask(''),
     taskManagementOpen,

@@ -42,6 +42,10 @@ def _save(store, value):
         # holds the continuation guard. A late result must not reactivate it.
         if current.get("id") == value.get("id") and current.get("status") == "stopped":
             retained.update(status="stopped", reason="owner_stopped")
+        if current.get("id") != value.get("id") and current.get("human_questions"):
+            # Retain the original grant as history in the same session. Its
+            # questions stay visible without carrying its authority forward.
+            session.setdefault("project_continuation_history", {})[current["id"]] = current
         return {**session, _FIELD: retained}
     store._mutate(write)
     return retained
@@ -97,16 +101,18 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     from goodteam_os.workflow_recovery import confirm_parent
 
     with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
-        current = store.read().get(_FIELD) or {}
-        if current.get("id") == identity:
-            if (current.get("seed_task_ids", current.get("task_ids")) != ids or current.get("max_batches") != maximum
-                    or current.get("discovery") != discovery
-                    or current.get("approved_backlog_version") != request.get("expected_backlog_version")
-                    or ({key: current["workflow_recovery"].get(key) for key in ("run_id", "version")}
-                        if current.get("workflow_recovery") else None) != recovery):
+        session = store.read()
+        current = session.get(_FIELD) or {}
+        original = current if current.get("id") == identity else (session.get("project_continuation_history") or {}).get(identity)
+        if original:
+            if (original.get("seed_task_ids", original.get("task_ids")) != ids or original.get("max_batches") != maximum
+                    or original.get("discovery") != discovery
+                    or original.get("approved_backlog_version") != request.get("expected_backlog_version")
+                    or ({key: original["workflow_recovery"].get(key) for key in ("run_id", "version")}
+                        if original.get("workflow_recovery") else None) != recovery):
                 raise ValueError("Continuation command was already used with different scope or limits.")
-            return current
-        pending = pending_project_batch(store.read(), root, project_key)
+            return original
+        pending = pending_project_batch(session, root, project_key)
         if current.get("status") == "active" or pending:
             raise ValueError("Stop the existing continuation and settle its current batch first.")
         if recovery is not None:

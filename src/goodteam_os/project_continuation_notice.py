@@ -42,7 +42,7 @@ def project_continuation_notice(session):
     phase, reason = status, value.get("reason", "")
     questions = [{"id": row["id"], **row["planning"]["selection"]["human_question"]}
                  for row in (value.get("human_questions") or {}).values()
-                 if status == "active" and row.get("answer") is None]
+                 if status == "active" and row.get("answer") is None and not row.get("resolution")]
     if status in {"active", "stopped"} and own_batch and batch.get("status") == "review":
         phase, reason = "review_required", "independent_review_and_delivery_required"
         if quality.get("required"):
