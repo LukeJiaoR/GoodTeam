@@ -141,6 +141,9 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
     refs += [outcome["quality"][key] for key in ("validation_receipt_id", "review_receipt_id") if key in outcome["quality"]]
     packet = {"schema_version": "project_outcome_discovery_packet.v1", "project_key": project_key,
         "authorization_digest": value["authorization_digest"], "discovery": value["discovery"],
+        "remaining_budget": {"manager_calls": value["max_manager_calls"] - value["manager_calls"],
+                             "batches": value["max_batches"] - value["batches_started"],
+                             "new_tasks": value["discovery"]["max_new_tasks"] - value["new_tasks_created"]},
         "authorized_task_ids": list(value["task_ids"]),
         "authorized_done_task_ids": [task["id"] for task in LocalTaskStore(root, project_key).list_tasks()
                                      if task["id"] in value["task_ids"] and task["status"] == "done"
@@ -165,18 +168,26 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         feedback = pending_investigation_feedback(workspace=workspace, project_key=project_key, root=root, value=value)
         packet["investigation_feedback"] = feedback
         packet["allowed_source_refs"].append(feedback["receipt_id"])
-    from goodteam_os.project_human_feedback import human_feedback, pending_question
+    from goodteam_os.project_investigation_feedback import _valid_receipt
+    from goodteam_os.project_human_feedback import human_feedback, question_context
 
+    # Earlier observations remain historical Context after their trigger has
+    # been consumed. They do not assert the current HEAD or task acceptance.
+    history = list((value.get("investigation_observations") or {}).values())
+    if any(not _valid_receipt(value, item) for item in history):
+        raise ValueError("A retained investigation observation changed.")
+    if history:
+        packet["investigation_history"] = history
+        packet["allowed_source_refs"].extend(item["receipt_id"] for item in history
+                                            if item["receipt_id"] not in packet["allowed_source_refs"])
     packet["human_feedback_supported"] = True
+    packet["human_questions"] = question_context(value)
     answers = human_feedback(value)
     if answers:
         packet["human_feedback"] = answers
         packet["allowed_source_refs"].extend(item["receipt_id"] for item in answers)
-    human = pending_question(value)
-    if human is not None:
-        if human["answer"] is None:
-            raise ValueError("The current Human question still awaits an answer.")
-        packet["human_answer"] = human["answer"]
+    packet["human_answers"] = [item for item in answers
+                               if item["receipt_id"] not in value.get("discovery_consumed", [])]
     packet["packet_digest"] = _digest(packet)
     return packet
 
@@ -184,23 +195,28 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
 def validate_discovered_task(packet, response):
     """Validate advice against the frozen grant; no storage or execution effects."""
     fields = {"new_task", "rationale"}
-    optional = {"human_question"} if packet.get("human_feedback_supported") is True else set()
+    optional = {"human_question", "wait_for_human"} if packet.get("human_feedback_supported") is True else set()
     if not isinstance(response, dict) or not fields.issubset(response) or set(response) - fields - optional:
         raise ValueError("Discovery must return one bounded follow-up or an evidence-based stopping reason.")
     reason = response["rationale"]
     if not isinstance(reason, str) or not 20 <= len(reason.strip()) <= 1600:
         raise ValueError("Discovery requires a concrete outcome-based rationale.")
     task = response["new_task"]
+    actions = {}
     if "human_question" in response:
         question = response["human_question"]
-        if (task is not None or not isinstance(question, dict) or set(question) != {"question", "why_human"}
+        if (not isinstance(question, dict) or set(question) != {"question", "why_human"}
                 or any(not isinstance(question[key], str) or not 10 <= len(question[key].strip()) <= 1200
                        for key in ("question", "why_human"))):
-            raise ValueError("A Human question needs a specific question and why only Human input can resolve it; no simultaneous task.")
-        return {"new_task": None, "rationale": reason.strip(),
-                "human_question": {key: item.strip() for key, item in question.items()}}
+            raise ValueError("A Human question needs a specific question and why only Human input can resolve it.")
+        actions["human_question"] = {key: item.strip() for key, item in question.items()}
+    if "wait_for_human" in response:
+        if (type(response["wait_for_human"]) is not bool
+                or response["wait_for_human"] and not (actions or packet.get("human_questions"))):
+            raise ValueError("Waiting for Human input requires a retained or newly proposed question.")
+        actions["wait_for_human"] = response["wait_for_human"]
     if task is None:
-        return {"new_task": None, "rationale": reason.strip()}
+        return {"new_task": None, "rationale": reason.strip(), **actions}
     fields = {"title", "description", "acceptance_criteria", "write_domains", "dependencies", "source_refs"}
     investigation_allowed = packet["discovery"].get("allow_investigation") is True
     optional = {"task_type"} if investigation_allowed else set()
@@ -237,12 +253,9 @@ def validate_discovered_task(packet, response):
     feedback = packet.get("investigation_feedback")
     if feedback and feedback["receipt_id"] not in sources:
         raise ValueError("A report-driven follow-up must reference the captured investigation observation.")
-    answer = packet.get("human_answer")
-    if answer and answer["receipt_id"] not in sources:
-        raise ValueError("An answer-driven follow-up must reference the captured Human answer.")
     return {"new_task": {**task, "title": task["title"].strip(), "description": task["description"].strip(),
                          "acceptance_criteria": [item.strip() for item in criteria], "write_domains": domains},
-            "rationale": reason.strip()}
+            "rationale": reason.strip(), **actions}
 
 
 def _discovered_task_intent(packet, selection, creation_ref):
@@ -262,11 +275,31 @@ def _creation_ref(value, packet):
     return "project-discovery:" + value["id"] + ":" + packet["packet_digest"].split(":", 1)[1]
 
 
+def _input_receipts(packet):
+    """Coalesce captured feedback using the existing consumed-input ledger."""
+    receipts = [packet["verified_outcome"]["delivery"]["receipt_id"]]
+    if packet.get("investigation_feedback"):
+        receipts.append(packet["investigation_feedback"]["receipt_id"])
+    receipts.extend(item["receipt_id"] for item in packet.get("human_answers", []))
+    return list(dict.fromkeys(receipts))
+
+
+def _budget_exhausted(store, value, reason):
+    def exhausted(session):
+        current = _current(session, value)
+        current.update(status="exhausted", reason=reason)
+        return session
+    return store._mutate(exhausted)["project_continuation"]
+
+
 def _revalidate(workspace, project_key, root, config, value, pending):
     from goodteam_os.project_human_feedback import validate_human_input
 
     packet = pending["packet"]
     validate_human_input(value, packet)
+    retained = value.get("investigation_observations") or {}
+    if any(retained.get(item["task_id"]) != item for item in packet.get("investigation_history", [])):
+        raise ValueError("The historical investigation Context changed during discovery.")
     if packet["packet_digest"] != _digest({key: item for key, item in packet.items() if key != "packet_digest"}):
         raise ValueError("The frozen discovery input changed.")
     if value["authority"] != authority_snapshot(workspace, project_key, Path(config), Path(root)):
@@ -297,10 +330,9 @@ def discover_next_iteration(*, workspace, project_key, root, project_config, val
             raise DiscoveryPublicationPending("The same reserved discovery input awaits publication replay.") from exc
         if (saved.get("id") == value["id"] and saved.get("status") == "active"
                 and saved.get("reason") == "awaiting_human_decision"):
-            from goodteam_os.project_human_feedback import pending_question
+            from goodteam_os.project_human_feedback import pending_questions
 
-            human = pending_question(saved)
-            if human is not None and human["answer"] is None:
+            if pending_questions(saved):
                 # The atomic question/handoff committed before its caller lost
                 # the acknowledgement. Preserve the wait, not another model turn.
                 return saved
@@ -322,33 +354,20 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
     from goodteam_os.project_iteration_planner import _require_planning_idle, run_manager_iteration_choice
 
     store = TaskAssistantSessionStore(workspace, project_key)
-    from goodteam_os.project_human_feedback import pending_question, record_human_question
+    from goodteam_os.project_human_feedback import record_human_question
 
-    human = pending_question(value)
-    if human is not None and human["answer"] is None:
-        _current(store.read(), value)
-        return value
     pending = value.get("discovery_pending")
     if pending is None:
         outcome = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value)
-        _remember(root, outcome)
-        if value["batches_started"] >= value["max_batches"] or value["manager_calls"] >= value["max_manager_calls"]:
-            def exhausted(session):
-                current = _current(session, value)
-                current.update(status="exhausted", reason="approved_iteration_budget_used")
-                return session
-            return store._mutate(exhausted)["project_continuation"]
-        if value["new_tasks_created"] >= value["discovery"]["max_new_tasks"]:
-            def full(session):
-                current = _current(session, value)
-                current.update(status="exhausted", reason="discovery_task_budget_used")
-                return session
-            return store._mutate(full)["project_continuation"]
         packet = _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config))
-        trigger_ref = (packet.get("human_answer") or packet.get("investigation_feedback") or {}).get(
-            "receipt_id", outcome["delivery"]["receipt_id"])
-        if trigger_ref in value.get("discovery_consumed", []):
-            raise ValueError("This outcome already supplied its bounded follow-up.")
+        inputs = _input_receipts(packet)
+        if all(item in value.get("discovery_consumed", []) for item in inputs):
+            _current(store.read(), value)
+            return value  # No new feedback, including when a question is still open.
+        _remember(root, outcome)
+        if value["manager_calls"] >= value["max_manager_calls"]:
+            return _budget_exhausted(store, value, "approved_iteration_budget_used")
+        trigger_ref = _digest(inputs)
         pending = {"packet": packet, "packet_digest": packet["packet_digest"],
                    "backlog_version": packet["backlog"]["version"], "trigger_ref": trigger_ref}
         def reserve(session):
@@ -375,18 +394,28 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
     receipt_id = pending["packet"]["verified_outcome"]["delivery"]["receipt_id"]
     trigger_ref = pending.get("trigger_ref", receipt_id)
     if selection.get("human_question"):
-        return record_human_question(store, value, pending)
+        value = record_human_question(store, value, pending)
+    inputs = _input_receipts(pending["packet"])
     if selection["new_task"] is None:
+        waiting = bool(selection.get("human_question") or selection.get("wait_for_human"))
         def finished(session):
             current = _current(session, value)
-            current.update(status="completed", reason="discovery_no_followup", discovery_pending=None,
-                investigation_pending=None, human_pending=None,
-                discovery_consumed=[*current.get("discovery_consumed", []), trigger_ref],
-                discovery_last={"status": "no_followup", "task_id": "", "outcome_receipt_id": receipt_id,
+            current.update(status="active" if waiting else "completed",
+                reason="awaiting_human_decision" if waiting else "discovery_no_followup", discovery_pending=None,
+                investigation_pending=None,
+                discovery_consumed=list(dict.fromkeys([*current.get("discovery_consumed", []), *inputs, trigger_ref])),
+                discovery_last={"status": "waiting_for_human" if waiting else "no_followup",
+                                "task_id": "", "outcome_receipt_id": receipt_id,
                                 "trigger_ref": trigger_ref,
                                 "rationale": selection["rationale"]})
             return session
         return store._mutate(finished)["project_continuation"]
+    # Task capacity constrains task publication, not a budgeted Manager judgment
+    # about new feedback. Replaying an already-created task spends no new slot.
+    if value["batches_started"] >= value["max_batches"]:
+        return _budget_exhausted(store, value, "approved_iteration_budget_used")
+    if not pending.get("task_id") and value["new_tasks_created"] >= value["discovery"]["max_new_tasks"]:
+        return _budget_exhausted(store, value, "discovery_task_budget_used")
     creation_ref = _creation_ref(value, pending["packet"])
     intent = _discovered_task_intent(pending["packet"], selection, creation_ref)
     def publish(session):
@@ -428,7 +457,8 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         current = _current(session, value)
         current.update(pending_batch={"task_ids": [identifier], "proposal_ids": ids,
             "expected_revisions": {item: proposals[item]["revision"] for item in ids}, "run_id": ""},
-            discovery_pending=None, investigation_pending=None, human_pending=None, batches_started=current["batches_started"] + 1,
-            discovery_consumed=[*current.get("discovery_consumed", []), trigger_ref], reason="outcome_followup_queued")
+            discovery_pending=None, investigation_pending=None, batches_started=current["batches_started"] + 1,
+            discovery_consumed=list(dict.fromkeys([*current.get("discovery_consumed", []), *inputs, trigger_ref])),
+            reason="outcome_followup_queued")
         return session
     return store._mutate(queued_batch)["project_continuation"]

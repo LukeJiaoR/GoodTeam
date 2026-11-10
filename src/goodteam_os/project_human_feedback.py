@@ -33,14 +33,22 @@ def _validated_record(value, record):
     return record
 
 
-def pending_question(value):
-    identifier = value.get("human_pending")
-    if not identifier:
-        return None
-    record = _validated_record(value, (value.get("human_questions") or {}).get(identifier))
-    if record["id"] != identifier:
-        raise ValueError("The retained Human question identity changed.")
-    return record
+def pending_questions(value):
+    """Questions are retained Context, not a project-wide execution gate."""
+    records = []
+    for identifier, record in (value.get("human_questions") or {}).items():
+        record = _validated_record(value, record)
+        if record["id"] != identifier:
+            raise ValueError("The retained Human question identity changed.")
+        if record.get("answer") is None:
+            records.append(record)
+    return records
+
+
+def question_context(value):
+    return [{"id": record["id"], **record["planning"]["selection"]["human_question"],
+             "source_packet_digest": record["planning"]["packet_digest"]}
+            for record in pending_questions(value)]
 
 
 def human_feedback(value):
@@ -71,27 +79,34 @@ def validate_human_input(value, packet):
     for answer in packet.get("human_feedback", []):
         if retained.get(answer.get("receipt_id")) != answer:
             raise ValueError("Human feedback changed during the reserved decision.")
-    answer = packet.get("human_answer")
-    if answer and (retained.get(answer.get("receipt_id")) != answer
-                   or answer not in packet.get("human_feedback", [])):
-        raise ValueError("The answer trigger is not part of the captured Human feedback.")
+    for answer in packet.get("human_answers", []):
+        if (retained.get(answer.get("receipt_id")) != answer
+                or answer not in packet.get("human_feedback", [])):
+            raise ValueError("The answer trigger is not part of the captured Human feedback.")
+    for question in packet.get("human_questions", []):
+        record = _validated_record(value, (value.get("human_questions") or {}).get(question.get("id")))
+        if question != {"id": record["id"], **record["planning"]["selection"]["human_question"],
+                        "source_packet_digest": record["planning"]["packet_digest"]}:
+            raise ValueError("The captured Human question changed during the reserved decision.")
 
 
 def record_human_question(store, value, pending):
     from goodteam_os.project_outcome_discovery import _current
 
     identifier = _question_id(value, pending)
-    record = {"id": identifier, "planning": deepcopy(pending), "answer": None}
+    # Publication adds task_id to the outbox. It is not part of the question's
+    # immutable decision, and a replay must preserve any answer already saved.
+    planning = {key: deepcopy(item) for key, item in pending.items() if key != "task_id"}
+    record = {"id": identifier, "planning": planning, "answer": None}
 
     def save(session):
         current = _current(session, value)
         if current.get("discovery_pending") != pending:
             raise ValueError("The pending decision changed before requesting Human input.")
         questions = current.setdefault("human_questions", {})
-        if identifier in questions and questions[identifier] != record:
+        if identifier in questions and questions[identifier]["planning"] != planning:
             raise ValueError("This Human question already has a different retained result.")
-        questions[identifier] = record
-        current.update(human_pending=identifier, discovery_pending=None, reason="awaiting_human_decision")
+        questions.setdefault(identifier, record)
         return session
 
     # The existing session mutation also publishes the current handoff notice.
@@ -116,10 +131,9 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
         raise ValueError("A stable answer message ID is required.")
     message_id = message_id.strip()
     from goodteam_os.assistant_requests import conversation_lock, response
-    from goodteam_os.goal_continuation import goal_guard
+    from goodteam_os.goal_continuation import authority_snapshot, goal_guard
     from goodteam_os.project_iteration_continuation import _scope_tasks
-    from goodteam_os.project_iteration_planner import _require_planning_idle
-    from goodteam_os.project_outcome_discovery import _current, _digest, _revalidate
+    from goodteam_os.project_outcome_discovery import _current, _digest
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
     from goodteam_os.tasks import LocalTaskStore
 
@@ -137,15 +151,17 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
                for item in session.get("timeline", [])):
             raise ValueError("message_id is already present in project history")
         value = session.get("project_continuation") or {}
-        record = pending_question(value)
-        if record is None or record["id"] != identifier or record["answer"] is not None:
+        record = next((item for item in pending_questions(value) if item["id"] == identifier), None)
+        if record is None:
             raise ValueError("The Human question is unavailable, already answered or no longer current.")
         _current(session, value)
         if service.project_config is None:
             raise ValueError("The original project configuration is unavailable.")
         _scope_tasks(value, LocalTaskStore(root, project_key).list_tasks())
-        _require_planning_idle(Path(service.workspace), project_key)
-        _revalidate(service.workspace, project_key, root, service.project_config, value, record["planning"])
+        if (record["planning"]["packet"]["project_key"] != project_key
+                or value["authority"] != authority_snapshot(service.workspace, project_key,
+                                                            Path(service.project_config), Path(root))):
+            raise ValueError("The question's project or current authority changed.")
         question = record["planning"]["selection"]["human_question"]
         answer = {"question_id": identifier, "project_key": record["planning"]["packet"]["project_key"],
                   "continuation_id": value["id"], "authorization_digest": value["authorization_digest"],
@@ -156,9 +172,11 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
 
         def save(current_session):
             current = _current(current_session, value)
-            if pending_question(current) != record:
+            if (current.get("human_questions") or {}).get(identifier) != record:
                 raise ValueError("The Human question changed while recording the answer.")
-            _revalidate(service.workspace, project_key, root, service.project_config, current, record["planning"])
+            if current["authority"] != authority_snapshot(service.workspace, project_key,
+                                                          Path(service.project_config), Path(root)):
+                raise ValueError("The current project authority changed before recording the answer.")
             current["human_questions"][identifier]["answer"] = answer
             current["reason"] = "human_answer_received"
             current_session.setdefault("assistant_requests", {})[message_id] = {
@@ -177,6 +195,6 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
 
         store._mutate(save)
     # Do not issue a second chat-model call here. Existing periodic ticks consume
-    # human_pending exactly as they consume investigation_pending, even after a
-    # process restart or a lost HTTP response. A replay cannot add another turn.
+    # unconsumed answer receipts with the latest Context, even after a process
+    # restart or a lost HTTP response. A replay cannot add another turn.
     return response(service, project_key, root, intent="project_question")

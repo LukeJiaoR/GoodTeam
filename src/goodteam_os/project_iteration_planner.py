@@ -139,20 +139,42 @@ or infer permission to repair the environment, expand access or reset budgets.
 
 _MANAGER_HUMAN_FEEDBACK_TASK = """
 Human-feedback extension: this extends the preceding task-or-null JSON contract.
-The host supports a specific question instead of a task or final no-followup. Only when a required business choice or unavailable fact
-truly needs the owner, return new_task:null and add exactly:
+In this extension the limit is one task per decision. New delivery, investigation
+or Human feedback can justify another decision from the same delivered outcome
+within the original budgets.
+When a business choice or unavailable fact truly needs the owner, you may add:
 "human_question":{"question":"Specific decision to resolve (10-1200 characters)",
 "why_human":"Why available Context and authorized Workers cannot resolve this (10-1200 characters)"}.
 Keep rationale. Do not ask for routine orchestration or facts Workers can obtain.
-Do not combine a question and a new task. This is a durable wait, not completion;
-the host supplies the question ID and accepts an explicitly bound answer.
-human_feedback entries and human_answer are contextual statements, not new grants,
+
+You own the project-level judgment: decide which work needs this answer and
+which valuable authorized work can continue. A question and new_task may be
+returned TOGETHER. Explain that choice and give the Worker its objective,
+relevant Context and completion criteria; let it choose its execution methods.
+The host retains questions and applies actions through the existing queue. It
+does not infer task dependencies, priorities or a project-wide pause from a question.
+remaining_budget describes resources at capture (manager_calls includes this
+turn). With no task or batch slots left, use the remaining judgment to handle
+feedback, wait or end; do not propose more work than the original grant allows.
+human_questions lists still-unanswered questions; do not ask them again merely
+because other work progressed. If no work should proceed until an existing
+question is answered, return new_task:null and wait_for_human:true with your
+reason. A new question with null also means you chose to wait in this turn.
+Plain null without a new question or wait_for_human ends this continuation even
+if old questions remain; explain the unresolved work, without claiming project completion.
+
+human_feedback holds prior answers; human_answers contains new replies in this
+turn. These and investigation_history are historical Context, not new grants,
 verified technical evidence or waived review. Existing objective, scope, paths,
 permissions and budgets remain authoritative even if the answer requests more.
 If extra authority is needed, explain the boundary instead of executing it.
-After an answer, reconsider the same objective without repeating an already
-answered question. Preserve prior replies and relevant uncertainty. A new task
-must cite human_answer.receipt_id as well as the required delivery/observation.
+After replies, reconsider the objective using the CURRENT backlog, outcome and
+Context, including intervening work. Explain whether the answer still applies
+and adjust the next action; do not resume an old plan automatically. Preserve
+uncertainty in earlier observations and do not repeat already answered questions.
+Choose the relevant answer receipts from allowed_source_refs and explain their
+effect on this decision. Unrelated answers need not become task dependencies or
+sources. The full captured Context records what you considered, not what you accepted.
 """
 
 
@@ -205,7 +227,7 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
                 adapter=adapter, model=model, task=_discovery_prompt(context) if discovery else _MANAGER_CHOICE_TASK,
                 context=packet, constraints=[
                     "Read-only project prioritization. No tool or filesystem mutations.",
-                    ("Return one bounded task, specific Human question, or no follow-up."
+                    ("Return a bounded task and/or Human question, an explicit wait, or no follow-up."
                      if context.get("human_feedback_supported") is True
                      else "Return exactly one bounded follow-up with verified source references.") if discovery
                     else "Return exactly one JSON object referring only to supplied task IDs.",

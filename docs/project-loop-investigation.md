@@ -125,14 +125,25 @@ silently replacing its input. Stopped or already-blocked continuation grants are
 not reactivated by this upgrade; their normal recovery/authorization remains
 explicit. The new path is considered only by an already-active continuation.
 
-## L4 first slice: a bound Human question is a wait, not completion
+## L4: retained Human questions and Manager-owned continuation
 
-Newly captured discovery packets advertise `human_feedback_supported`. If a
-specific business choice or unavailable fact truly needs the owner, Manager may
-return `new_task: null`, its normal `rationale`, and:
+Newly captured discovery packets advertise `human_feedback_supported`. Manager
+decides which work needs a Human answer and which valuable authorized work can
+continue. The existing response accepts `new_task`, `rationale` and an optional
+question together:
 
 ```json
 {
+  "new_task": {
+    "title": "Verify the existing entry-point behavior",
+    "description": "Verify the current entry-point behavior and report its limitations without changing the intended audience.",
+    "acceptance_criteria": ["Return the observed entry behavior and remaining uncertainty"],
+    "task_type": "investigation",
+    "write_domains": [],
+    "dependencies": ["PROJECT-1"],
+    "source_refs": ["<actual delivery receipt>", "<actual observation receipt>"]
+  },
+  "rationale": "The audience decision needs Human input; the authorized investigation can establish current behavior meanwhile.",
   "human_question": {
     "question": "Should this entry target internal staff or external API clients?",
     "why_human": "The intended audience is a business choice not established by current evidence."
@@ -140,19 +151,35 @@ return `new_task: null`, its normal `rationale`, and:
 }
 ```
 
-This is an addition to the normal response, not a separate API request. The host
-rejects simultaneous work plus a question. Existing frozen packets without the
-capability keep their original output/prompt contract. Grant normalization and
-its scope digest do not change: asking does not authorize any extra Worker work.
-Routine facts that authorized Workers can obtain should not be escalated to Human.
+The example references must be replaced with supplied receipts, and an
+investigation still requires the original investigation permission and an
+available Researcher. This extends the normal response, not the execution path.
+The host enforces the existing grant, paths, budget, task identity, execution
+isolation and review boundaries. It does not compute question-to-task blocking
+rules, infer dependencies or choose priorities. Routine facts that authorized
+Workers can obtain should not be escalated to Human.
 
-The existing continuation session retains the exact planning packet, selection,
-execution identity and a host-generated `human-...` question ID. Its grant remains
-active with `reason: awaiting_human_decision`; the existing handoff projection
-shows `phase: human_required`, the actual question and why it needs the owner.
-The original continuation tick returns while no answer exists. Polling/reopening
-is passive, and waiting does not buy new Manager calls or create tasks. No extra
-question store, scheduler or dialogue engine is introduced.
+| Manager output | Effect through the existing continuation |
+| --- | --- |
+| `new_task` plus `human_question` | Persist the question and queue the selected work in the same decision. |
+| `new_task: null` plus a new question | Ask and choose no work in this turn; retain the grant for new feedback. |
+| `new_task: null, wait_for_human: true` | Explicitly wait for an already retained question, with a rationale. |
+| Plain `new_task: null` | End this grant with `discovery_no_followup`, even if historical questions remain; this is not whole-project completion. |
+
+The existing session's `human_questions` map retains each exact planning packet,
+selection, execution identity and host-generated `human-...` ID. There is no
+global pending-question gate. In-flight batches continue to be reconciled;
+their results, later deliveries and answers can all prompt a new judgment. A
+Manager-chosen wait has `reason: awaiting_human_decision`; unchanged feedback
+does not buy another model call. Asking is an output, not a self-triggering event.
+The existing notice displays outstanding questions alongside the current batch's
+review/quality/delivery handoff, without hiding that actual execution state.
+No separate question store, scheduler or dialogue engine is introduced.
+
+The packet includes `remaining_budget`. Manager calls, task creation and batches
+keep their own existing limits: exhausted task capacity does not suppress an
+otherwise authorized judgment about a new answer. Manager can use that turn to
+wait or end; the host still refuses a task that exceeds the remaining resources.
 
 The first supported response surface is the **existing project message endpoint
 and composer**, using the exact command displayed in that handoff:
@@ -162,37 +189,48 @@ and composer**, using the exact command displayed in that handoff:
 ```
 
 This explicit identifier avoids treating arbitrary chat, a late reply or a generic
-"continue" as consent to whichever question happens to be current. This slice has
+"continue" as consent to whichever question happens to be current. Several
+questions may remain open and each answer names its own ID. This slice has
 no new dedicated answer button and does not claim natural-language reply routing.
 Historical-task messages, attachments and runtime retries cannot answer this
 project-level question. They keep their existing unrelated meaning.
 
-The handler validates the original grant, target/task intents, source evidence,
-question and effective configuration, then atomically records the answer receipt,
-original user message and visible acknowledgement. It performs **no model call or
-Worker dispatch**. The existing active-continuation service consumes the answer
-on its next tick, including after a process restart or lost HTTP response. The
-owner does not need another Start/continue command; the original service must be
-running, as for all existing automatic continuation. GET does not advance it.
+The handler validates the current grant, target/task authorization, question
+identity and effective configuration, then atomically records the answer receipt,
+original user message and visible acknowledgement. It does not require an idle
+project or equality with the question's old HEAD, backlog or investigation files.
+Unrelated progress does not invalidate the question. The handler performs **no
+model call or Worker dispatch**. The existing active-continuation service
+consumes the answer when its current execution can safely advance, using a new
+packet with the latest Context. The owner does not need another Start/continue
+command; the original service must be running. GET does not advance it.
 
 The answer is contextual information, not a new grant, completed task or verified
-technical fact. A subsequent work proposal must cite the actual answer and still
-satisfy the original sources, paths, dependencies, role, budget and review rules.
+technical fact. Manager chooses which answers are relevant to its task sources;
+the full decision packet retains all captured replies. A subsequent proposal must
+still satisfy the original sources, paths, dependencies, role, budget and review rules.
 An answer requesting extra permissions cannot change those limits; use the normal
-separately confirmed authorization/change flow. If the original target, backlog,
-report or authority changed, the answer is rejected rather than silently retargeted.
-That stale-question recovery is still explicit in this first slice.
+separately confirmed authorization/change flow. A changed goal/grant, revoked
+authority or Stop still rejects new actions; a reply cannot revive a finished
+grant. Manager judges whether a reply still applies to the current project and
+what work is now useful, rather than restoring the plan from the question's date.
 
-Prior replies remain available to later planning within the same continuation.
-An additional question gets a new bound ID; it cannot absorb an old answer.
-Repeated submission of the same message returns its receipt without another
-planning call. Reusing an ID with different text is rejected. A question publication
-whose acknowledgement is lost remains a wait; an answer committed before a crash
-remains pending for the original service. Queue-publication replay continues to
-reuse the same reserved decision and task. Stop is never undone by reply/replay;
-exhausted budgets do not get replenished. Plain `new_task:null` still means no
-follow-up, not whole-project completion; broader stopping categories are not
-claimed implemented here.
+Packets expose unanswered `human_questions`, all retained `human_feedback`, new
+`human_answers`, and historical `investigation_history`. Historical observations
+retain their original revision and uncertainty; they are not recertified as
+current truth. The existing `discovery_consumed` receipt ledger coalesces captured
+delivery, investigation and answer feedback in one decision. Consumption records
+that the feedback entered a judgment, not that Manager accepted it or made every
+answer a task dependency. New answers that
+arrive after a decision was captured remain available to the following judgment.
+
+Repeated submission of the same message returns its receipt. Reusing an ID with
+different text is rejected. Question persistence leaves the original discovery
+outbox intact, so an interrupted combined action reuses its decision, task
+creation reference and queue identity. Replay never clears an answer already
+recorded. Frozen decisions still undergo their original input/authorization
+checks before dispatch; recording an answer is distinct from executing old advice.
+Stop is never undone by reply/replay, and budgets are not replenished.
 
 ## Replay, Stop and deliberate remaining limits
 
@@ -208,10 +246,10 @@ termination and unchanged-workspace checks.
 This L3 slice is restricted to single, grant-discovered read-only investigations.
 Failed writing tasks, mixed batches and uncaptured failures keep the original
 recovery behavior; general partial-execution handling remains unfinished L3.
-The L4 slice below supports explicit question/answer continuation, not arbitrary
+The L4 slice supports explicit question/answer continuation, not arbitrary
 natural-language approval or automatic goal/permission changes. More expressive
-stopping choices remain open. This does not independently accept the research
-task or claim that the full user goal is met. Manager tool-level isolation,
+stopping choices beyond the bounded action contract remain open. This does not
+independently accept the research task or claim that the full user goal is met. Manager tool-level isolation,
 UI opt-in and real-model two-delivery acceptance remain unverified/open.
 
 ## Validation boundary
@@ -219,29 +257,29 @@ UI opt-in and real-model two-delivery acceptance remain unverified/open.
 `test_project_discovery_investigation.py` retains the L1 pure protocol contract.
 `test_project_investigation_feedback.py` adds one representative result-to-decision
 case using explicit in-memory storage, terminal-evidence and model/dispatch
-fixtures, extended in place for terminal failures and missing/empty reports. It covers the production continuation/observation/discovery connection,
+fixtures, extended in place for terminal failures and missing/empty reports. It
+covers the production continuation/observation/discovery connection,
 queue-publication interruption/replay, no delivery promotion, changed report,
 Stop during decision, exhausted allowance, unknown termination, file mutation,
 failed partial/missing/empty output, failure-preserving follow-up or stop,
 unattributable output, invalid UTF-8 and source/dependency restrictions.
-The same failed-feedback scenario rejects progress on the preceding L2 code and
-reaches re-decision on this candidate under those fixtures.
-
 These fixtures are not real database durability, Worker/process isolation, actual
 Git checks, independent review or live model evidence. Run the normal tests in a
 complete checkout plus the existing outcome/assignment/continuation integration
 cases and required control-plane checks before claiming those properties. The
-local source-subset runner imports the complete candidate modules with explicit
-dependency substitutes. It is supplemental evidence for an environment without
-full dependencies, not the normal repository test entry point or real integration.
-Earlier AST-subset results remain historical evidence only.
+normal `pytest` entry now exercises complete production-module imports with the
+declared dependencies installed. Earlier source-subset and AST-subset runs are
+historical evidence only; the PR records the actual commands, version, results
+and environment limitations of each validation run.
 
 All product results remain under #419. CI stays paused. This code does not start
 StockFlow, enable production services, call paid models or restore old Stop/grants.
 
-The same representative fixture now covers L4 via the complete production message
-entry: durable question, passive waiting, bound answer, next-tick re-decision,
-question/answer acknowledgement loss, duplicate and stale replies, source/goal
-changes, history retention, exhausted budget and Stop. The preceding L3 discovery
-rejects the question response in the corresponding RED run. No real PostgreSQL
-restart, browser or model quality claim follows from these substituted dependencies.
+The same representative fixture covers L4 via the complete production message
+entry: question plus work, publication and answer acknowledgement loss, batch
+progress and review while questions remain open, answers during execution,
+coalesced replies with current Context, explicit waiting versus no-followup,
+question history, exhausted budget and Stop. It preserves the distinction
+between unrelated Context progress and changed authorization. Full imports do
+not change the fixture boundary: no PostgreSQL restart, browser or real-model
+quality claim follows from these tests.

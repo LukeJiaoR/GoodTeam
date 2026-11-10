@@ -1,4 +1,5 @@
 export const continuationEn = {
+  "work.manager.continuation.human_required": "Manager has questions for you. Other authorized work can continue according to its decisions.",
   "work.manager.continuation.review_required": "The batch produced a candidate and needs independent review and delivery confirmation.",
   "work.manager.continuation.quality_required": "The batch needs its configured checks and independent review before delivery.",
   "work.manager.continuation.delivery_required": "Candidate checks and independent review passed. Delivery still needs your confirmation.",
@@ -15,6 +16,10 @@ export const continuationEn = {
   "work.manager.continuation.delivered": "Recorded deliveries: {{tasks}}",
   "work.manager.continuation.receipts": "Delivery receipts: {{receipts}}",
   "work.manager.continuation.rationale": "Manager rationale: {{rationale}}",
+  "work.manager.continuation.human_question": "Question: {{question}}",
+  "work.manager.continuation.why_human": "Why your input is needed: {{reason}}",
+  "work.manager.continuation.answer_format": "Reply format: {{command}}",
+  "work.manager.continuation.next.human_required": "Next step: answer each specific question with its displayed /answer command in this project conversation.",
   "work.manager.continuation.next.review_required": "Next step: inspect the candidate, independently review it, then use the existing delivery confirmation after landing it.",
   "work.manager.continuation.next.quality_required": "Next step: open the batch checks and review card and follow its next step for this same input.",
   "work.manager.continuation.next.delivery_required": "Next step: inspect the evidence, land this exact candidate through the authorized Git workflow, then confirm delivery.",
@@ -24,6 +29,8 @@ export const continuationEn = {
   "work.manager.continuation.next.completed": "Next step: review the results; select tasks and authorize a new continuation if more work is needed.",
   "work.manager.continuation.next.stopped": "Next step: review any pending candidate or discuss the results here. Further execution needs a new bounded authorization.",
   "work.manager.continuation.open": "View iteration and actions",
+  "work.manager.continuation.reason.human_question_pending": "Specific project questions await your answer.",
+  "work.manager.continuation.reason.awaiting_human_decision": "Manager chose to wait for a specific Human decision.",
   "work.manager.continuation.reason.approved_iteration_budget_used": "Approved batch or Manager call limit reached.",
   "work.manager.continuation.reason.discovery_task_budget_used": "Approved new-task limit reached.",
   "work.manager.continuation.reason.discovery_no_followup": "No follow-up was proposed within the approved scope.",
@@ -40,6 +47,7 @@ export const continuationEn = {
 };
 
 export const continuationZhCN = {
+  "work.manager.continuation.human_required": "Manager 有问题需要你回答；其他已授权工作可按其判断继续。",
   "work.manager.continuation.review_required": "本批次已产出候选，需要独立审查与交付确认。",
   "work.manager.continuation.quality_required": "本批次需要完成已配置的检查与独立审查，才能交付。",
   "work.manager.continuation.delivery_required": "候选检查与独立审查已通过，仍需要你确认交付。",
@@ -56,6 +64,10 @@ export const continuationZhCN = {
   "work.manager.continuation.delivered": "已记录交付：{{tasks}}",
   "work.manager.continuation.receipts": "交付凭据：{{receipts}}",
   "work.manager.continuation.rationale": "Manager 判断依据：{{rationale}}",
+  "work.manager.continuation.human_question": "待决问题：{{question}}",
+  "work.manager.continuation.why_human": "为什么需要你决定：{{reason}}",
+  "work.manager.continuation.answer_format": "回答格式：{{command}}",
+  "work.manager.continuation.next.human_required": "下一步：在本项目对话中，使用各问题显示的 /answer 命令分别回答。",
   "work.manager.continuation.next.review_required": "下一步：查看候选并独立审查，落地后通过现有交付卡确认交付。",
   "work.manager.continuation.next.quality_required": "下一步：打开本批次的检查与审查卡，按卡片提示继续处理同一输入。",
   "work.manager.continuation.next.delivery_required": "下一步：查看证据，通过已授权的 Git 流程落地此候选，再确认交付。",
@@ -65,6 +77,8 @@ export const continuationZhCN = {
   "work.manager.continuation.next.completed": "下一步：查看本次结果；如需继续，请选择任务并重新授权。",
   "work.manager.continuation.next.stopped": "下一步：查看待处理候选或在此讨论结果；继续执行需要新的有界授权。",
   "work.manager.continuation.open": "查看迭代与处理操作",
+  "work.manager.continuation.reason.human_question_pending": "具体项目问题等待你的回答。",
+  "work.manager.continuation.reason.awaiting_human_decision": "Manager 判断当前需要等待具体的人工决定。",
   "work.manager.continuation.reason.approved_iteration_budget_used": "已达到授权批次或 Manager 调用上限。",
   "work.manager.continuation.reason.discovery_task_budget_used": "已达到授权的新任务上限。",
   "work.manager.continuation.reason.discovery_no_followup": "本次未提出授权范围内的后续任务。",

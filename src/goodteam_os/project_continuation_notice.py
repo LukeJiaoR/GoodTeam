@@ -4,7 +4,7 @@ import json
 
 
 _COPY = {
-    "human_required": "Manager is waiting for your answer to the specific question below; this is not project completion.",
+    "human_required": "Manager has questions for you. Other authorized work can continue according to its decisions.",
     "review_required": "The batch produced a candidate and needs independent review and delivery confirmation.",
     "quality_required": "The batch needs its configured checks and independent review before delivery.",
     "delivery_required": "Candidate checks and independent review passed. Delivery still needs your confirmation.",
@@ -40,10 +40,10 @@ def project_continuation_notice(session):
     own_batch = batch.get("expected_continuation_id") == identifier
     quality = batch.get("quality") or {}
     phase, reason = status, value.get("reason", "")
-    human = (value.get("human_questions") or {}).get(value.get("human_pending")) or {}
-    if status == "active" and human and human.get("answer") is None:
-        phase, reason = "human_required", "awaiting_human_decision"
-    elif status in {"active", "stopped"} and own_batch and batch.get("status") == "review":
+    questions = [{"id": row["id"], **row["planning"]["selection"]["human_question"]}
+                 for row in (value.get("human_questions") or {}).values()
+                 if status == "active" and row.get("answer") is None]
+    if status in {"active", "stopped"} and own_batch and batch.get("status") == "review":
         phase, reason = "review_required", "independent_review_and_delivery_required"
         if quality.get("required"):
             accepted = (quality.get("status") == "reviewed" and quality.get("check_status") == "passed"
@@ -53,6 +53,8 @@ def project_continuation_notice(session):
             reason = quality.get("reason") or phase
     elif status == "stopped" and own_batch and batch.get("status") == "blocked":
         phase, reason = "blocked", batch.get("error") or "batch_blocked"
+    elif status == "active" and questions:
+        phase, reason = "human_required", "human_question_pending"
     elif status == "active":
         return None
     if reason == "discovery_no_followup":
@@ -63,9 +65,10 @@ def project_continuation_notice(session):
         if row.get("expected_continuation_id") == identifier and row.get("status") == "delivered" and receipt.get("receipt_id"):
             receipts.append(receipt["receipt_id"])
             delivered.extend(row.get("task_ids", []))
-    identity_parts = [identifier, phase, run_id, reason, quality.get("input_digest", "")]
-    if phase == "human_required":
-        identity_parts.append(human["id"])
+    # A task starting is not a new question. Review/quality transitions still
+    # have their own handoff while the unanswered questions remain visible.
+    identity_parts = [identifier, phase, "" if phase == "human_required" else run_id,
+                      reason, quality.get("input_digest", ""), [row["id"] for row in questions]]
     identity = json.dumps(identity_parts)
     return {
         "id": f"continuation:{identifier}:" + sha256(identity.encode()).hexdigest()[:24],
@@ -75,11 +78,13 @@ def project_continuation_notice(session):
         "delivered_task_ids": list(dict.fromkeys(delivered)), "delivery_receipt_ids": receipts,
         "batches_started": value.get("batches_started", 0), "max_batches": value.get("max_batches", 0),
         "manager_calls": value.get("manager_calls", 0), "max_manager_calls": value.get("max_manager_calls", 0),
-        "rationale": (value.get("discovery_last") or {}).get("rationale", "") if phase == "no_followup" else "",
-        "next_action": ("/answer " + human["id"] + " <your answer>" if phase == "human_required"
+        "rationale": ((value.get("discovery_pending") or {}).get("selection")
+                      or value.get("discovery_last") or {}).get("rationale", "")
+                     if phase in {"no_followup", "human_required"} else "",
+        "next_action": ("/answer " + questions[0]["id"] + " <your answer>" if phase == "human_required"
                         else quality.get("next_action") if phase == "quality_required" else ""),
-        **({"human_question_id": human["id"],
-            "human_question": human["planning"]["selection"]["human_question"]} if phase == "human_required" else {}),
+        **({"human_questions": questions, "human_question_id": questions[0]["id"],
+            "human_question": {key: questions[0][key] for key in ("question", "why_human")}} if questions else {}),
     }
 
 
@@ -88,8 +93,8 @@ def notice_content(notice):
     lines = [_COPY[phase], "Reason: " + notice["reason"],
              f"Batch reservations: {notice['batches_started']}/{notice['max_batches']}; "
              f"Manager reservations: {notice['manager_calls']}/{notice['max_manager_calls']}."]
-    if notice.get("human_question"):
-        lines.extend([notice["human_question"]["question"], notice["human_question"]["why_human"]])
+    for question in notice.get("human_questions", []):
+        lines.extend([question["question"], question["why_human"], "/answer " + question["id"] + " <your answer>"])
     if notice["delivered_task_ids"]:
         lines.append("Recorded deliveries: " + ", ".join(notice["delivered_task_ids"]))
         lines.append("Delivery receipts: " + ", ".join(notice["delivery_receipt_ids"]))
