@@ -87,6 +87,46 @@ def _quality_quiescent(root, batch):
     return True
 
 
+def _continuation_pending_for_recovery(current, batch, report_digest):
+    """Recover only the original released pointer, never a fresh authorization."""
+    from goodteam_os.project_batch_feedback import valid_receipt
+    from goodteam_os.project_iteration_execution import _identity
+    from goodteam_os.project_outcome_discovery import authorization_digest
+
+    if (current.get("status") != "blocked" or batch.get("expected_continuation_id") != current.get("id")):
+        return None
+    pending = current.get("pending_batch")
+    if pending:
+        return pending if pending.get("run_id") == batch["run_id"] else None
+    # A frozen or unpublished decision still owns its reservation. Do not erase
+    # it merely because recovery was requested on a historical batch.
+    if (current.get("discovery_pending") or current.get("planning_backlog_version")
+            or current.get("batch_feedback_pending") or current.get("investigation_pending")):
+        return None
+    key = batch["run_id"] + ":" + effective_dispatch_id(batch)
+    receipt = (current.get("batch_observations") or {}).get(key)
+    if (not valid_receipt(current, receipt) or receipt.get("observation_key") != key
+            or receipt.get("batch_run_id") != batch["run_id"]
+            or receipt.get("dispatch_run_id") != effective_dispatch_id(batch)
+            or receipt.get("dispatch_report_digest") != report_digest
+            or current.get("authority") != batch.get("expected_authority")):
+        return None
+    try:
+        if current["authorization_digest"] != authorization_digest(current):
+            return None
+        ids = batch["task_ids"]
+        observed = receipt["tasks"]
+        if (len(observed) != len(ids) or {item["task_id"] for item in observed} != set(ids)
+                or not set(ids).issubset(current["task_ids"])
+                or any(item["task_intent_digest"] != current["task_intents"].get(item["task_id"]) for item in observed)
+                or _identity(batch["proposal_ids"], batch["expected_revisions"])[0] != batch["run_id"]):
+            return None
+        return {"run_id": batch["run_id"], "task_ids": list(ids), "proposal_ids": list(batch["proposal_ids"]),
+                "expected_revisions": dict(batch["expected_revisions"])}
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def project_batch_recovery_evidence(*, workspace, project_key, root, run_id):
     """Read-only eligibility and exact version, including live/unpublished runs."""
     store, batch = _batch(workspace, project_key, root, run_id)
@@ -142,8 +182,7 @@ def project_batch_recovery_evidence(*, workspace, project_key, root, run_id):
         value["reason"] = ("Only the listed failed tasks will run again; successful results are retained."
                            if value["retryable_task_ids"] else "Retained results can be inspected or the undelivered batch explicitly abandoned.")
     current = store.read().get("project_continuation") or {}
-    if (current.get("status") == "blocked" and (current.get("pending_batch") or {}).get("run_id") == run_id
-            and batch.get("expected_continuation_id") == current.get("id")):
+    if _continuation_pending_for_recovery(current, batch, "sha256:" + sha256(raw).hexdigest() if raw else None):
         value.update(can_resume_continuation=bool(value["retryable_task_ids"]), continuation_id=current["id"])
     value["version"] = _digest({"run_id": run_id, "dispatch_id": dispatch_id, "report": sha256(raw).hexdigest() if raw else None,
                               "proofs": proofs, "state": value})
@@ -359,11 +398,12 @@ def recover_project_batch(*, workspace, project_key, root, request):
                 def persist(session):
                     current = session.get("project_continuation") or {}
                     if request.get("resume_continuation") is True:
-                        if (not retry or not evidence["can_resume_continuation"]
-                                or current.get("id") != request.get("continuation_id") or current.get("status") != "blocked"
-                                or (current.get("pending_batch") or {}).get("run_id") != batch["run_id"]):
+                        pending = _continuation_pending_for_recovery(current, batch,
+                            "sha256:" + command["source"]["report_digest"] if retry else None)
+                        if (not retry or not evidence["can_resume_continuation"] or pending is None
+                                or current.get("id") != request.get("continuation_id")):
                             raise ValueError("Only the same blocked continuation can resume; stopped authorization is not revived.")
-                        current.update(status="active", reason="explicit_failed_task_recovery")
+                        current.update(status="active", pending_batch=pending, reason="explicit_failed_task_recovery")
                     saved = session["project_task_batches"][batch["run_id"]]
                     saved.setdefault("recovery_commands", {})[command_id] = command
                     if retry:
