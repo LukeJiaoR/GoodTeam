@@ -291,6 +291,7 @@ class PiSessionRuntime:
         self._metadata_lock = threading.RLock()
         self._abort_in_flight = False
         self._closing_abort = False
+        self.web_search = None
 
     def start_or_resume(self) -> dict[str, Any]:
         self.config.session_dir.mkdir(parents=True, exist_ok=True)
@@ -318,7 +319,18 @@ class PiSessionRuntime:
             command.extend(["--provider", self.config.provider])
         if self.config.model:
             command.extend(["--model", self.config.model])
-        self.rpc = PiRpcProcess(command, cwd=self.runtime_cwd, stderr_path=self.stderr_path, on_record=self._on_record)
+        environment = None
+        if self.job.get("web_search") is not None:
+            from goodteam_os.web_search import JobWebSearch
+            if self.job["id"].startswith(("job-skill-", "job-input-", "job-correction-")):
+                raise ValueError("Protected runtime search requires its own explicit capability contract")
+            self.web_search = JobWebSearch(self.job_root, self.job,
+                active=lambda: self.metadata.get("status") == "running" and not self.aborted
+                    and not self._abort_in_flight and not self._closing_abort)
+            environment = {**provider_environment(), **self.web_search.start()}
+            command.extend(["--extension", str(Path(__file__).with_name("pi_web_search.mjs"))])
+        self.rpc = PiRpcProcess(command, cwd=self.runtime_cwd, stderr_path=self.stderr_path,
+                                on_record=self._on_record, **({"env": environment} if environment else {}))
         self.rpc.start()
         startup_timeout = max(self.config.request_timeout, PI_STARTUP_TIMEOUT_FLOOR_SECONDS)
         now = _now()
@@ -404,6 +416,8 @@ class PiSessionRuntime:
         if self.aborted:
             return {"type": "response", "command": "abort", "success": True, "idempotent": True}
         self._abort_in_flight = True
+        if self.web_search:
+            self.web_search.stop()
         try:
             response = self._rpc().request({"type": "abort"}, timeout=min(self.config.request_timeout, 5.0))
         except PiRpcError:
@@ -470,7 +484,10 @@ class PiSessionRuntime:
         response = self._rpc().request({"type": "get_last_assistant_text"}, timeout=self.config.request_timeout)
         data = response.get("data") if isinstance(response.get("data"), dict) else {}
         text = data.get("text")
-        return text if isinstance(text, str) and text.strip() else None
+        text = text if isinstance(text, str) and text.strip() else ""
+        if self.web_search:
+            text += self.web_search.evidence_text()
+        return text or None
 
     def get_session_stats(self) -> dict[str, Any]:
         response = self._rpc().request({"type": "get_session_stats"}, timeout=self.config.request_timeout)
@@ -511,6 +528,8 @@ class PiSessionRuntime:
         raise TimeoutError(f"Pi agent did not settle within {timeout:g}s")
 
     def close(self) -> None:
+        if self.web_search:
+            self.web_search.close()
         if self.rpc is not None:
             abort = self.metadata.get("status") == "running"
             self._closing_abort = abort
