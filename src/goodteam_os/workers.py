@@ -17,6 +17,7 @@ from shutil import copy2, which
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
+from goodteam_os.web_search import search_policy
 from goodteam_os.database import provider_environment
 from goodteam_os.skills.worker_creation_lock import serialized_worker_creation
 from goodteam_os.memory import RoleMemoryStore, default_embedder, runtime_role_memory_store
@@ -1106,7 +1107,12 @@ class WorkerJobStore:
         task_input: "TaskExecutionSnapshot | None" = None,
         workflow_workspace: dict[str, Any] | None = None,
         provider_connection: object = _CAPTURE_PROVIDER_CONNECTION,
+        web_search: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        web_search = search_policy(web_search)
+        if web_search is not None and (adapter not in SESSION_BACKENDS
+                or task_skill_context is not _NO_TASK_SKILL_CONTEXT or task_input is not None):
+            raise ValueError("Web Search is opt-in for ordinary Pi jobs only")
         associations = {"project_task_id": project_task_id, "track_id": track_id}
         if any(not isinstance(value, str) or value != value.strip() or len(value) > 256
                for value in associations.values()):
@@ -1124,6 +1130,7 @@ class WorkerJobStore:
             skill_request = locals().copy()
             skill_request.pop("workflow_workspace")
             skill_request.pop("provider_connection")
+            skill_request.pop("web_search")
             for key in ("project_task_id", "track_id", "associations"):
                 skill_request.pop(key)
             from goodteam_os.skills.worker_requests import create_skill_worker_job
@@ -1185,6 +1192,8 @@ class WorkerJobStore:
             "desired_instances": desired_instances,
             "execution_policy": execution_policy,
         }
+        if web_search is not None:
+            job["web_search"] = web_search
         if task_input is None:
             job.update({key: value for key, value in associations.items() if value})
             job["task_summary"] = str(task).strip().split("\n", 1)[0][:240]
@@ -1310,6 +1319,8 @@ class WorkerJobStore:
             bound = inspect.signature(type(self).create_job).bind(self, **job_spec)
             bound.apply_defaults()
             values = dict(bound.arguments)
+            if values.pop("web_search") is not None:
+                raise ValueError("Protected Skill workers cannot acquire search authority")
             if values.pop("project_task_id") or values.pop("track_id"):
                 raise ValueError("Protected Workers retain their original task association protocol.")
             if values.pop("provider_connection") is not _CAPTURE_PROVIDER_CONNECTION:
@@ -1332,6 +1343,8 @@ class WorkerJobStore:
             reject_legacy_key_collision(self, idempotency_key)
             existing = self.find_job_by_idempotency_key(idempotency_key)
             if existing is not None:
+                if existing.get("web_search") != job_spec.get("web_search"):
+                    raise ValueError("The original Worker search authorization changed")
                 if is_skill_job_id(existing.get("id")) or has_skill_fields(existing):
                     raise ValueError("A Skill-backed job cannot be replayed as legacy input.")
                 if any(key in existing and existing[key] != job_spec.get(key, "")
