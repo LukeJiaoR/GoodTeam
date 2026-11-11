@@ -20,7 +20,8 @@ from goodteam_os import project_iteration_recovery as recovery
 from goodteam_os import task_assistant_session, tasks, team_control_plane, workflow_recovery
 
 
-def test_investigation_report_reenters_original_loop_once_without_delivery_promotion(tmp_path, monkeypatch):
+@pytest.mark.parametrize("observation_role, permission, task_type", [("research", "allow_investigation", "investigation"), ("planner", "allow_planning", "planning")])
+def test_investigation_report_reenters_original_loop_once_without_delivery_promotion(tmp_path, monkeypatch, observation_role, permission, task_type):
     root = tmp_path / "source"
     root.mkdir()
     config = tmp_path / "project.yaml"
@@ -32,7 +33,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
                 write_domains=["src"], execution_policy="workspace_write", external_refs=[],
                 status="done", delivery_verified=True, run_id="seed-run")
     research = dict(id="DEMO-2", title="Check a missing fact", description="Investigate the exact current entry point.",
-                    role="research", dependencies=[seed["id"]], acceptance_criteria=["Identify the entry point"],
+                    role=observation_role, dependencies=[seed["id"]], acceptance_criteria=["Identify the entry point"],
                     write_domains=[], execution_policy="read_only", external_refs=["discovery-fixture"],
                     status="review", delivery_verified=False, run_id=run_id, execution_origin="task_assistant_batch",
                     dispatch_job_id="research-job", dispatch_run_id=dispatch_id)
@@ -45,7 +46,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
                  new_tasks_created=1, discovered_task_ids=[research["id"]],
                  discovery=dict(objective="Resolve the entry-point uncertainty and improve the delivered project.",
                                 allowed_write_domains=["src"], max_new_tasks=3, max_planning_calls=5,
-                                allow_investigation=True), discovery_pending=None,
+                                **{permission: True}), discovery_pending=None,
                  discovery_consumed=["delivery-seed"], planning_backlog_version="",
                  pending_batch=dict(task_ids=[research["id"]], proposal_ids=["research-proposal"],
                                     expected_revisions={"research-proposal": 1}, run_id=run_id))
@@ -54,7 +55,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
                  project_root=str(root), expected_continuation_id=value["id"], expected_authority=authority,
                  task_ids=[research["id"]], task_bindings=[dict(task_id=research["id"],
                  task_intent=tasks.project_task_intent(research))],
-                 tracks=[dict(project_task_id=research["id"], role="research", execution_policy="read_only")])
+                 tracks=[dict(project_task_id=research["id"], role=observation_role, execution_policy="read_only")])
     state = dict(project_continuation=deepcopy(value), project_task_batches={run_id: deepcopy(batch)},
                  timeline=[], queued_task_proposals=[])
 
@@ -113,7 +114,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     monkeypatch.setattr(continuation, "_require_clean_checkout", lambda *_: None)
     monkeypatch.setattr(memory, "runtime_role_memory_store", lambda *_: SimpleNamespace(build_pickup_packet=lambda *_, **__: {}))
     monkeypatch.setattr(team_control_plane, "team_view_for_config", lambda *_: {
-        "roles": [{"role": "research", "state": "enabled", "workers": [{"dispatchable": True}]}]})
+        "roles": [{"role": observation_role, "state": "enabled", "workers": [{"dispatchable": True}]}]})
     monkeypatch.setattr(discovery, "_remember", lambda *_: None)
     outcome = {"batch_run_id": "seed-run", "delivery": {"receipt_id": "delivery-seed"}, "quality": {}}
     monkeypatch.setattr(discovery, "verified_outcome", lambda **_: deepcopy(outcome))
@@ -127,7 +128,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     artifacts = tmp_path / "dispatch"
     artifacts.mkdir()
     report = dict(run_id=dispatch_id, project_root=str(root), all_ok=True, jobs=[dict(job_id="research-job",
-                  role="research", project_task_id=research["id"], outcome="ok", attribution_status="captured")])
+                  role=observation_role, project_task_id=research["id"], outcome="ok", attribution_status="captured")])
     (artifacts / "report.json").write_text(json.dumps(report))
     result = root / ".goodteam/workers/jobs/research-job/result.md"
     result.parent.mkdir(parents=True)
@@ -177,7 +178,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
             return {"selection": {"new_task": dict(title="Resolve the unverified entry question", description=
                     "Use an alternative read-only method to resolve the entry point; prior failed or absent output is not proof.",
                     acceptance_criteria=["Return current entry evidence and any unresolved limitations"],
-                    task_type="investigation", write_domains=[], dependencies=[seed["id"]],
+                    task_type=task_type, write_domains=[], dependencies=[seed["id"]],
                     source_refs=["delivery-seed", observation["receipt_id"]]),
                     "rationale": "The incomplete investigation requires a focused alternative, not a blind retry of the old job."}}
         return {"selection": {"new_task": dict(title="Improve observed HTTP entry", description=
@@ -301,7 +302,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
         resumed = tick()
         assert resumed["status"] == "active" and len(calls) == len(starts) == 1
         assert rows[:2] == before_rows and state["project_task_batches"][run_id] == before_batch
-        assert rows[-1]["role"] == "research" and rows[-1]["execution_policy"] == "read_only"
+        assert rows[-1]["role"] == observation_role and rows[-1]["execution_policy"] == "read_only"
         assert rows[-1]["dependencies"] == [seed["id"]]
         assert feedback.is_observed_investigation(resumed, rows[1])
         assert resumed["manager_calls"] == 3 and resumed["new_tasks_created"] == 2

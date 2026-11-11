@@ -25,16 +25,21 @@ def _valid_receipt(value, receipt):
             and receipt.get("receipt_id") == _digest({key: item for key, item in receipt.items() if key != "receipt_id"}))
 
 
+def _authorized_read_only_role(value, role):
+    flag = {"research": "allow_investigation", "planner": "allow_planning"}.get(role)
+    return bool(flag and (value.get("discovery") or {}).get(flag) is True)
+
+
 def is_observed_investigation(value, task):
     """Scheduling settlement only; never satisfies a done-task dependency."""
     receipt = (value.get("investigation_observations") or {}).get(task["id"])
-    return ((value.get("discovery") or {}).get("allow_investigation") is True
+    return (_authorized_read_only_role(value, task.get("role"))
             and _valid_receipt(value, receipt)
             and task["id"] in value.get("discovered_task_ids", [])
             and receipt.get("task_id") == task["id"]
             and receipt.get("task_intent_digest") == value["task_intents"].get(task["id"])
             and receipt.get("batch_run_id") == task.get("run_id")
-            and task.get("role") == "research" and task.get("execution_policy") == "read_only"
+            and task.get("role") in {"research", "planner"} and task.get("execution_policy") == "read_only"
             and task.get("write_domains") == []
             and receipt.get("task_status", "review") in {"review", "blocked"}
             and task.get("status") == receipt.get("task_status", "review")
@@ -52,8 +57,7 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
     from goodteam_os.tasks import LocalTaskStore
 
-    if ((value.get("discovery") or {}).get("allow_investigation") is not True
-            or task_id not in value.get("discovered_task_ids", [])
+    if (task_id not in value.get("discovered_task_ids", [])
             or re.fullmatch(r"task-batch-[a-f0-9]{64}", str(run_id)) is None):
         raise ValueError("Investigation feedback requires this grant's discovered read-only task.")
     root = Path(root).resolve()
@@ -68,7 +72,7 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
             or batch.get("status") != task_status
             or batch.get("project_root") != str(root) or batch.get("expected_continuation_id") != value["id"]
             or batch.get("expected_authority") != value["authority"] or batch.get("task_ids") != [task_id]
-            or task.get("role") != "research"
+            or not _authorized_read_only_role(value, task.get("role"))
             or task.get("execution_policy") != "read_only" or task.get("write_domains") != []
             or task.get("delivery_verified") is True or task.get("run_id") != run_id
             or task.get("execution_origin") != "task_assistant_batch"
@@ -76,7 +80,7 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
             or len(bindings) != 1 or bindings[0].get("task_id") != task_id
             or bindings[0].get("task_intent") != project_task_intent(task)
             or len(tracks) != 1 or tracks[0].get("project_task_id") != task_id
-            or tracks[0].get("role") != "research" or tracks[0].get("execution_policy") != "read_only"
+            or tracks[0].get("role") != task.get("role") or tracks[0].get("execution_policy") != "read_only"
             or "worker_id" in task and tracks[0].get("worker_id") != task["worker_id"]):
         raise ValueError("Investigation feedback does not match its original confirmed task.")
     evidence = project_batch_recovery_evidence(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
@@ -100,7 +104,7 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
     job = jobs[0]
     job_id = job.get("job_id")
     if (not isinstance(job_id, str) or re.fullmatch(r"[A-Za-z0-9_-]+", job_id) is None
-            or job.get("project_task_id") != task_id or job.get("role") != "research"
+            or job.get("project_task_id") != task_id or job.get("role") != task.get("role")
             or job.get("dispatch_run_id", dispatch_id) != dispatch_id
             or job.get("outcome") != ("needs_human" if failed else "ok")
             or failed and job.get("status") != "failed"
@@ -143,6 +147,8 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
         receipt.update(task_status=task_status, worker_status="failed" if failed else "completed",
                        worker_outcome=job["outcome"], report_status=report_status,
                        execution_summary=str(job.get("summary") or "")[:2000])
+    if task.get("role") == "planner":
+        receipt["role"] = "planner"
     receipt["receipt_id"] = _digest(receipt)
     return receipt
 
@@ -160,11 +166,10 @@ def observe_pending_investigation(*, workspace, project_key, root, project_confi
 
     pending = value.get("pending_batch") or {}
     ids = pending.get("task_ids") or []
-    if (not pending.get("run_id") or len(ids) != 1
-            or (value.get("discovery") or {}).get("allow_investigation") is not True):
+    if not pending.get("run_id") or len(ids) != 1:
         return None
     task = next((row for row in LocalTaskStore(root, project_key).list_tasks() if row["id"] == ids[0]), {})
-    if (task.get("role") != "research" or task.get("execution_policy") != "read_only"
+    if (not _authorized_read_only_role(value, task.get("role")) or task.get("execution_policy") != "read_only"
             or ids[0] not in value.get("discovered_task_ids", [])):
         return None
     receipt = _read_observation(workspace=workspace, project_key=project_key, root=root,

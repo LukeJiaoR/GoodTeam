@@ -26,12 +26,14 @@ def normalize_discovery(value):
         return None
     required = {"objective", "allowed_write_domains", "max_new_tasks", "max_planning_calls"}
     if (not isinstance(value, dict) or not required.issubset(value)
-            or set(value) - required - {"allow_investigation"}):
+            or set(value) - required - {"allow_investigation", "allow_planning"}):
         raise ValueError("Confirm an explicit discovery objective, paths and finite task/planning budgets.")
     if "allow_investigation" in value and type(value["allow_investigation"]) is not bool:
         raise ValueError("Investigation permission must be an explicit boolean.")
+    if "allow_planning" in value and type(value["allow_planning"]) is not bool:
+        raise ValueError("Planning permission must be an explicit boolean.")
     # Keep omitted flags omitted: existing grants retain their exact digest and
-    # cannot acquire research authority on upgrade or authorization replay.
+    # cannot acquire research or Planner authority on upgrade or authorization replay.
     objective = value["objective"]
     domains = normalize_write_domains(value["allowed_write_domains"])
     if (not isinstance(objective, str) or not 20 <= len(objective.strip()) <= 2000
@@ -168,6 +170,8 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         "memory_pickup": runtime_role_memory_store(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
     team = team_view_for_config(Path(workspace), project_key, project_config) or {}
     allowed_roles = {"implementation", "research"} if value["discovery"].get("allow_investigation") is True else {"implementation"}
+    if value["discovery"].get("allow_planning") is True:
+        allowed_roles.add("planner")
     packet["role_capabilities"] = [
         {"role": role["role"], "state": role.get("state"), "capability": role.get("capability", ""),
          "dispatchable": role.get("state") == "enabled"
@@ -181,6 +185,10 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
             "dispatchable": role.get("state") == "enabled"
                 and any(worker.get("dispatchable") is True for worker in role.get("workers", [])),
         }
+    if value["discovery"].get("allow_planning") is True:
+        role = next((item for item in packet["role_capabilities"] if item["role"] == "planner"), {})
+        packet["planning_capability"] = {"role": "planner", "execution_policy": "read_only",
+                                          "dispatchable": role.get("dispatchable") is True}
     if value.get("investigation_pending"):
         from goodteam_os.project_investigation_feedback import pending_investigation_feedback
 
@@ -292,7 +300,8 @@ def validate_discovered_task(packet, response):
         return {"new_task": None, "rationale": reason.strip(), **actions}
     fields = {"title", "description", "acceptance_criteria", "write_domains", "dependencies", "source_refs"}
     investigation_allowed = packet["discovery"].get("allow_investigation") is True
-    optional = {"task_type"} if investigation_allowed else set()
+    planning_allowed = packet["discovery"].get("allow_planning") is True
+    optional = {"task_type"} if investigation_allowed or planning_allowed else set()
     # Only frozen packets from the former member-selection contract accept
     # that field. Newly captured Role capabilities never select an instance.
     if "worker_capabilities" in packet and "role_capabilities" not in packet:
@@ -302,23 +311,27 @@ def validate_discovered_task(packet, response):
             or not isinstance(task["description"], str) or not 20 <= len(task["description"].strip()) <= 4000):
         raise ValueError("A follow-up needs an explicit bounded task, not runtime commands or new permissions.")
     task_type = task.get("task_type", "implementation")
-    if task_type not in ("implementation", "investigation"):
-        raise ValueError("Discovery task type must be implementation or investigation.")
+    if task_type not in ("implementation", "investigation", "planning"):
+        raise ValueError("Discovery task type must be implementation, investigation or planning.")
     investigation = task_type == "investigation"
+    planning = task_type == "planning"
     if investigation and (not investigation_allowed
             or (packet.get("investigation_capability") or {}).get("dispatchable") is not True):
         raise ValueError("Investigation requires explicit authority and an available Researcher.")
-    if investigation and task["write_domains"] != []:
-        raise ValueError("An investigation must be read-only and declare no write domains.")
+    if planning and (not planning_allowed
+            or (packet.get("planning_capability") or {}).get("dispatchable") is not True):
+        raise ValueError("Planning requires explicit authority and an available Planner.")
+    if (investigation or planning) and task["write_domains"] != []:
+        raise ValueError("A research or planning task must be read-only and declare no write domains.")
     if "worker_id" in task:
         worker_id = task["worker_id"]
-        role = "research" if investigation else "implementation"
+        role = "planner" if planning else "research" if investigation else "implementation"
         if (not isinstance(worker_id, str) or not worker_id.strip() or worker_id != worker_id.strip() or len(worker_id) > 256
                 or not any(item.get("worker_id") == worker_id and item.get("role") == role and item.get("dispatchable") is True
                            for item in packet.get("worker_capabilities", []))):
             raise ValueError("The requested Worker is unavailable for this authorized task; no replacement was selected.")
     criteria = task["acceptance_criteria"]
-    domains = [] if investigation else normalize_write_domains(task["write_domains"])
+    domains = [] if investigation or planning else normalize_write_domains(task["write_domains"])
     allowed = packet["discovery"]["allowed_write_domains"]
     if (not isinstance(criteria, list) or not 1 <= len(criteria) <= 12
             or any(not isinstance(item, str) or not 5 <= len(item.strip()) <= 500 for item in criteria)
@@ -351,11 +364,12 @@ def _discovered_task_intent(packet, selection, creation_ref):
     if task is None:
         raise ValueError("No follow-up task was proposed.")
     investigation = task.get("task_type") == "investigation"
+    planning = task.get("task_type") == "planning"
     intent = {key: task[key] for key in ("title", "description", "acceptance_criteria", "write_domains", "dependencies")}
     if "worker_id" in task:
         intent["worker_id"] = task["worker_id"]
-    intent.update(role="research" if investigation else "implementation", priority="medium",
-                  execution_policy="read_only" if investigation else "workspace_write",
+    intent.update(role="planner" if planning else "research" if investigation else "implementation", priority="medium",
+                  execution_policy="read_only" if investigation or planning else "workspace_write",
                   external_refs=[creation_ref, *task["source_refs"]], artifact_refs=list(task["source_refs"]))
     return intent
 
