@@ -195,7 +195,7 @@ def _scope_tasks(value, tasks):
 
 
 def tick_project_continuation(*, workspace, project_key, root, project_config,
-                              manager_runner=None, batch_runner=None):
+                              manager_runner=None, batch_runner=None, observation_runner=None):
     """One bounded automatic step; retries retain the same queued batch identity."""
     from goodteam_os.project_iteration_execution import run_queued_iteration_batch
     from goodteam_os.project_outcome_discovery import DiscoveryPublicationPending, discover_next_iteration
@@ -229,7 +229,14 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                         or observed_value.get("authority") != value.get("authority")
                         or observed_value.get("pending_batch") != pending):
                     return observed_value
-                value = observed_value
+                from goodteam_os.project_observation_judgment import judge_running_observation
+                judged = judge_running_observation(store=store, root=root, value=observed_value,
+                    runner=observation_runner,
+                    authority_check=lambda: observed_value["authority"] == authority_snapshot(workspace, project_key, project_config, root))
+                if (judged.get("status") != "active" or judged.get("id") != observed_value.get("id")
+                        or judged.get("pending_batch") != pending):
+                    return judged
+                value = judged
                 latest_batch = store.read().get("project_task_batches", {}).get(pending["run_id"], {})
                 if ((latest_batch.get("current_dispatch_run_id") or latest_batch.get("dispatch_run_id"))
                         != (saved_batch.get("current_dispatch_run_id") or saved_batch.get("dispatch_run_id"))
