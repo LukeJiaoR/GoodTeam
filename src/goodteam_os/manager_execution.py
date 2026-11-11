@@ -454,11 +454,12 @@ def _manager_chat_task(text: str) -> str:
             "Acknowledgements, greetings, hypothetical discussion and cancellation are not work requests. Use ambiguous and respond without claiming any action happened.",
             "For ready work requests, call the existing queue action by returning task_action with exactly kind=queue_task, role (an enabled dispatchable Team role), execution_policy (read_only or workspace_write), write_domains (empty for read_only; explicit project-relative allowed paths for writes), acceptance_criteria (1-8 observable criteria supported by the user's goal), and delegation with exactly purpose (the specific work and why), context (relevant facts, source references and unresolved questions from supplied Context), and scope (bounds and exclusions). Carry the task-specific Context forward rather than telling the Worker only the raw user message. Never invent missing evidence or grant new permissions. Select the Role and work; the execution layer allocates a generic Worker and supplies this task's Role context and supported methods. Do not select a Team member or supply worker_id. An execution handle is returned only after the original job is created; use its job_id and observed state for supervision. Completed handles identify historical records, not Workers available for new assignments. Use Research for research deliverables via role research. This is a real server action that creates the original task card and queues its exact user source messages; do not merely promise assignment. Do not call it for discussion, recommendations or missing scope. It does not authorize charges, execute Workers, approve results, merge or deploy. Existing authorizations and execution gates retain authority. If a current draft needs revision, use the existing draft flow instead of queuing a duplicate.",
             "For work requests, preserve the user's original wording. Existing drafts are revised, not silently replaced. Execution and preparation require separate user confirmation unless an existing bounded authorization already covers the work.",
-            'The JSON shape must be: {"intent": "work_request|project_question|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
+            'The JSON shape must be: {"intent": "work_request|project_question|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|set_role_runtime_source|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
             'For product discovery and every work_request, also include "task_intake": {"ready": true|false, "missing_decisions": ["concrete user-facing question in the user\'s language"], "source_message_ids": ["exact user message ID"]}. A ready task has no missing_decisions; otherwise ready must be false and include at least one focused question.',
             "For a ready task, select all relevant exact user message IDs from Task intake source messages, including the current message, earlier goal and clarifications. Do not select assistant suggestions, unrelated questions or earlier tasks. When refining an existing draft, select all relevant follow-up messages including the current one; the existing draft is already preserved by revision controls. Never invent IDs or replace source text with a model summary.",
             "For a ready task, the response must summarize the agreed goal, first-version scope, constraints and observable acceptance criteria in a short readable outline. Only include supported or explicitly delegated decisions. The visible draft will retain the selected user messages verbatim; do not merely say the direction is specific enough.",
             "team_commands and team_authorization are required only for intent team_management; omit them otherwise.",
+            "set_role_runtime_source explicitly selects an active member worker_id as configuration only for a Role; it does not copy member prompts or methods. An explicit empty worker_id clears the selection. Never infer this choice from a work request.",
             "Every team command is a proposal requiring a separate user confirmation. The team_authorization field is descriptive and never grants execution authority.",
             "Use exact Worker IDs from the Team summary. When names match multiple Workers, list their roles, names and IDs and ask the user to select; never choose the first match.",
             "Never claim a Team change has already happened. Do not propose changes when the user asks for an explanation or explicitly says not to change the Team.",
@@ -568,6 +569,7 @@ def _parse_task_intake(raw: object) -> dict[str, object]:
 
 
 TEAM_COMMAND_KINDS = {
+    "set_role_runtime_source",
     "enable_role",
     "disable_role",
     "initialize_worker",
@@ -600,6 +602,8 @@ def _parse_team_commands(raw: object) -> list[dict[str, object]]:
         for key in ("provider", "model", "reasoning_depth", "additional_prompt"):
             if key in item:
                 command[key] = str(item.get(key, "") or "")[:4000]
+        if kind == "set_role_runtime_source" and "worker_id" in item:
+            command["worker_id"] = str(item["worker_id"] or "").strip()[:200]
         commands.append(command)
     return commands
 
