@@ -92,6 +92,12 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
         return handle_answer_message(service, project_key=project_key, root=root, text=text,
             message_id=message_id, context_run_id=context_run_id, attachments=attachments,
             expected_attempt=expected_attempt)
+    if isinstance(text, str) and text.strip().split(maxsplit=1)[:1] == ["/worker"]:
+        from goodteam_os.manager_worker_control import handle_worker_command
+
+        return handle_worker_command(service, project_key=project_key, root=root, text=text,
+            message_id=message_id, context_run_id=context_run_id, attachments=attachments,
+            expected_attempt=expected_attempt)
     from goodteam_os.conversation_attachments import resolve_attachments
 
     attachment_ids = [] if attachments is None else attachments
