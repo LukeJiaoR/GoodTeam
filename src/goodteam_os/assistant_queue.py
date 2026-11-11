@@ -34,7 +34,7 @@ def handle_queue_action(service, *, project_key, root, request):
                  if item.get("id") == request.get("proposal_id")), None
             )
             if queued is not None and queued.get("status") == "queued":
-                require_queued_project_task(root, project_key, queued)
+                require_queued_project_task(root, project_key, queued, workflow=False)
             archive_terminal_proposal(store, workspace=service.workspace, root=root)
         store._mutate(lambda session: _apply(session, request))
         return response(service, project_key, root)
@@ -112,7 +112,7 @@ def require_no_active_project_goal(workspace, project_key):
         raise ValueError("Finish or explicitly stop the active Goal before a separate project task.")
 
 
-def require_queued_project_task(root, project_key, proposal):
+def require_queued_project_task(root, project_key, proposal, *, workflow=True):
     """Revalidate an original Manager-selected task before the existing Workflow.
 
     Ordinary human-typed drafts have no project_task_id and remain unchanged.
@@ -137,7 +137,9 @@ def require_queued_project_task(root, project_key, proposal):
     known = {item.get("id"): item for item in tasks}
     if any(known.get(dep, {}).get("status") != "done" for dep in task.get("dependencies", [])):
         raise ValueError("The Manager-selected task has unfinished dependencies.")
-    if task.get("execution_policy") == "read_only":
+    if workflow and task.get("worker_id"):
+        raise ValueError("A named Worker task cannot enter a role-replacing Workflow.")
+    if workflow and task.get("execution_policy") == "read_only":
         raise ValueError("Read-only Manager work cannot enter a code-writing Workflow.")
     return task
 

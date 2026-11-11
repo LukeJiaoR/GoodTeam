@@ -16,6 +16,7 @@ from goodteam_os.workers import WorkerJobStore
 
 
 _TASK_INTAKE_CONTRACT = "Task intake contract: v1"
+_DELEGATION_CONTRACT = "Task delegation contract: v1"
 
 
 class ManagerExecutionError(RuntimeError):
@@ -91,6 +92,7 @@ def run_manager_chat_turn(
     except OSError as exc:
         raise ManagerExecutionError("The configured Task Assistant did not return a readable result.") from exc
     require_task_intake = True
+    require_delegation = True
     if not created:
         try:
             captured_task = (store.root / job_id / "task.md").read_text(encoding="utf-8")
@@ -98,7 +100,8 @@ def run_manager_chat_turn(
             pass  # Missing prompt evidence cannot relax the current contract.
         else:
             require_task_intake = _TASK_INTAKE_CONTRACT in captured_task
-    parsed = _parse_chat_turn(output, require_task_intake=require_task_intake)
+            require_delegation = _DELEGATION_CONTRACT in captured_task
+    parsed = _parse_chat_turn(output, require_task_intake=require_task_intake, require_delegation=require_delegation)
     return {
         "schema_version": "task_assistant_turn.v1",
         **parsed,
@@ -388,6 +391,7 @@ def _manager_chat_task(text: str) -> str:
         [
             "Respond as the project's Task Assistant and classify the user's current message.",
             _TASK_INTAKE_CONTRACT,
+            _DELEGATION_CONTRACT,
             "Use intent work_request only when the requested product, change or deliverable is concrete enough to draft a task from the current message and conversation context.",
             "A new-project introduction or request to brainstorm/shape an unspecified idea is discovery, even if it says start building. Use ambiguous and ask one concrete question about the product or intended users. Do not propose a task or invent scope until the user supplies a concrete outcome.",
             "A product category plus an audience and an aspirational quality claim is still discovery. Naming a Web app, its users, or a technology does not establish an executable first version. Do not equate a clear direction with a ready task.",
@@ -405,7 +409,7 @@ def _manager_chat_task(text: str) -> str:
             "Use intent team_management only for a persistent Team composition change (enable/disable a capability, add/pause/release a worker, change a worker's runtime or role).",
             "Use intent ambiguous when a safe clarifying question is required.",
             "Acknowledgements, greetings, hypothetical discussion and cancellation are not work requests. Use ambiguous and respond without claiming any action happened.",
-            "For ready work requests, call the existing queue action by returning task_action with exactly kind=queue_task, role (an enabled dispatchable Team role), execution_policy (read_only or workspace_write), write_domains (empty for read_only; explicit project-relative allowed paths for writes), and acceptance_criteria (1-8 observable criteria supported by the user's goal). Select the Role and work; the execution layer allocates a generic Worker and supplies this task's Role context and supported methods. Do not select a Team member or supply worker_id. An execution handle is returned only after the original job is created; use its job_id and observed state for supervision. Completed handles identify historical records, not Workers available for new assignments. Use Research for research deliverables via role research. This is a real server action that creates the original task card and queues its exact user source messages; do not merely promise assignment. Do not call it for discussion, recommendations or missing scope. It does not authorize charges, execute Workers, approve results, merge or deploy. Existing authorizations and execution gates retain authority. If a current draft needs revision, use the existing draft flow instead of queuing a duplicate.",
+            "For ready work requests, call the existing queue action by returning task_action with exactly kind=queue_task, role (an enabled dispatchable Team role), execution_policy (read_only or workspace_write), write_domains (empty for read_only; explicit project-relative allowed paths for writes), acceptance_criteria (1-8 observable criteria supported by the user's goal), and delegation with exactly purpose (the specific work and why), context (relevant facts, source references and unresolved questions from supplied Context), and scope (bounds and exclusions). Carry the task-specific Context forward rather than telling the Worker only the raw user message. Never invent missing evidence or grant new permissions. Select the Role and work; the execution layer allocates a generic Worker and supplies this task's Role context and supported methods. Do not select a Team member or supply worker_id. An execution handle is returned only after the original job is created; use its job_id and observed state for supervision. Completed handles identify historical records, not Workers available for new assignments. Use Research for research deliverables via role research. This is a real server action that creates the original task card and queues its exact user source messages; do not merely promise assignment. Do not call it for discussion, recommendations or missing scope. It does not authorize charges, execute Workers, approve results, merge or deploy. Existing authorizations and execution gates retain authority. If a current draft needs revision, use the existing draft flow instead of queuing a duplicate.",
             "For work requests, preserve the user's original wording. Existing drafts are revised, not silently replaced. Execution and preparation require separate user confirmation unless an existing bounded authorization already covers the work.",
             'The JSON shape must be: {"intent": "work_request|project_question|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
             'For product discovery and every work_request, also include "task_intake": {"ready": true|false, "missing_decisions": ["concrete user-facing question in the user\'s language"], "source_message_ids": ["exact user message ID"]}. A ready task has no missing_decisions; otherwise ready must be false and include at least one focused question.',
@@ -435,7 +439,7 @@ def _manager_chat_task(text: str) -> str:
     )
 
 
-def _parse_chat_turn(output: str, *, require_task_intake: bool = True) -> dict[str, object]:
+def _parse_chat_turn(output: str, *, require_task_intake: bool = True, require_delegation: bool = True) -> dict[str, object]:
     text = str(output or "").strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
     candidate = fenced.group(1) if fenced else text
@@ -457,7 +461,7 @@ def _parse_chat_turn(output: str, *, require_task_intake: bool = True) -> dict[s
 
         fields = {"kind", "role", "execution_policy", "write_domains", "acceptance_criteria"}
         if (intent != "work_request" or not isinstance(action, dict)
-                or set(action) != fields
+                or set(action) not in ((fields | {"delegation"},) if require_delegation else (fields, fields | {"delegation"}))
                 or action.get("kind") != "queue_task" or action.get("role") not in ROLE_KEYS
                 or action.get("execution_policy") not in {"read_only", "workspace_write"}
                 or not isinstance(action.get("write_domains"), list)
@@ -469,6 +473,13 @@ def _parse_chat_turn(output: str, *, require_task_intake: bool = True) -> dict[s
                 or any(not isinstance(item, str) or not item.strip() or len(item) > 400
                        for item in action["acceptance_criteria"])):
             raise ManagerExecutionError("The Manager returned an invalid task action.")
+        if "delegation" in action:
+            from goodteam_os.task_delegation import validate_delegation
+
+            try:
+                validate_delegation(action["delegation"])
+            except ValueError as exc:
+                raise ManagerExecutionError("The Manager returned an invalid task delegation.") from exc
         parsed["task_action"] = action
     if intent == "project_operation":
         operation = payload.get("project_operation")

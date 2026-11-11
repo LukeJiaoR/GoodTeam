@@ -78,7 +78,8 @@ TASK_INTENT_FIELDS = ("id", "title", "description", "role", "dependencies", "acc
 def project_task_intent(task: dict[str, Any]) -> dict[str, Any]:
     """Bind an explicit Worker target while keeping historical intents unchanged."""
     return {**{key: task.get(key) for key in TASK_INTENT_FIELDS},
-            **({"worker_id": task["worker_id"]} if "worker_id" in task else {})}
+            **({"worker_id": task["worker_id"]} if "worker_id" in task else {}),
+            **({"delegation": task["delegation"]} if "delegation" in task else {})}
 
 
 class LocalTaskStore:
@@ -112,7 +113,12 @@ class LocalTaskStore:
         write_domains: list[str] | None = None,
         execution_policy: str = "workspace_write",
         worker_id: str | None = None,
+        delegation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if delegation is not None:
+            from goodteam_os.task_delegation import validate_delegation
+
+            delegation = validate_delegation(delegation, with_sources=True)
         if role == "orchestrator":
             raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
         if execution_policy not in {"read_only", "workspace_write"}:
@@ -140,6 +146,7 @@ class LocalTaskStore:
             "id": task_id,
             "title": title,
             "description": description,
+            **({"delegation": delegation} if delegation is not None else {}),
             "role": role,
             **({"worker_id": worker_id} if worker_id is not None else {}),
             "status": "todo",
@@ -161,6 +168,10 @@ class LocalTaskStore:
 
     @_locked
     def update_task(self, task_id: str, **updates: Any) -> dict[str, Any]:
+        if "delegation" in updates:
+            from goodteam_os.task_delegation import validate_delegation
+
+            updates["delegation"] = validate_delegation(updates["delegation"], with_sources=True)
         if updates.get("role") == "orchestrator":
             raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
         if "worker_id" in updates and (not isinstance(updates["worker_id"], str) or not updates["worker_id"].strip()
