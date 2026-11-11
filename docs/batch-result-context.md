@@ -39,12 +39,19 @@ publication/queue/dispatch path; this does not authorize concurrent unknown work
 
 ## Remaining limits
 
-Explicit batch recovery remains available on the original batch, but after
-feedback releases its pending pointer this increment does not reconnect recovery
-back into that same continuation automatically. A later recovery attempt is not
-silently substituted into a frozen observation. Recovery-to-continuation handoff,
-no-seed feedback decisions, running-job management, and real Runtime/combined
+After feedback releases its pending pointer, explicit failed-task recovery can
+now reattach that same blocked continuation when the retained observation still
+matches the original batch, effective dispatch, report digest, authority, task
+intents and proposal revisions. This still requires explicit retry confirmation,
+charge acknowledgement and `resume_continuation`; observation never starts a
+retry itself. Another pending batch or frozen/unjudged input cannot be displaced.
+Old recovery command replay does not reactivate a subsequent Stop. History is
+retained, and later attempt observations use their own dispatch identity.
+
+No-seed feedback decisions, running-job management, and real Runtime/combined
 Loop evidence remain open work. This is not full #686 or #419 acceptance.
+`tests/test_feedback_recovery_handoff.py` checks the production recovery handoff
+with fixture stores/terminal proofs/dispatch, not a paid or native Runtime run.
 
 `tests/test_project_batch_feedback.py` supplies one deterministic contract with
 mixed results, publication interruption, no duplicate call/start, unknown/changed
