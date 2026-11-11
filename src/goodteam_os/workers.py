@@ -967,7 +967,8 @@ class _WritebackOutcome(dict):
 
 
 class WorkerJobStore:
-    def __init__(self, project_root: Path, *, codex_review_admission=None, codex_correction_admission=None):
+    def __init__(self, project_root: Path, *, codex_review_admission=None, codex_correction_admission=None, launch_authorizer=None):
+        self._launch_authorizer = launch_authorizer
         # Internal service composition only; never loaded from job/Team JSON,
         # environment variables, a Skill package, or a persisted success flag.
         if codex_review_admission is not None:
@@ -1161,7 +1162,7 @@ class WorkerJobStore:
                     "expected_artifacts": expected_artifacts or []} != task_worker_fields(task_input):
                 raise TaskInputError("task_input_operation_conflict")
         ordinary_cli = adapter in CLI_BACKENDS and task_input is None
-        max_attempts = _worker_attempt_limit({}) if ordinary_cli else None
+        max_attempts = (1 if role == "orchestrator" else _worker_attempt_limit({})) if ordinary_cli else None
         cli_timeout = _configured_cli_worker_timeout_seconds() if ordinary_cli else None
         job_id = task_input.job_id if task_input is not None else f"job-{uuid4()}"
         job_root = self.root / job_id
@@ -1519,6 +1520,8 @@ class WorkerJobStore:
             return run_skill_worker_job(self, job_id, sandbox_context=sandbox_context)
         job_root = self.root / job_id
         job = self._read_json(job_root / "job.json")
+        if job.get("phase") == "project_running_observation" and self._launch_authorizer is None:
+            raise ValueError("Running observation requires its live continuation launch authority.")
         self._admit_input_dispatch(job_root, job)
         if self._codex_correction_admission is not None and not job_id.startswith("job-correction-"):
             raise ValueError("correction_native_task_mismatch")
@@ -2842,6 +2845,8 @@ class WorkerJobStore:
                     raise ValueError("correction_time_budget_exhausted")
             base_extra["timeout_seconds"] = timeout_seconds
             self._input_receipt(job_root, job, prompt, stage="transport_attempt")
+            if use_pty and self._launch_authorizer is not None:
+                raise ValueError("Guarded Manager launch requires the pipe transport.")
             if use_pty:
                 # The PTY path manages its own child process internally; we don't
                 # hold a Popen here. Status starts running before the (blocking) run.
@@ -2872,16 +2877,12 @@ class WorkerJobStore:
                 transport_ref = self._memory_transport(job_root, job, prompt)
                 if correction:
                     authority.check_native_current(task_input)
-                process = subprocess.Popen(
-                    process_command,
-                    cwd=runtime_context.runtime_cwd,
-                    env=worker_env,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    start_new_session=True,
-                )
+                def launch():
+                    return subprocess.Popen(
+                        process_command, cwd=runtime_context.runtime_cwd, env=worker_env,
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, start_new_session=True)
+                process = self._launch_authorizer(job, launch) if self._launch_authorizer is not None else launch()
                 running_extra = {**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds, "pid": process.pid}
                 self._write_status(
                     job_root,

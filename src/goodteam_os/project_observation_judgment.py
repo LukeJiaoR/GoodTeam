@@ -1,4 +1,4 @@
-"""Budgeted, read-only observation advice contract; no production Runtime hookup."""
+"""Budgeted, read-only advice contract shared with the bounded production consumer."""
 from copy import deepcopy
 
 from goodteam_os.project_running_observation import _binding

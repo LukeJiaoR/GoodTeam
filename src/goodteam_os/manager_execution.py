@@ -360,6 +360,25 @@ def _manager_execution_evidence(
 
 
 @contextmanager
+def manager_resource_slot(project_root: Path):
+    """One Manager Runtime per project; never wait behind a billable turn.
+
+    The separate session mutation lock remains available to Stop and UI updates.
+    """
+    lock_root = project_root / ".goodteam" / "workers" / "task-assistant-locks"
+    lock_root.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(lock_root / "manager-resource.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ManagerExecutionError("The project's Manager Runtime is busy.", code="manager_resource_busy") from exc
+        yield
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
 def _manager_turn_lock(project_root: Path, message_id: str):
     digest = hashlib.sha256(str(message_id).encode("utf-8")).hexdigest()
     lock_root = project_root / ".goodteam" / "workers" / "task-assistant-locks"
@@ -367,7 +386,8 @@ def _manager_turn_lock(project_root: Path, message_id: str):
     descriptor = os.open(lock_root / f"{digest}.lock", os.O_WRONLY | os.O_CREAT, 0o600)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
+        with manager_resource_slot(project_root):
+            yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
