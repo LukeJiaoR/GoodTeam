@@ -223,6 +223,8 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             pending = value.get("pending_batch")
             if pending and pending.get("run_id"):
                 batch_tasks = [known[identifier] for identifier in pending["task_ids"]]
+                if any(task["status"] == "canceled" for task in batch_tasks):
+                    raise ValueError("The current batch was canceled; no automatic follow-up is authorized.")
                 saved_batch = store.read().get("project_task_batches", {}).get(pending["run_id"], {})
                 from goodteam_os.project_running_observation import observe_running_batch
                 observed_value = observe_running_batch(store=store, root=root, project_key=project_key, value=value)
@@ -231,7 +233,8 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                         or observed_value.get("pending_batch") != pending):
                     return observed_value
                 from goodteam_os.project_observation_judgment import judge_running_observation
-                authority_check = lambda: observed_value["authority"] == authority_snapshot(workspace, project_key, project_config, root)
+                def authority_check():
+                    return observed_value["authority"] == authority_snapshot(workspace, project_key, project_config, root)
                 if observation_runner is None:
                     from goodteam_os.project_observation_runtime import judge_with_production_runtime
                     judged = judge_with_production_runtime(store=store, root=root, project_key=project_key,
@@ -242,7 +245,11 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 if (judged.get("status") != "active" or judged.get("id") != observed_value.get("id")
                         or judged.get("pending_batch") != pending):
                     return judged
-                value = judged
+                from goodteam_os.project_worker_follow_up import consume_worker_follow_up
+                value = consume_worker_follow_up(store=store, root=root, project_key=project_key,
+                    value=judged, authority_check=authority_check)
+                if value.get("status") != "active" or value.get("pending_batch") != pending:
+                    return value
                 latest_batch = store.read().get("project_task_batches", {}).get(pending["run_id"], {})
                 if ((latest_batch.get("current_dispatch_run_id") or latest_batch.get("dispatch_run_id"))
                         != (saved_batch.get("current_dispatch_run_id") or saved_batch.get("dispatch_run_id"))

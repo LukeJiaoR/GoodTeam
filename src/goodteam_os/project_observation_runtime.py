@@ -17,7 +17,11 @@ and answers alongside Worker progress; answers do not expand authorization. Loca
 are not Worker replies or delivery. Do not use tools, change files, dispatch,
 retry, interrupt or complete work. Return exactly JSON with assessment (wait or
 needs_attention), rationale (10-1600 characters), observed_job_ids (only supplied
-job IDs). Missing evidence should be described, never invented.'''
+job IDs). If contract.optional_follow_up is non-null, you may also return follow_up
+with exactly job_id and message: one useful progress question to a supported job,
+within its original task. This is a proposal, not permission to act with tools.
+Do not request new work or wider scope. Otherwise omit follow_up completely.
+Missing evidence should be described, never invented.'''
 
 
 def judge_with_production_runtime(*, store, root, project_config, project_key, value, authority_check):
