@@ -223,8 +223,10 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
         raise ValueError("Manager selection exceeds the supplied project candidate inventory.")
     if any(item not in candidates or not candidates[item]["eligible_to_plan"] for item in selected_ids):
         raise ValueError("Manager selected a missing, stale or blocked task.")
-    if any(item not in candidates or not candidates[item]["eligible_to_plan"] for item in compared):
-        raise ValueError("Manager compared an unavailable or blocked candidate.")
+    # Considering a blocked/running/review task is project judgment, not
+    # permission to select or restart it. Selection keeps its eligibility gate.
+    if any(item not in candidates for item in compared):
+        raise ValueError("Manager compared a candidate outside the supplied project context.")
     if len(selected_ids) > 1:
         _validate_parallel_group([candidates[task_id] for task_id in selected_ids])
     return {

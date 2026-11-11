@@ -336,3 +336,22 @@ def test_full_planning_inventory_is_not_limited_by_ui_candidate_preview(tmp_path
     assert len(result["iteration_choice"]["selected_task_ids"]) == len(created)
     assert len(captures) == 1
     assert result["workflow_started"] is False
+
+
+def test_manager_can_consider_unready_work_without_selecting_or_restarting_it():
+    rows = [{"id": identifier, "title": identifier, "role": "implementation", "status": status,
+             "dependencies": [], "external_refs": []}
+            for identifier, status in [("T-ready", "todo"), ("T-blocked", "blocked"),
+                                       ("T-running", "in_progress"), ("T-review", "review")]]
+    snapshot = rank_project_backlog(rows, "T")
+    response = {"selected_task_ids": ["T-ready"], "compared_task_ids": [row["id"] for row in rows],
+                "rationale": "Preserve the running call and unresolved review; the independent ready task can be proposed."}
+    choice = validate_iteration_choice(snapshot, response)
+    assert choice["compared_task_ids"] == response["compared_task_ids"]
+    assert choice["selected_task_ids"] == ["T-ready"] and choice["execution_authorized"] is False
+    assert [row["status"] for row in rows] == ["todo", "blocked", "in_progress", "review"]
+    for identifier in ["T-blocked", "T-running", "T-review"]:
+        with pytest.raises(ValueError, match="blocked task"):
+            validate_iteration_choice(snapshot, {**response, "selected_task_ids": [identifier]})
+    with pytest.raises(ValueError, match="outside"):
+        validate_iteration_choice(snapshot, {**response, "compared_task_ids": ["T-ready", "not-in-packet"]})
