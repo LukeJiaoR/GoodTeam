@@ -81,5 +81,9 @@ def running_observation_context(session):
         _binding(session, batch["project_root"]) == binding)
     # Informational only: must never mint or extend the existing authority.
     result["remaining_manager_calls"] = max(0, value.get("max_manager_calls", 0) - value.get("manager_calls", 0))
+    judgment = (value.get("running_judgments") or {}).get(receipt["digest"])
+    if judgment:
+        result["judgment"] = {key: deepcopy(judgment[key]) for key in (
+            "status", "advice", "advice_only", "actions_executed", "worker_reply_attributed") if key in judgment}
     result["automatic_consumer_available"] = False
     return result

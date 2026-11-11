@@ -80,3 +80,13 @@ def test_existing_tick_collects_candidate_without_new_manager_call(tmp_path, mon
     assert result["status"] == "active" and result["manager_calls"] == 1
     assert result["running_observation"]["packet"]["binding"]["dispatch_run_id"] == "attempt-a"
     assert result["pending_batch"]["run_id"] == "batch"
+    # Same public service tick can exercise the injected contract without
+    # enabling a production Runtime or invoking idle-only planning.
+    judgments = []
+    def observation_runner(**kwargs):
+        judgments.append(kwargs)
+        return {"assessment": "wait", "rationale": "No attributable Worker response is available.", "observed_job_ids": []}
+    judged = c.tick_project_continuation(workspace=tmp_path, root=tmp_path, project_key="DEMO", project_config=tmp_path/'demo.yaml',
+        manager_runner=forbidden_manager, batch_runner=lambda **k: {"run_id": "batch"}, observation_runner=observation_runner)
+    assert len(judgments) == 1 and judged["manager_calls"] == 2 and judged["status"] == "active"
+    assert next(iter(judged["running_judgments"].values()))["status"] == "recorded"
