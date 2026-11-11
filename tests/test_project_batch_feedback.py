@@ -18,6 +18,8 @@ from goodteam_os import project_iteration_planner as planner
 from goodteam_os import assistant_queue, dispatch_workspace, goal_continuation, memory, memory_storage
 from goodteam_os import project_iteration_recovery as recovery
 from goodteam_os import task_assistant_session, tasks, team_control_plane, workflow_recovery
+# Load API aliases before fixture stores are patched, independent of test order.
+from goodteam_os import web
 
 
 def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_path, monkeypatch):
@@ -162,11 +164,18 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
     unrelated_change = [False]
     related_change = [False]
 
+    undelivered_mode = [False]
+
     def manager(**kwargs):
         calls.append(deepcopy(kwargs["context"]))
         packet = kwargs["context"]
         observation = packet.get("batch_feedback") or packet["batch_history"][-1]
-        assert seed["id"] in packet["authorized_done_task_ids"]
+        if undelivered_mode[0]:
+            assert not packet["authorized_done_task_ids"]
+            assert packet["verified_outcome"] is None
+            assert packet["undelivered_source"]["delivery_verified"] is False
+        else:
+            assert seed["id"] in packet["authorized_done_task_ids"]
         assert observation["receipt_id"] in packet["allowed_source_refs"]
         assert len(observation["tasks"]) == 2
         assert all(not t["delivery_verified"] and t["task_acceptance"] == "not_assessed" for t in observation["tasks"])
@@ -182,7 +191,7 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
             return {"selection": {"new_task": None, "rationale": "No safe authorized follow-up; unresolved results still require a decision."}}
         return {"selection": {"new_task": dict(title="Resolve the missing fact", description="Read-only independent diagnostic of the partial result; do not retry original jobs.",
             task_type="investigation", acceptance_criteria=["Return evidence and remaining uncertainty"],
-            write_domains=[], dependencies=[seed["id"]], source_refs=["delivery-seed", observation["receipt_id"]]),
+            write_domains=[], dependencies=[] if undelivered_mode[0] else [seed["id"]], source_refs=[observation["receipt_id"]] if undelivered_mode[0] else ["delivery-seed", observation["receipt_id"]]),
             "rationale": "Inspect the partial result while retaining the successful companion for independent review."}}
 
     manager_action = manager
@@ -292,7 +301,123 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
     related_change[0] = False
     reset()
     def no_seed(**kwargs):
-        raise ValueError("No verified delivery seed")
+        raise discovery.NoVerifiedDelivery("No verified delivery seed")
     monkeypatch.setattr(discovery, "verified_outcome", no_seed)
     assert tick()["status"] == "blocked" and not calls and not starts
     assert rows == original_rows
+
+
+    # A newly opted-in grant may judge real terminal feedback without pretending
+    # the failed seed was delivered. The exact same publication/replay path runs.
+    reset()
+    undelivered_mode[0] = True
+    rows[0].update(status="blocked", delivery_verified=False)
+    grant = state["project_continuation"]
+    grant["discovery"]["allow_undelivered_feedback"] = True
+    grant["authorization_digest"] = discovery.authorization_digest(grant)
+    fail_publication[0] = True
+    assert tick()["reason"] == "discovery_publication_pending"
+    assert len(calls) == 1 and not starts
+    assert tick()["status"] == "active" and len(calls) == len(starts) == 1
+    packet = calls[0]
+    assert "NO accepted" in planner._discovery_prompt(packet)
+    assert packet["undelivered_source"]["receipt_id"] == packet["batch_feedback"]["receipt_id"]
+    assert rows[-1]["dependencies"] == []
+    assert not rows[0]["delivery_verified"]
+    proposed = {"new_task": dict(title="Bounded next diagnosis", description="Inspect the captured failure without retrying the original invocation.",
+        task_type="investigation", acceptance_criteria=["Report original failure evidence"],
+        write_domains=[], dependencies=[seed["id"]], source_refs=[packet["batch_feedback"]["receipt_id"]]),
+        "rationale": "Use original feedback, not invented delivery."}
+    with pytest.raises(ValueError):
+        discovery.validate_discovered_task(packet, proposed)
+    # Missing captured evidence cannot create an empty-project discovery source.
+    with pytest.raises(ValueError):
+        discovery._undelivered_source(workspace=tmp_path, project_key="DEMO", root=root,
+            value={**grant, "batch_feedback_pending": None})
+
+
+    reset()
+    undelivered_mode[0] = True
+    rows[0].update(status="blocked", delivery_verified=False)
+    grant = state["project_continuation"]
+    grant["discovery"]["allow_undelivered_feedback"] = True
+    grant["authorization_digest"] = discovery.authorization_digest(grant)
+    def invalid_delivery(**kwargs):
+        raise ValueError("Existing delivery receipt cannot be verified")
+    monkeypatch.setattr(discovery, "verified_outcome", invalid_delivery)
+    assert tick()["status"] == "blocked" and not calls and not starts
+
+
+    # The same no-seed grant still cannot cross liveness, Stop or changed-source
+    # boundaries, and a decline leaves unresolved work blocked (not complete).
+    monkeypatch.setattr(discovery, "verified_outcome", no_seed)
+    for mode in ("unknown", "stop", "changed_report", "decline", "budget"):
+        reset()
+        rows[0].update(status="blocked", delivery_verified=False)
+        grant = state["project_continuation"]
+        grant["discovery"]["allow_undelivered_feedback"] = True
+        grant["authorization_digest"] = discovery.authorization_digest(grant)
+        if mode == "unknown":
+            terminal["unknown_task_ids"] = [research["id"]]
+        elif mode == "stop":
+            stop_during_decision[0] = True
+        elif mode == "changed_report":
+            change_during_decision[0] = True
+        elif mode == "decline":
+            stop_after_feedback[0] = True
+        elif mode == "budget":
+            grant["manager_calls"] = grant["max_manager_calls"]
+        observed = tick()
+        assert not starts
+        if mode == "stop":
+            assert observed["status"] == "stopped"
+        elif mode == "budget":
+            assert observed["status"] == "exhausted" and not calls
+        else:
+            assert observed["status"] == "blocked"
+        if mode == "unknown":
+            assert not calls
+        terminal["unknown_task_ids"] = []
+        stop_during_decision[0] = change_during_decision[0] = stop_after_feedback[0] = False
+
+    # Ask/answer consumes pending batch trigger, but not its verified source
+    # anchor. The next real Manager tick can still decide against that source.
+    reset()
+    rows[0].update(status="blocked", delivery_verified=False)
+    grant = state["project_continuation"]
+    grant["discovery"]["allow_undelivered_feedback"] = True
+    grant["authorization_digest"] = discovery.authorization_digest(grant)
+    def ask_manager(**kwargs):
+        calls.append(deepcopy(kwargs["context"]))
+        return {"selection": {"new_task": None, "rationale": "The original failure needs the owner's scope decision.",
+            "human_question": {"question": "Should the diagnostic cover the internal client only?",
+                "why_human": "The client audience is not determined by the failed invocation."}}}
+    manager_action = ask_manager
+    assert tick()["reason"] == "awaiting_human_decision"
+    grant = state["project_continuation"]
+    assert not grant["batch_feedback_pending"] and grant["undelivered_feedback_anchor"]
+    record = next(iter(grant["human_questions"].values()))
+    answer = dict(question_id=record["id"], project_key="DEMO", continuation_id=grant["id"],
+        authorization_digest=grant["authorization_digest"],
+        question=record["planning"]["selection"]["human_question"],
+        source_packet_digest=record["planning"]["packet_digest"], message_id="fixture-human-answer",
+        text="Internal client only.", authority_changed=False, received_at="fixture")
+    answer["receipt_id"] = discovery._digest(answer)
+    record["answer"] = answer
+    grant["reason"] = "human_answer_received"
+    manager_action = manager
+    assert tick()["status"] == "active" and len(calls) == 2 and len(starts) == 1
+    assert calls[-1]["human_answers"] == [answer]
+    assert calls[-1]["undelivered_source"] == calls[0]["undelivered_source"]
+    assert not calls[-1].get("batch_feedback")
+
+    # The same retained anchor survives a read-only feedback-only source lookup;
+    # source evidence is still checked, not trusted merely because it is history.
+    grant = state["project_continuation"]
+    source = discovery._undelivered_source(workspace=tmp_path, project_key="DEMO", root=root,
+        value={**grant, "investigation_pending": "new-read-only-result"})
+    assert source == calls[0]["undelivered_source"]
+    result.write_text("changed original terminal evidence")
+    with pytest.raises(ValueError):
+        discovery._undelivered_source(workspace=tmp_path, project_key="DEMO", root=root,
+            value={**grant, "investigation_pending": "new-read-only-result"})

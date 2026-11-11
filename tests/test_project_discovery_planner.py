@@ -32,10 +32,12 @@ def test_explicit_planning_opt_in_preserves_old_grants_and_real_ledger_identity(
     for key,val in (("write_domains",["src"]),("task_type","investigation"),("role","planner")):
         with pytest.raises(ValueError): validate_discovered_task(packet,{**proposed,"new_task":{**proposed["new_task"],key:val}})
     for bad in (1,"true",None):
-        with pytest.raises(ValueError):normalize_discovery({**legacy,"allow_planning":bad})
+        for permission in ("allow_planning", "allow_undelivered_feedback"):
+            with pytest.raises(ValueError):normalize_discovery({**legacy,permission:bad})
 
 
-def test_existing_authorization_api_persists_explicit_planner_scope_without_starting_runtime(tmp_path):
+@pytest.mark.parametrize("permission", ["allow_planning", "allow_undelivered_feedback"])
+def test_existing_authorization_api_persists_explicit_planner_scope_without_starting_runtime(tmp_path, permission):
     from goodteam_os import web
     from goodteam_os.project_iteration import project_iteration_backlog
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
@@ -46,11 +48,11 @@ def test_existing_authorization_api_persists_explicit_planner_scope_without_star
     config.write_text(f"key: DEMO\nrepos:\n  root: {source}\nworker_backend:\n  mode: fake\n")
     ledger=LocalTaskStore(source,"DEMO")
     seed=ledger.create_task(title="Deliver the approved seed",description="Bounded original implementation",role="implementation",write_domains=["src"])
-    request=dict(action="start_project_continuation",task_ids=[seed["id"]],max_batches=3,confirmed=True,billing_acknowledged=True,idempotency_key="planner-opt-in",expected_backlog_version=project_iteration_backlog(source,"DEMO")["version"],discovery=dict(objective="Plan the follow-up against the accepted seed and latest Context.",allowed_write_domains=["src"],max_new_tasks=2,max_planning_calls=3,allow_planning=True))
+    request=dict(action="start_project_continuation",task_ids=[seed["id"]],max_batches=3,confirmed=True,billing_acknowledged=True,idempotency_key="planner-opt-in",expected_backlog_version=project_iteration_backlog(source,"DEMO")["version"],discovery=dict(objective="Plan the follow-up against the accepted seed and latest Context.",allowed_write_domains=["src"],max_new_tasks=2,max_planning_calls=3,**{permission: True}))
     code,result=web.handle_project_api_post(tmp_path,"/api/projects/DEMO/task-assistant/actions",request)
     assert code==200,result
     saved=TaskAssistantSessionStore(tmp_path,"DEMO").read()["project_continuation"]
-    assert saved["discovery"]["allow_planning"] is True and "allow_investigation" not in saved["discovery"]
+    assert saved["discovery"][permission] is True and "allow_investigation" not in saved["discovery"]
     assert saved["manager_calls"]==0 and saved["batches_started"]==0 and saved["pending_batch"] is None
     code,replayed=web.handle_project_api_post(tmp_path,"/api/projects/DEMO/task-assistant/actions",request)
     assert code==200 and replayed["project_continuation"]==saved
