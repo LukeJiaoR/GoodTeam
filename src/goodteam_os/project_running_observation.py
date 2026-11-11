@@ -84,6 +84,7 @@ def running_observation_context(session):
     judgment = (value.get("running_judgments") or {}).get(receipt["digest"])
     if judgment:
         result["judgment"] = {key: deepcopy(judgment[key]) for key in (
-            "status", "advice", "advice_only", "actions_executed", "worker_reply_attributed") if key in judgment}
-    result["automatic_consumer_available"] = False
+            "status", "advice", "advice_only", "actions_executed", "worker_reply_attributed", "manager_invocation") if key in judgment}
+    result["automatic_consumer_available"] = (value.get("discovery") or {}).get("allow_running_observation") is True
+    result["automatic_consumer_scope"] = "read_only_advice; runtime admission still required"
     return result

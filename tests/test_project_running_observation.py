@@ -90,3 +90,13 @@ def test_existing_tick_collects_candidate_without_new_manager_call(tmp_path, mon
         manager_runner=forbidden_manager, batch_runner=lambda **k: {"run_id": "batch"}, observation_runner=observation_runner)
     assert len(judgments) == 1 and judged["manager_calls"] == 2 and judged["status"] == "active"
     assert next(iter(judged["running_judgments"].values()))["status"] == "recorded"
+    # The normal service tick selects the production consumer without injection.
+    from goodteam_os import project_observation_runtime
+    production_calls = []
+    def production(**kwargs):
+        production_calls.append(kwargs)
+        return kwargs["value"]
+    monkeypatch.setattr(project_observation_runtime, "judge_with_production_runtime", production)
+    c.tick_project_continuation(workspace=tmp_path, root=tmp_path, project_key="DEMO", project_config=tmp_path/'demo.yaml',
+        manager_runner=forbidden_manager, batch_runner=lambda **k: {"run_id": "batch"})
+    assert len(production_calls) == 1

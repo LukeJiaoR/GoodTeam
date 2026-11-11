@@ -230,9 +230,14 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                         or observed_value.get("pending_batch") != pending):
                     return observed_value
                 from goodteam_os.project_observation_judgment import judge_running_observation
-                judged = judge_running_observation(store=store, root=root, value=observed_value,
-                    runner=observation_runner,
-                    authority_check=lambda: observed_value["authority"] == authority_snapshot(workspace, project_key, project_config, root))
+                authority_check = lambda: observed_value["authority"] == authority_snapshot(workspace, project_key, project_config, root)
+                if observation_runner is None:
+                    from goodteam_os.project_observation_runtime import judge_with_production_runtime
+                    judged = judge_with_production_runtime(store=store, root=root, project_key=project_key,
+                        project_config=project_config, value=observed_value, authority_check=authority_check)
+                else:
+                    judged = judge_running_observation(store=store, root=root, value=observed_value,
+                        runner=observation_runner, authority_check=authority_check)
                 if (judged.get("status") != "active" or judged.get("id") != observed_value.get("id")
                         or judged.get("pending_batch") != pending):
                     return judged
