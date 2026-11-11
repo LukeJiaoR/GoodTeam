@@ -108,3 +108,42 @@ def test_explicit_search_task_queue_binding_dispatch_receipt_and_replay(tmp_path
     assert capture_task_start(workspace=tmp_path, project_key='DEMO', worker_root=root,
         task=TaskSkillIdentity('direct_task', 'DEMO', batch['run_id']), command_key='queued-search-capture',
         subjects=('role:implementation',), confirmed_input={'tracks': [track]}) == {}
+
+
+def test_explicit_search_configuration_rebinds_only_unconfirmed_queue(tmp_path, monkeypatch):
+    from goodteam_os.assistant_queue import configure_queued_search
+    from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+    from goodteam_os.tasks import task_evidence_digest
+    from goodteam_os.providers import ProviderStore
+    root = tmp_path / 'project'
+    root.mkdir()
+    tasks = LocalTaskStore(root, 'DEMO')
+    task = tasks.create_task(title='Public docs', description='Cite sources', role='implementation')
+    store = TaskAssistantSessionStore(tmp_path, 'DEMO')
+    def seed(session):
+        session['queued_task_proposals'] = [{'id': 'draft', 'status': 'queued', 'revision': 1,
+            'project_task_id': task['id'], 'project_task_digest': task_evidence_digest(task),
+            'exact_request': 'Cite sources', 'confirmed': False}]
+        return session
+    store._mutate(seed)
+    monkeypatch.setattr(ProviderStore, 'resolve', lambda self, ref: {'protocol': 'responses'})
+    request = {'proposal_id': 'draft', 'expected_revision': 1, 'confirmed': True, 'web_search': POLICY}
+    configure_queued_search(store, root, 'DEMO', request)
+    proposal = store.read()['queued_task_proposals'][0]
+    assert proposal['revision'] == 2 and proposal['web_search'] == POLICY
+    assert require_queued_project_task(root, 'DEMO', proposal, workflow=False)['web_search'] == POLICY
+    assert not proposal['confirmed'] and 'run_id' not in proposal
+    assert store.read()['timeline'][-1]['details']['execution_started'] is False
+    with pytest.raises(ValueError, match='unconfirmed'):
+        configure_queued_search(store, root, 'DEMO', request)
+    configure_queued_search(store, root, 'DEMO', {**request, 'expected_revision': 2, 'web_search': None})
+    assert 'web_search' not in tasks.get_task(task['id'])
+    assert store.read()['queued_task_proposals'][0]['revision'] == 3
+    tasks.update_task(task['id'], execution_policy='read_only')
+    def rebind(session):
+        session['queued_task_proposals'][0]['project_task_digest'] = task_evidence_digest(tasks.get_task(task['id']))
+        return session
+    store._mutate(rebind)
+    with pytest.raises(ValueError, match='ordinary standard'):
+        configure_queued_search(store, root, 'DEMO', {**request, 'expected_revision': 3})
+    assert 'web_search' not in tasks.get_task(task['id'])

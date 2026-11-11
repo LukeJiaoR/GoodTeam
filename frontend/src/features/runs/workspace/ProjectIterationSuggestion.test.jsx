@@ -52,6 +52,10 @@ describe('project iteration recommendation', () => {
     });
     view.rerender(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} onQueue={onQueue}
       queuedTasks={tasks.map(item => ({ id: `proposal-${item.task_id}`, revision: 1, project_task_id: item.task_id, status: 'queued' }))} />);
+    expect(screen.queryByRole('button', { name: 'Confirm and run selected tasks (uses model)' })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Legacy policy not projected/)).toHaveLength(16);
+    view.rerender(<ProjectIterationSuggestion snapshot={snapshot} choice={choice} onQueue={onQueue}
+      queuedTasks={tasks.map(item => ({ id: `proposal-${item.task_id}`, revision: 1, web_search: null, project_task_id: item.task_id, status: 'queued' }))} />);
     expect(screen.getByText(/Queued tasks run in isolated workspaces/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add selected tasks to existing queue' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm and run selected tasks (uses model)' }));
@@ -74,7 +78,7 @@ describe('project iteration recommendation', () => {
 it('shows a chat assignment scope and uses the existing exact-revision batch confirmation', () => {
   const onQueue = vi.fn();
   render(<ProjectIterationSuggestion snapshot={snapshot} onQueue={onQueue} queuedTasks={[{
-    id: 'chat-task', revision: 3, project_task_id: 'DEMO-8', source: 'manager_conversation', status: 'queued',
+    id: 'chat-task', web_search: null, revision: 3, project_task_id: 'DEMO-8', source: 'manager_conversation', status: 'queued',
     exact_request: 'Research the entry point.', assignment: { role: 'research', execution_policy: 'read_only',
       write_domains: [], acceptance_criteria: ['Cite the actual entry point.'],
       delegation: { purpose: 'Trace login failures', context: 'Observed timeout', scope: 'Diagnosis only' } },
@@ -85,7 +89,7 @@ it('shows a chat assignment scope and uses the existing exact-revision batch con
   expect(screen.getByText('Cite the actual entry point.')).toBeInTheDocument();
   expect(screen.getByText(/Read only; no project file changes/)).toBeInTheDocument();
   expect(onQueue).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm scope and model charges and run this task' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm scope, saved configuration and model charges and run this task' }));
   expect(onQueue).toHaveBeenCalledExactlyOnceWith({ action: 'start_queued_task_batch', proposal_ids: ['chat-task'],
     expected_revisions: { 'chat-task': 3 }, confirmed: true });
 });
