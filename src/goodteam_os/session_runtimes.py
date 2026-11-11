@@ -226,7 +226,7 @@ class PiRpcSessionStore:
     def append_event(self, event: str, payload: dict[str, Any] | None = None) -> None:
         self._append(self.events_path, {"recorded_at": _now(), "event": event, **(payload or {})})
 
-    def append_entries(self, entries: list[dict[str, Any]]) -> str:
+    def append_entries(self, entries: list[dict[str, Any]], *, source: dict[str, str] | None = None) -> str:
         existing = self._entry_ids()
         last = ""
         for entry in entries:
@@ -236,7 +236,7 @@ class PiRpcSessionStore:
             last = entry_id
             if entry_id in existing:
                 continue
-            self._append(self.entries_path, entry)
+            self._append(self.entries_path, {**entry, "_goodteam_source": source or {}})
             existing.add(entry_id)
         return last
 
@@ -298,6 +298,7 @@ class PiSessionRuntime:
         self._abort_in_flight = False
         self._closing_abort = False
         self.web_search = None
+        self._entries_pending = threading.Event()
 
     def start_or_resume(self) -> dict[str, Any]:
         self.config.session_dir.mkdir(parents=True, exist_ok=True)
@@ -496,12 +497,56 @@ class PiSessionRuntime:
             response = self._rpc().request({"type": "get_entries"}, timeout=self.config.request_timeout)
         data = response.get("data") if isinstance(response.get("data"), dict) else {}
         entries = data.get("entries") if isinstance(data.get("entries"), list) else []
-        last_persisted = self.store.append_entries([entry for entry in entries if isinstance(entry, dict)])
-        if last_persisted:
-            self.metadata["last_entry_id"] = last_persisted
-        self.metadata["leaf_id"] = str(data.get("leafId") or "")
-        self.store.write_metadata(self.metadata)
+        with self._metadata_lock:
+            last_persisted = self.store.append_entries(
+                [entry for entry in entries if isinstance(entry, dict)], source=self._entry_source())
+            if last_persisted:
+                self.metadata["last_entry_id"] = last_persisted
+            self.metadata["leaf_id"] = str(data.get("leafId") or "")
+            self.store.write_metadata(self.metadata)
         return data
+
+    def _entry_source(self) -> dict[str, str]:
+        # Cross-job session history has no safe per-entry invocation boundary.
+        if self.job.get("worker_session_ref") or self.job.get("session_policy") == "resume":
+            return {}
+        session_id = str(self.metadata.get("session_id") or "")
+        return {"job_id": str(self.job["id"]),
+                "execution_id": str(self.job.get("execution_id") or self.job.get("run_id") or ""),
+                "run_id": str(self.job.get("run_id") or ""),
+                "session_digest": hashlib.sha256(session_id.encode()).hexdigest() if session_id else ""}
+
+    def _capture_persisted_entries(self) -> None:
+        """Bounded local evidence only; never block the control loop on an RPC.
+
+        Pi session JSONL is already persisted by the Runtime. Require its header
+        identity as well as the configured root before importing stable entries.
+        Incomplete append tails are ignored until a later real turn event.
+        """
+        with self._metadata_lock:
+            session_id = str(self.metadata.get("session_id") or "")
+            session_file = str(self.metadata.get("session_file") or "")
+        if not session_id:
+            raise ValueError("Pi session identity is unavailable")
+        path = self.store.validate_session_file(session_file)
+        with path.open("rb") as handle:
+            raw = handle.read(2_000_001)
+        if len(raw) > 2_000_000:
+            raise ValueError("Pi local entry snapshot exceeds limit")
+        lines = raw.splitlines(keepends=True)
+        complete = [line for line in lines if line.endswith(b"\n")]
+        if not complete:
+            raise ValueError("Pi session header is unavailable")
+        header = json.loads(complete[0])
+        if not isinstance(header, dict) or header.get("type") != "session" or header.get("id") != session_id:
+            raise ValueError("Pi session header identity mismatch")
+        entries = [json.loads(line) for line in complete[1:]]
+        with self._metadata_lock:
+            if self.metadata.get("session_id") != session_id or self.metadata.get("session_file") != session_file:
+                raise ValueError("Pi session changed during observation")
+            # Do not advance the RPC replay cursor: the final get_entries path
+            # retains responsibility for its own protocol bookkeeping.
+            self.store.append_entries([entry for entry in entries if isinstance(entry, dict)], source=self._entry_source())
 
     def get_last_assistant_text(self) -> str | None:
         response = self._rpc().request({"type": "get_last_assistant_text"}, timeout=self.config.request_timeout)
@@ -527,6 +572,14 @@ class PiSessionRuntime:
         while time.monotonic() < deadline:
             if tick is not None:
                 tick()
+            if self._entries_pending.is_set():
+                self._entries_pending.clear()
+                try:
+                    self._capture_persisted_entries()
+                except (OSError, ValueError):
+                    # Local evidence failure never sends an RPC or prompt,
+                    # changes execution status, or authorizes a retry.
+                    self.store.append_event("entry_observation_unavailable")
             rpc = self._rpc()
             if rpc.wait_settled(min(0.2, max(0.01, deadline - time.monotonic()))):
                 if self.agent_error and not self.aborted:
@@ -632,6 +685,9 @@ class PiSessionRuntime:
 
     def _on_record(self, record: dict[str, Any]) -> None:
         self.store.append_protocol(record)
+        if record.get("type") == "turn_end":
+            # The RPC reader must not synchronously request on its own stream.
+            self._entries_pending.set()
         if record.get("type") == "agent_start":
             with self._metadata_lock:
                 operation = self.metadata.get("active_operation")

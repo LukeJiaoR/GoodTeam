@@ -896,6 +896,9 @@ def worker_invocation_context(root, project_key, session, *, run_id="", observe_
             item.update(batch_states.get(item["run_id"], {}))
         if observe_runtime:
             from goodteam_os.manager_runtime_observation import runtime_observation
+            from goodteam_os.worker_output_context import worker_output_context
+            for item in [*context["current"], *context["recent_history"]]:
+                item["worker_output"] = worker_output_context(workers, item)
             for item in context["current"]:
                 item["runtime_observation"] = runtime_observation(workers, item)
         return context

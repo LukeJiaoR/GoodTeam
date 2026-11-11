@@ -68,6 +68,7 @@ def observe_running_batch(*, store, root, project_key, value):
         # semantic wakeup input. Keep job/result state distinct from local health.
         evidence = observation.get("evidence") or {}
         rows.append({"job_id": row["job_id"], "status": row["status"],
+            "worker_output": row.get("worker_output", {"available": False, "entries": []}),
             "follow_up_supported": row.get("adapter") in {"pi", "pi-rpc"} and row.get("status") == "running"
                 and row.get("current_dispatch_attempt") is not False and row["job_id"] not in questioned_jobs,
             "observation_available": observation.get("available") is True,
