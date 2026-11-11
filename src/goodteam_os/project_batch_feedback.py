@@ -101,6 +101,26 @@ def _read_observation(*, workspace, project_key, root, value, run_id):
     return {**receipt, "receipt_id": _digest(receipt)}
 
 
+def can_observe_initial_readonly(value, tasks):
+    """Only a newly opted-in grant may settle successful read-only seed work.
+
+    This is a routing predicate, not evidence: observe_pending_batch still
+    revalidates terminal processes, original task bindings and captured output.
+    """
+    from goodteam_os.project_investigation_feedback import _authorized_read_only_role
+
+    discovery = value.get("discovery") or {}
+    return (discovery.get("allow_initial_readonly_feedback") is True
+            and discovery.get("allow_undelivered_feedback") is True
+            and bool(tasks)
+            and all(task["id"] in value.get("seed_task_ids", [])
+                    and task.get("status") == "review"
+                    and _authorized_read_only_role(value, task.get("role"))
+                    and task.get("execution_policy") == "read_only"
+                    and task.get("write_domains") == []
+                    for task in tasks))
+
+
 def observe_pending_batch(*, workspace, project_key, root, project_config, value):
     from goodteam_os.goal_continuation import authority_snapshot
     from goodteam_os.project_outcome_discovery import _current

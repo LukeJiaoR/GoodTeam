@@ -421,3 +421,82 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
     with pytest.raises(ValueError):
         discovery._undelivered_source(workspace=tmp_path, project_key="DEMO", root=root,
             value={**grant, "investigation_pending": "new-read-only-result"})
+
+    # Initial successful Researcher + Planner seeds use the shared batch path,
+    # not the discovered-task-only observer. No result becomes accepted delivery.
+    def successful_seeds():
+        reset()
+        rows[0].update(status="blocked", delivery_verified=False)
+        grant = state["project_continuation"]
+        grant["discovery"].update(allow_undelivered_feedback=True,
+            allow_initial_readonly_feedback=True, allow_planning=True)
+        for row, role in zip(rows[1:], ("research", "planner")):
+            row.update(status="review", role=role, execution_policy="read_only", write_domains=[], dependencies=[])
+        grant.update(seed_task_ids=[row["id"] for row in rows[1:]],
+            seed_task_intents={row["id"]: continuation._intent(row) for row in rows[1:]})
+        grant["task_intents"].update(grant["seed_task_intents"])
+        grant["authorization_digest"] = discovery.authorization_digest(grant)
+        current_batch = state["project_task_batches"][run_id]
+        current_batch.update(status="review",
+            task_bindings=[dict(task_id=t["id"], task_intent=tasks.project_task_intent(t)) for t in rows[1:]],
+            tracks=[dict(project_task_id=t["id"], role=t["role"], execution_policy=t["execution_policy"]) for t in rows[1:]])
+        report.update(all_ok=True)
+        for job, row in zip(report["jobs"], rows[1:]):
+            job.update(role=row["role"], outcome="ok", status="completed")
+        (artifacts / "report.json").write_text(json.dumps(report))
+        terminal.update(unknown_task_ids=[], retryable_task_ids=[],
+            preserved_task_ids=[row["id"] for row in rows[1:]])
+        return grant
+
+    grant = successful_seeds()
+    fail_publication[0] = True
+    assert tick()["reason"] == "discovery_publication_pending"
+    assert tick()["status"] == "active" and len(calls) == len(starts) == 1
+    assert [t["worker_status"] for t in calls[0]["batch_feedback"]["tasks"]] == ["completed", "completed"]
+    assert [t["role"] for t in calls[0]["batch_feedback"]["tasks"]] == ["research", "planner"]
+    assert all(row["status"] == "review" and not row["delivery_verified"] for row in rows[1:3])
+    assert rows[-1]["dependencies"] == []
+    tick()
+    assert len(calls) == len(starts) == 1
+
+    for mode in ("old_grant", "role_not_authorized", "implementation", "unknown", "mutated_files", "stop", "budget"):
+        grant = successful_seeds()
+        if mode == "old_grant":
+            del grant["discovery"]["allow_initial_readonly_feedback"]
+        elif mode == "role_not_authorized":
+            grant["discovery"]["allow_planning"] = False
+        elif mode == "implementation":
+            rows[2].update(role="implementation", execution_policy="workspace_write", write_domains=["src"])
+            grant["task_intents"][rows[2]["id"]] = continuation._intent(rows[2])
+            grant["seed_task_intents"][rows[2]["id"]] = continuation._intent(rows[2])
+        elif mode == "unknown":
+            terminal["unknown_task_ids"] = [research["id"]]
+        elif mode == "mutated_files":
+            captured["changed_files"] = ["src/not_readonly.py"]
+        elif mode == "stop":
+            stop_during_decision[0] = True
+        elif mode == "budget":
+            grant["manager_calls"] = grant["max_manager_calls"]
+        grant["authorization_digest"] = discovery.authorization_digest(grant)
+        observed = tick()
+        assert not starts
+        if mode in {"old_grant", "role_not_authorized", "implementation"}:
+            assert observed["pending_batch"] is not None and not calls
+        elif mode == "stop":
+            assert observed["status"] == "stopped"
+        else:
+            assert observed["status"] in {"blocked", "exhausted"} and not calls
+        stop_during_decision[0] = False
+        captured["changed_files"] = []
+
+
+def test_initial_readonly_flag_requires_explicit_no_delivery_scope():
+    base = dict(objective="Investigate the current project and plan a bounded next step.",
+        allowed_write_domains=["src"], max_new_tasks=2, max_planning_calls=2)
+    assert "allow_initial_readonly_feedback" not in discovery.normalize_discovery(base)
+    with pytest.raises(ValueError):
+        discovery.normalize_discovery({**base, "allow_initial_readonly_feedback": True})
+    with pytest.raises(ValueError):
+        discovery.normalize_discovery({**base, "allow_initial_readonly_feedback": "true"})
+    assert discovery.normalize_discovery({**base, "allow_initial_readonly_feedback": True,
+        "allow_undelivered_feedback": True})["allow_initial_readonly_feedback"] is True

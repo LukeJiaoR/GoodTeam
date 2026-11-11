@@ -30,7 +30,7 @@ def normalize_discovery(value):
         return None
     required = {"objective", "allowed_write_domains", "max_new_tasks", "max_planning_calls"}
     if (not isinstance(value, dict) or not required.issubset(value)
-            or set(value) - required - {"allow_investigation", "allow_planning", "allow_undelivered_feedback"}):
+            or set(value) - required - {"allow_investigation", "allow_planning", "allow_undelivered_feedback", "allow_initial_readonly_feedback"}):
         raise ValueError("Confirm an explicit discovery objective, paths and finite task/planning budgets.")
     if "allow_investigation" in value and type(value["allow_investigation"]) is not bool:
         raise ValueError("Investigation permission must be an explicit boolean.")
@@ -38,6 +38,10 @@ def normalize_discovery(value):
         raise ValueError("Planning permission must be an explicit boolean.")
     if "allow_undelivered_feedback" in value and type(value["allow_undelivered_feedback"]) is not bool:
         raise ValueError("Undelivered feedback permission must be an explicit boolean.")
+    if "allow_initial_readonly_feedback" in value and type(value["allow_initial_readonly_feedback"]) is not bool:
+        raise ValueError("Initial read-only feedback permission must be an explicit boolean.")
+    if value.get("allow_initial_readonly_feedback") is True and value.get("allow_undelivered_feedback") is not True:
+        raise ValueError("Initial read-only feedback also requires undelivered feedback permission.")
     # Keep omitted flags omitted: existing grants retain their exact digest and
     # cannot acquire research or Planner authority on upgrade or authorization replay.
     objective = value["objective"]
