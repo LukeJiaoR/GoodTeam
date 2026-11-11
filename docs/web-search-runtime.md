@@ -64,3 +64,32 @@ tool, and end-to-end Manager Context use still require approved live validation.
 Do not mark #701 or the complete project loop accepted based only on these local
 checks; carry the live combined path in #419. CI remains paused. No deployment or
 provider/security settings are changed by this increment.
+
+## Confirmed project-task queue
+
+An authorized host may now create/update an existing `LocalTaskStore` task with
+an explicit `web_search` policy of the shape above. This is not inferred from
+Manager text, an external report, or a default Provider. Discovery-generated
+new-task intents still reject this field. It does not add a search-settings UI.
+The caller must already hold the specified search/spending authorization.
+
+For ordinary Pi work, the task's existing `workspace_write` policy maps to the
+existing isolated batch's `standard` Worker policy. The queue displays the exact
+search allowance; original task intent/digest, proposal revision and immutable
+batch tracks retain it. A changed allowance invalidates the old confirmation and
+continuation task intent. Dispatch passes it to the original task-associated job,
+whose existing replay check rejects replacing its search policy. No second job
+ledger, model-selected budget, automatic enablement, or provider fallback exists.
+
+Read-only tasks, non-Pi adapters, protected Skill/Input/Correction paths and the
+role-replacing Workflow fallback cannot acquire this capability. They fail
+rather than drop the policy or lower the execution policy. Existing custom-method
+capture and isolation rejection remain enforced; only the pre-existing ordinary
+method-free path is supported. Manager itself keeps its read-only execution
+policy and consumes returned Worker evidence rather than receiving search tools.
+
+`tests/test_queued_web_search.py` covers the real local task -> recommendation ->
+queue -> batch-confirmation -> dispatch job construction and once-only result
+publication into Manager conversation Context. Search HTTP/provider output is a
+fixture; no model/paid endpoint or isolated process acceptance is claimed. The
+existing SDK/Pi extension tests cover those transport seams independently.
