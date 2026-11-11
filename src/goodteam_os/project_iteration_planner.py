@@ -208,6 +208,25 @@ def _discovery_prompt(context):
     base = (_MANAGER_INVESTIGATION_DISCOVERY_TASK
             if (context.get("discovery") or {}).get("allow_investigation") is True
             else _MANAGER_DISCOVERY_TASK)
+    if (context.get("discovery") or {}).get("allow_planning") is True:
+        base += """
+Planning extension: this explicitly extends the preceding fixed implementation
+schema: task_type is an allowed optional field. For planning only, it overrides
+the implementation-role and nonempty-write_domains requirements; all other
+bounded task fields, source/dependency checks and budgets remain mandatory.
+The task_type may also be "planning" only when
+planning_capability.dispatchable is true. It maps to Planner/read_only with
+write_domains=[]; it grants no implementation, runtime or additional permissions.
+Delegate specific decomposition only when useful, never as a mandatory stage.
+Include the agreed objective, relevant facts/source references, constraints,
+tradeoffs, unresolved questions and acceptance criteria in the task description.
+Planning results arrive through the shared investigation_feedback/history fields,
+with role=planner. They are attributed advice, including partial/failed output,
+not accepted delivery or permission. Cite the receipt in source_refs for followup,
+never depend on its still-unaccepted task, and judge it against the latest Context
+and decision_project_head, not only the report's original source_project_head.
+Do not grant Researcher authority unless allow_investigation is explicitly true.
+"""
     # Frozen pre-extension packets retain their original prompt contract.
     if context.get("human_feedback_supported") is True:
         base += _MANAGER_HUMAN_FEEDBACK_TASK
@@ -234,6 +253,9 @@ substituting another. Omit worker_id to use the role's configured default select
 This selects an existing Worker; its configured runtime remains host-owned and
 the original task types, scope, permissions and budgets are unchanged.
 """
+    if (context.get("discovery") or {}).get("allow_planning") is True:
+        base = base.replace("(implementation -> implementation; investigation -> research)",
+                            "(implementation -> implementation; investigation -> research; planning -> planner)")
     return base
 
 

@@ -218,7 +218,7 @@ class LocalTaskStore:
                 or "worker_id" in intent and (not isinstance(intent["worker_id"], str) or not intent["worker_id"].strip()
                     or intent["worker_id"] != intent["worker_id"].strip() or len(intent["worker_id"]) > 256)
                 or intent["priority"] != "medium"
-                or not (intent["role"] == "research" and intent["execution_policy"] == "read_only"
+                or not (intent["role"] in {"research", "planner"} and intent["execution_policy"] == "read_only"
                         and intent["write_domains"] == []
                         or intent["role"] == "implementation" and intent["execution_policy"] == "workspace_write"
                         and normalize_write_domains(intent["write_domains"]) is not None
