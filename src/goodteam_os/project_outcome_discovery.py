@@ -185,6 +185,17 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         raise ValueError("A retained investigation observation changed.")
     if history:
         packet["investigation_history"] = history
+        # Historical reports are not claims about the latest checkout. Give
+        # Manager both revisions; action publication still revalidates the
+        # frozen decision, current authority, task intent and delivery evidence.
+        decision_head = outcome.get("project_head") or _head(root)
+        packet["investigation_context"] = {
+            "decision_project_head": decision_head,
+            "reports": [{"receipt_id": item["receipt_id"], "source_project_head": item["project_head"],
+                         "matches_decision_revision": item["project_head"] == decision_head}
+                        for item in history],
+            "interpretation": "Historical findings require judgment against current Context; they are not task acceptance.",
+        }
         packet["allowed_source_refs"].extend(item["receipt_id"] for item in history
                                             if item["receipt_id"] not in packet["allowed_source_refs"])
     packet["human_feedback_supported"] = True

@@ -143,7 +143,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     captured = dict(changed_files=[])
     monkeypatch.setattr(memory_storage, "read_bytes", read_bytes)
     monkeypatch.setattr(dispatch_workspace, "dispatch_artifact_root", lambda *_: artifacts)
-    monkeypatch.setattr(dispatch_workspace, "prepare_dispatch_workspace", lambda *_: SimpleNamespace(metadata={"original_head": head}))
+    monkeypatch.setattr(dispatch_workspace, "prepare_dispatch_workspace", lambda *_: SimpleNamespace(source_head=lambda: head))
     monkeypatch.setattr(dispatch_workspace, "verify_dispatch_result", lambda *_: deepcopy(captured))
     monkeypatch.setattr(recovery, "project_batch_recovery_evidence", lambda **_: deepcopy(terminal))
     monkeypatch.setattr(recovery, "effective_dispatch_id", lambda row: row["dispatch_run_id"])
@@ -249,6 +249,25 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
         outcome.update(deepcopy(original_outcome))
         captured["changed_files"] = []
         result.write_text("The observed HTTP entry point is api.py; independent verification remains outstanding.\n")
+
+    # A later independent commit does not erase a bound historical report.
+    # Manager receives old source and latest decision revisions separately.
+    reset()
+    outcome["project_head"] = "e" * 40
+    monkeypatch.setattr(discovery, "_head", lambda *_: "e" * 40)
+    assert tick()["status"] == "active" and len(calls) == len(starts) == 1
+    observation = calls[0]["investigation_feedback"]
+    assert observation["project_head"] == head
+    context = calls[0]["investigation_context"]
+    assert context["decision_project_head"] == "e" * 40
+    assert context["reports"] == [{"receipt_id": observation["receipt_id"],
+                                    "source_project_head": head, "matches_decision_revision": False}]
+    assert rows[:2] == original_rows
+    monkeypatch.setattr(discovery, "_head", lambda *_: head)
+    reset()
+    monkeypatch.setattr(dispatch_workspace, "prepare_dispatch_workspace", lambda *_: SimpleNamespace(source_head=lambda: None))
+    assert tick()["status"] == "blocked" and not calls and not starts
+    monkeypatch.setattr(dispatch_workspace, "prepare_dispatch_workspace", lambda *_: SimpleNamespace(source_head=lambda: head))
 
     def fail_investigation(report_status="partial"):
         reset()
@@ -714,3 +733,18 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     stored = state["project_continuation"]["human_questions"][identifier]["answer"]
     stored["text"] = "tampered answer"
     assert tick()["status"] == "blocked" and len(calls) == 1 and not starts
+
+
+def test_investigation_source_is_bound_to_snapshot_parent(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    source, baseline = "a" * 40, "b" * 40
+    retained = dispatch_workspace.DispatchWorkspace(tmp_path, {
+        "baseline_root_identity": {}, "baseline_git_identity": "fixture",
+        "baseline_commit": baseline, "original_head": source}, None)
+    monkeypatch.setattr(dispatch_workspace, "AnchoredRepository", lambda *_, **__: nullcontext())
+    monkeypatch.setattr(dispatch_workspace, "_git_identity", lambda *_: "fixture")
+    monkeypatch.setattr(dispatch_workspace, "_read_git", lambda *_: f"{baseline} {source}\n".encode())
+    assert retained.source_head() == source
+    retained.metadata["original_head"] = "c" * 40
+    with pytest.raises(ValueError, match="source revision"):
+        retained.source_head()

@@ -49,7 +49,6 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
     from goodteam_os.project_iteration_continuation import _intent, _require_clean_checkout
     from goodteam_os.tasks import project_task_intent
     from goodteam_os.project_iteration_recovery import effective_dispatch_id, project_batch_recovery_evidence
-    from goodteam_os.project_outcome_discovery import _head
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
     from goodteam_os.tasks import LocalTaskStore
 
@@ -113,9 +112,12 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
     if captured.get("changed_files") != []:
         raise ValueError("A read-only investigation changed project files; feedback cannot release the batch.")
     retained = prepare_dispatch_workspace(root, dispatch_id, None)
-    head = _head(root)
-    if retained.metadata.get("original_head") != head:
-        raise ValueError("The project changed since investigation; do not treat its report as current evidence.")
+    # A report describes its captured source revision, not today's checkout.
+    # Keep this immutable so later independent commits cannot rewrite its
+    # provenance or invalidate an already retained observation.
+    head = retained.source_head()
+    if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head):
+        raise ValueError("The investigation source revision is missing or invalid.")
     _require_clean_checkout(root, "investigation source")
     # Never read a path supplied by the model or report. The bound job identity
     # selects the existing safe storage reader; oversized output is not truncated.
