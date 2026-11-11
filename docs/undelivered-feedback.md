@@ -3,12 +3,20 @@
 A new grant may explicitly set `discovery.allow_undelivered_feedback: true`
 through the existing `start_project_continuation` API. Omitted/false flags
 retain the verified-delivery prerequisite and original authorization digest.
-No existing grant is edited or expanded. This increment is limited to the
-existing generic batch observer's blocked/mixed terminal results. An initial
-all-success Researcher/Planner seed still lacks this path (the read-only observer
-requires discovered_task_ids); successful implementation candidates still need
-their original review/delivery acceptance. This is not a complete no-seed Planner
-Loop.
+No existing grant is edited or expanded. Failed/mixed terminal results use
+this flag alone. A new grant may additionally set
+`discovery.allow_initial_readonly_feedback: true` to feed initial all-success
+Researcher/Planner seed batches into the same observer and Manager outbox.
+The additional flag requires `allow_undelivered_feedback: true` and each Role's
+existing `allow_investigation` / `allow_planning` permission. Every task must be
+an original seed, read-only with no write domains, and have attributable known
+terminal evidence and unchanged captured files. Ordinary successful implementation
+candidates still wait for review/delivery acceptance. Old grants missing the new
+flag retain their previous behavior.
+
+This closes the initial read-only seed routing gap, not actual Runtime admission
+or complete real-project acceptance. Reports remain unaccepted observations,
+never delivered tasks or dependencies. No empty-project bootstrap is introduced.
 
 When no eligible delivery exists, the shared discovery outbox can instead use
 an already captured, revalidated `batch_feedback_pending` receipt. Its packet
@@ -40,3 +48,10 @@ terminal evidence and Manager responses in those tests are fixtures, not real
 Runtime acceptance. CI remains paused; no paid call, deployment, credential,
 permission or #440/#445 isolation change. Full real-project Loop acceptance
 remains tracked separately under #419.
+
+The initial-success regression runs the production continuation tick through the
+shared batch observation, no-delivery source, Manager decision, lost publication
+acknowledgement replay and dispatch seam. Researcher and Planner are both covered;
+old grants, absent Role permission, unknown termination, changed files, Stop and
+budget exhaustion cannot start follow-up work. Model/process/dispatch seams are
+fixtures; no live Runtime result is claimed.
