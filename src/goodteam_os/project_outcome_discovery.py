@@ -13,6 +13,10 @@ from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
 
 
+class NoVerifiedDelivery(ValueError):
+    """No eligible delivery exists; invalid delivery evidence is a different error."""
+
+
 class DiscoveryPublicationPending(RuntimeError):
     """A durable decision can replay its create-once publication without a model."""
 
@@ -26,12 +30,14 @@ def normalize_discovery(value):
         return None
     required = {"objective", "allowed_write_domains", "max_new_tasks", "max_planning_calls"}
     if (not isinstance(value, dict) or not required.issubset(value)
-            or set(value) - required - {"allow_investigation", "allow_planning"}):
+            or set(value) - required - {"allow_investigation", "allow_planning", "allow_undelivered_feedback"}):
         raise ValueError("Confirm an explicit discovery objective, paths and finite task/planning budgets.")
     if "allow_investigation" in value and type(value["allow_investigation"]) is not bool:
         raise ValueError("Investigation permission must be an explicit boolean.")
     if "allow_planning" in value and type(value["allow_planning"]) is not bool:
         raise ValueError("Planning permission must be an explicit boolean.")
+    if "allow_undelivered_feedback" in value and type(value["allow_undelivered_feedback"]) is not bool:
+        raise ValueError("Undelivered feedback permission must be an explicit boolean.")
     # Keep omitted flags omitted: existing grants retain their exact digest and
     # cannot acquire research or Planner authority on upgrade or authorization replay.
     objective = value["objective"]
@@ -80,7 +86,7 @@ def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
                      and set(batch.get("task_ids", [])).issubset(value["task_ids"]))]
     batch = batches.get(run_id) if run_id else max(eligible, key=lambda row: row["created_at"], default=None)
     if not batch or batch not in eligible:
-        raise ValueError("Discovery requires a verified delivery from this authorized continuation.")
+        raise NoVerifiedDelivery("Discovery requires a verified delivery from this authorized continuation.")
     receipt = batch.get("delivery_receipt") or {}
     if (receipt.get("receipt_id") != _digest({key: item for key, item in receipt.items() if key != "receipt_id"})
             or receipt.get("producer") != "human_confirmed_candidate_delivery"
@@ -122,6 +128,27 @@ def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
             "tasks": tasks, "integration": report["integration"], "quality": checks}
 
 
+def _undelivered_source(*, workspace, project_key, root, value):
+    from goodteam_os.project_batch_feedback import pending_batch_feedback
+
+    if value["discovery"].get("allow_undelivered_feedback") is not True:
+        raise ValueError("Undelivered feedback requires an explicit new discovery grant.")
+    source_key = value.get("batch_feedback_pending") or value.get("undelivered_feedback_anchor")
+    feedback = pending_batch_feedback(workspace=workspace, project_key=project_key, root=root,
+        value={**value, "batch_feedback_pending": source_key})
+    if not feedback:
+        raise ValueError("Undelivered discovery requires captured known terminal batch feedback.")
+    return {"schema_version": "undelivered_project_source.v1", "delivery_verified": False,
+            "project_head": _head(root), "batch_run_id": feedback["batch_run_id"],
+            "receipt_id": feedback["receipt_id"], "observation_key": source_key}
+
+
+def _source_receipt(packet):
+    if packet.get("verified_outcome") is not None:
+        return packet["verified_outcome"]["delivery"]["receipt_id"]
+    return packet["undelivered_source"]["receipt_id"]
+
+
 def _remember(root, outcome):
     from goodteam_os.memory import RoleMemoryStore
 
@@ -152,8 +179,11 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
     from goodteam_os.team_control_plane import team_view_for_config
 
     snapshot = rank_project_backlog(LocalTaskStore(root, project_key).list_tasks(), project_key, limit=None)
-    refs = [outcome["delivery"]["receipt_id"]]
-    refs += [outcome["quality"][key] for key in ("validation_receipt_id", "review_receipt_id") if key in outcome["quality"]]
+    undelivered = None if outcome is not None else _undelivered_source(
+        workspace=workspace, project_key=project_key, root=root, value=value)
+    refs = [outcome["delivery"]["receipt_id"]] if outcome is not None else [undelivered["receipt_id"]]
+    if outcome is not None:
+        refs += [outcome["quality"][key] for key in ("validation_receipt_id", "review_receipt_id") if key in outcome["quality"]]
     packet = {"schema_version": "project_outcome_discovery_packet.v1", "project_key": project_key,
         "authorization_digest": value["authorization_digest"], "discovery": value["discovery"],
         "remaining_budget": {"manager_calls": value["max_manager_calls"] - value["manager_calls"],
@@ -168,6 +198,8 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         "allowed_source_refs": refs,
         "repository_understanding": _project_evidence(Path(workspace), project_key, Path(root), inspect_missing=True),
         "memory_pickup": runtime_role_memory_store(root).build_pickup_packet("orchestrator", query=value["discovery"]["objective"])}
+    if undelivered is not None:
+        packet["undelivered_source"] = undelivered
     team = team_view_for_config(Path(workspace), project_key, project_config) or {}
     allowed_roles = {"implementation", "research"} if value["discovery"].get("allow_investigation") is True else {"implementation"}
     if value["discovery"].get("allow_planning") is True:
@@ -208,7 +240,7 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         # Historical reports are not claims about the latest checkout. Give
         # Manager both revisions; action publication still revalidates the
         # frozen decision, current authority, task intent and delivery evidence.
-        decision_head = outcome.get("project_head") or _head(root)
+        decision_head = (outcome or {}).get("project_head") or _head(root)
         packet["investigation_context"] = {
             "decision_project_head": decision_head,
             "reports": [{"receipt_id": item["receipt_id"], "source_project_head": item["project_head"],
@@ -229,7 +261,7 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
             if not (known_tasks.get(item["task_id"], {}).get("status") == "canceled"
                     or known_tasks.get(item["task_id"], {}).get("status") == "done"
                     and known_tasks.get(item["task_id"], {}).get("delivery_verified") is True)})
-        packet["batch_context"] = {"decision_project_head": outcome.get("project_head") or _head(root),
+        packet["batch_context"] = {"decision_project_head": (outcome or {}).get("project_head") or _head(root),
             "interpretation": "Known terminal results are not accepted delivery. Retain unresolved work; do not repeat original invocations."}
         packet["allowed_source_refs"].extend(item["receipt_id"] for item in batch_history)
     if value.get("batch_feedback_pending"):
@@ -345,7 +377,7 @@ def validate_discovered_task(packet, response):
             or not set(dependencies).issubset(done & set(packet["authorized_task_ids"]))
             or not isinstance(sources, list) or not sources or any(not isinstance(item, str) for item in sources)
             or len(set(sources)) != len(sources) or not set(sources).issubset(packet["allowed_source_refs"])
-            or packet["verified_outcome"]["delivery"]["receipt_id"] not in sources):
+            or _source_receipt(packet) not in sources):
         raise ValueError("Follow-up dependencies and source references must name authorized delivered facts.")
     feedback = packet.get("investigation_feedback")
     if feedback and feedback["receipt_id"] not in sources:
@@ -380,7 +412,7 @@ def _creation_ref(value, packet):
 
 def _input_receipts(packet):
     """Coalesce captured feedback using the existing consumed-input ledger."""
-    receipts = [packet["verified_outcome"]["delivery"]["receipt_id"]]
+    receipts = [_source_receipt(packet)]
     if packet.get("investigation_feedback"):
         receipts.append(packet["investigation_feedback"]["receipt_id"])
     if packet.get("batch_feedback"):
@@ -409,10 +441,21 @@ def _revalidate(workspace, project_key, root, config, value, pending):
         raise ValueError("The frozen discovery input changed.")
     if value["authority"] != authority_snapshot(workspace, project_key, Path(config), Path(root)):
         raise ValueError("Discovery configuration or runtime authority changed.")
-    observed = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value,
-                                run_id=packet["verified_outcome"]["batch_run_id"])
-    if observed != packet["verified_outcome"]:
-        raise ValueError("The source revision or accepted outcome changed during discovery.")
+    if packet.get("verified_outcome") is None:
+        # A missing delivery is not a substitute for invalid/changed delivery evidence.
+        try:
+            verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value)
+        except NoVerifiedDelivery:
+            pass
+        else:
+            raise ValueError("Delivery evidence appeared during undelivered discovery.")
+        if _undelivered_source(workspace=workspace, project_key=project_key, root=root, value=value) != packet.get("undelivered_source"):
+            raise ValueError("The undelivered source or current revision changed.")
+    else:
+        observed = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value,
+                                    run_id=packet["verified_outcome"]["batch_run_id"])
+        if observed != packet["verified_outcome"]:
+            raise ValueError("The source revision or accepted outcome changed during discovery.")
     if packet.get("investigation_feedback"):
         from goodteam_os.project_investigation_feedback import pending_investigation_feedback
 
@@ -483,13 +526,19 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
 
     pending = value.get("discovery_pending")
     if pending is None:
-        outcome = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value)
+        try:
+            outcome = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value)
+        except NoVerifiedDelivery:
+            if value["discovery"].get("allow_undelivered_feedback") is not True:
+                raise
+            outcome = None
         packet = _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config))
         inputs = _input_receipts(packet)
         if all(item in value.get("discovery_consumed", []) for item in inputs):
             _current(store.read(), value)
             return value  # No new feedback, including when a question is still open.
-        _remember(root, outcome)
+        if outcome is not None:
+            _remember(root, outcome)
         if value["manager_calls"] >= value["max_manager_calls"]:
             return _budget_exhausted(store, value, "approved_iteration_budget_used")
         trigger_ref = _digest(inputs)
@@ -497,6 +546,8 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
                    "backlog_version": packet["backlog"]["version"], "trigger_ref": trigger_ref}
         def reserve(session):
             current = _current(session, value)
+            if packet.get("undelivered_source"):
+                current["undelivered_feedback_anchor"] = packet["undelivered_source"]["observation_key"]
             current.update(discovery_pending=pending, manager_calls=current["manager_calls"] + 1, reason="outcome_discovery_reserved")
             return session
         value = store._mutate(reserve)["project_continuation"]
@@ -516,7 +567,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         value = store._mutate(decided)["project_continuation"]
         pending = value["discovery_pending"]
     selection = validate_discovered_task(pending["packet"], pending["selection"])
-    receipt_id = pending["packet"]["verified_outcome"]["delivery"]["receipt_id"]
+    receipt_id = _source_receipt(pending["packet"])
     trigger_ref = pending.get("trigger_ref", receipt_id)
     if selection.get("human_question"):
         value = record_human_question(store, value, pending)
