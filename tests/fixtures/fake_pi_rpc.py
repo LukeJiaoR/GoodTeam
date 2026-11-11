@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 if "--version" in sys.argv:
-    print("pi 0.99.0-fake")
+    print("pi 1.1.0")
     raise SystemExit(0)
 
 args = sys.argv[1:]
@@ -92,7 +92,7 @@ def finish_prompt(message: str) -> None:
         emit({"type": "extension_error", "error": "fake extension failed"})
     streaming = False
     if os.getenv("FAKE_PI_NO_SETTLED") != "1":
-        emit({"type": "agent_settled"})
+        emit({"type": "agent_settled", "aborted": aborted or os.getenv("FAKE_PI_RUNTIME_ABORTED") == "1"})
 
 
 for raw in sys.stdin.buffer:
@@ -133,11 +133,13 @@ for raw in sys.stdin.buffer:
             response(request)
     elif command in {"steer", "follow_up"}:
         response(request)
+    elif command == "clear_queue":
+        response(request, data={"steering": [], "followUp": []})
     elif command == "abort":
         aborted = True
         streaming = False
         response(request)
-        emit({"type": "agent_settled"})
+        emit({"type": "agent_settled", "aborted": aborted or os.getenv("FAKE_PI_RUNTIME_ABORTED") == "1"})
     elif command == "get_session_stats":
         response(request, data={"sessionFile": str(session_file), "sessionId": session_id, "totalMessages": len(entries), "tokens": {"total": 42}, "cost": 0})
     elif command == "get_entries":
