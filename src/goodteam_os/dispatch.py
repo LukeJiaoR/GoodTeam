@@ -457,6 +457,13 @@ def _create_track_job(
         fields = {"task_skill_context": method_context, "skill_subject": subject_for_role(str(track["role"])),
                   "skill_loader_version": WORKER_METADATA_LOADER, "project_key": project_key,
                   "idempotency_key": command_key}
+    if track.get("web_search") is not None:
+        from goodteam_os.web_search import search_policy
+        from goodteam_os.graph import SESSION_BACKENDS
+
+        if method_context or track.get("adapter") not in SESSION_BACKENDS or track.get("execution_policy", "standard") != "standard":
+            raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Pi Worker.")
+        fields["web_search"] = search_policy(track["web_search"])
     fields.update({key: track[key] for key in ("original_failed_job_id", "retry_attempt", "retry_of_idempotency_key") if key in track})
     from goodteam_os.skills.review_protocol import review_execution_fields
 

@@ -116,17 +116,28 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
     )
     from goodteam_os.task_delegation import render_project_task
 
-    return [{
+    tracks = [{
         "track_id": task["id"], "project_task_id": task["id"], "role": task["role"],
         **_worker_job_fields(target, str(task["role"]), state,
                              **({"worker_id": task["worker_id"]} if "worker_id" in task else {})),
         "task": render_project_task(task), "task_source": "task_assistant_queue",
+        **({"web_search": task["web_search"]} if "web_search" in task else {}),
         "context": "Execute only this confirmed project task in the assigned isolated repository. "
                    "Do not merge, deploy or change shared project state. Results require independent review.",
         "execution_policy": "read_only" if task.get("execution_policy") == "read_only" else "standard",
         **({"write_domains": task["write_domains"]} if task.get("write_domains") else {}),
         "constraints": ["Do not write outside the declared task paths: " + ", ".join(task.get("write_domains") or [])],
     } for task, proposal in zip(tasks, proposals)]
+    from goodteam_os.graph import SESSION_BACKENDS
+    from goodteam_os.web_search import search_policy
+
+    for track in tracks:
+        if "web_search" in track:
+            track["web_search"] = search_policy(track["web_search"])
+            if track["web_search"] is not None and (
+                    track["adapter"] not in SESSION_BACKENDS or track["execution_policy"] != "standard"):
+                raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Pi Worker.")
+    return tracks
 
 
 def _claim_tasks(root, project_key, batch):

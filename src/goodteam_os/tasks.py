@@ -79,7 +79,8 @@ def project_task_intent(task: dict[str, Any]) -> dict[str, Any]:
     """Bind an explicit Worker target while keeping historical intents unchanged."""
     return {**{key: task.get(key) for key in TASK_INTENT_FIELDS},
             **({"worker_id": task["worker_id"]} if "worker_id" in task else {}),
-            **({"delegation": task["delegation"]} if "delegation" in task else {})}
+            **({"delegation": task["delegation"]} if "delegation" in task else {}),
+            **({"web_search": task["web_search"]} if "web_search" in task else {})}
 
 
 class LocalTaskStore:
@@ -114,7 +115,13 @@ class LocalTaskStore:
         execution_policy: str = "workspace_write",
         worker_id: str | None = None,
         delegation: dict[str, Any] | None = None,
+        web_search: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        from goodteam_os.web_search import search_policy
+
+        web_search = search_policy(web_search)
+        if web_search is not None and execution_policy != "workspace_write":
+            raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Worker.")
         if delegation is not None:
             from goodteam_os.task_delegation import validate_delegation
 
@@ -146,6 +153,7 @@ class LocalTaskStore:
             "id": task_id,
             "title": title,
             "description": description,
+            **({"web_search": web_search} if web_search is not None else {}),
             **({"delegation": delegation} if delegation is not None else {}),
             "role": role,
             **({"worker_id": worker_id} if worker_id is not None else {}),
@@ -199,6 +207,16 @@ class LocalTaskStore:
             if "status" in updates and updates["status"] not in TASK_STATUSES:
                 raise ValueError(f"Unknown task status: {updates['status']}")
             updated = {**task, **updates, "updated_at": self._now()}
+            if "web_search" in updated:
+                from goodteam_os.web_search import search_policy
+
+                policy = search_policy(updated["web_search"])
+                if policy is None:
+                    updated.pop("web_search", None)
+                else:
+                    if updated.get("execution_policy", "workspace_write") != "workspace_write":
+                        raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Worker.")
+                    updated["web_search"] = policy
             tasks[index] = updated
             ledger["tasks"] = tasks
             self._write(ledger)

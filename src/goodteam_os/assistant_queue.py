@@ -137,6 +137,8 @@ def require_queued_project_task(root, project_key, proposal, *, workflow=True):
     known = {item.get("id"): item for item in tasks}
     if any(known.get(dep, {}).get("status") != "done" for dep in task.get("dependencies", [])):
         raise ValueError("The Manager-selected task has unfinished dependencies.")
+    if workflow and task.get("web_search") is not None:
+        raise ValueError("Search-authorized project tasks must retain their confirmed batch search contract.")
     if workflow and task.get("worker_id"):
         raise ValueError("A named Worker task cannot enter a role-replacing Workflow.")
     if workflow and task.get("execution_policy") == "read_only":
@@ -155,6 +157,9 @@ def _project_task_request(task):
     domains = task.get("write_domains") or []
     if domains:
         parts.append("Declared write scope (must be independently enforced): " + ", ".join(domains))
+    if task.get("web_search") is not None:
+        import json
+        parts.append("Explicit Web Search allowance (not an amount budget): " + json.dumps(task["web_search"], sort_keys=True))
     result = "\n\n".join(parts)
     if not 1 <= len(result) <= 8000:
         raise ValueError("Project task exceeds the existing Task Assistant draft limit.")
