@@ -192,3 +192,38 @@ def test_spawn_is_owned_and_reaped_when_session_save_fails(tmp_path, monkeypatch
             launch=lambda: process)
     assert terminated == [process]
     assert all(getattr(process, name).closed for name in ("stdin", "stdout", "stderr"))
+
+
+def test_human_update_before_spawn_is_known_stale_not_unknown_transport(tmp_path, monkeypatch):
+    from goodteam_os import project_observation_runtime as runtime
+    from goodteam_os.project_observation_judgment import judge_running_observation
+    store = TaskAssistantSessionStore(tmp_path, "DEMO")
+    value = {"id": "grant", "status": "active", "authority": "fixed", "manager_calls": 0, "max_manager_calls": 2,
+             "pending_batch": {"run_id": "batch", "task_ids": []}}
+    batch = {"confirmed": True, "expected_continuation_id": "grant", "project_root": str(tmp_path.resolve()),
+             "status": "running", "dispatch_run_id": "attempt"}
+    store._mutate(lambda s: {**s, "project_continuation": deepcopy(value), "project_task_batches": {"batch": batch}})
+    packet = {"binding": _binding(store.read(), tmp_path), "workers": []}
+    def candidate(key):
+        store._mutate(lambda s: {**s, "project_continuation": {**s["project_continuation"],
+            "running_observation": {"digest": key, "packet": packet}}})
+    def stale_runner(**kwargs):
+        def bind(s):
+            s["project_continuation"]["running_judgments"]["old"]["manager_invocation"] = {"job_id": "manager"}
+            return s
+        store._mutate(bind)
+        # Simulate a valid new Human snapshot arriving after bind but before Popen.
+        monkeypatch.setattr(runtime, "human_observation_current", lambda *a: False)
+        return runtime._launch_under_authority(store=store, root=tmp_path, observation=packet,
+            observation_id="old", continuation_id="grant", job_id="manager", authority_check=lambda: True,
+            launch=lambda: pytest.fail("stale Human context must not launch transport"))
+    candidate("old")
+    result = judge_running_observation(store=store, root=tmp_path, value=value, runner=stale_runner, authority_check=lambda: True)
+    assert result["running_judgments"]["old"]["status"] == "stale_before_call"
+    assert result["manager_calls"] == 1  # no refund or retry of the old identity
+    assert not result["running_judgments"]["old"].get("transport_started")
+    candidate("new")
+    result = judge_running_observation(store=store, root=tmp_path, value=value,
+        runner=lambda **k: {"assessment": "wait", "rationale": "The latest Human evidence was considered.", "observed_job_ids": []},
+        authority_check=lambda: True)
+    assert result["manager_calls"] == 2 and result["running_judgments"]["new"]["status"] == "recorded"
