@@ -81,7 +81,9 @@ def authority_snapshot(workspace, project_key, config, root):
     if team is not None:
         team = {
             "schema_version": team["schema_version"], "project_key": team["project_key"],
-            "roles": {role: {"state": value["state"]} for role, value in team["roles"].items()},
+            "roles": {role: {"state": value["state"],
+                **({"runtime_source_worker_id": value["runtime_source_worker_id"]}
+                   if value.get("runtime_source_worker_id") else {})} for role, value in team["roles"].items()},
             "manager": {"runtime": team["manager"]["runtime"]},
             # created_at affects deterministic Worker selection. Keep it and
             # list ordering; only labels and non-execution timestamps are noise.

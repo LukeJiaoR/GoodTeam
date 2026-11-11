@@ -10,6 +10,9 @@ Domain boundaries enforced here:
   own runtime configuration, and an independent lifecycle
   (``active``/``inactive``/``released``/``deleted``).
 
+An explicit Role runtime-source selection may reuse a member configuration for
+another task Role; it does not change membership or copy member prompts/Skills.
+
 Every Team mutation from any surface (Team UI, Manager conversation, API
 adapter, migration) must flow through :func:`execute_team_commands`. Each
 execution appends immutable events to the project decision/event ledger and
@@ -264,6 +267,11 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
         if state not in TEAM_ROLE_STATES:
             raise TeamControlPlaneError(f"TeamRole {role_key} has invalid state: {state}")
         roles[role_key] = {"state": state, "updated_at": str(dict(raw).get("updated_at", "") or "") if isinstance(raw, dict) else ""}
+        source = dict(raw).get("runtime_source_worker_id") if isinstance(raw, dict) else None
+        if source is not None:
+            if not isinstance(source, str) or not source.strip() or len(source) > 200:
+                raise TeamControlPlaneError("Runtime source must identify a configured Worker.")
+            roles[role_key]["runtime_source_worker_id"] = source.strip()
     workers_raw = payload.get("workers", [])
     if not isinstance(workers_raw, list):
         raise TeamControlPlaneError("Team workers must be a list")
@@ -932,6 +940,7 @@ def _apply_command(
         )
     handlers = {
         "enable_role": _cmd_enable_role,
+        "set_role_runtime_source": _cmd_set_role_runtime_source,
         "disable_role": _cmd_disable_role,
         "initialize_worker": _cmd_initialize_worker,
         "activate_worker": _cmd_activate_worker,
@@ -1089,6 +1098,35 @@ def _find_worker(state: dict[str, object], worker_id: object) -> dict[str, objec
         if str(worker["id"]) == identifier:
             return worker
     raise TeamControlPlaneError(f"Unknown worker: {identifier or '(blank)'}")
+
+
+def _cmd_set_role_runtime_source(state, command, *, actor, surface, decision_id, source_ref, reason):
+    """Explicit configuration reuse, not reassignment of a persistent member."""
+    role = _command_role(command)
+    if "worker_id" not in command:
+        raise TeamControlPlaneError("Specify a runtime source Worker or an explicit empty value to clear it.")
+    source = str(command["worker_id"] or "").strip()
+    if source:
+        worker = _find_worker(state, source)
+        if worker["lifecycle"] != "active" or not dict(worker["runtime"]).get("model"):
+            raise TeamControlPlaneError("Runtime source requires an active member with an explicit model.")
+    roles = _roles(state)
+    current = dict(roles.get(role) or {"state": "enabled", "updated_at": ""})
+    before = current.get("runtime_source_worker_id", "")
+    if before == source:
+        return []
+    if source:
+        current["runtime_source_worker_id"] = source
+    else:
+        current.pop("runtime_source_worker_id", None)
+    current["updated_at"] = _now()
+    roles[role] = current
+    state["roles"] = roles
+    return [_event(project_key=str(state["project_key"]), decision_id=decision_id,
+        actor=actor, surface=surface, source_ref=source_ref,
+        event=f"{TEAM_ROLE_EVENT_PREFIX}.runtime_source_changed", target={"kind": "team_role", "id": role},
+        reason=reason or "Select the explicit Runtime configuration source; preserve task Role and methods.",
+        before={"runtime_source_worker_id": before}, after={"runtime_source_worker_id": source}, cause="user_command")]
 
 
 def _cmd_enable_role(state, command, *, actor, surface, decision_id, source_ref, reason):
@@ -1535,6 +1573,15 @@ def derive_role_capability(
     return "degraded"
 
 
+def _runtime_source(state, source_id, *, backend_doctor=None):
+    source = next((item for item in _workers(state) if item["id"] == source_id), None)
+    if (source is None or source["lifecycle"] != "active"
+            or not dict(source["runtime"]).get("model")
+            or not worker_runtime_eligible(dict(source["runtime"]).get("provider"), backend_doctor=backend_doctor)):
+        return None
+    return source
+
+
 def build_team_capability_view(
     state: dict[str, object],
     *,
@@ -1582,11 +1629,13 @@ def build_team_capability_view(
                 "role": role,
                 "label": catalog_item["label"],
                 "state": team_role.get("state", "enabled"),
-                "capability": derive_role_capability(
-                    role,
-                    str(team_role.get("state", "enabled")),
-                    role_workers,
-                    backend_doctor=backend_doctor,
+                "runtime_source_worker_id": team_role.get("runtime_source_worker_id"),
+                "capability": (
+                    ("disabled" if team_role.get("state", "enabled") != "enabled" else
+                     "ready" if _runtime_source(state, team_role["runtime_source_worker_id"], backend_doctor=backend_doctor)
+                     else "degraded") if team_role.get("runtime_source_worker_id") else
+                    derive_role_capability(role, str(team_role.get("state", "enabled")),
+                                           role_workers, backend_doctor=backend_doctor)
                 ),
                 "skill_binding": project_binding(binding),
                 "workers": projected_workers,
@@ -1636,7 +1685,9 @@ def build_team_execution_snapshot(state: dict[str, object]) -> dict[str, object]
     deletes) must never rewrite what a historical run bound at start.
     """
     roles = {
-        role: {"state": str(dict(roles_state).get("state", "enabled"))}
+        role: {"state": str(dict(roles_state).get("state", "enabled")),
+               **({"runtime_source_worker_id": roles_state["runtime_source_worker_id"]}
+                  if roles_state.get("runtime_source_worker_id") else {})}
         for role, roles_state in _roles(state).items()
     }
     workers = {
@@ -1729,7 +1780,7 @@ def resolve_worker_for_role(target: dict[str, object], role: str, *, worker_id: 
     Returns ``None`` when the target carries no team state (legacy/unmigrated
     project), letting callers fall back to legacy resolution. Raises
     :class:`TeamDispatchBlocked` when the TeamRole is disabled or no active,
-    runtime-eligible Worker exists.
+    runtime-eligible Worker/configuration source exists.
     """
     state = attached_team_state(target)
     if state is None:
@@ -1755,6 +1806,16 @@ def resolve_worker_from_state(state: dict[str, object], role: str, *, worker_id:
             f"The {role_label(role)} capability is disabled for this team. Enable it before dispatching work.",
             role=role,
         )
+    source_id = team_role.get("runtime_source_worker_id")
+    if worker_id is None and source_id:
+        source = _runtime_source(state, source_id)
+        if source is None:
+            raise TeamDispatchBlocked("team_runtime_source_unavailable",
+                "The explicitly selected Runtime source is unavailable; no fallback was selected.", role=role)
+        resolved = _worker_resolution(source, desired_instances=1)
+        # The member identifies configuration provenance, never the task's Role
+        # or another Role's private prompt. Skill selection remains task-scoped.
+        return {**resolved, "role": role, "additional_prompt": ""}
     if worker_id is not None:
         worker = next((item for item in _workers(state) if item["id"] == worker_id), None)
         if worker is None:
@@ -1903,9 +1964,18 @@ def _sync_legacy_worker_config_view(config_path: Path, state: dict[str, object])
             if str(worker["role"]) == role and worker["lifecycle"] in DISPATCHABLE_LIFECYCLES
         ]
         active.sort(key=lambda w: (str(w["created_at"]), str(w["id"])))
+        role_state = _roles(state).get(role, {})
+        source_id = role_state.get("runtime_source_worker_id")
+        if source_id:
+            source = _runtime_source(state, source_id)
+            if source is None or role_state.get("state", "enabled") != "enabled":
+                continue  # No stale same-Role projection for an unavailable explicit source.
+            active = [source]
         if not active:
             continue
         runtime = dict(active[0]["runtime"])
+        if source_id:
+            runtime["additional_prompt"] = ""
         provider = str(runtime.get("provider", "") or default_provider)
         workers[role] = provider
         if runtime.get("model"):
