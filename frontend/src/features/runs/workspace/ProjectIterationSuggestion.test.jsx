@@ -93,3 +93,16 @@ it('shows a chat assignment scope and uses the existing exact-revision batch con
   expect(onQueue).toHaveBeenCalledExactlyOnceWith({ action: 'start_queued_task_batch', proposal_ids: ['chat-task'],
     expected_revisions: { 'chat-task': 3 }, confirmed: true });
 });
+
+
+it('keeps a queued group confirmable with new revisions after configuration invalidates the recommendation', () => {
+  const onQueue = vi.fn();
+  render(<ProjectIterationSuggestion snapshot={snapshot} onQueue={onQueue}
+    choice={{ schema_version: 'project_iteration_choice.v1', status: 'stale' }} queuedTasks={[
+      { id: 'a', project_task_id: 'DEMO-1', status: 'queued', source: 'manager_project_iteration', source_event_id: 'choice-1', revision: 2, web_search: null },
+      { id: 'b', project_task_id: 'DEMO-2', status: 'queued', source: 'manager_project_iteration', source_event_id: 'choice-1', revision: 4, web_search: null },
+    ]} />);
+  fireEvent.click(screen.getByRole('button', { name: /run queued group/ }));
+  expect(onQueue).toHaveBeenCalledExactlyOnceWith({ action: 'start_queued_task_batch', proposal_ids: ['a', 'b'],
+    expected_revisions: { a: 2, b: 4 }, confirmed: true });
+});

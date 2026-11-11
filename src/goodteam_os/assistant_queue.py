@@ -149,7 +149,7 @@ def require_queued_project_task(root, project_key, proposal, *, workflow=True):
     return task
 
 
-def _project_task_request(task):
+def _project_task_request(task, *, enforce_input_limit=True):
     """Carry exact existing backlog work into the normal human-reviewable draft."""
     parts = [f"Project task {task['id']}: {task['title']}"]
     if task.get("description"):
@@ -164,7 +164,7 @@ def _project_task_request(task):
         import json
         parts.append("Explicit Web Search allowance (not an amount budget): " + json.dumps(task["web_search"], sort_keys=True))
     result = "\n\n".join(parts)
-    if not 1 <= len(result) <= 8000:
+    if enforce_input_limit and not 1 <= len(result) <= 8000:
         raise ValueError("Project task exceeds the existing Task Assistant draft limit.")
     return result
 
@@ -314,7 +314,8 @@ def configure_queued_search(store, root, project_key, request):
         ledger = {**original, "tasks": [updated if item["id"] == task["id"] else item for item in original["tasks"]]}
         tasks._write(ledger)
         try:
-            text = _project_task_request(updated)
+            text = (proposal["exact_request"] if proposal.get("source") == "manager_conversation"
+                    else _project_task_request(updated, enforce_input_limit=False))
             def apply(current):
                 item = next(item for item in current["queued_task_proposals"] if item["id"] == proposal["id"])
                 item.update(project_task_digest=task_evidence_digest(updated), exact_request=text,

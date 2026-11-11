@@ -27,9 +27,14 @@ no model-list request or paid search is sent while configuring it.
   an all-green backend run.
 - Focused queue binding/configuration: 2 passed; includes explicit opt-in,
   exact revision changes, disable, stale retry and read-only refusal.
-- Frontend focused configuration/queue: 5 passed; defaults off, exact policy
+- Frontend focused configuration/queue: 6 passed; defaults off, exact policy
   payload, no execution on save, and legacy batch refusal.
 - Frontend lint and build passed (existing bundle-size warning).
 - Independent review corrected nested file lock and legacy-policy display/start
   issues. No production deployment or paid provider request; GitHub CI remains
   paused. Real provider/live Worker end-to-end acceptance remains in #419/#701.
+
+PR review follow-up: original queued groups remain explicitly confirmable with
+latest revisions after the Manager recommendation becomes stale; 7,900-character
+conversation assignments retain their exact original text. Frontend full: 326
+passed; repeated backend full has the same 437/32/5/20 results and baseline IDs.

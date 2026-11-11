@@ -118,12 +118,12 @@ def test_explicit_search_configuration_rebinds_only_unconfirmed_queue(tmp_path, 
     root = tmp_path / 'project'
     root.mkdir()
     tasks = LocalTaskStore(root, 'DEMO')
-    task = tasks.create_task(title='Public docs', description='Cite sources', role='implementation')
+    task = tasks.create_task(title='Public docs', description='x' * 7900, role='implementation')
     store = TaskAssistantSessionStore(tmp_path, 'DEMO')
     def seed(session):
         session['queued_task_proposals'] = [{'id': 'draft', 'status': 'queued', 'revision': 1,
             'project_task_id': task['id'], 'project_task_digest': task_evidence_digest(task),
-            'exact_request': 'Cite sources', 'confirmed': False}]
+            'exact_request': 'x' * 7900, 'source': 'manager_conversation', 'confirmed': False}]
         return session
     store._mutate(seed)
     monkeypatch.setattr(ProviderStore, 'resolve', lambda self, ref: {'protocol': 'responses'})
@@ -131,6 +131,7 @@ def test_explicit_search_configuration_rebinds_only_unconfirmed_queue(tmp_path, 
     configure_queued_search(store, root, 'DEMO', request)
     proposal = store.read()['queued_task_proposals'][0]
     assert proposal['revision'] == 2 and proposal['web_search'] == POLICY
+    assert proposal['exact_request'] == 'x' * 7900
     assert require_queued_project_task(root, 'DEMO', proposal, workflow=False)['web_search'] == POLICY
     assert not proposal['confirmed'] and 'run_id' not in proposal
     assert store.read()['timeline'][-1]['details']['execution_started'] is False
