@@ -244,7 +244,7 @@ def test_competing_manual_recommendation_cannot_replace_authorized_queue_handoff
             if command == "stop-during-planning":
                 continuation.stop_project_continuation(workspace=tmp_path, project_key="DEMO", continuation_id=authorization["id"])
             else:
-                config.write_text(config.read_text() + "# configuration changed during planning\n")
+                config.write_text(config.read_text() + "delivery_mode: custom\n")
             return selection
 
         result = continuation.tick_project_continuation(workspace=tmp_path, project_key="DEMO", root=source,

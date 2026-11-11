@@ -129,7 +129,7 @@ def test_lost_dispatch_response_reconciles_exact_run_after_restart(setup):
 def test_changed_runtime_scope_or_stop_prevents_dispatch(setup):
     workspace, root, config, store, create = setup
     goal = create()
-    config.write_text(config.read_text() + "# changed\n")
+    config.write_text(config.read_text() + "delivery_mode: custom\n")
     result = tick_goal(workspace, "DEMO", goal["id"], starter=lambda **kw: pytest.fail("changed authority"))
     assert result["status"] == "blocked"
     stopped = handle_goal_action(workspace, "DEMO", root, dict(action="stop_goal", goal_id=goal["id"],
@@ -368,7 +368,7 @@ def test_changed_effective_model_catalog_cannot_expand_confirmed_routing(setup, 
         monkeypatch.setenv("GOODTEAM_MODEL_CONFIG", str(catalog))
     catalog.write_text(catalog_text)
     goal = create()
-    catalog.write_text(catalog_text + "\n# new effective provider catalog\n")
+    catalog.write_text(catalog_text.replace("codex:gpt-5.6-sol", "codex:changed-model"))
     result = tick_goal(workspace, "DEMO", goal["id"], starter=lambda **kw: pytest.fail("changed model routing"))
     assert result["status"] == "blocked"
     assert "configuration changed" in result["stop_reason"]
