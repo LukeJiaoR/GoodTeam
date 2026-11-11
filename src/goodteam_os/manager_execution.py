@@ -5,7 +5,8 @@ import hashlib
 import json
 import os
 import re
-from contextlib import contextmanager
+import threading
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,10 @@ class ManagerExecutionError(RuntimeError):
     def __init__(self, message: str, *, code: str = "execution_failed"):
         super().__init__(message)
         self.code = code
+
+
+class ManagerResourceBusy(ManagerExecutionError):
+    """The nonblocking project slot was not acquired; no call was launched."""
 
 
 def run_manager_chat_turn(
@@ -359,6 +364,17 @@ def _manager_execution_evidence(
     }
 
 
+class _ManagerResourceLease:
+    def __init__(self, root):
+        self.root = Path(root).resolve()
+        self.owner = (os.getpid(), threading.get_ident())
+        self.active = True
+
+    def valid_for(self, root):
+        return (self.active and self.root == Path(root).resolve()
+                and self.owner == (os.getpid(), threading.get_ident()))
+
+
 @contextmanager
 def manager_resource_slot(project_root: Path):
     """One Manager Runtime per project; never wait behind a billable turn.
@@ -372,21 +388,28 @@ def manager_resource_slot(project_root: Path):
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise ManagerExecutionError("The project's Manager Runtime is busy.", code="manager_resource_busy") from exc
-        yield
+            raise ManagerResourceBusy("The project's Manager Runtime is busy.", code="manager_resource_busy") from exc
+        lease = _ManagerResourceLease(project_root)
+        try:
+            yield lease
+        finally:
+            lease.active = False
     finally:
         os.close(descriptor)
 
 
 @contextmanager
-def _manager_turn_lock(project_root: Path, message_id: str):
+def _manager_turn_lock(project_root: Path, message_id: str, *, resource_slot=None):
     digest = hashlib.sha256(str(message_id).encode("utf-8")).hexdigest()
     lock_root = project_root / ".goodteam" / "workers" / "task-assistant-locks"
     lock_root.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(lock_root / f"{digest}.lock", os.O_WRONLY | os.O_CREAT, 0o600)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
-        with manager_resource_slot(project_root):
+        if resource_slot is not None and (not isinstance(resource_slot, _ManagerResourceLease)
+                or not resource_slot.valid_for(project_root)):
+            raise ManagerExecutionError("Manager resource reservation is no longer valid.")
+        with nullcontext() if resource_slot is not None else manager_resource_slot(project_root):
             yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)

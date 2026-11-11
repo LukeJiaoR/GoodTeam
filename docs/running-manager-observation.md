@@ -33,3 +33,18 @@ consumer accepts only the ordinary Codex pipe transport; Skill/session/PTY paths
 without that handshake remain unavailable. Persisted observation jobs cannot be
 launched through an unguarded generic Worker store. A post-spawn failure still
 retains the pre-bound invocation and unknown-result block, never a refund.
+
+### Contention with continuation planning
+
+The continuation's existing-task planner and outcome-discovery planner acquire
+that same nonblocking Manager slot **before** reserving a billable planning call.
+Ordinary planning also acquires the existing conversation lock and revalidates
+its input before the reservation callback. Typed file/PostgreSQL lock contention,
+not arbitrary provider errors, is deferrable. A busy project defers this tick while leaving the grant active and its counters
+unchanged. Previously retained uncertain inputs remain retained, not refunded.
+An active same-project/process/thread lease is passed to the built-in Manager
+turn so it does not acquire the slot twice; unrelated turns still contend.
+Once planning has entered, failures retain the original charged reservation and
+block for inspection rather than silently starting a fresh call. Stop and the
+original authorization/budget checks are unchanged. Offline contention fixtures
+are not live model or full-loop acceptance evidence.

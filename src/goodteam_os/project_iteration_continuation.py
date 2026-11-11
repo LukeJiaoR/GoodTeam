@@ -14,9 +14,10 @@ import re
 
 from goodteam_os.assistant_queue import active_project_run, queue_manager_iteration_choice, require_no_active_project_goal
 from goodteam_os.goal_continuation import authority_snapshot, goal_guard
-from goodteam_os.manager_execution import ManagerExecutionError
+from goodteam_os.manager_execution import ManagerExecutionError, ManagerResourceBusy
 from goodteam_os.project_iteration import _internal, project_iteration_backlog, rank_project_backlog
 from goodteam_os.project_iteration_planner import plan_next_iteration
+from goodteam_os.state_documents import DocumentLockBusy
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore, project_task_intent, task_evidence_digest
 
@@ -286,30 +287,48 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 if (value["batches_started"] >= value["max_batches"]
                         or value["manager_calls"] >= value["max_manager_calls"] and not value.get("planning_backlog_version")):
                     return _save(store, {**value, "status": "exhausted", "reason": "approved_iteration_budget_used"})
-                snapshot = project_iteration_backlog(root, project_key, limit=None)
-                eligible = [task for task in snapshot.get("candidates", []) if task["eligible_to_plan"]]
-                if not any(task["task_id"] in value["task_ids"] for task in eligible):
-                    return _save(store, {**value, "status": "blocked", "reason": "no_authorized_task_is_ready"})
-                # Reserve before the potentially billable Manager call. Its own
-                # backlog-bound Worker identity makes a lost reply replayable.
-                planning = value.get("planning_backlog_version")
-                if planning and planning != snapshot["version"]:
-                    raise ValueError("The backlog changed after a reserved planning attempt; inspect before resuming.")
-                if planning and value.get("planning_input_version") != 2:
-                    raise ValueError("An older reserved planning attempt must be reconciled before continuing.")
-                if not planning:
-                    value = _save(store, {**value, "planning_backlog_version": snapshot["version"],
-                                         "planning_input_version": 2,
-                                         "manager_calls": value["manager_calls"] + 1})
-                if value["status"] != "active":
-                    return value
-                result = plan_next_iteration(
-                    workspace=workspace, project_key=project_key, root=root, project_config=project_config,
-                    expected_backlog_version=snapshot["version"], confirmed=True,
-                    allowed_task_ids=value["task_ids"],
-                    planning_attempt_id=f"{value['id']}:{value['manager_calls']}",
-                    **({"manager_runner": manager_runner} if manager_runner is not None else {}),
-                )
+                from goodteam_os.manager_execution import manager_resource_slot
+
+                with manager_resource_slot(root) as resource_slot:
+                    snapshot = project_iteration_backlog(root, project_key, limit=None)
+                    eligible = [task for task in snapshot.get("candidates", []) if task["eligible_to_plan"]]
+                    if not any(task["task_id"] in value["task_ids"] for task in eligible):
+                        return _save(store, {**value, "status": "blocked", "reason": "no_authorized_task_is_ready"})
+                    # Reserve before the potentially billable Manager call. Its own
+                    # backlog-bound Worker identity makes a lost reply replayable.
+                    planning = value.get("planning_backlog_version")
+                    if planning and planning != snapshot["version"]:
+                        raise ValueError("The backlog changed after a reserved planning attempt; inspect before resuming.")
+                    if planning and value.get("planning_input_version") != 2:
+                        raise ValueError("An older reserved planning attempt must be reconciled before continuing.")
+                    planned_call = value["manager_calls"] + (0 if planning else 1)
+                    def reserve_planning():
+                        nonlocal value
+                        # The planner now owns the conversation lock. Recheck
+                        # Stop even when replaying an already reserved attempt.
+                        if value["authority"] != authority_snapshot(workspace, project_key, project_config, root):
+                            raise ValueError("Project authorization changed before planning.")
+                        def reserve(session):
+                            current = session.get(_FIELD) or {}
+                            if (current.get("id") != value["id"] or current.get("status") != "active"
+                                    or current.get("authority") != value["authority"]):
+                                raise ValueError("Continuation stopped or changed before planning.")
+                            if (current.get("planning_backlog_version") != value.get("planning_backlog_version")
+                                    or current.get("manager_calls") != value["manager_calls"]):
+                                raise ValueError("Planning reservation changed before invocation.")
+                            if not planning:
+                                current.update(planning_backlog_version=snapshot["version"],
+                                               planning_input_version=2, manager_calls=planned_call)
+                            return session
+                        value = store._mutate(reserve)[_FIELD]
+                    result = plan_next_iteration(
+                        workspace=workspace, project_key=project_key, root=root, project_config=project_config,
+                        expected_backlog_version=snapshot["version"], confirmed=True,
+                        allowed_task_ids=value["task_ids"],
+                        resource_slot=resource_slot, reserve_planning=reserve_planning,
+                        planning_attempt_id=f"{value['id']}:{planned_call}",
+                        **({"manager_runner": manager_runner} if manager_runner is not None else {}),
+                    )
                 chosen = result["iteration_choice"]["selected_task_ids"]
                 if (store.read().get(_FIELD) or {}).get("status") != "active":
                     return store.read()[_FIELD]
@@ -356,6 +375,11 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             # this outbox does not spend another planning call or reset a card.
             current = store.read().get(_FIELD) or value
             return _save(store, {**current, "reason": "discovery_publication_pending"})
+        except (ManagerResourceBusy, DocumentLockBusy):
+            # Slot contention happens before reservation/provider entry. Keep
+            # prior uncertain reservations intact; never refund a spent call.
+            current = store.read().get(_FIELD) or value
+            return _save(store, {**current, "reason": "manager_resource_busy"})
         except (OSError, ValueError, ManagerExecutionError) as exc:
             # An uncertain outcome is inspectable and cannot silently spend a
             # second attempt or choose another task under the same reservation.

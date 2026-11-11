@@ -276,7 +276,7 @@ the original task types, scope, permissions and budgets are unchanged.
 
 def run_manager_iteration_choice(*, project_config: Path, project_key: str,
                                  backlog: dict[str, Any], context: dict[str, Any],
-                                 planning_attempt_id: str = "") -> dict[str, Any]:
+                                 planning_attempt_id: str = "", resource_slot=None) -> dict[str, Any]:
     """Call the existing read-only Manager worker with an idempotent input."""
     from goodteam_os.graph import resolve_project_runtime_root, resolve_role_adapter
     from goodteam_os.manager_execution import (
@@ -305,7 +305,7 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
         # Outcome/HEAD/memory were captured together. A coincidentally unchanged
         # backlog cannot reuse advice from another delivered result or grant.
         identity = "project-outcome:" + sha256(json.dumps(context, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    with _manager_turn_lock(root, identity):
+    with _manager_turn_lock(root, identity, resource_slot=resource_slot):
         store = WorkerJobStore(root)
         job, created = _create_manager_job(
             store, project_config=project_config, project_root=root,
@@ -465,7 +465,7 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                         project_config: Path, expected_backlog_version: str,
                         manager_runner: Callable[..., dict[str, Any]] = run_manager_iteration_choice,
                         confirmed: bool = False, allowed_task_ids: list[str] | None = None,
-                        planning_attempt_id: str = "") -> dict[str, Any]:
+                        planning_attempt_id: str = "", resource_slot=None, reserve_planning=None) -> dict[str, Any]:
     """Persist a version-bound read-only recommendation; do not start a run."""
     if confirmed is not True:
         raise ValueError("Confirm the potentially billable Manager planning call first.")
@@ -511,7 +511,10 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             if linked_parent(workspace, project_key, continuation_id=continuation.get("id")) is None:
                 raise ValueError("Resolve the current task proposal before planning another iteration.")
         _require_planning_idle(workspace, project_key)
+        if reserve_planning is not None:
+            reserve_planning()
         result = manager_runner(project_config=project_config, project_key=project_key,
+            **({"resource_slot": resource_slot} if resource_slot is not None and manager_runner is run_manager_iteration_choice else {}),
                                 backlog=snapshot, context=context,
                                 **({"planning_attempt_id": planning_attempt_id} if planning_attempt_id else {}))
         choice = validate_iteration_choice(snapshot, result.get("selection"))

@@ -486,9 +486,12 @@ def _revalidate(workspace, project_key, root, config, value, pending):
 
 
 def discover_next_iteration(*, workspace, project_key, root, project_config, value, manager_runner=None):
+    from goodteam_os.manager_execution import manager_resource_slot
+
     try:
-        return _discover_next_iteration(workspace=workspace, project_key=project_key, root=root,
-            project_config=project_config, value=value, manager_runner=manager_runner)
+        with manager_resource_slot(Path(root)) as resource_slot:
+            return _discover_next_iteration(workspace=workspace, project_key=project_key, root=root,
+                project_config=project_config, value=value, manager_runner=manager_runner, resource_slot=resource_slot)
     except OSError as exc:
         saved = TaskAssistantSessionStore(workspace, project_key).read().get("project_continuation") or {}
         if saved.get("id") == value["id"] and saved.get("discovery_pending"):
@@ -521,7 +524,7 @@ def discover_next_iteration(*, workspace, project_key, root, project_config, val
         raise
 
 
-def _discover_next_iteration(*, workspace, project_key, root, project_config, value, manager_runner=None):
+def _discover_next_iteration(*, workspace, project_key, root, project_config, value, manager_runner=None, resource_slot=None):
     """One existing continuation step: observe, reserve, create once and queue."""
     from goodteam_os.assistant_queue import queue_manager_iteration_choice
     from goodteam_os.project_iteration_continuation import _intent
@@ -563,6 +566,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
     if "selection" not in pending:
         packet = pending["packet"]
         result = (manager_runner or run_manager_iteration_choice)(project_config=Path(project_config), project_key=project_key,
+            **({"resource_slot": resource_slot} if manager_runner is None else {}),
             backlog={**packet["backlog"], "planning_scope": packet["packet_digest"].split(":", 1)[1]}, context=packet)
         selection = validate_discovered_task(packet, result.get("selection"))
         _revalidate(workspace, project_key, root, project_config, value, pending)
