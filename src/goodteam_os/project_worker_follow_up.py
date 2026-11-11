@@ -22,7 +22,7 @@ def consume_worker_follow_up(*, store, root, project_key, value, authority_check
     initial = _current(store.read(), value)
     for old_key, old_record in initial.get("running_judgments", {}).items():
         old = old_record.get("worker_control") or {}
-        if old.get("status") not in {"reserved", "queued", "unconfirmed"}:
+        if old.get("status") not in {"reserved", "queued", "unconfirmed", "processing"}:
             continue
         try:
             existing = workers.find_project_session_control(old["control_id"], project_key=project_key)
@@ -75,13 +75,17 @@ def consume_worker_follow_up(*, store, root, project_key, value, authority_check
     result = {"control_state": "unconfirmed", "accepted": False}
     try:
         if fresh:
+            tasks = LocalTaskStore(root, project_key)
             def enqueue(session):
                 current = _current(session, value)
                 record = current.get("running_judgments", {}).get(key) or {}
                 if (record.get("worker_control") != control or _binding(session, root) != record.get("binding")
                         or not human_observation_current(current, record["packet"]) or not authority_check()):
                     raise ValueError("Original observation or authority changed before follow-up enqueue")
-                _scope_tasks(current, LocalTaskStore(root, project_key).list_tasks())
+                known, _ = _scope_tasks(current, tasks.list_tasks())
+                pending = current.get("pending_batch") or {}
+                if any(known[identifier]["status"] == "canceled" for identifier in pending.get("task_ids", [])):
+                    raise ValueError("The current batch was canceled; no automatic follow-up is authorized.")
                 command = {"job_id": control["job_id"], "action": "follow_up", "message": control["message"], "reason": ""}
                 _target(root, project_key, session, command, record["binding"]["dispatch_run_id"])
                 # The durable reservation is already saved. A crash at/after
@@ -100,8 +104,11 @@ def consume_worker_follow_up(*, store, root, project_key, value, authority_check
                         actor="manager", source="project_continuation", control_id=control["control_id"],
                         audit_context={"project_key": project_key}, wait_for_ack=False)
                 return session
-            store._mutate(enqueue)
-        elif control["status"] in {"reserved", "queued", "unconfirmed"}:
+            # Match the existing task-ledger -> session lock order. Cancellation
+            # cannot commit between the final task read and this nonblocking send.
+            with tasks._lock():
+                store._mutate(enqueue)
+        elif control["status"] in {"reserved", "queued", "unconfirmed", "processing"}:
             existing = workers.find_project_session_control(control["control_id"], project_key=project_key)
             if existing is not None:
                 job_id, request = existing

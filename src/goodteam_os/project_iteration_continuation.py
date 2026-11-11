@@ -223,6 +223,8 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             pending = value.get("pending_batch")
             if pending and pending.get("run_id"):
                 batch_tasks = [known[identifier] for identifier in pending["task_ids"]]
+                if any(task["status"] == "canceled" for task in batch_tasks):
+                    raise ValueError("The current batch was canceled; no automatic follow-up is authorized.")
                 saved_batch = store.read().get("project_task_batches", {}).get(pending["run_id"], {})
                 from goodteam_os.project_running_observation import observe_running_batch
                 observed_value = observe_running_batch(store=store, root=root, project_key=project_key, value=value)

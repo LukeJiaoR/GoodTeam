@@ -78,7 +78,12 @@ def observe_running_batch(*, store, root, project_key, value):
               "human_context": human_observation_context(session.get("project_continuation") or {}),
               "source_available": context.get("available") is True,
               "omitted_current": context.get("omitted_current", 0), "omitted_history": context.get("omitted_history", 0)}
-    digest = sha256(json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    # Eligibility reflects our own reservation bookkeeping, not new Worker or
+    # Human evidence. Keep it in the packet for validation, outside the wakeup key.
+    semantic_packet = {**packet, "workers": [
+        {key: value for key, value in row.items() if key != "follow_up_supported"}
+        for row in packet["workers"]]}
+    digest = sha256(json.dumps(semantic_packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     def save(current_session):
         if (_binding(current_session, root) != binding
                 or not human_observation_current(current_session.get("project_continuation") or {}, packet)):

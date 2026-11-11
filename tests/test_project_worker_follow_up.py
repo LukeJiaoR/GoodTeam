@@ -15,7 +15,8 @@ from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.workers import WorkerJobStore
 
 
-def test_authorized_manager_follow_up_uses_original_job_queue_once_and_preserves_truth(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cancel_before_enqueue", [False, True])
+def test_authorized_manager_follow_up_uses_original_job_queue_once_and_preserves_truth(tmp_path, monkeypatch, cancel_before_enqueue):
     task = LocalTaskStore(tmp_path, 'DEMO').create_task(title='Inspect current documentation',
         description='Report existing documentation only', role='research', acceptance_criteria=['Report evidence'])
     discovery = normalize_discovery({'objective': 'Inspect documented behavior without expanding the task scope.',
@@ -45,8 +46,15 @@ def test_authorized_manager_follow_up_uses_original_job_queue_once_and_preserves
         return judge_running_observation(store=store, root=tmp_path, value=observed, runner=manager, authority_check=lambda: True)
     judged = observe_and_judge()
     key = judged['running_observation']['digest']
+    checks = 0
+    def authority_check():
+        nonlocal checks
+        checks += 1
+        if cancel_before_enqueue and checks == 1:
+            LocalTaskStore(tmp_path, 'DEMO').update_task(task['id'], status='canceled')
+        return True
     def consume():
-        return consume_worker_follow_up(store=store, root=tmp_path, project_key='DEMO', value=store.read()['project_continuation'], authority_check=lambda: True)
+        return consume_worker_follow_up(store=store, root=tmp_path, project_key='DEMO', value=store.read()['project_continuation'], authority_check=authority_check)
     original_send = WorkerJobStore.session_control
     sends = []
     def lost_enqueue_response(self, *args, **kwargs):
@@ -56,12 +64,23 @@ def test_authorized_manager_follow_up_uses_original_job_queue_once_and_preserves
     monkeypatch.setattr(WorkerJobStore, 'session_control', lost_enqueue_response)
     first = consume()
     receipt = first['running_judgments'][key]['worker_control']
+    if cancel_before_enqueue:
+        assert not (root / 'pi_control_queue.jsonl').exists() and sends == []
+        assert 'canceled' in receipt['error']
+        return
+    unchanged = observe_and_judge()
+    assert unchanged['running_observation']['digest'] == key
+    assert unchanged['manager_calls'] == 1
+
     assert receipt['status'] == 'unconfirmed' and not receipt['worker_reply_attributed'] and not receipt['execution_completed']
     queue_path = root / 'pi_control_queue.jsonl'
     before = queue_path.read_bytes()
     request = json.loads(before)
     assert request['actor'] == 'manager' and request['source'] == 'project_continuation'
     assert request['job_id'] == job['id'] and request['execution_id'] == 'attempt'
+    jobs._append_pi_control_ack(root, receipt['control_id'], 'processing')
+    processing = consume()
+    assert processing['running_judgments'][key]['worker_control']['status'] == 'processing'
     jobs._append_pi_control_ack(root, receipt['control_id'], 'rpc_accepted')
     second = consume()
     assert queue_path.read_bytes() == before
