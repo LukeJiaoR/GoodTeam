@@ -6,6 +6,7 @@ does not implement another scheduler or turn Worker completion into delivery.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from hashlib import sha256
 import json
@@ -113,11 +114,13 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
         resolve_runtime_model_config(Path("models.yaml")), target,
         explicit_profile=str(target.get("model_profile") or "balanced"), role_overrides=[],
     )
+    from goodteam_os.task_delegation import render_project_task
+
     return [{
         "track_id": task["id"], "project_task_id": task["id"], "role": task["role"],
         **_worker_job_fields(target, str(task["role"]), state,
                              **({"worker_id": task["worker_id"]} if "worker_id" in task else {})),
-        "task": proposal["exact_request"], "task_source": "task_assistant_queue",
+        "task": render_project_task(task), "task_source": "task_assistant_queue",
         "context": "Execute only this confirmed project task in the assigned isolated repository. "
                    "Do not merge, deploy or change shared project state. Results require independent review.",
         "execution_policy": "read_only" if task.get("execution_policy") == "read_only" else "standard",
@@ -155,15 +158,25 @@ def _claim_tasks(root, project_key, batch):
 
 
 def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, expected_revisions, confirmed,
-                 expected_authority=None, expected_continuation_id=None):
+                 expected_authority=None, expected_continuation_id=None, selected_proposal_id=None, expected_team_revision=None):
     if confirmed is not True:
         raise ValueError("Confirm starting these queued tasks; configured Workers may use model credits.")
     run_id, dispatch_id = _identity(proposal_ids, expected_revisions)
     session_store = TaskAssistantSessionStore(workspace, project_key)
-    with workflow_guard(workspace, project_key), conversation_lock(session_store):
+    from goodteam_os.team_control_plane import TeamControlPlaneStore
+    from goodteam_os.skills.models import SkillConflict, SkillError
+
+    if expected_team_revision is not None and (type(expected_team_revision) is not int or expected_team_revision < 0):
+        raise SkillError("invalid_revision", "Task confirmation requires a valid Team revision.")
+    team_store = TeamControlPlaneStore(workspace, project_key)
+    with workflow_guard(workspace, project_key), conversation_lock(session_store), (team_store._locked() if expected_team_revision is not None else nullcontext()):
         session = session_store.read()
         batch = session.get("project_task_batches", {}).get(run_id)
         if batch:
+            if expected_team_revision is not None and batch.get("expected_team_revision") != expected_team_revision:
+                raise SkillConflict("team_revision_changed", "The batch was confirmed under a different Team revision.")
+            if selected_proposal_id is not None and batch.get("selected_proposal_id") != selected_proposal_id:
+                raise ValueError("The batch belongs to a different selected task.")
             if batch["project_root"] != str(Path(root).resolve()) or batch["project_config"] != str(Path(project_config).resolve()):
                 raise ValueError("A batch cannot be replayed against another project source.")
             if expected_authority is not None and batch.get("expected_authority") != expected_authority:
@@ -191,21 +204,40 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                         **current.get("project_task_batches", {}), run_id: batch}}
                 session_store._mutate(reclaim)
             return batch
+        if expected_team_revision is not None:
+            team = team_store.read()
+            if team is None:
+                raise SkillError("team_unavailable", "The confirmed project Team is unavailable.")
+            if team["revision"] != expected_team_revision:
+                raise SkillConflict("team_revision_changed", "Team changed after confirmation; review before starting.")
         _require_execution_slot(workspace, project_key, run_id, continuation_id=expected_continuation_id)
         _require_authority(workspace, project_key, root, project_config, expected_authority)
         _require_continuation(session, expected_continuation_id)
         proposal = session.get("proposed_task")
-        if proposal and proposal.get("status") != "cancelled":
+        selected_draft = None
+        if selected_proposal_id is not None:
+            if (proposal_ids != [selected_proposal_id] or not isinstance(proposal, dict)
+                    or proposal.get("id") != selected_proposal_id
+                    or proposal.get("revision") != expected_revisions[selected_proposal_id]
+                    or proposal.get("status") not in {"draft", "confirmed"}
+                    or proposal.get("pending_change") or proposal.get("run_id")
+                    or not proposal.get("project_task_id")):
+                raise ValueError("The selected project task draft changed before confirmation.")
+            selected_draft = proposal
+        if proposal and proposal.get("status") != "cancelled" and selected_draft is None:
             from goodteam_os.workflow_recovery import linked_parent
 
             if linked_parent(workspace, project_key, continuation_id=expected_continuation_id) is None:
                 raise ValueError("Resolve the current task draft before starting a batch.")
         queue = {item["id"]: item for item in session.get("queued_task_proposals", [])}
         proposals = [queue.get(identifier) for identifier in proposal_ids]
-        if any(item is None or item.get("status") != "queued" or item.get("confirmed")
+        if any(item is None or item.get("status") != ("selected" if selected_draft else "queued") or item.get("confirmed")
                or item.get("revision") != expected_revisions[item["id"]]
                or not item.get("project_task_id") for item in proposals):
             raise ValueError("Queued project tasks changed; refresh before confirming the batch.")
+        if selected_draft and any(selected_draft.get(key) != proposals[0].get(key)
+                                  for key in ("project_task_id", "project_task_digest", "exact_request")):
+            raise ValueError("The selected draft differs from its queued project task.")
         ledger = LocalTaskStore(root, project_key)
         tasks = [ledger.get_task(item["project_task_id"]) for item in proposals]
         if len({task["id"] for task in tasks}) != len(tasks):
@@ -230,6 +262,7 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
             "expected_continuation_id": expected_continuation_id,
             **({"workflow_recovery": session["project_continuation"]["workflow_recovery"]}
                if expected_continuation_id and session["project_continuation"].get("workflow_recovery") else {}),
+            "selected_proposal_id": selected_proposal_id, "expected_team_revision": expected_team_revision,
             "tracks": tracks, "status": "claimed", "confirmed": True,
             "created_at": datetime.now(UTC).isoformat()}
 
@@ -237,6 +270,10 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
             # Stop and admission share this short session mutation lock. A
             # stopped authorization cannot launch work after a slow preview.
             _require_continuation(current, expected_continuation_id)
+            if selected_draft is not None:
+                if current.get("proposed_task") != selected_draft:
+                    raise ValueError("Selected draft changed during execution admission.")
+                current["proposed_task"] = None
             current.setdefault("project_task_batches", {})[run_id] = batch
             for item in current["queued_task_proposals"]:
                 if item["id"] in proposal_ids:
@@ -409,7 +446,7 @@ def _execute_batch(*, workspace, project_key, root, batch):
 
 def run_queued_iteration_batch(*, workspace, project_key, root, project_config, proposal_ids,
                                expected_revisions, confirmed=False, background=False, expected_authority=None,
-                               expected_continuation_id=None):
+                               expected_continuation_id=None, selected_proposal_id=None, expected_team_revision=None):
     """Confirm exact queued work once and reuse the existing real Worker pool.
 
     Manual requests and authorized project continuation share this entry;
@@ -427,12 +464,16 @@ def run_queued_iteration_batch(*, workspace, project_key, root, project_config, 
                 if (confirmed is not True or batch["project_root"] != str(root)
                         or batch["project_config"] != str(Path(project_config).resolve())
                         or expected_authority is not None and batch.get("expected_authority") != expected_authority
-                        or expected_continuation_id is not None and batch.get("expected_continuation_id") != expected_continuation_id):
+                        or expected_continuation_id is not None and batch.get("expected_continuation_id") != expected_continuation_id
+                        or selected_proposal_id is not None and batch.get("selected_proposal_id") != selected_proposal_id
+                        or expected_team_revision is not None and (type(expected_team_revision) is not int
+                            or batch.get("expected_team_revision") != expected_team_revision)):
                     raise ValueError("The running batch belongs to different confirmed inputs or authority.")
             else:
                 batch = _claim_batch(workspace=workspace, project_key=project_key, root=root, project_config=project_config,
                     proposal_ids=proposal_ids, expected_revisions=expected_revisions, confirmed=confirmed,
-                    expected_authority=expected_authority, expected_continuation_id=expected_continuation_id)
+                    expected_authority=expected_authority, expected_continuation_id=expected_continuation_id,
+                    selected_proposal_id=selected_proposal_id, expected_team_revision=expected_team_revision)
                 def run():
                     try:
                         _execute_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)
@@ -452,5 +493,6 @@ def run_queued_iteration_batch(*, workspace, project_key, root, project_config, 
                     "task_assistant_session": TaskAssistantSessionStore(workspace, project_key).read()}
     batch = _claim_batch(workspace=workspace, project_key=project_key, root=root, project_config=project_config,
         proposal_ids=proposal_ids, expected_revisions=expected_revisions, confirmed=confirmed,
-        expected_authority=expected_authority, expected_continuation_id=expected_continuation_id)
+        expected_authority=expected_authority, expected_continuation_id=expected_continuation_id,
+                    selected_proposal_id=selected_proposal_id, expected_team_revision=expected_team_revision)
     return _execute_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)

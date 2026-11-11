@@ -76,8 +76,10 @@ it('shows a chat assignment scope and uses the existing exact-revision batch con
   render(<ProjectIterationSuggestion snapshot={snapshot} onQueue={onQueue} queuedTasks={[{
     id: 'chat-task', revision: 3, project_task_id: 'DEMO-8', source: 'manager_conversation', status: 'queued',
     exact_request: 'Research the entry point.', assignment: { role: 'research', execution_policy: 'read_only',
-      write_domains: [], acceptance_criteria: ['Cite the actual entry point.'] },
+      write_domains: [], acceptance_criteria: ['Cite the actual entry point.'],
+      delegation: { purpose: 'Trace login failures', context: 'Observed timeout', scope: 'Diagnosis only' } },
   }]} />);
+  for (const text of ['Trace login failures', 'Observed timeout', 'Diagnosis only']) expect(screen.getByText(text)).toBeInTheDocument();
   expect(screen.getByText('Research the entry point.')).toBeInTheDocument();
   expect(screen.queryByText('Original assignment member')).not.toBeInTheDocument();
   expect(screen.getByText('Cite the actual entry point.')).toBeInTheDocument();

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, FilePlus, FolderOpen, Pencil, Play, Plus, Replace, Save, X } from 'lucide-react';
 import Button from '../../../components/ui/Button';
 import './assistantControls.css';
+import TaskDelegationSummary from './TaskDelegationSummary';
 
 export function ProjectModeControl({ busy, onAction, t }) {
   const [mode, setMode] = useState('');
@@ -49,6 +50,9 @@ export default function TaskDraftControls({ draft, busy, modeRequired, resumeRea
     {editing ? <label className="assistant-draft-editor">{t('assistant.taskDraft')}
       <textarea value={text} rows={5} disabled={Boolean(busy)} onChange={(event) => setText(event.target.value)} />
     </label> : <p className="assistant-draft-text">{draft.exact_request}</p>}
+    {draft.project_task_id && <TaskDelegationSummary delegation={draft.assignment?.delegation} labels={{
+      purpose: t('assistant.delegationPurpose'), context: t('assistant.delegationContext'), scope: t('assistant.delegationScope'),
+    }} />}
     {draft.needs_clarification ? <p role="status">{t('assistant.needsClarification')}</p> : null}
     {!readOnly ? <>
       <PendingChange change={draft.pending_change} busy={busy} resolve={resolve} t={t} />

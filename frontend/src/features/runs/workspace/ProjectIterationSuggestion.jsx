@@ -1,3 +1,4 @@
+import TaskDelegationSummary from './TaskDelegationSummary';
 /** Project advice enters the existing queue; starting requires explicit confirmation. */
 function iterationPlanningRequest(snapshot, language = 'en') {
   if (snapshot?.schema_version !== 'project_iteration_backlog.v1') return '';
@@ -56,6 +57,9 @@ export default function ProjectIterationSuggestion({
     </div>
     {assignments.map(item => <div key={item.id}>
       <p>{item.exact_request}</p>
+      <TaskDelegationSummary delegation={item.assignment?.delegation} labels={zh
+        ? { purpose: '任务目的', context: '相关 Context', scope: '任务范围' }
+        : { purpose: 'Task purpose', context: 'Relevant Context', scope: 'Task scope' }} />
       {item.assignment?.worker_id && <p>{zh ? '原任务指定成员' : 'Original assignment member'}: <strong>{item.assignment.worker_id}</strong></p>}
       <p>{item.assignment?.role} · {item.assignment?.execution_policy === 'read_only'
         ? (zh ? '只读研究，不修改项目文件' : 'Read only; no project file changes')

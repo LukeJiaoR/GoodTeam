@@ -35,6 +35,10 @@ if '--version' in sys.argv:
 prompt = sys.stdin.read()
 assert '这个项目是干嘛的' in prompt
 assert 'RESEARCH_ROLE_RUNTIME' in prompt
+assert 'Explain the product purpose from retained evidence.' in prompt
+assert 'README evidence; unresolved audience question.' in prompt
+assert 'Read repository only; do not implement.' in prompt
+assert 'Identify the greeting and remaining uncertainty.' in prompt
 assert sys.argv[sys.argv.index('--model') + 1] == 'research-role-fixture'
 Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed greeting in README. Remaining: independent review.\\n')
 ''')
@@ -53,7 +57,10 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed
             'intent': 'work_request', 'response': 'Assigning this research.',
             'task_intake': {'ready': True, 'missing_decisions': [], 'source_message_ids': ['research']},
             'task_action': {'kind': 'queue_task', 'role': 'research', 'execution_policy': 'read_only',
-                            'write_domains': [], 'acceptance_criteria': ['Identify the greeting and remaining uncertainty.']},
+                            'write_domains': [], 'acceptance_criteria': ['Identify the greeting and remaining uncertainty.'],
+                            'delegation': {'purpose': 'Explain the product purpose from retained evidence.',
+                                           'context': 'README evidence; unresolved audience question.',
+                                           'scope': 'Read repository only; do not implement.'}},
         }))
     service = TaskAssistantService(tmp_path, project_config=config, manager_turn=manager)
     # Keep this legacy isolated configuration free of readiness preparation.
@@ -68,6 +75,7 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed
     assert task['role'] == 'research' and task['execution_policy'] == 'read_only'
     assert 'worker_id' not in task and 'worker_id' not in queued[0]['assignment']
     assert task['description'] == queued[0]['exact_request'] == request['text']
+    assert task['delegation']['source_messages'] == [{'message_id': 'research', 'content': request['text']}]
     assert not queued[0]['confirmed']
     service.send_message(**request)
     assert len(calls) == 1
@@ -93,6 +101,11 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Observed
     job = result['report']['jobs'][0]
     assert job['role'] == 'research' and job['write_scope_verified']
     assert created_jobs == [job['job_id']]
+    persisted = WorkerJobStore(source).list_jobs()[0]
+    # The immutable task intent protects the same delegated context on replay.
+    from goodteam_os.tasks import project_task_intent
+    assert project_task_intent(task)['delegation'] == task['delegation']
+    assert persisted['role'] == 'research'
     timeline = TaskAssistantSessionStore(tmp_path, 'DEMO').read()['timeline']
     replies = [item for item in timeline if item['message_id'].startswith('batch-result:')]
     assert len(replies) == 1

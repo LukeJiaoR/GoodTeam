@@ -6647,6 +6647,16 @@ def handle_project_api_post(
         store = TaskAssistantSessionStore(workspace, key)
         executor = ProjectReadinessExecutor(workspace)
         proposal_id = str(request.get("proposal_id", ""))
+        from goodteam_os.assistant_drafts import start_selected_project_task
+
+        service = TaskAssistantService(workspace, readiness_executor=executor,
+                                       project_config=_project_config_for_key(workspace, key))
+        try:
+            selected_result = start_selected_project_task(service, project_key=key, root=root, request=request)
+        except ValueError as exc:
+            raise ProjectApiError("task_draft_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
+        if selected_result is not None:
+            return 202, selected_result
         if action == "confirm_task":
             service = TaskAssistantService(workspace, readiness_executor=executor,
                                            project_config=_project_config_for_key(workspace, key))
