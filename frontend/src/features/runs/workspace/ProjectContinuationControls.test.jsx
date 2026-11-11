@@ -217,3 +217,36 @@ it('binds recovery to failed task evidence, preserves stop, and makes abandonmen
     .toHaveAttribute('href', `/api/projects/APP/iteration-batches/${batch.run_id}`);
   expect(screen.queryByRole('button', { name: /Retry confirmed|Abandon this batch|Continue checks|Verify version/ })).not.toBeInTheDocument();
 });
+
+it('requires fresh consent for optional running observations and bounded Worker questions', () => {
+  const action = vi.fn();
+  render(<ProjectContinuationControls projectKey="APP" onAction={action} canStart snapshot={{ version: 'scope',
+    candidates: [{ task_id: 'APP-1', title: 'Original task', status: 'todo' }] }} />);
+  fireEvent.click(screen.getByLabelText('Discover follow-up tasks from verified delivered outcomes'));
+  fireEvent.change(screen.getByLabelText(/Project objective/), { target: { value: 'Continue the authorized project tasks without expanding scope.' } });
+  fireEvent.change(screen.getByLabelText(/Allowed project paths/), { target: { value: 'src' } });
+  const observe = screen.getByLabelText('Allow Manager observations while Workers run');
+  expect(observe).not.toBeChecked();
+  const consent = screen.getByLabelText(/I confirm the initial tasks/);
+  fireEvent.click(consent);
+  fireEvent.click(observe);
+  expect(consent).not.toBeChecked();
+  const questions = screen.getByLabelText('Allow bounded Manager progress questions to current Pi invocations');
+  expect(questions).not.toBeChecked();
+  fireEvent.click(questions);
+  expect(screen.getByText(/each follow-up may add Worker model charges/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Total Worker follow-up limit'), { target: { value: '2' } });
+  fireEvent.click(consent);
+  fireEvent.click(screen.getByRole('button', { name: 'Authorize and start continuation' }));
+  expect(action.mock.lastCall[0].discovery).toMatchObject({ allow_running_observation: true, worker_follow_up_limit: 2 });
+  const first = action.mock.lastCall[0];
+  fireEvent.change(screen.getByLabelText('Total Worker follow-up limit'), { target: { value: '11' } });
+  expect(consent).not.toBeChecked();
+  expect(screen.getByRole('button', { name: 'Authorize and start continuation' })).toBeDisabled();
+  fireEvent.click(observe);
+  fireEvent.click(consent);
+  fireEvent.click(screen.getByRole('button', { name: 'Authorize and start continuation' }));
+  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_running_observation');
+  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('worker_follow_up_limit');
+  expect(action.mock.lastCall[0].idempotency_key).not.toBe(first.idempotency_key);
+});

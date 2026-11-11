@@ -141,6 +141,9 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
   const [paths, setPaths] = useState('');
   const [newTaskLimit, setNewTaskLimit] = useState(3);
   const [planningLimit, setPlanningLimit] = useState(6);
+  const [observeRunning, setObserveRunning] = useState(false);
+  const [followUp, setFollowUp] = useState(false);
+  const [followUpLimit, setFollowUpLimit] = useState(1);
   const [confirmedInput, setConfirmedInput] = useState('');
   const [command] = useState(() => globalThis.crypto?.randomUUID?.() || `continuation-${Date.now()}`);
   const lastSubmission = useRef({ input: '', revision: 0 });
@@ -150,7 +153,9 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
     && domains.every(path => path.length <= 160 && !path.split('/').some(part => ['', '.', '..'].includes(part))
       && ![...path].some(character => character.charCodeAt(0) < 32 || '\\:*?[]'.includes(character)));
   const discovery = discover ? { objective: objective.trim(), allowed_write_domains: domains,
-    max_new_tasks: newTaskLimit, max_planning_calls: planningLimit } : undefined;
+    max_new_tasks: newTaskLimit, max_planning_calls: planningLimit,
+    ...(observeRunning ? { allow_running_observation: true } : {}),
+    ...(observeRunning && followUp ? { worker_follow_up_limit: followUpLimit } : {}) } : undefined;
   const input = { action: 'start_project_continuation', expected_backlog_version: snapshot.version,
     task_ids: tasks.map(task => task.task_id), max_batches: maximum, confirmed: true, billing_acknowledged: true,
     ...(discovery ? { discovery } : {}) };
@@ -158,7 +163,8 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
   const valid = Number.isInteger(maximum) && maximum >= 1 && maximum <= 50
     && (!discover || objective.trim().length >= 20 && objective.trim().length <= 2000 && validDomains
       && Number.isInteger(newTaskLimit) && newTaskLimit >= 1 && newTaskLimit <= 50
-      && Number.isInteger(planningLimit) && planningLimit >= 1 && planningLimit <= 100);
+      && Number.isInteger(planningLimit) && planningLimit >= 1 && planningLimit <= 100
+      && (!observeRunning || !followUp || Number.isInteger(followUpLimit) && followUpLimit >= 1 && followUpLimit <= 10));
   const start = () => {
     if (lastSubmission.current.input !== inputIdentity) {
       lastSubmission.current = { input: inputIdentity, revision: lastSubmission.current.revision + 1 };
@@ -185,6 +191,17 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
       </label>
       <p>{zh ? '填写 1–12 个项目相对目录或文件路径。每次已核实的交付最多产生一个后续任务；现有任务仍可并行执行。'
         : 'Enter 1–12 project-relative directories or files. Each verified delivery can produce at most one follow-up task; existing tasks can still run in parallel.'}</p>
+      <label><input type="checkbox" checked={observeRunning} onChange={event => setObserveRunning(event.target.checked)} />
+        {zh ? '允许执行期间的 Manager 观察判断' : 'Allow Manager observations while Workers run'}</label>
+      {observeRunning ? <>
+        <label><input type="checkbox" checked={followUp} onChange={event => setFollowUp(event.target.checked)} />
+          {zh ? '允许 Manager 向当前 Pi 调用提出有界进展追问' : 'Allow bounded Manager progress questions to current Pi invocations'}</label>
+        {followUp ? <label>{zh ? 'Worker 追问总次数上限' : 'Total Worker follow-up limit'}
+          <input type="number" min="1" max="10" value={followUpLimit} onChange={event => setFollowUpLimit(Number(event.target.value))} />
+        </label> : null}
+        <p>{zh ? '观察占用 Manager 额度；每次追问可能增加 Worker 模型费用，每个调用最多一次。只限原任务，不授权 steer、abort、扩范围或未知结果重试；旧授权不会自动升级。'
+          : 'Observations use the Manager allowance; each follow-up may add Worker model charges, at most once per invocation. Original tasks only: no steer, abort, expanded scope or unknown-result retries. Existing grants are not upgraded.'}</p>
+      </> : null}
       <label>{zh ? '新任务总量上限' : 'Maximum new tasks in total'}
         <input type="number" min="1" max="50" value={newTaskLimit} onChange={event => setNewTaskLimit(Number(event.target.value))} />
       </label>

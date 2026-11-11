@@ -56,6 +56,9 @@ def observe_running_batch(*, store, root, project_key, value):
     if not binding or binding["continuation_id"] != value.get("id") or binding["authority"] != value.get("authority"):
         return session.get("project_continuation") or value
     context = worker_invocation_context(root, project_key, session, run_id=binding["dispatch_run_id"], observe_runtime=True)
+    controls = [r["worker_control"] for r in (session.get("project_continuation") or {}).get("running_judgments", {}).values()
+                if r.get("worker_control")]
+    questioned_jobs = {control["job_id"] for control in controls}
     rows = []
     for row in [*context.get("current", []), *context.get("recent_history", [])]:
         if row.get("run_id") != binding["dispatch_run_id"]:
@@ -65,6 +68,8 @@ def observe_running_batch(*, store, root, project_key, value):
         # semantic wakeup input. Keep job/result state distinct from local health.
         evidence = observation.get("evidence") or {}
         rows.append({"job_id": row["job_id"], "status": row["status"],
+            "follow_up_supported": row.get("adapter") in {"pi", "pi-rpc"} and row.get("status") == "running"
+                and row.get("current_dispatch_attempt") is not False and row["job_id"] not in questioned_jobs,
             "observation_available": observation.get("available") is True,
             "observation_reason": observation.get("reason", "not_observed"),
             "runtime": {key: evidence[key] for key in ("session_status", "process_alive", "isStreaming",
@@ -106,7 +111,10 @@ def running_observation_context(session):
     judgment = (value.get("running_judgments") or {}).get(receipt["digest"])
     if judgment:
         result["judgment"] = {key: deepcopy(judgment[key]) for key in (
-            "status", "advice", "advice_only", "actions_executed", "worker_reply_attributed", "manager_invocation") if key in judgment}
+            "status", "advice", "advice_only", "actions_executed", "worker_reply_attributed", "manager_invocation", "worker_control") if key in judgment}
     result["automatic_consumer_available"] = (value.get("discovery") or {}).get("allow_running_observation") is True
-    result["automatic_consumer_scope"] = "read_only_advice; runtime admission still required"
+    result["automatic_consumer_scope"] = "read_only_advice; follow_up only within explicit separate allowance; runtime admission required"
+    result["worker_controls"] = [{key: deepcopy(control[key]) for key in (
+        "control_id", "job_id", "action", "status", "rpc_accepted", "error", "worker_reply_attributed", "execution_completed") if key in control}
+        for record in value.get("running_judgments", {}).values() if (control := record.get("worker_control"))][-10:]
     return result

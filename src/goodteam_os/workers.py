@@ -2309,13 +2309,14 @@ class WorkerJobStore:
         return self._wait_for_pi_control_ack(job_id, job_root, payload["id"], action,
                                              timeout=None if wait_for_ack else 0)
 
-    def session_control_result(self, job_id: str, control_id: str, action: str) -> dict[str, Any]:
+    def session_control_result(self, job_id: str, control_id: str, action: str, *, wait_for_ack: bool = True) -> dict[str, Any]:
         """Wait for an existing control receipt only; never enqueue a command."""
         job_root, _job = self._session_job(job_id)
         request = self._pi_control_request(job_root, control_id)
         if not request or request.get("action") != action:
             raise ValueError("The original session control request is unavailable.")
-        return self._wait_for_pi_control_ack(job_id, job_root, control_id, action, idempotent=True)
+        return self._wait_for_pi_control_ack(job_id, job_root, control_id, action, idempotent=True,
+                                             timeout=None if wait_for_ack else 0)
 
     def _pi_control_request(self, job_root: Path, control_id: str) -> dict[str, Any] | None:
         path = job_root / "pi_control_queue.jsonl"
