@@ -1838,7 +1838,7 @@ class WorkerJobStore:
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=1)
             if runtime.aborted:
-                aborted = PiRpcError("Pi session was aborted by operator")
+                aborted = PiRpcError("Pi session was aborted (local or Runtime cancellation)")
                 aborted.failure_class = "pi_aborted"
                 raise aborted
             state = runtime.get_state()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -30,6 +31,7 @@ PI_CAPABILITIES = (
     "entry_replay",
 )
 PI_STARTUP_TIMEOUT_FLOOR_SECONDS = 1.0
+PI_MINIMUM_VERSION = (1, 1, 0)  # agent_settled.aborted is part of our terminal contract.
 MEANINGFUL_EVENTS = {
     "agent_start": "turn_started",
     "agent_end": "turn_ended",
@@ -149,12 +151,16 @@ def pi_backend_doctor(project_root: Path | None = None, overrides: Mapping[str, 
         except (OSError, IndexError, subprocess.TimeoutExpired):
             version = ""
     writable = _directory_writable(config.session_dir)
-    ready = available and bool(version) and writable
+    match = re.fullmatch(r"(?:pi\s+)?v?(\d+)\.(\d+)\.(\d+)(?:[+][A-Za-z0-9.-]+)?", version)
+    compatible = bool(match and tuple(map(int, match.groups())) >= PI_MINIMUM_VERSION)
+    ready = available and compatible and writable
     return {
         "mode": "pi",
         "kind": "session",
         "runtime_kind": PI_RUNTIME_SPEC.runtime_kind,
-        "capabilities": list(PI_CAPABILITIES),
+        "capabilities": list(PI_CAPABILITIES) if compatible else [],
+        "minimum_version": "1.1.0",
+        "protocol_compatible": compatible,
         "command": "pi",
         "command_path": resolved,
         "available": available,
@@ -168,7 +174,7 @@ def pi_backend_doctor(project_root: Path | None = None, overrides: Mapping[str, 
         "hint": (
             "Pi RPC is ready. Authentication remains owned by Pi."
             if ready
-            else "Pi is not ready. Install with `npm install -g @earendil-works/pi-coding-agent` and ensure the local session directory is writable."
+            else "Pi 1.1.0 or newer is required for verified RPC cancellation semantics. Install with `npm install -g @earendil-works/pi-coding-agent` and ensure the local session directory is writable."
         ),
     }
 
@@ -414,11 +420,25 @@ class PiSessionRuntime:
 
     def abort(self) -> dict[str, Any]:
         if self.aborted:
+            if self.metadata.get("queue_clear_unconfirmed"):
+                raise PiRpcError("Pi abort was acknowledged but clearing queued messages was not confirmed")
             return {"type": "response", "command": "abort", "success": True, "idempotent": True}
         self._abort_in_flight = True
         if self.web_search:
             self.web_search.stop()
+        queue_error = None
         try:
+            # Pi abort alone retains queued messages. Stop must remove those
+            # before cancelling the active turn; acknowledgement is not exit.
+            try:
+                self._rpc().request({"type": "clear_queue"}, timeout=min(self.config.request_timeout, 5.0))
+            except PiRpcError as exc:
+                queue_error = exc  # Still attempt abort, but never report full Stop success.
+            # Persist before abort: its asynchronous settled event may arrive
+            # before an acknowledgement that is subsequently lost.
+            with self._metadata_lock:
+                self.metadata["queue_clear_unconfirmed"] = queue_error is not None
+                self.store.write_metadata(self.metadata)
             response = self._rpc().request({"type": "abort"}, timeout=min(self.config.request_timeout, 5.0))
         except PiRpcError:
             self._abort_in_flight = False
@@ -427,11 +447,14 @@ class PiSessionRuntime:
         self._abort_in_flight = False
         with self._metadata_lock:
             self.metadata["status"] = "aborted"
+            self.metadata["queue_clear_unconfirmed"] = queue_error is not None
             operation = self.metadata.get("active_operation")
             if isinstance(operation, dict) and operation.get("state") != "settled":
                 self.metadata["active_operation"] = {**operation, "state": "aborted", "aborted_at": _now()}
             self.store.write_metadata(self.metadata)
-        self.store.append_event("abort")
+        self.store.append_event("abort", {"queue_clear_confirmed": queue_error is None})
+        if queue_error is not None:
+            raise PiRpcError("Pi abort was acknowledged but clearing queued messages was not confirmed") from queue_error
         return response
 
     def get_state(self, *, timeout: float | None = None) -> dict[str, Any]:
@@ -615,7 +638,21 @@ class PiSessionRuntime:
                 if isinstance(operation, dict) and operation.get("state") in {"dispatching", "accepted"}:
                     self.metadata["active_operation"] = {**operation, "turn_started_at": _now()}
                     self.store.write_metadata(self.metadata)
-        if record.get("type") == "agent_settled" and not self._abort_in_flight and not self._closing_abort:
+        if record.get("type") == "agent_settled" and record.get("aborted") is True:
+            # Runtime-side cancellation is real even when it was not initiated
+            # by our local abort(). Never promote a cancelled turn to success.
+            self.aborted = True
+            if self.web_search:
+                self.web_search.stop()
+            with self._metadata_lock:
+                self.metadata["status"] = "aborted"
+                operation = self.metadata.get("active_operation")
+                if isinstance(operation, dict):
+                    self.metadata["active_operation"] = {**operation, "state": "aborted", "aborted_at": _now()}
+                self.store.write_metadata(self.metadata)
+            self.store.append_event("runtime_aborted", {"source": "agent_settled"})
+        if (record.get("type") == "agent_settled" and not self.aborted
+                and not self._abort_in_flight and not self._closing_abort):
             with self._metadata_lock:
                 operation = self.metadata.get("active_operation")
                 if (
