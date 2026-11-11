@@ -54,6 +54,7 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
         "source_event_id": "reply:" + message_id, "status": "queued", "confirmed": False,
         "run_id": "", "created_at": datetime.now(UTC).isoformat(), "project_task_id": task["id"],
         "project_task_digest": task_evidence_digest(task), "source": "manager_conversation",
+        "web_search": task.get("web_search"),
         "assignment": {key: action[key] for key in ("role", "execution_policy", "write_domains", "acceptance_criteria", "delegation") if key in action}}
 
     def append(session):

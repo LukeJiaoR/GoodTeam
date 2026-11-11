@@ -10,7 +10,7 @@ from goodteam_os.state import StateStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
-QUEUE_ACTIONS = {"queue_task", "edit_queued_task", "discard_queued_task", "select_queued_task"}
+QUEUE_ACTIONS = {"queue_task", "edit_queued_task", "discard_queued_task", "select_queued_task", "configure_queued_search"}
 
 
 def active_project_run(workspace, project_key):
@@ -24,6 +24,9 @@ def handle_queue_action(service, *, project_key, root, request):
     if action not in QUEUE_ACTIONS:
         raise ValueError("Unknown task queue action")
     with conversation_lock(store):
+        if action == "configure_queued_search":
+            configure_queued_search(store, root, project_key, request)
+            return response(service, project_key, root)
         if action == "select_queued_task":
             from goodteam_os.project_iteration_execution import active_project_batch
 
@@ -146,7 +149,7 @@ def require_queued_project_task(root, project_key, proposal, *, workflow=True):
     return task
 
 
-def _project_task_request(task):
+def _project_task_request(task, *, enforce_input_limit=True):
     """Carry exact existing backlog work into the normal human-reviewable draft."""
     parts = [f"Project task {task['id']}: {task['title']}"]
     if task.get("description"):
@@ -161,7 +164,7 @@ def _project_task_request(task):
         import json
         parts.append("Explicit Web Search allowance (not an amount budget): " + json.dumps(task["web_search"], sort_keys=True))
     result = "\n\n".join(parts)
-    if not 1 <= len(result) <= 8000:
+    if enforce_input_limit and not 1 <= len(result) <= 8000:
         raise ValueError("Project task exceeds the existing Task Assistant draft limit.")
     return result
 
@@ -233,6 +236,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
                     "created_at": datetime.now(UTC).isoformat(),
                     "project_task_id": task["id"],
                     "project_task_digest": digest,
+                    "web_search": task.get("web_search"),
                     "source": "manager_project_iteration",
                 })
 
@@ -271,3 +275,57 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
         "workflow_started": False,
         "task_assistant_session": updated,
     }
+
+
+def configure_queued_search(store, root, project_key, request):
+    """Explicit user configuration only; retain task identity and invalidate old confirmation.
+
+    Caller owns the conversation lock. A crash between ledger and queue writes
+    fails closed at the existing digest check; it never starts a Worker.
+    """
+    from goodteam_os.tasks import LocalTaskStore, task_evidence_digest
+    from goodteam_os.web_search import search_policy
+    from goodteam_os.providers import ProviderStore
+
+    if request.get("confirmed") is not True or "web_search" not in request:
+        raise ValueError("Explicit search configuration confirmation is required.")
+    policy = search_policy(request["web_search"])
+    if policy is not None:
+        ProviderStore().resolve(policy["provider"])
+    tasks = LocalTaskStore(root, project_key)
+    with tasks._lock():
+        session = store.read()
+        proposal = next((item for item in session.get("queued_task_proposals", [])
+                         if item["id"] == request.get("proposal_id")), None)
+        if (proposal is None or proposal.get("status") != "queued" or proposal.get("confirmed")
+                or proposal.get("run_id") or proposal.get("batch_run_id")
+                or type(request.get("expected_revision")) is not int
+                or proposal["revision"] != request["expected_revision"] or not proposal.get("project_task_id")):
+            raise ValueError("Reload an unconfirmed queued project task before configuring search.")
+        task = require_queued_project_task(root, project_key, proposal, workflow=False)
+        original = tasks._read()
+        if policy is not None and task.get("execution_policy", "workspace_write") != "workspace_write":
+            raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Worker.")
+        updated = {**task, "updated_at": datetime.now(UTC).isoformat()}
+        if policy is None:
+            updated.pop("web_search", None)
+        else:
+            updated["web_search"] = policy
+        ledger = {**original, "tasks": [updated if item["id"] == task["id"] else item for item in original["tasks"]]}
+        tasks._write(ledger)
+        try:
+            text = (proposal["exact_request"] if proposal.get("source") == "manager_conversation"
+                    else _project_task_request(updated, enforce_input_limit=False))
+            def apply(current):
+                item = next(item for item in current["queued_task_proposals"] if item["id"] == proposal["id"])
+                item.update(project_task_digest=task_evidence_digest(updated), exact_request=text,
+                            revision=proposal["revision"] + 1, web_search=policy)
+                current["timeline"].append({"message_id": f"search-config:{item['id']}:{item['revision']}",
+                    "actor": "user", "event": "queued_search_configured", "content": text,
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "details": {"proposal_id": item["id"], "web_search": policy, "execution_started": False}})
+                return current
+            store._mutate(apply)
+        except Exception:
+            tasks._write(original)
+            raise
