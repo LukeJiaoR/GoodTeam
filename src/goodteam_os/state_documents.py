@@ -113,6 +113,10 @@ def connection():
             yield conn
 
 
+class DocumentLockBusy(ValueError):
+    """A nonblocking state lock could not be acquired."""
+
+
 @contextmanager
 def document_lock(path, *, blocking=True):
     if not database_configured():
@@ -133,7 +137,7 @@ def document_lock(path, *, blocking=True):
             else:
                 acquired = conn.execute(f"SELECT pg_try_advisory_{suffix}(%s) AS acquired", (key,)).fetchone()["acquired"]
                 if not acquired:
-                    raise ValueError("Task Assistant is busy. Reload before retrying.")
+                    raise DocumentLockBusy("Task Assistant is busy. Reload before retrying.")
             yield
         finally:
             try:

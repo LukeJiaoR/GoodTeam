@@ -32,7 +32,7 @@ def _file_conversation_lock(store):
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise ValueError("Task Assistant is busy. Reload before retrying.") from exc
+            raise state_documents.DocumentLockBusy("Task Assistant is busy. Reload before retrying.") from exc
         try:
             yield
         finally:

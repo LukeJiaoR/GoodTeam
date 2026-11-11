@@ -235,6 +235,23 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
         starts.clear()
         result.write_text("Partial observation about api.py")
 
+    # A simultaneous chat owns the same project slot. Discovery must not
+    # consume a call or freeze its packet before it can actually start.
+    from goodteam_os.manager_execution import manager_resource_slot
+    original_calls = state["project_continuation"]["manager_calls"]
+    with manager_resource_slot(root):
+        deferred = tick()
+    assert deferred["status"] == "active" and deferred["reason"] == "manager_resource_busy"
+    assert deferred["manager_calls"] == original_calls and not deferred.get("discovery_pending")
+    assert not calls and not starts
+    retained = {"packet_digest": "unknown-prior-input", "no_response_yet": True}
+    state["project_continuation"].update(discovery_pending=retained, manager_calls=original_calls + 1)
+    with manager_resource_slot(root):
+        deferred = tick()
+    assert deferred["discovery_pending"] == retained and deferred["manager_calls"] == original_calls + 1
+    assert not calls and not starts
+    state["project_continuation"].update(discovery_pending=None, manager_calls=original_calls)
+
     fail_publication[0] = True
     assert tick()["reason"] == "discovery_publication_pending"
     assert len(calls) == 1 and not starts
