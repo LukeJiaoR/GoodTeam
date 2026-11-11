@@ -51,7 +51,10 @@ Return one JSON object only (no Markdown):
 Keep selected_task_ids unique and ordered by preference. Choose a batch
 size justified by the project's actual independent work, not by a model
 constant or a guessed Worker capacity. selected_task_id must equal its first
-element. Keep compared IDs unique and eligible, including every selected ID.
+element. Keep compared IDs unique and present in the supplied candidate inventory,
+including every selected ID. You may compare blocked, in-progress or review tasks
+to explain dependencies, uncertainty or waiting, but do not select/restart them
+or treat review as accepted delivery. Comparison does not change their status.
 The number of tasks in a planning batch is NOT the number of Agent processes
 that will run concurrently; execution capacity, cost and permissions are
 separate runtime decisions. Rationale length 20-1600.
