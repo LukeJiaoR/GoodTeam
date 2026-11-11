@@ -1,0 +1,85 @@
+"""Deduplicated observation input on an existing continuation, not a new scheduler."""
+from copy import deepcopy
+from hashlib import sha256
+import json
+from pathlib import Path
+from datetime import datetime, timezone
+
+
+def _binding(session, root):
+    value = session.get("project_continuation") or {}
+    pending = value.get("pending_batch") or {}
+    batch = session.get("project_task_batches", {}).get(pending.get("run_id")) or {}
+    if (value.get("status") != "active" or batch.get("confirmed") is not True
+            or batch.get("expected_continuation_id") != value.get("id")
+            or batch.get("project_root") != str(Path(root).resolve())
+            or batch.get("status") not in {"claimed", "running"}):
+        return None
+    attempt = batch.get("current_dispatch_run_id") or batch.get("dispatch_run_id")
+    if not attempt:
+        return None
+    return {"continuation_id": value["id"], "batch_run_id": pending["run_id"], "dispatch_run_id": attempt,
+            "authority": value.get("authority"), "task_ids": list(pending.get("task_ids", [])),
+            "project_root_digest": sha256(str(Path(root).resolve()).encode()).hexdigest()}
+
+
+def observe_running_batch(*, store, root, project_key, value):
+    """Called only by the existing authorized tick after its authority checks.
+
+    No Manager call is made/reserved here. A future consumer must atomically
+    reserve from the original budget and revalidate this binding before use.
+    """
+    from goodteam_os.task_assistant import worker_invocation_context
+
+    session = store.read()
+    binding = _binding(session, root)
+    if not binding or binding["continuation_id"] != value.get("id") or binding["authority"] != value.get("authority"):
+        return session.get("project_continuation") or value
+    context = worker_invocation_context(root, project_key, session, run_id=binding["dispatch_run_id"], observe_runtime=True)
+    rows = []
+    for row in [*context.get("current", []), *context.get("recent_history", [])]:
+        if row.get("run_id") != binding["dispatch_run_id"]:
+            continue
+        observation = row.get("runtime_observation") or {}
+        # Time/heartbeat churn and acknowledgement changes do not create a new
+        # semantic wakeup input. Keep job/result state distinct from local health.
+        evidence = observation.get("evidence") or {}
+        rows.append({"job_id": row["job_id"], "status": row["status"],
+            "observation_available": observation.get("available") is True,
+            "observation_reason": observation.get("reason", "not_observed"),
+            "runtime": {key: evidence[key] for key in ("session_status", "process_alive", "isStreaming",
+                        "isCompacting", "pendingMessageCount") if key in evidence}})
+    packet = {"binding": binding, "workers": sorted(rows, key=lambda row: row["job_id"]),
+              "source_available": context.get("available") is True,
+              "omitted_current": context.get("omitted_current", 0), "omitted_history": context.get("omitted_history", 0)}
+    digest = sha256(json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    def save(current_session):
+        if _binding(current_session, root) != binding:
+            return current_session  # Stop/recovery/config replacement won the race.
+        current = current_session["project_continuation"]
+        previous = current.get("running_observation") or {}
+        if previous.get("digest") == digest:
+            return current_session
+        current["running_observation"] = {"schema_version": "running_observation.v1", "digest": digest,
+            "observed_at": datetime.now(timezone.utc).isoformat(), "packet": packet,
+            "manager_called": False, "action_executed": False,
+            "interpretation": "Changed evidence is only a wakeup candidate. No Manager call scheduled, budget reserved, "
+                              "Worker reply attributed, execution completed or retry authorized."}
+        return current_session
+    return store._mutate(save).get("project_continuation") or value
+
+
+def running_observation_context(session):
+    value = session.get("project_continuation") or {}
+    receipt = value.get("running_observation")
+    if not receipt:
+        return None
+    result = deepcopy(receipt)
+    binding = receipt["packet"]["binding"]
+    batch = session.get("project_task_batches", {}).get(binding["batch_run_id"], {})
+    result["current_binding"] = bool(batch.get("project_root") and
+        _binding(session, batch["project_root"]) == binding)
+    # Informational only: must never mint or extend the existing authority.
+    result["remaining_manager_calls"] = max(0, value.get("max_manager_calls", 0) - value.get("manager_calls", 0))
+    result["automatic_consumer_available"] = False
+    return result

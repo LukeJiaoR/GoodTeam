@@ -223,6 +223,18 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             if pending and pending.get("run_id"):
                 batch_tasks = [known[identifier] for identifier in pending["task_ids"]]
                 saved_batch = store.read().get("project_task_batches", {}).get(pending["run_id"], {})
+                from goodteam_os.project_running_observation import observe_running_batch
+                observed_value = observe_running_batch(store=store, root=root, project_key=project_key, value=value)
+                if (observed_value.get("status") != "active" or observed_value.get("id") != value.get("id")
+                        or observed_value.get("authority") != value.get("authority")
+                        or observed_value.get("pending_batch") != pending):
+                    return observed_value
+                value = observed_value
+                latest_batch = store.read().get("project_task_batches", {}).get(pending["run_id"], {})
+                if ((latest_batch.get("current_dispatch_run_id") or latest_batch.get("dispatch_run_id"))
+                        != (saved_batch.get("current_dispatch_run_id") or saved_batch.get("dispatch_run_id"))
+                        or latest_batch.get("status") != saved_batch.get("status")):
+                    return value
                 recovering = (saved_batch.get("status") in {"claimed", "running"}
                               and bool(saved_batch.get("current_recovery_attempt")))
                 if any(task.get("run_id") not in {None, "", pending["run_id"]} for task in batch_tasks):
