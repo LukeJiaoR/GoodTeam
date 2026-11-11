@@ -860,11 +860,11 @@ def _manager_chat_context(
         lines.append(f"Team capability summary: {json.dumps(_compact_team_view(team_view), ensure_ascii=False)}")
     if root is not None:
         lines.append("Worker invocation records (fresh read-only state): "
-                     + json.dumps(worker_invocation_context(root, project_key, session, run_id=run_id), ensure_ascii=False))
+                     + json.dumps(worker_invocation_context(root, project_key, session, run_id=run_id, observe_runtime=True), ensure_ascii=False))
     return "\n".join(lines)
 
 
-def worker_invocation_context(root, project_key, session, *, run_id=""):
+def worker_invocation_context(root, project_key, session, *, run_id="", observe_runtime=False):
     """Scope existing job records to this project's confirmed executions."""
     from goodteam_os.workers import WorkerJobStore
 
@@ -888,9 +888,14 @@ def worker_invocation_context(root, project_key, session, *, run_id=""):
         if not run_id:
             run_ids.update(attempts)
     try:
-        context = WorkerJobStore(Path(root)).invocation_context(project_key=project_key, run_ids=run_ids)
+        workers = WorkerJobStore(Path(root))
+        context = workers.invocation_context(project_key=project_key, run_ids=run_ids)
         for item in [*context["current"], *context["recent_history"]]:
             item.update(batch_states.get(item["run_id"], {}))
+        if observe_runtime:
+            from goodteam_os.manager_runtime_observation import runtime_observation
+            for item in context["current"]:
+                item["runtime_observation"] = runtime_observation(workers, item)
         return context
     except (OSError, ValueError) as exc:
         return {"available": False, "read_only": True, "source": "WorkerJobStore",
