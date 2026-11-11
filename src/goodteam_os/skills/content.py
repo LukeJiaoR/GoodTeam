@@ -289,6 +289,18 @@ class SkillContextProvider:
             raise SkillError("snapshot_scope_mismatch", "Content authority changed before input return.")
         return record["input"]  # Freshly decoded value, never shared mutable state.
 
+    def worker_input(self, ref) -> bytes:
+        """Prepare ordinary-Role input; never proof of delivery or execution.
+
+        An independently admitted adapter must bind its optional read channel
+        to this same reference. Model arguments cannot select another context.
+        Production dispatch remains closed until that adapter is admitted.
+        """
+        from .worker_input import render_worker_input
+
+        private = self.private_input(ref)  # Current authority, scope and revocation.
+        return render_worker_input(private, maximum=self.limits.max_input_bytes)
+
     def read_resource(self, ref, *, skill_id: str, relative: str, call_id: str) -> bytes:
         """Controlled broker read, not proof a model read/used the returned bytes.
 
