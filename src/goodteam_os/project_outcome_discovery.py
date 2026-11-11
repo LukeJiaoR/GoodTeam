@@ -133,6 +133,17 @@ def _remember(root, outcome):
         source="execution:project-delivery:" + receipt["receipt_id"] + ":final_provenance")
 
 
+def _authorized_task_context(root, project_key, value, *, exclude_ref=None):
+    """Freeze the grant's actual task facts, not unrelated project bookkeeping."""
+    from goodteam_os.tasks import project_task_intent
+
+    return [{"task_id": task["id"], "intent": project_task_intent(task),
+             **{key: task.get(key) for key in ("status", "run_id", "execution_origin", "dispatch_job_id",
+                 "dispatch_run_id", "delivery_verified", "delivery_receipt")}}
+            for task in sorted(LocalTaskStore(root, project_key).list_tasks(), key=lambda task: task["id"])
+            if task["id"] in value["task_ids"] and (not exclude_ref or exclude_ref not in task.get("external_refs", []))]
+
+
 def _packet(workspace, project_key, root, value, outcome, *, project_config=None):
     from goodteam_os.memory import runtime_role_memory_store
     from goodteam_os.project_iteration_planner import _project_evidence
@@ -147,6 +158,7 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
                              "batches": value["max_batches"] - value["batches_started"],
                              "new_tasks": value["discovery"]["max_new_tasks"] - value["new_tasks_created"]},
         "authorized_task_ids": list(value["task_ids"]),
+        "authorized_task_context": _authorized_task_context(root, project_key, value),
         "authorized_done_task_ids": [task["id"] for task in LocalTaskStore(root, project_key).list_tasks()
                                      if task["id"] in value["task_ids"] and task["status"] == "done"
                                      and task.get("delivery_verified") is True],
@@ -198,6 +210,22 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         }
         packet["allowed_source_refs"].extend(item["receipt_id"] for item in history
                                             if item["receipt_id"] not in packet["allowed_source_refs"])
+    from goodteam_os.project_batch_feedback import pending_batch_feedback, valid_receipt
+    batch_history = list((value.get("batch_observations") or {}).values())
+    if any(not valid_receipt(value, item) for item in batch_history):
+        raise ValueError("A retained batch observation changed.")
+    if batch_history:
+        packet["batch_history"] = batch_history
+        known_tasks = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
+        packet["unresolved_batch_task_ids"] = sorted({item["task_id"] for receipt in batch_history for item in receipt["tasks"]
+            if not (known_tasks.get(item["task_id"], {}).get("status") == "canceled"
+                    or known_tasks.get(item["task_id"], {}).get("status") == "done"
+                    and known_tasks.get(item["task_id"], {}).get("delivery_verified") is True)})
+        packet["batch_context"] = {"decision_project_head": outcome.get("project_head") or _head(root),
+            "interpretation": "Known terminal results are not accepted delivery. Retain unresolved work; do not repeat original invocations."}
+        packet["allowed_source_refs"].extend(item["receipt_id"] for item in batch_history)
+    if value.get("batch_feedback_pending"):
+        packet["batch_feedback"] = pending_batch_feedback(workspace=workspace, project_key=project_key, root=root, value=value)
     packet["human_feedback_supported"] = True
     packet["human_questions"] = question_context(value)
     packet["question_board"] = question_board({**TaskAssistantSessionStore(workspace, project_key).read(),
@@ -309,6 +337,9 @@ def validate_discovered_task(packet, response):
     feedback = packet.get("investigation_feedback")
     if feedback and feedback["receipt_id"] not in sources:
         raise ValueError("A report-driven follow-up must reference the captured investigation observation.")
+    batch_feedback = packet.get("batch_feedback")
+    if batch_feedback and batch_feedback["receipt_id"] not in sources:
+        raise ValueError("A batch-driven follow-up must reference its captured results, including unresolved work.")
     return {"new_task": {**task, "title": task["title"].strip(), "description": task["description"].strip(),
                          "acceptance_criteria": [item.strip() for item in criteria], "write_domains": domains},
             "rationale": reason.strip(), **actions}
@@ -338,6 +369,8 @@ def _input_receipts(packet):
     receipts = [packet["verified_outcome"]["delivery"]["receipt_id"]]
     if packet.get("investigation_feedback"):
         receipts.append(packet["investigation_feedback"]["receipt_id"])
+    if packet.get("batch_feedback"):
+        receipts.append(packet["batch_feedback"]["receipt_id"])
     receipts.extend(item["receipt_id"] for item in packet.get("human_answers", []))
     return list(dict.fromkeys(receipts))
 
@@ -372,9 +405,20 @@ def _revalidate(workspace, project_key, root, config, value, pending):
         feedback = pending_investigation_feedback(workspace=workspace, project_key=project_key, root=root, value=value)
         if feedback != packet["investigation_feedback"]:
             raise ValueError("The pending investigation no longer matches the reserved Manager input.")
+    from goodteam_os.project_batch_feedback import pending_batch_feedback
+    retained_batches = value.get("batch_observations") or {}
+    if any(retained_batches.get(item["observation_key"]) != item for item in packet.get("batch_history", [])):
+        raise ValueError("The historical batch Context changed during discovery.")
+    if packet.get("batch_feedback") and pending_batch_feedback(
+            workspace=workspace, project_key=project_key, root=root, value=value) != packet["batch_feedback"]:
+        raise ValueError("Pending batch results differ from the reserved Manager input.")
     ref = _creation_ref(value, packet)
     original_tasks = [task for task in LocalTaskStore(root, project_key).list_tasks() if ref not in task.get("external_refs", [])]
-    if rank_project_backlog(original_tasks, project_key, limit=None)["version"] != pending["backlog_version"]:
+    if "authorized_task_context" in packet:
+        if _authorized_task_context(root, project_key, value, exclude_ref=ref) != packet["authorized_task_context"]:
+            raise ValueError("An authorized task changed during outcome discovery.")
+    elif rank_project_backlog(original_tasks, project_key, limit=None)["version"] != pending["backlog_version"]:
+        # Already-reserved older decisions keep their original contract.
         raise ValueError("The project backlog changed during outcome discovery.")
 
 
@@ -470,10 +514,12 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
             current = _current(session, value)
             consumed = list(dict.fromkeys([*current.get("discovery_consumed", []), *inputs, trigger_ref]))
             newer_answers = any(item["receipt_id"] not in consumed for item in human_feedback(current))
-            current.update(status="active" if waiting or newer_answers else "completed",
+            unresolved_batch = bool(pending["packet"].get("unresolved_batch_task_ids"))
+            current.update(status="active" if waiting or newer_answers else "blocked" if unresolved_batch else "completed",
                 reason=("human_answer_received" if newer_answers else
-                        "awaiting_human_decision" if waiting else "discovery_no_followup"), discovery_pending=None,
-                investigation_pending=None,
+                        "awaiting_human_decision" if waiting else "observed_results_require_resolution" if unresolved_batch
+                        else "discovery_no_followup"), discovery_pending=None,
+                investigation_pending=None, batch_feedback_pending=None,
                 discovery_consumed=consumed,
                 discovery_last={"status": "waiting_for_human" if waiting else "no_followup",
                                 "task_id": "", "outcome_receipt_id": receipt_id,
@@ -528,7 +574,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         current = _current(session, value)
         current.update(pending_batch={"task_ids": [identifier], "proposal_ids": ids,
             "expected_revisions": {item: proposals[item]["revision"] for item in ids}, "run_id": ""},
-            discovery_pending=None, investigation_pending=None, batches_started=current["batches_started"] + 1,
+            discovery_pending=None, investigation_pending=None, batch_feedback_pending=None, batches_started=current["batches_started"] + 1,
             discovery_consumed=list(dict.fromkeys([*current.get("discovery_consumed", []), *inputs, trigger_ref])),
             reason="outcome_followup_queued")
         return session

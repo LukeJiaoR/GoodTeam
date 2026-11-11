@@ -199,6 +199,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
     """One bounded automatic step; retries retain the same queued batch identity."""
     from goodteam_os.project_iteration_execution import run_queued_iteration_batch
     from goodteam_os.project_outcome_discovery import DiscoveryPublicationPending, discover_next_iteration
+    from goodteam_os.project_batch_feedback import observe_pending_batch
     from goodteam_os.project_investigation_feedback import is_observed_investigation, observe_pending_investigation
     from goodteam_os.project_human_feedback import human_feedback
 
@@ -234,6 +235,9 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 elif not recovering and all(task["status"] in {"review", "blocked"} for task in batch_tasks):
                     observed = observe_pending_investigation(workspace=workspace, project_key=project_key,
                         root=root, project_config=project_config, value=value)
+                    if observed is None and any(task["status"] == "blocked" for task in batch_tasks):
+                        observed = observe_pending_batch(workspace=workspace, project_key=project_key,
+                            root=root, project_config=project_config, value=value)
                     if observed is None:
                         if any(task["status"] == "blocked" for task in batch_tasks):
                             raise ValueError("The current batch is blocked; inspect its retained execution result.")
@@ -242,7 +246,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 elif not recovering and any(task["status"] == "blocked" for task in batch_tasks):
                     raise ValueError("The current batch is blocked; inspect its retained execution result.")
             if (value.get("discovery") and pending is None and (value.get("discovery_pending")
-                    or value.get("investigation_pending") or value.get("reason") == "awaiting_human_decision"
+                    or value.get("investigation_pending") or value.get("batch_feedback_pending") or value.get("reason") == "awaiting_human_decision"
                     or any(item["receipt_id"] not in value.get("discovery_consumed", []) for item in human_feedback(value))
                     or all((task["status"] == "done" and task.get("delivery_verified") is True)
                            or is_observed_investigation(value, task) for task in selected))):
