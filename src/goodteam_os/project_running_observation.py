@@ -23,6 +23,26 @@ def _binding(session, root):
             "project_root_digest": sha256(str(Path(root).resolve()).encode()).hexdigest()}
 
 
+
+def human_observation_context(value):
+    """Reuse validated original-grant receipts, never treat answers as authority."""
+    from goodteam_os.project_human_feedback import human_feedback, question_context
+
+    answers = sorted(human_feedback(value), key=lambda item: (item.get("received_at", ""), item["receipt_id"]))
+    questions = question_context(value)
+    return {"answers": answers[-10:], "questions": questions[-10:],
+            "omitted_answers": max(0, len(answers) - 10),
+            "omitted_questions": max(0, len(questions) - 10)}
+
+
+def human_observation_current(value, packet):
+    captured = packet.get("human_context")
+    current = human_observation_context(value)
+    # Older persisted candidates carried no Human context. They are usable only
+    # when no Human evidence exists; a new tick captures any new information.
+    return captured == current if captured is not None else not (current["answers"] or current["questions"])
+
+
 def observe_running_batch(*, store, root, project_key, value):
     """Called only by the existing authorized tick after its authority checks.
 
@@ -50,11 +70,13 @@ def observe_running_batch(*, store, root, project_key, value):
             "runtime": {key: evidence[key] for key in ("session_status", "process_alive", "isStreaming",
                         "isCompacting", "pendingMessageCount") if key in evidence}})
     packet = {"binding": binding, "workers": sorted(rows, key=lambda row: row["job_id"]),
+              "human_context": human_observation_context(session.get("project_continuation") or {}),
               "source_available": context.get("available") is True,
               "omitted_current": context.get("omitted_current", 0), "omitted_history": context.get("omitted_history", 0)}
     digest = sha256(json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     def save(current_session):
-        if _binding(current_session, root) != binding:
+        if (_binding(current_session, root) != binding
+                or not human_observation_current(current_session.get("project_continuation") or {}, packet)):
             return current_session  # Stop/recovery/config replacement won the race.
         current = current_session["project_continuation"]
         previous = current.get("running_observation") or {}
