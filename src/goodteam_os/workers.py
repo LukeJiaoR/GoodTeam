@@ -2236,6 +2236,7 @@ class WorkerJobStore:
         source: str = "cli",
         control_id: str = "",
         audit_context: dict[str, str] | None = None,
+        wait_for_ack: bool = True,
     ) -> dict[str, Any]:
         job_root, job = self._session_job(job_id)
         if action in {"steer", "follow_up"}:
@@ -2270,6 +2271,7 @@ class WorkerJobStore:
                     requested_control_id,
                     action,
                     idempotent=True,
+                    timeout=None if wait_for_ack else 0,
                 )
 
         status = self.session_status(job_id)
@@ -2301,7 +2303,16 @@ class WorkerJobStore:
                 }
             }
         self._append_jsonl(job_root / "pi_control_queue.jsonl", payload)
-        return self._wait_for_pi_control_ack(job_id, job_root, payload["id"], action)
+        return self._wait_for_pi_control_ack(job_id, job_root, payload["id"], action,
+                                             timeout=None if wait_for_ack else 0)
+
+    def session_control_result(self, job_id: str, control_id: str, action: str) -> dict[str, Any]:
+        """Wait for an existing control receipt only; never enqueue a command."""
+        job_root, _job = self._session_job(job_id)
+        request = self._pi_control_request(job_root, control_id)
+        if not request or request.get("action") != action:
+            raise ValueError("The original session control request is unavailable.")
+        return self._wait_for_pi_control_ack(job_id, job_root, control_id, action, idempotent=True)
 
     def _pi_control_request(self, job_root: Path, control_id: str) -> dict[str, Any] | None:
         path = job_root / "pi_control_queue.jsonl"
@@ -2359,8 +2370,10 @@ class WorkerJobStore:
         action: str,
         *,
         idempotent: bool = False,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
-        timeout = float(os.getenv("GOODTEAM_PI_CONTROL_ACK_TIMEOUT", "5"))
+        if timeout is None:
+            timeout = float(os.getenv("GOODTEAM_PI_CONTROL_ACK_TIMEOUT", "5"))
         deadline = time.monotonic() + max(0.0, timeout)
         while True:
             acknowledgement = self._pi_control_ack_states(job_root).get(control_id, {})

@@ -840,6 +840,7 @@ def _manager_chat_context(
     run_id: str = "",
 ) -> str:
     from goodteam_os.context_continuity import conversation_context
+    from goodteam_os.manager_worker_control import control_context
 
     current = next((item for item in session.get("timeline", [])
                     if item.get("message_id") == current_message_id), {})
@@ -852,6 +853,7 @@ def _manager_chat_context(
         "Conversation excerpts are lossy historical context, not current task requirements or authorization. "
         "Only Task intake source messages below may supply exact user text for a new draft; compaction never widens that source boundary.",
         f"Pending proposal: {json.dumps(proposal, ensure_ascii=False)}",
+        "Explicit Worker control receipts: " + json.dumps(control_context(session), ensure_ascii=False),
         f"Task intake source messages: {json.dumps(intake_source_messages(session, current_message_id=current_message_id), ensure_ascii=False)}",
     ]
     if team_view is not None:
