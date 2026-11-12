@@ -43,6 +43,28 @@ def human_observation_current(value, packet):
     return captured == current if captured is not None else not (current["answers"] or current["questions"])
 
 
+def judgment_human_current(value, record):
+    """Own newly published unanswered question is not concurrent Human input."""
+    identifier = record.get("human_question_id")
+    if not identifier:
+        return human_observation_current(value, record["packet"])
+    from goodteam_os.project_human_feedback import _validated_record
+    question = _validated_record(value, (value.get("human_questions") or {}).get(identifier))
+    planning = question["planning"]
+    packet = planning["packet"]
+    own = (planning.get("source_kind") == "running_observation"
+           and packet.get("observation_id") == record["observation_digest"]
+           and packet.get("observation") == record["packet"])
+    if own and (question.get("answer") is not None or question.get("resolution")):
+        return False
+    if human_observation_current(value, record["packet"]):
+        return True  # A duplicate proposal may refer to an existing captured question.
+    if not own:
+        return False
+    without_own = {**value, "human_questions": {key: item for key, item in value["human_questions"].items() if key != identifier}}
+    return human_observation_current(without_own, record["packet"])
+
+
 def observe_running_batch(*, store, root, project_key, value):
     """Called only by the existing authorized tick after its authority checks.
 
@@ -84,6 +106,16 @@ def observe_running_batch(*, store, root, project_key, value):
     semantic_packet = {**packet, "workers": [
         {key: value for key, value in row.items() if key != "follow_up_supported"}
         for row in packet["workers"]]}
+    # Publishing our own question is not new external evidence. Keep it in the
+    # next actual input, but do not buy another judgment merely to reread it.
+    own_questions = {identifier for identifier, record in
+        ((session.get("project_continuation") or {}).get("human_questions") or {}).items()
+        if record.get("planning", {}).get("source_kind") == "running_observation"
+        and record["planning"]["packet"]["observation"]["binding"] == binding}
+    from goodteam_os.project_human_feedback import question_context
+    wake_questions = [q for q in question_context(session.get("project_continuation") or {}) if q["id"] not in own_questions]
+    semantic_packet["human_context"] = {**packet["human_context"],
+        "questions": wake_questions[-10:], "omitted_questions": max(0, len(wake_questions) - 10)}
     digest = sha256(json.dumps(semantic_packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     def save(current_session):
         if (_binding(current_session, root) != binding
@@ -117,7 +149,7 @@ def running_observation_context(session):
     judgment = (value.get("running_judgments") or {}).get(receipt["digest"])
     if judgment:
         result["judgment"] = {key: deepcopy(judgment[key]) for key in (
-            "status", "advice", "advice_only", "actions_executed", "worker_reply_attributed", "manager_invocation", "worker_control") if key in judgment}
+            "status", "advice", "advice_only", "actions_executed", "worker_reply_attributed", "manager_invocation", "worker_control", "human_question_id") if key in judgment}
     result["automatic_consumer_available"] = (value.get("discovery") or {}).get("allow_running_observation") is True
     result["automatic_consumer_scope"] = "read_only_advice; follow_up only within explicit separate allowance; runtime admission required"
     result["worker_controls"] = [{key: deepcopy(control[key]) for key in (

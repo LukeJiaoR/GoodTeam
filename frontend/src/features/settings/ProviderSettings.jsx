@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Cable, Plus, RefreshCw } from 'lucide-react';
 import { fetchProviderModels, getProviders, getProviderUsage, updateProvider } from './providerApi';
 import './providerSettings.css';
+import './settingsCompact.css';
 
 const emptyDraft = () => ({ id: '', agent: 'codex', protocol: 'responses', name: '', base_url: '', api_key: '', model: '' });
 const number = (value) => value == null ? '—' : new Intl.NumberFormat().format(value);
@@ -105,12 +106,14 @@ export default function ProviderSettings({ t }) {
   const disabled = Boolean(pending) || !settings?.configured;
   const active = settings?.active?.codex || '';
 
-  return <section className="studio-settings-section provider-settings" aria-labelledby="settings-providers">
+  return <section className="studio-settings-section provider-settings provider-settings--compact" aria-labelledby="settings-providers">
+    <div className="provider-settings__heading">
     <header><Cable size={19} aria-hidden="true" /><div><h2 id="settings-providers">{label('title')}</h2><p>{label('description')}</p></div></header>
     <div className="provider-settings__toolbar">
       <span className="provider-settings__agent">Codex</span>
       <button className="product-button product-button--secondary" type="button" disabled={Boolean(pending)} onClick={() => { setPending('load'); setError(''); reload(); }}><RefreshCw size={14} aria-hidden="true" />{label('refresh')}</button>
       <button className="product-button" type="button" disabled={disabled} onClick={() => edit()}><Plus size={14} aria-hidden="true" />{label('add')}</button>
+    </div>
     </div>
     {pending === 'load' ? <p role="status">{label('loading')}</p> : null}
     {settings && !settings.configured ? <p role="status">{label('databaseRequired')}</p> : null}

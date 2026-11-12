@@ -32,6 +32,10 @@ def _authorized_read_only_role(value, role):
 
 def is_observed_investigation(value, task):
     """Scheduling settlement only; never satisfies a done-task dependency."""
+    from goodteam_os.project_batch_feedback import is_observed_discovered_readonly
+
+    if is_observed_discovered_readonly(value, task):
+        return True
     receipt = (value.get("investigation_observations") or {}).get(task["id"])
     return (_authorized_read_only_role(value, task.get("role"))
             and _valid_receipt(value, receipt)

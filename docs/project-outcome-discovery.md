@@ -5,10 +5,28 @@ project continuation form. The default remains a fixed existing task list. Only
 the additional grant lets Manager propose a new task after the approved inventory
 has been delivered.
 
-This slice discovers at most **one new follow-up per accepted delivery**. Existing
-task selection and the isolated batch pool keep their current parallel capacity;
-the one-task limit applies only to each discovery response. Across later accepted
-deliveries, the same grant can discover more tasks until its finite limits stop it.
+Current packets advertise `multiple_followups_supported: true`. Manager may return
+the existing `new_task` object, or a nonempty `new_tasks` array instead, with one
+shared rationale and the existing optional Human actions. The fields are mutually
+exclusive. Frozen older packets retain the single-task contract. No follow-up
+remains `new_task: null`; a list cannot contain null entries.
+
+Each task retains the same source, scope, role and delivered-dependency checks.
+The whole set must fit the remaining task allowance and one available batch;
+there is no truncation or additional Manager call per task. New tasks cannot
+depend on unknown IDs in the same response. Multiple writers must have disjoint
+declared domains under the existing batch rules. Actual execution still passes
+the original resource, authorization, isolation and quality gates.
+
+The original task ledger validates all identities and normalized business
+equivalence under its existing lock before one atomic write. A duplicate later
+entry, including one matching an existing card, publishes no new cards. Replay
+retains the grant/packet/index identity, adopts already-written exact cards,
+preserves their progress and never spends their task slots twice. The first
+identity remains compatible with historical single-task publication. Human
+questions keep their immutable decision identity across publication retries.
+This is a bounded set on the existing queue, not a new scheduler or permission
+to start conflicting work.
 
 ## What the owner authorizes
 

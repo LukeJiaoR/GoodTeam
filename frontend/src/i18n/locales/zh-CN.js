@@ -1794,4 +1794,5 @@ export const zhCN = {
   'work.attachments.partial': '已提取部分文本，原文件已保留。',
   'work.attachments.empty': '未提取到文本，已保留原文件；扫描页和内嵌图片需另行查看。',
   'work.attachments.message': '请查看这些附件。',
+  'work.attachments.messageOnly': '附件尚未发送。请切换到“消息”发送附件，或先移除附件再继续。',
 };

@@ -1831,17 +1831,21 @@ def _team_execution_role(target: dict[str, object], role: str) -> str:
 def resolve_role_adapter(target: dict[str, object], role: str) -> str:
     """Pick the worker backend for a single role.
 
-    With Team Control Plane state attached, the first active Worker of the
-    role owns the runtime. Legacy projects without team state resolve from
+    With Team Control Plane state attached, an explicitly selected Runtime
+    source owns the routing choice; otherwise the first active Role member does. Legacy projects without team state resolve from
     per-role `workers.<role>` overriding the global `worker_backend.mode`,
     defaulting to codex. This does not gate dispatch — dispatch paths must go
     through `resolve_worker_for_role`, which fails closed.
     """
-    from goodteam_os.team_control_plane import active_workers_for_role, attached_team_state, normalize_provider
+    from goodteam_os.team_control_plane import (
+        active_workers_for_role, attached_team_state, normalize_provider, resolve_worker_from_state,
+    )
 
     role = _team_execution_role(target, role)
     state = attached_team_state(target)
     if state is not None and role != "orchestrator":
+        if dict(dict(state.get("roles") or {}).get(role) or {}).get("runtime_source_worker_id"):
+            return str(resolve_worker_from_state(state, role)["adapter"])
         active = sorted(active_workers_for_role(state, role), key=lambda w: (str(w["created_at"]), str(w["id"])))
         if active:
             return normalize_provider(dict(active[0]["runtime"]).get("provider", ""))

@@ -1,0 +1,41 @@
+/* Knowledge-only #677 alignment. Source evidence remains expanded and searchable. */
+.product-shell.product-shell--workspace .product-knowledge-page.product-knowledge-page { font-size: 14px; }
+.product-shell.product-shell--workspace .product-knowledge-page :is(h2, h3) { font-size: 14px; line-height: 1.5; }
+.product-shell.product-shell--workspace .product-knowledge-page :is(.product-page-heading__description, .knowledge-context-description, .knowledge-confirmed-facts header p) { font-size: 12px; margin: 0; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-view-switcher { flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-tab-count { font-size: 12px; font-variant-numeric: tabular-nums; padding: 0 6px; border-radius: 4px; background: var(--product-surface-muted); }
+.product-shell.product-shell--workspace .product-knowledge-page :is(button, input[type="search"]) { min-height: 32px; font-size: 13px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-overview { gap: 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-intro { padding: 10px 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-intro dl { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 8px 0 0; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-intro dl > div { display: flex; align-items: baseline; gap: 8px; padding: 0; border: 0; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-intro dt { font-size: 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-intro dd { margin: 0; font-size: 14px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-confirmed-facts > header { padding: 10px 12px; gap: 8px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-confirmed-grid > section { padding: 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-confirmed-grid :is(li, .product-empty-copy) { font-size: 14px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-overview > .repository-overview { padding: 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-overview .repository-overview-group { padding: 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page :is(.knowledge-artifacts, .knowledge-memory) { gap: 12px; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); }
+.product-shell.product-shell--workspace .product-knowledge-page :is(.knowledge-artifacts > aside, .knowledge-document, .knowledge-memory > aside, .knowledge-memory-workspace) { min-width: 0; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-artifacts > aside .collection-toolbar { padding: 10px 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-artifacts > aside ol button { padding: 8px 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-document > header { min-height: 0; padding: 10px 12px; gap: 8px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-artifact-rendered-wrap { padding: 16px; font-size: 14px; line-height: 1.6; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-memory > aside :is(header, button) { padding: 8px 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-memory-workspace { padding: 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-memory-records > li button { padding: 10px 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-memory-record-body { font-size: 14px; line-height: 1.6; }
+.product-shell.product-shell--workspace .product-knowledge-page :is(small, .knowledge-memory-record-meta, .memory-provenance__notice, .memory-provenance__hit-source) { font-size: 12px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-cross-memory { padding: 12px; gap: 10px; }
+.product-shell.product-shell--workspace .product-knowledge-page :is(code, .file-location) { overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .product-shell.product-shell--workspace .product-knowledge-page :is(.knowledge-artifacts, .knowledge-memory) { grid-template-columns: minmax(0, 1fr); }
+  .product-shell.product-shell--workspace .product-knowledge-page .knowledge-confirmed-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (any-pointer: coarse), (max-width: 767px) {
+  .product-shell.product-shell--workspace .product-knowledge-page :is(button, input[type="search"]) { min-height: 44px; }
+}
+@media (any-pointer: coarse), (max-width: 767px) {
+  .product-shell.product-shell--workspace .product-knowledge-page :is(input, input[type="search"], select, textarea) { font-size: 16px; }
+}

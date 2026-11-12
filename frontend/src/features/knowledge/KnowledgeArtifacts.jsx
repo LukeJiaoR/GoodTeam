@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import FileLocation from '../../components/ui/FileLocation';
 import { documentTitle, fileName } from '../../lib/presentation/filePresentation';
-import { Files } from 'lucide-react';
 import CollectionToolbar from '../../components/ui/CollectionToolbar';
 import MarkdownView from '../../components/ui/MarkdownView';
 import ProductError from '../../components/ui/ProductError';
@@ -30,13 +29,12 @@ export default function KnowledgeArtifacts({ entries, projectKey, search, setSea
   return (
     <div className="knowledge-artifacts">
       <aside>
-        <header><span aria-hidden="true"><Files size={17} /></span><div><h2>{t('knowledge.artifacts.title')}</h2><small>{entries.length}</small></div></header>
         <CollectionToolbar label={t('knowledge.artifacts.search')} query={query} onQueryChange={setQuery} count={visibleEntries.length} t={t} />
         {!visibleEntries.length ? <p className="product-empty-copy">{t('collection.noResults')}</p> : null}
-        <ol>{visibleEntries.map(([key, path]) => <li key={key}><button aria-pressed={key === selectedKey} className={key === selectedKey ? 'is-active' : ''} onClick={() => setSearch({ view: 'artifacts', artifact: key })}><strong>{documentTitle(key, t)}</strong><small>{fileName(path)}</small></button></li>)}</ol>
+        <ol>{visibleEntries.map(([key, path]) => <li key={key}><button aria-pressed={key === selectedKey} className={key === selectedKey ? 'is-active' : ''} onClick={() => { const next = new URLSearchParams(search); next.set('view', 'artifacts'); next.set('artifact', key); setSearch(next); }}><strong>{documentTitle(key, t)}</strong><small>{fileName(path)}</small></button></li>)}</ol>
       </aside>
       <article className="knowledge-document">
-        <header><p className="product-eyebrow">{t('knowledge.workspace.document')}</p><h2>{documentTitle(selectedKey, t)}</h2><FileLocation key={selectedKey} path={entries.find(([key]) => key === selectedKey)?.[1]} t={t} /></header>
+        <header><h2>{documentTitle(selectedKey, t)}</h2><FileLocation key={selectedKey} path={entries.find(([key]) => key === selectedKey)?.[1]} t={t} /></header>
         <DocumentContent key={`${projectKey}:${selectedKey}`} projectKey={projectKey} selectedKey={selectedKey} t={t} />
       </article>
     </div>

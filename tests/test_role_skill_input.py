@@ -49,12 +49,12 @@ def invocation(tmp_path):
                       resolve_plan=lambda: TaskSkillPlan(1, bindings, contracts))
     workers = WorkerJobStore(workspace)
 
-    def create(role):
-        job = workers.create_job(run_id='run', role=role, adapter='codex', model='fixture',
+    def create(role, adapter='codex', **kwargs):
+        job = workers.create_job(run_id='run', role=role, adapter=adapter, model='fixture',
                                  task=f'{role} purpose; scope; acceptance criteria', context=f'{role} private context',
                                  constraints=['no external side effects'], expected_artifacts=['result'],
                                  project_key='project', idempotency_key=role,
-                                 task_skill_context=task_skill_context(task, ref), skill_subject=f'role:{role}')
+                                 task_skill_context=task_skill_context(task, ref), skill_subject=f'role:{role}', **kwargs)
         provider = SkillContextProvider(workers, job['id'], authority=FixtureAuthority())
         context = provider.prepare('context-' + role)
         return provider, context, job
@@ -110,3 +110,4 @@ def test_role_input_keeps_admission_and_complete_budget_fail_closed(invocation):
     with pytest.raises(SkillError) as error:
         provider.worker_input(ref)
     assert error.value.code == 'content_budget_exceeded'
+

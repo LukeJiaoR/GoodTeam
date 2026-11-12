@@ -7,7 +7,7 @@ vi.mock('../../settings/providerApi', () => ({ getProviders: vi.fn() }));
 test('search defaults off and explicit save pins provider revision without executing', async () => {
   getProviders.mockResolvedValue({ providers: [{ id: 'p', revision: 3, name: 'Existing provider' }] });
   const onAction = vi.fn().mockResolvedValue({});
-  render(<TaskSearchConfiguration item={{ id: 'q', revision: 4, web_search: null }} onAction={onAction} language="en" />);
+  render(<TaskSearchConfiguration item={{ id: 'q', revision: 4, web_search: null, assignment: { role: 'research', execution_policy: 'read_only' } }} onAction={onAction} language="en" />);
   expect(screen.getByText('Saved Web Search: Off')).toBeInTheDocument();
   expect(getProviders).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText('Configure search'));
@@ -23,4 +23,13 @@ test('search defaults off and explicit save pins provider revision without execu
     expected_revision: 4, confirmed: true, web_search: { provider: { id: 'p', revision: 3 },
       model: 'search-model', max_requests: 2, timeout_seconds: 30 } }));
   expect(onAction).toHaveBeenCalledTimes(1);
+});
+
+test('unsupported read-only role cannot enable search', async () => {
+  getProviders.mockResolvedValue({ providers: [] });
+  render(<TaskSearchConfiguration item={{ id: 'qa', revision: 1, web_search: null,
+    assignment: { role: 'qa', execution_policy: 'read_only' } }} language="en" />);
+  fireEvent.click(screen.getByText('Configure search'));
+  expect(screen.getByRole('checkbox')).toBeDisabled();
+  await waitFor(() => expect(getProviders).toHaveBeenCalled());
 });

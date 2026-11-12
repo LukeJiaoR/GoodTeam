@@ -106,3 +106,16 @@ it('keeps a queued group confirmable with new revisions after configuration inva
   expect(onQueue).toHaveBeenCalledExactlyOnceWith({ action: 'start_queued_task_batch', proposal_ids: ['a', 'b'],
     expected_revisions: { a: 2, b: 4 }, confirmed: true });
 });
+
+it('shows a saved non-dispatch judgment without stale or queue controls', () => {
+  const onQueue = vi.fn();
+  render(<ProjectIterationSuggestion snapshot={{ ...snapshot, status: 'blocked', next_candidate: null }}
+    choice={{ schema_version: 'project_iteration_choice.v1', status: 'waiting',
+      backlog_version: snapshot.version, selected_task_ids: [], execution_mode: 'none',
+      rationale: 'Wait for dependency evidence before starting the original task.' }} onQueue={onQueue} />);
+  expect(screen.getByText('Manager recommends no dispatch')).toBeInTheDocument();
+  expect(screen.getByText(/Judgment saved; no task, question or execution created/)).toBeInTheDocument();
+  expect(screen.queryByText(/Previous recommendation is stale/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Add selected tasks to existing queue' })).not.toBeInTheDocument();
+  expect(onQueue).not.toHaveBeenCalled();
+});

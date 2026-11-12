@@ -3,7 +3,7 @@ from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
 
-from goodteam_os.project_running_observation import _binding, human_observation_current
+from goodteam_os.project_running_observation import _binding, judgment_human_current
 
 
 def consume_worker_follow_up(*, store, root, project_key, value, authority_check):
@@ -59,7 +59,7 @@ def consume_worker_follow_up(*, store, root, project_key, value, authority_check
         controls = [r["worker_control"] for r in current.get("running_judgments", {}).values() if r.get("worker_control")]
         used = len(controls)
         if (used >= limit or any(c["job_id"] == command["job_id"] for c in controls) or _binding(session, root) != record["binding"]
-                or not human_observation_current(current, record["packet"]) or not authority_check()):
+                or not judgment_human_current(current, record) or not authority_check()):
             return session
         control = {"control_id": "control-manager-" + sha256((value["id"] + key).encode()).hexdigest(),
                    "job_id": command["job_id"], "action": "follow_up", "status": "reserved",
@@ -80,7 +80,7 @@ def consume_worker_follow_up(*, store, root, project_key, value, authority_check
                 current = _current(session, value)
                 record = current.get("running_judgments", {}).get(key) or {}
                 if (record.get("worker_control") != control or _binding(session, root) != record.get("binding")
-                        or not human_observation_current(current, record["packet"]) or not authority_check()):
+                        or not judgment_human_current(current, record) or not authority_check()):
                     raise ValueError("Original observation or authority changed before follow-up enqueue")
                 known, _ = _scope_tasks(current, tasks.list_tasks())
                 pending = current.get("pending_batch") or {}

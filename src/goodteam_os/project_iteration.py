@@ -194,10 +194,27 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
     A task description and a model response are untrusted data. This result
     carries no authority to create tasks, dispatch Workers or change the Goal.
     """
-    if snapshot.get("schema_version") != "project_iteration_backlog.v1" or snapshot.get("status") != "candidate_ready":
+    if snapshot.get("schema_version") != "project_iteration_backlog.v1" or snapshot.get("status") not in ({"candidate_ready", "blocked"} if snapshot.get("allow_wait") is True else {"candidate_ready"}):
         raise ValueError("No valid project backlog is available for planning.")
     if not isinstance(response, dict):
         raise ValueError("Manager choice must be a JSON object.")
+    if snapshot.get("allow_wait") is True and response.get("selected_task_ids") == []:
+        compared = response.get("compared_task_ids")
+        candidates = {item["task_id"] for item in snapshot.get("candidates", [])}
+        reason = response.get("rationale")
+        if (response.get("selected_task_id") not in (None, "")
+                or not isinstance(compared, list) or not compared
+                or any(not isinstance(item, str) or item not in candidates for item in compared)
+                or len(compared) != len(set(compared))
+                or not isinstance(reason, str) or not 20 <= len(reason.strip()) <= 1600):
+            raise ValueError("A non-dispatch judgment needs bounded rationale and actual compared task IDs.")
+        return {"schema_version": "project_iteration_choice.v1", "project_key": snapshot["project_key"],
+                "backlog_version": snapshot["version"], "selected_task_id": None, "selected_title": "",
+                "selected_task_ids": [], "selected_tasks": [], "execution_mode": "none",
+                "compared_task_ids": compared, "rationale": reason.strip(), "status": "waiting",
+                "execution_authorized": False, "parallel_execution_authorized": False,
+                "requires_worktree_isolation": False, "fan_in_required": False,
+                "source": "manager_on_backlog_snapshot"}
     selected = response.get("selected_task_id")
     selected_ids = response.get("selected_task_ids")
     if selected_ids is None:

@@ -16,7 +16,9 @@ from goodteam_os.assistant_queue import active_project_run, queue_manager_iterat
 from goodteam_os.goal_continuation import authority_snapshot, goal_guard
 from goodteam_os.manager_execution import ManagerExecutionError, ManagerResourceBusy
 from goodteam_os.project_iteration import _internal, project_iteration_backlog, rank_project_backlog
-from goodteam_os.project_iteration_planner import plan_next_iteration
+from goodteam_os.project_iteration_planner import (
+    plan_next_iteration, ManagerPlanningBudgetExhausted, ManagerPlanningActivationChanged,
+)
 from goodteam_os.state_documents import DocumentLockBusy
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore, project_task_intent, task_evidence_digest
@@ -65,10 +67,12 @@ def _event(store, identifier, event, details):
 
 def pending_project_batch(session, root, project_key):
     """Keep uncertain/admitted work; release only settled or unclaimed intent."""
-    pending = (session.get(_FIELD) or {}).get("pending_batch")
+    value = session.get(_FIELD) or {}
+    known = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
+    from goodteam_os.project_parallel_dispatch import select_pending
+    pending = select_pending(session, value, known)
     if not pending:
         return None
-    known = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
     settled = all(known.get(identifier, {}).get("status") == "done"
                   and known[identifier].get("delivery_verified") for identifier in pending["task_ids"])
     admitted = any(set(batch.get("proposal_ids", [])) & set(pending["proposal_ids"])
@@ -143,10 +147,12 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
         version = rank_project_backlog(list(tasks.values()), project_key, limit=None)["version"]
         if request.get("expected_backlog_version") != version:
             raise ValueError("The displayed project backlog changed; review its current task scope before authorizing.")
+        permitted_statuses = {"todo", "done", "blocked"} if discovery and discovery.get("allow_backlog_judgment") is True else {"todo", "done"}
         if any(identifier not in tasks or _internal(tasks[identifier])
-               or tasks[identifier]["status"] not in {"todo", "done"} for identifier in ids):
+               or tasks[identifier]["status"] not in permitted_statuses for identifier in ids):
             raise ValueError("Continuation scope must contain available project backlog tasks.")
-        if discovery and not any(tasks[identifier]["status"] == "todo" for identifier in ids):
+        if discovery and not any(tasks[identifier]["status"] in (
+                {"todo", "blocked"} if discovery.get("allow_backlog_judgment") is True else {"todo"}) for identifier in ids):
             raise ValueError("Begin outcome discovery with at least one existing seed task to deliver.")
         if discovery and any(tasks[identifier]["status"] == "done" and tasks[identifier].get("delivery_verified") is not True
                              for identifier in ids):
@@ -198,9 +204,9 @@ def _scope_tasks(value, tasks):
 def tick_project_continuation(*, workspace, project_key, root, project_config,
                               manager_runner=None, batch_runner=None, observation_runner=None):
     """One bounded automatic step; retries retain the same queued batch identity."""
-    from goodteam_os.project_iteration_execution import run_queued_iteration_batch
+    from goodteam_os.project_iteration_execution import run_queued_iteration_batch, ProjectBatchResourceBusy
     from goodteam_os.project_outcome_discovery import DiscoveryPublicationPending, discover_next_iteration
-    from goodteam_os.project_batch_feedback import can_observe_initial_readonly, observe_pending_batch
+    from goodteam_os.project_batch_feedback import can_observe_initial_readonly, can_observe_pending_write_review, can_observe_discovered_readonly, observe_pending_batch
     from goodteam_os.project_investigation_feedback import is_observed_investigation, observe_pending_investigation
     from goodteam_os.project_human_feedback import human_feedback
 
@@ -220,7 +226,19 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             if active_project_run(workspace, project_key) and parent is None:
                 raise ValueError("Another Workflow owns the project; continuation is paused.")
             known, selected = _scope_tasks(value, LocalTaskStore(root, project_key).list_tasks())
-            pending = value.get("pending_batch")
+            from goodteam_os.project_parallel_dispatch import select_pending, ready_parallel_tasks
+            pending = select_pending(store.read(), value, known)
+            if pending != value.get("pending_batch"):
+                value = _save(store, {**value, "pending_batch": pending})
+            parallel_planning = bool(value.get("planning_backlog_version") and value.get("planning_input_version") == 5)
+            parallel_eligible = value.get("planning_eligible_task_ids") if parallel_planning else None
+            if parallel_planning:
+                if (not isinstance(parallel_eligible, list) or not parallel_eligible
+                        or not set(parallel_eligible).issubset(value["task_ids"])):
+                    raise ValueError("The original concurrent planning inventory is unavailable.")
+                # Reconcile the reserved call before moving its observation
+                # cursor or consuming newly arrived sibling feedback.
+                pending = None
             if pending and pending.get("run_id"):
                 batch_tasks = [known[identifier] for identifier in pending["task_ids"]]
                 if any(task["status"] == "canceled" for task in batch_tasks):
@@ -268,18 +286,45 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                     observed = observe_pending_investigation(workspace=workspace, project_key=project_key,
                         root=root, project_config=project_config, value=value)
                     if observed is None and (any(task["status"] == "blocked" for task in batch_tasks)
-                            or can_observe_initial_readonly(value, batch_tasks)):
+                            or can_observe_discovered_readonly(value, batch_tasks)
+                            or can_observe_initial_readonly(value, batch_tasks)
+                            or can_observe_pending_write_review(value, batch_tasks)):
                         observed = observe_pending_batch(workspace=workspace, project_key=project_key,
                             root=root, project_config=project_config, value=value)
                     if observed is None:
                         if any(task["status"] == "blocked" for task in batch_tasks):
                             raise ValueError("The current batch is blocked; inspect its retained execution result.")
-                        return value
-                    value, pending = observed, None
+                    else:
+                        value, pending = observed, None
                 elif not recovering and any(task["status"] == "blocked" for task in batch_tasks):
                     raise ValueError("The current batch is blocked; inspect its retained execution result.")
-            if (value.get("discovery") and pending is None and (value.get("discovery_pending")
-                    or value.get("investigation_pending") or value.get("batch_feedback_pending") or value.get("reason") == "awaiting_human_decision"
+            if (pending and pending.get("run_id") and value.get("discovery")
+                    and not value.get("planning_backlog_version") and not value.get("discovery_pending")
+                    and not any(record.get("status") in {"reserved", "unconfirmed"}
+                                for record in value.get("running_judgments", {}).values())
+                    and any(answer["receipt_id"] not in value.get("discovery_consumed", [])
+                            and value["human_questions"][answer["question_id"]]["planning"].get("source_kind") != "running_observation"
+                            for answer in human_feedback(value))):
+                # An answer to the original discovery question must reach
+                # Manager while independent Workers keep running. This moves
+                # only the local observation cursor; original batches remain
+                # in the ledger and all source/authority checks stay in discovery.
+                pending = None
+            if pending and pending.get("run_id"):
+                parallel_eligible = (value.get("planning_eligible_task_ids") if value.get("planning_backlog_version")
+                    else ready_parallel_tasks(workspace, project_key, root, store.read(), value, known))
+            if (pending and pending.get("run_id") and (value.get("planning_backlog_version") or parallel_eligible)):
+                # pending_batch is only the current observation/reservation cursor;
+                # original project_task_batches retains every in-flight identity.
+                pending = None
+                parallel_planning = True
+            if pending and pending.get("run_id") and saved_batch.get("status") in {"review", "blocked"}:
+                return value
+            ready_authorized = any(task["eligible_to_plan"] and task["task_id"] in value["task_ids"]
+                for task in rank_project_backlog(list(known.values()), project_key, limit=None).get("candidates", []))
+            if (value.get("discovery") and pending is None and not parallel_planning and (value.get("discovery_pending")
+                    or value["discovery"].get("allow_backlog_judgment") is True and not ready_authorized
+                    or value.get("investigation_pending") or value.get("batch_feedback_pending") or value.get("reason") == "awaiting_human_decision" and not ready_authorized
                     or any(item["receipt_id"] not in value.get("discovery_consumed", []) for item in human_feedback(value))
                     or all((task["status"] == "done" and task.get("delivery_verified") is True)
                            or is_observed_investigation(value, task) for task in selected))):
@@ -292,21 +337,23 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 return _save(store, {**value, "status": "completed", "reason": "authorized_tasks_delivered"})
             if pending is None:
                 if (value["batches_started"] >= value["max_batches"]
-                        or value["manager_calls"] >= value["max_manager_calls"] and not value.get("planning_backlog_version")):
+                        or value["manager_calls"] >= value["max_manager_calls"]
+                        and not value.get("planning_backlog_version") and not value.get("waiting_attempt_id")):
                     return _save(store, {**value, "status": "exhausted", "reason": "approved_iteration_budget_used"})
                 from goodteam_os.manager_execution import manager_resource_slot
 
                 with manager_resource_slot(root) as resource_slot:
                     snapshot = project_iteration_backlog(root, project_key, limit=None)
                     eligible = [task for task in snapshot.get("candidates", []) if task["eligible_to_plan"]]
-                    if not any(task["task_id"] in value["task_ids"] for task in eligible):
+                    if (value.get("planning_backlog_version") and value.get("planning_input_version") == 2
+                            and not any(task["task_id"] in value["task_ids"] for task in eligible)):
                         return _save(store, {**value, "status": "blocked", "reason": "no_authorized_task_is_ready"})
                     # Reserve before the potentially billable Manager call. Its own
                     # backlog-bound Worker identity makes a lost reply replayable.
                     planning = value.get("planning_backlog_version")
                     if planning and planning != snapshot["version"]:
                         raise ValueError("The backlog changed after a reserved planning attempt; inspect before resuming.")
-                    if planning and value.get("planning_input_version") != 2:
+                    if planning and value.get("planning_input_version") not in {2, 3, 4, 5}:
                         raise ValueError("An older reserved planning attempt must be reconciled before continuing.")
                     planned_call = value["manager_calls"] + (0 if planning else 1)
                     def reserve_planning():
@@ -324,19 +371,81 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                                     or current.get("manager_calls") != value["manager_calls"]):
                                 raise ValueError("Planning reservation changed before invocation.")
                             if not planning:
+                                if current["manager_calls"] >= current["max_manager_calls"]:
+                                    raise ManagerPlanningBudgetExhausted("Approved Manager planning budget is exhausted.")
                                 current.update(planning_backlog_version=snapshot["version"],
-                                               planning_input_version=2, manager_calls=planned_call)
+                                               planning_input_version=5 if parallel_planning else 4, manager_calls=planned_call)
+                                if parallel_planning:
+                                    current["planning_eligible_task_ids"] = list(parallel_eligible)
+                                else:
+                                    current.pop("planning_eligible_task_ids", None)
                             return session
                         value = store._mutate(reserve)[_FIELD]
+                    def validate_planning_authority():
+                        current = store.read().get(_FIELD) or {}
+                        if (current.get("id") != value["id"] or current.get("status") != "active"
+                                or current.get("authority") != value["authority"]
+                                or value["authority"] != authority_snapshot(workspace, project_key, project_config, root)):
+                            raise ManagerPlanningActivationChanged("Continuation stopped or authorization changed during planning.")
+                    def settle_stale_planning(evidence):
+                        # Retain the completed decision and settle its original
+                        # reservation together in the existing session timeline.
+                        validate_planning_authority()
+                        identifier = evidence["choice"]["source_event_id"] + ":stale"
+                        event = {"message_id": identifier, "actor": "system", "event": "project_iteration_choice_superseded",
+                                 "run_id": "", "content": "Completed planning input changed; no task dispatched.",
+                                 "details": evidence}
+                        def settle(session):
+                            current = session.get(_FIELD) or {}
+                            if (current.get("id") != value["id"] or current.get("status") != "active"
+                                    or current.get("authority") != value["authority"]):
+                                raise ManagerPlanningActivationChanged("Continuation stopped or changed during planning.")
+                            if (current.get("planning_backlog_version") != snapshot["version"]
+                                    or current.get("manager_calls") != planned_call
+                                    or current.get("planning_input_version") != value.get("planning_input_version")):
+                                raise ValueError("The original planning reservation changed before settlement.")
+                            _scope_tasks(current, LocalTaskStore(root, project_key).list_tasks())
+                            timeline = session.setdefault("timeline", [])
+                            if any(item.get("message_id") == identifier for item in timeline):
+                                raise ValueError("This planning settlement was already recorded.")
+                            timeline.append({**event, "created_at": datetime.now(UTC).isoformat()})
+                            current.update(planning_backlog_version="", waiting_attempt_id="", reason="planning_context_changed")
+                            return session
+                        try:
+                            store._mutate(settle)
+                        except OSError:
+                            saved = store.read()
+                            record = next((item for item in saved.get("timeline", []) if item.get("message_id") == identifier), None)
+                            current = saved.get(_FIELD) or {}
+                            if (not record or any(record.get(key) != item for key, item in event.items())
+                                    or current.get("id") != value["id"] or current.get("planning_backlog_version")
+                                    or current.get("manager_calls") != planned_call):
+                                raise
+
                     result = plan_next_iteration(
                         workspace=workspace, project_key=project_key, root=root, project_config=project_config,
                         expected_backlog_version=snapshot["version"], confirmed=True,
                         allowed_task_ids=value["task_ids"],
+                        **({"concurrent_continuation_id": value["id"], "eligible_task_ids": parallel_eligible} if parallel_planning else {}),
+                        allow_wait=not planning or value.get("planning_input_version") in {3, 4, 5},
+                        include_question_context=not planning or value.get("planning_input_version") in {4, 5},
+                        completed_wait_attempt_id=value.get("waiting_attempt_id", "") if not planning else "",
+                        validate_authority=validate_planning_authority, on_stale_result=settle_stale_planning,
                         resource_slot=resource_slot, reserve_planning=reserve_planning,
                         planning_attempt_id=f"{value['id']}:{planned_call}",
                         **({"manager_runner": manager_runner} if manager_runner is not None else {}),
                     )
+                if result.get("context_changed"):
+                    return store.read().get(_FIELD) or value
                 chosen = result["iteration_choice"]["selected_task_ids"]
+                if not chosen:
+                    current = store.read().get(_FIELD) or value
+                    if current.get("status") != "active" or current.get("id") != value["id"]:
+                        return current
+                    validate_planning_authority()
+                    return _save(store, {**current, "planning_backlog_version": "",
+                                         "waiting_attempt_id": result["iteration_choice"].get("planning_attempt_id", ""),
+                                         "reason": "awaiting_project_context"})
                 if (store.read().get(_FIELD) or {}).get("status") != "active":
                     return store.read()[_FIELD]
                 if not set(chosen).issubset(value["task_ids"]):
@@ -365,6 +474,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                     or [queued_by_id.get(identifier, {}).get("project_task_id") for identifier in pending["proposal_ids"]]
                     != pending["task_ids"]):
                 raise ValueError("The retained queue reservation is outside the approved task scope.")
+            new_reservation = not pending.get("run_id")
             result = (batch_runner or run_queued_iteration_batch)(
                 workspace=workspace, project_key=project_key, root=root, project_config=project_config,
                 proposal_ids=pending["proposal_ids"], expected_revisions=pending["expected_revisions"], confirmed=True,
@@ -374,9 +484,30 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 raise ValueError("The batch did not return its durable execution identity.")
             value = _save(store, {**value, "pending_batch": {**pending, "run_id": result["run_id"]},
                                  "reason": "awaiting_verified_delivery"})
-            _event(store, f"project-continuation-batch:{value['id']}:{value['batches_started']}",
-                   "project_continuation_batch_started", {"run_id": result["run_id"], "task_ids": pending["task_ids"]})
+            if new_reservation:
+                _event(store, f"project-continuation-batch:{value['id']}:{value['batches_started']}",
+                       "project_continuation_batch_started", {"run_id": result["run_id"], "task_ids": pending["task_ids"]})
             return value
+        except ProjectBatchResourceBusy:
+            # The original queue reservation has not claimed or started work.
+            # Retry that exact reservation after the occupied domain is free;
+            # no new Manager call, budget charge, or alternative task selection.
+            def wait_for_resources(session):
+                current = session.get(_FIELD) or {}
+                if (current.get("id") == value.get("id") and current.get("status") == "active"
+                        and current.get("authority") == value.get("authority")
+                        and current.get("pending_batch") == value.get("pending_batch")):
+                    current["reason"] = "awaiting_batch_resources"
+                return session
+            return store._mutate(wait_for_resources).get(_FIELD) or {}
+        except ManagerPlanningActivationChanged as exc:
+            current = store.read().get(_FIELD) or value
+            if current.get("id") != value["id"] or current.get("status") != "active":
+                return current
+            return _save(store, {**current, "status": "blocked", "reason": str(exc)})
+        except ManagerPlanningBudgetExhausted:
+            current = store.read().get(_FIELD) or value
+            return _save(store, {**current, "status": "exhausted", "reason": "approved_iteration_budget_used"})
         except DiscoveryPublicationPending:
             # The response and creation identity are already durable. Replaying
             # this outbox does not spend another planning call or reset a card.
@@ -390,10 +521,11 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
         except (OSError, ValueError, ManagerExecutionError) as exc:
             # An uncertain outcome is inspectable and cannot silently spend a
             # second attempt or choose another task under the same reservation.
+            current = store.read().get(_FIELD) or {}
+            if current.get("id") != value.get("id"):
+                return current  # A late old failure cannot replace a newer grant.
             if value.get("discovery"):
-                current = store.read().get(_FIELD) or {}
-                if current.get("id") == value["id"]:
-                    value = current
+                value = current
             return _save(store, {**value, "status": "blocked", "reason": str(exc)})
 
 

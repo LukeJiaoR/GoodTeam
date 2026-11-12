@@ -38,3 +38,18 @@ test('project settings keeps deep-linked work context and exposes named navigati
   await act(() => router.navigate(-1));
   expect(screen.getByRole('heading', { name: 'Settings' })).toBeVisible();
 });
+
+test('compact appearance row keeps named keyboard-operable theme controls without preview cards', async () => {
+  const user = userEvent.setup();
+  openSettings('/settings');
+  const group = screen.getByRole('group', { name: 'Appearance' });
+  const light = within(group).getByRole('button', { name: 'Light', exact: true });
+  const dark = within(group).getByRole('button', { name: 'Dark', exact: true });
+  expect(light).toHaveAttribute('aria-pressed', 'true');
+  dark.focus();
+  await user.keyboard('{Enter}');
+  expect(dark).toHaveAttribute('aria-pressed', 'true');
+  expect(light).toHaveAttribute('aria-pressed', 'false');
+  expect(group.querySelector('.studio-theme-preview')).toBeNull();
+  expect(within(screen.getByRole('main')).getByRole('combobox', { name: 'Language' })).toBeVisible();
+});

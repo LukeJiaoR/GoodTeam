@@ -202,6 +202,8 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
             if choice is None or choice.get("status") != "recommended":
                 raise ValueError("No current persisted Manager recommendation exists.")
             validated = validate_iteration_choice(snapshot, choice)
+            if not validated["selected_task_ids"]:
+                raise ValueError("A non-dispatch judgment cannot be queued.")
             known = {item["id"]: item for item in items}
             selected = [known[task_id] for task_id in validated["selected_task_ids"]]
             # Batch dispatch preserves read-only policy. The ordinary writing
@@ -304,8 +306,9 @@ def configure_queued_search(store, root, project_key, request):
             raise ValueError("Reload an unconfirmed queued project task before configuring search.")
         task = require_queued_project_task(root, project_key, proposal, workflow=False)
         original = tasks._read()
-        if policy is not None and task.get("execution_policy", "workspace_write") != "workspace_write":
-            raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Worker.")
+        if policy is not None and not (task.get("execution_policy", "workspace_write") == "workspace_write"
+                or task.get("execution_policy") == "read_only" and task.get("role") in {"research", "planner"}):
+            raise ValueError("Task Web Search requires an explicitly authorized supported Worker task.")
         updated = {**task, "updated_at": datetime.now(UTC).isoformat()}
         if policy is None:
             updated.pop("web_search", None)
