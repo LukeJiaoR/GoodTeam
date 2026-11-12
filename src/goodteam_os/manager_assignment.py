@@ -10,11 +10,10 @@ from goodteam_os.tasks import LocalTaskStore, task_evidence_digest
 
 
 def queue_assignment(service, *, store, root, message_id, sources, action):
-    from goodteam_os.assistant_queue import require_no_active_project_goal
-
     if "worker_id" in action:
         raise ValueError("Manager assignments select a Role; execution handles are returned after job creation.")
-    require_no_active_project_goal(service.workspace, store.project_key)
+    # Intake only saves unconfirmed future work. Active Goal/Workflow/resource
+    # exclusion belongs to the existing execution admission, not this queue.
     team = service.team_view(store.project_key) or {}
     role = next((item for item in team.get("roles", []) if item.get("role") == action["role"]), {})
     if role.get("state") != "enabled" or not any(worker.get("dispatchable") for worker in role.get("workers", [])):
