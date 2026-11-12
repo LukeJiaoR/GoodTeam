@@ -49,8 +49,8 @@ def invocation(tmp_path):
                       resolve_plan=lambda: TaskSkillPlan(1, bindings, contracts))
     workers = WorkerJobStore(workspace)
 
-    def create(role):
-        job = workers.create_job(run_id='run', role=role, adapter='codex', model='fixture',
+    def create(role, adapter='codex'):
+        job = workers.create_job(run_id='run', role=role, adapter=adapter, model='fixture',
                                  task=f'{role} purpose; scope; acceptance criteria', context=f'{role} private context',
                                  constraints=['no external side effects'], expected_artifacts=['result'],
                                  project_key='project', idempotency_key=role,
