@@ -78,7 +78,9 @@ TASK_INTENT_FIELDS = ("id", "title", "description", "role", "dependencies", "acc
 def project_task_intent(task: dict[str, Any]) -> dict[str, Any]:
     """Bind an explicit Worker target while keeping historical intents unchanged."""
     return {**{key: task.get(key) for key in TASK_INTENT_FIELDS},
-            **({"worker_id": task["worker_id"]} if "worker_id" in task else {})}
+            **({"worker_id": task["worker_id"]} if "worker_id" in task else {}),
+            **({"delegation": task["delegation"]} if "delegation" in task else {}),
+            **({"web_search": task["web_search"]} if "web_search" in task else {})}
 
 
 class LocalTaskStore:
@@ -112,7 +114,19 @@ class LocalTaskStore:
         write_domains: list[str] | None = None,
         execution_policy: str = "workspace_write",
         worker_id: str | None = None,
+        delegation: dict[str, Any] | None = None,
+        web_search: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        from goodteam_os.web_search import search_policy
+
+        web_search = search_policy(web_search)
+        if web_search is not None and not (execution_policy == "workspace_write"
+                or execution_policy == "read_only" and role in {"research", "planner"}):
+            raise ValueError("Task Web Search requires an explicitly authorized supported Worker task.")
+        if delegation is not None:
+            from goodteam_os.task_delegation import validate_delegation
+
+            delegation = validate_delegation(delegation, with_sources=True)
         if role == "orchestrator":
             raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
         if execution_policy not in {"read_only", "workspace_write"}:
@@ -140,6 +154,8 @@ class LocalTaskStore:
             "id": task_id,
             "title": title,
             "description": description,
+            **({"web_search": web_search} if web_search is not None else {}),
+            **({"delegation": delegation} if delegation is not None else {}),
             "role": role,
             **({"worker_id": worker_id} if worker_id is not None else {}),
             "status": "todo",
@@ -161,6 +177,10 @@ class LocalTaskStore:
 
     @_locked
     def update_task(self, task_id: str, **updates: Any) -> dict[str, Any]:
+        if "delegation" in updates:
+            from goodteam_os.task_delegation import validate_delegation
+
+            updates["delegation"] = validate_delegation(updates["delegation"], with_sources=True)
         if updates.get("role") == "orchestrator":
             raise ValueError("Project Manager coordinates work; assign business tasks to a Worker role.")
         if "worker_id" in updates and (not isinstance(updates["worker_id"], str) or not updates["worker_id"].strip()
@@ -188,6 +208,17 @@ class LocalTaskStore:
             if "status" in updates and updates["status"] not in TASK_STATUSES:
                 raise ValueError(f"Unknown task status: {updates['status']}")
             updated = {**task, **updates, "updated_at": self._now()}
+            if "web_search" in updated:
+                from goodteam_os.web_search import search_policy
+
+                policy = search_policy(updated["web_search"])
+                if policy is None:
+                    updated.pop("web_search", None)
+                else:
+                    if not (updated.get("execution_policy", "workspace_write") == "workspace_write"
+                            or updated.get("execution_policy") == "read_only" and updated.get("role") in {"research", "planner"}):
+                        raise ValueError("Task Web Search requires an explicitly authorized supported Worker task.")
+                    updated["web_search"] = policy
             tasks[index] = updated
             ledger["tasks"] = tasks
             self._write(ledger)
@@ -197,6 +228,31 @@ class LocalTaskStore:
     @_locked
     def create_task_once(self, *, creation_ref: str, intent: dict[str, Any]) -> dict[str, Any]:
         """Publish one confirmed discovery intent; replay never resets progress."""
+        ledger = self._read()
+        count = len(ledger["tasks"])
+        task = self._prepare_discovery_task(ledger, creation_ref=creation_ref, intent=intent)
+        if len(ledger["tasks"]) != count:
+            self._write(ledger)
+        return task
+
+    @_locked
+    def create_tasks_once(self, *, items: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+        """Validate an entire discovery set under the existing ledger lock.
+
+        Preparing all rows before the original atomic write prevents an invalid
+        later task from stranding an earlier card. Existing identities replay
+        unchanged, including a partially published historical decision.
+        """
+        if not items or len({ref for ref, _ in items}) != len(items):
+            raise ValueError("A discovery set requires distinct creation identities.")
+        ledger = self._read()
+        count = len(ledger["tasks"])
+        tasks = [self._prepare_discovery_task(ledger, creation_ref=ref, intent=intent) for ref, intent in items]
+        if len(ledger["tasks"]) != count:
+            self._write(ledger)
+        return tasks
+
+    def _prepare_discovery_task(self, ledger, *, creation_ref, intent):
         required = {"title", "description", "role", "priority", "dependencies", "acceptance_criteria",
                     "write_domains", "execution_policy", "external_refs", "artifact_refs"}
         from goodteam_os.project_iteration import normalize_write_domains
@@ -207,14 +263,13 @@ class LocalTaskStore:
                 or "worker_id" in intent and (not isinstance(intent["worker_id"], str) or not intent["worker_id"].strip()
                     or intent["worker_id"] != intent["worker_id"].strip() or len(intent["worker_id"]) > 256)
                 or intent["priority"] != "medium"
-                or not (intent["role"] == "research" and intent["execution_policy"] == "read_only"
+                or not (intent["role"] in {"research", "planner"} and intent["execution_policy"] == "read_only"
                         and intent["write_domains"] == []
                         or intent["role"] == "implementation" and intent["execution_policy"] == "workspace_write"
                         and normalize_write_domains(intent["write_domains"]) is not None
                         and normalize_write_domains(intent["write_domains"]) == intent["write_domains"])
                 or creation_ref not in intent["external_refs"]):
             raise ValueError("A fixed project discovery task intent is required.")
-        ledger = self._read()
         matches = [task for task in ledger["tasks"] if creation_ref in task.get("external_refs", [])]
         if matches:
             if (len(matches) != 1 or any(matches[0].get(key) != value for key, value in intent.items())
@@ -240,7 +295,6 @@ class LocalTaskStore:
         task = {**intent, "id": f"{prefix}-{next_id}", "status": "todo", "created_at": now, "updated_at": now}
         ledger["tasks"].append(task)
         ledger["next_id"] = next_id + 1
-        self._write(ledger)
         return dict(task)
 
     @_locked

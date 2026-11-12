@@ -450,6 +450,9 @@ export const en = {
   'assistant.newProject': 'New project',
   'assistant.existingProject': 'Existing project',
   'assistant.confirmMode': 'Confirm project type',
+  'assistant.delegationPurpose': 'Task purpose',
+  'assistant.delegationContext': 'Relevant Context',
+  'assistant.delegationScope': 'Task scope',
   'assistant.taskDraft': 'Task draft',
   'assistant.needsClarification': 'The task needs more detail before starting. Continue the conversation to clarify scope and acceptance criteria, or edit the draft.',
   'assistant.project.closeTasks': 'Close task list',
@@ -1791,4 +1794,5 @@ export const en = {
   'work.attachments.partial': 'Text excerpt only; original file retained.',
   'work.attachments.empty': 'No text extracted; original retained. Scans and embedded images need visual inspection.',
   'work.attachments.message': 'Please review these attachments.',
+  'work.attachments.messageOnly': 'These attachments have not been sent. Switch to Message to send them, or remove the attachments before continuing.',
 };

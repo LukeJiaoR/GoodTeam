@@ -88,6 +88,16 @@ def test_question_board_requires_manager_closure_and_retains_prior_grant_history
     assert all(item["status"] == "awaiting_answer" and item["can_answer"]
                for item in question_board(store.read())["items"])
 
+    # Cosmetic edits after the question was issued do not revoke the answer's
+    # original authority or alter the question/receipt attribution.
+    from goodteam_os.team_control_plane import TeamControlPlaneStore
+    team_store = TeamControlPlaneStore(tmp_path, "DEMO")
+    team = team_store.read()
+    team["workers"][0].update(name="Renamed for display", updated_at="later")
+    team["revision"] += 1
+    team_store._write_state(team)
+    config.write_text(config.read_text() + "name: Display label\n# Formatting only\n")
+
     # A paused turn holds the real continuation and queue/conversation guards.
     # Answer receipt must persist before it finishes, and its older whole-grant save
     # must retain both the answer and the next judgment's responsibility.

@@ -246,3 +246,108 @@ def confirm_and_prepare(service, *, project_key, root, request):
             inputs = {"goal": proposal["exact_request"], "brief": proposal["exact_request"]} if state.get("project_mode") == "new_project" else {}
             state = service.readiness.start(project_key, root, inputs, idempotency_key=f"task-proposal:{proposal['id']}:{revision}")
         return session, state
+
+
+def start_selected_project_task(service, *, project_key, root, request):
+    """A selected Role task uses the queue's existing batch, even when alone.
+
+    Ordinary free-form drafts remain explicit whole-Workflow requests. Existing
+    Workflow start identities are never migrated into a different execution.
+    Preparation may persist confirmation, but only batch admission starts work.
+    """
+    from goodteam_os.assistant_queue import active_project_run, require_no_active_project_goal, require_queued_project_task
+    from goodteam_os.project_iteration_execution import active_project_batch, run_queued_iteration_batch
+    from goodteam_os.project_readiness import build_capabilities
+
+    store = TaskAssistantSessionStore(service.workspace, project_key)
+    with conversation_lock(store):
+        session = store.read()
+        proposal = session.get("proposed_task") or {}
+        proposal_id = str(request.get("proposal_id", ""))
+        # Preparation submits an input against the selected draft, not a new
+        # task. Keep its existing identity even when the UI omits proposal_id.
+        if request.get("action") == "continue_preparation" and not proposal_id:
+            proposal_id = str(proposal.get("id", ""))
+        queued = next((item for item in session.get("queued_task_proposals", [])
+                       if item.get("id") == proposal_id), None)
+        if not queued or not queued.get("project_task_id"):
+            return None
+        if proposal.get("id") == proposal_id and not proposal.get("project_task_id"):
+            return None  # A human edit deliberately detached this draft from the queued task.
+        if (proposal.get("id") == proposal_id
+                and (proposal.get("run_id") or proposal.get("start_claim_id") or proposal.get("start_run_id"))):
+            return None  # Retain the legacy Workflow's original ownership.
+        revision = request.get("expected_revision")
+        if request.get("action") == "continue_preparation":
+            revision = proposal.get("revision")
+        if type(revision) is not int or revision != queued.get("revision"):
+            raise ValueError("Confirm the latest selected task revision.")
+        expected_team_revision = request.get("expected_team_revision")
+        batch_run_id = queued.get("batch_run_id")
+        if batch_run_id:
+            batch = session.get("project_task_batches", {}).get(batch_run_id, {})
+            if batch.get("selected_proposal_id") != proposal_id:
+                raise ValueError("The selected draft does not own this batch.")
+            saved_revision = batch.get("expected_team_revision")
+            if expected_team_revision is not None and expected_team_revision != saved_revision:
+                raise ValueError("The selected batch owns a different Team confirmation.")
+            expected_team_revision = saved_revision
+        else:
+            if (proposal.get("id") != proposal_id or proposal.get("revision") != revision
+                    or proposal.get("status") == "cancelled" or proposal.get("pending_change")
+                    or proposal.get("needs_clarification") or queued.get("status") != "selected"):
+                raise ValueError("Confirm the current selected task with no unresolved changes.")
+            if proposal.get("task_skill_context"):
+                raise ValueError("This draft has Workflow-specific methods; retain or explicitly replace its confirmation.")
+            if proposal.get("confirmed"):
+                if "selected_team_revision" not in proposal:
+                    raise ValueError("The selected task confirmation is incomplete; review and replace the draft before starting.")
+                saved_revision = proposal.get("selected_team_revision")
+                if expected_team_revision is not None and expected_team_revision != saved_revision:
+                    raise ValueError("The selected task owns a different Team confirmation.")
+                expected_team_revision = saved_revision
+            if expected_team_revision is not None:
+                from goodteam_os.skills.models import SkillConflict, SkillError
+                from goodteam_os.team_control_plane import TeamControlPlaneStore
+
+                if type(expected_team_revision) is not int or expected_team_revision < 0:
+                    raise SkillError("invalid_revision", "Task confirmation requires a valid Team revision.")
+                team_store = TeamControlPlaneStore(service.workspace, project_key)
+                with team_store._locked():
+                    team = team_store.read()
+                    if team is None:
+                        raise SkillError("team_unavailable", "The confirmed project Team is unavailable.")
+                    if team["revision"] != expected_team_revision:
+                        raise SkillConflict("team_revision_changed", "Team changed after confirmation; review it before starting.")
+            require_no_active_project_goal(service.workspace, project_key)
+            if active_project_batch(service.workspace, project_key) or active_project_run(service.workspace, project_key):
+                raise ValueError("Finish or reconcile the active project execution before preparing another task.")
+            require_queued_project_task(root, project_key, proposal, workflow=False)
+            state = service._readiness_state(project_key, root)
+            if state.get("project_mode") == "unconfirmed":
+                raise ValueError("Confirm the project mode before starting the task.")
+            if request.get("action") == "confirm_task":
+                store.confirm_task(proposal_id, expected_revision=revision, task_skill_context={})
+                store._mutate(lambda value: {**value, "proposed_task": {**value["proposed_task"],
+                    "selected_team_revision": expected_team_revision}})
+                if state.get("lifecycle") != "ready" and not isinstance(state.get("execution"), dict):
+                    inputs = ({"goal": proposal["exact_request"], "brief": proposal["exact_request"]}
+                              if state.get("project_mode") == "new_project" else {})
+                    state = service.readiness.start(project_key, root, inputs,
+                        idempotency_key=f"task-proposal:{proposal_id}:{revision}")
+            else:
+                if not proposal.get("confirmed"):
+                    raise ValueError("Confirm this selected task before continuing preparation.")
+                values = request.get("values", {})
+                if not isinstance(values, dict):
+                    raise ValueError("Project preparation values must be a JSON object.")
+                state = service.readiness.submit_input(project_key, root, str(request.get("step_id", "")),
+                                                       values, background=False)
+            if not build_capabilities(state)["start_workflow"]:
+                return {"task_assistant_session": service.session(project_key, root),
+                        "workflow_started": False, "execution_started": False, "status": "preparing_project"}
+    # Admission rechecks the exact selected task, ledger and execution slot
+    # under its own locks, then atomically consumes the draft into the batch.
+    return run_queued_iteration_batch(workspace=service.workspace, project_key=project_key, root=root,
+        project_config=service.project_config, proposal_ids=[proposal_id], expected_revisions={proposal_id: revision},
+        confirmed=True, background=True, selected_proposal_id=proposal_id, expected_team_revision=expected_team_revision)

@@ -1,0 +1,98 @@
+/* #677 Settings-only compact layout; controls keep their original actions. */
+.settings-compact { font-size: var(--studio-text-body, 14px); }
+.product-shell.product-shell--studio .studio-settings-page.settings-compact {
+  max-width: 1040px;
+  padding-top: 16px;
+}
+.settings-compact .product-page-heading__description { font-size: var(--studio-text-body, 14px); }
+.settings-compact .product-page-heading__eyebrow { font-size: var(--studio-text-small, 12px); }
+.settings-compact .studio-settings-section,
+.studio-settings-section.provider-settings--compact {
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  box-shadow: none;
+}
+.settings-compact .studio-settings-section header,
+.provider-settings--compact header { gap: 8px; min-width: 0; }
+.settings-compact .studio-settings-section h2,
+.provider-settings--compact h2 { font-size: var(--studio-text-body, 14px); line-height: 1.5; }
+.settings-compact .studio-settings-section p,
+.provider-settings--compact p { font-size: var(--studio-text-small, 12px); line-height: 1.5; }
+.settings-compact .studio-settings-section--row { gap: 12px 24px; }
+.settings-compact__preferences {
+  border: 1px solid var(--product-border);
+  border-radius: var(--product-radius);
+  background: var(--product-surface);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.settings-compact .settings-compact__preferences > section {
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--product-border);
+  margin: 0;
+}
+.settings-compact .settings-compact__preferences > section:last-child { border-bottom: 0; }
+.settings-compact :is(.product-button, select),
+.provider-settings--compact :is(.product-button, .provider-settings__text-button) {
+  min-height: 32px;
+  padding: 5px 10px;
+  font-size: var(--studio-text-control, 13px);
+  line-height: 20px;
+}
+.settings-compact__theme { display: flex; gap: 4px; flex-shrink: 0; }
+.settings-compact__theme-option { gap: 6px; }
+.settings-compact__theme-option[aria-pressed=true] {
+  border-color: var(--product-accent); background: var(--product-accent-soft);
+}
+.settings-compact__theme-option:focus-visible,
+.provider-settings--compact :is(button, input, select):focus-visible {
+  outline: 2px solid var(--product-accent); outline-offset: 2px;
+}
+.provider-settings--compact { font-size: var(--studio-text-body, 14px); }
+.provider-settings__heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.provider-settings--compact .provider-settings__toolbar { margin: 0; gap: 6px; }
+.provider-settings--compact .provider-settings__agent { font-size: var(--studio-text-small, 12px); margin-right: 6px; }
+.provider-settings--compact .provider-settings__list { gap: 0; margin-top: 12px; border: 1px solid var(--product-border); border-radius: 6px; overflow: hidden; }
+.provider-settings--compact .provider-settings__connection { padding: 10px 12px; gap: 8px 16px; border: 0; border-radius: 0; border-bottom: 1px solid var(--product-border); }
+.provider-settings--compact .provider-settings__connection:last-child { border-bottom: 0; }
+.provider-settings--compact .provider-settings__identity { flex-basis: 220px; }
+.provider-settings--compact .provider-settings__identity strong { font-size: var(--studio-text-body, 14px); }
+.provider-settings--compact .provider-settings__identity p { margin: 2px 0; }
+.provider-settings--compact .provider-settings__identity small { font-size: var(--studio-text-small, 12px); overflow-wrap: anywhere; }
+.provider-settings--compact .provider-settings__badge { padding: 1px 6px; margin-left: 6px; font-size: var(--studio-text-small, 12px); }
+.provider-settings--compact .provider-settings__actions { gap: 6px; }
+.provider-settings--compact :is(.provider-settings__form, .provider-settings__usage) { margin-top: 12px; padding-top: 12px; }
+.provider-settings--compact h3 { font-size: var(--studio-text-body, 14px); line-height: 1.5; margin: 0 0 4px; }
+.provider-settings--compact .provider-settings__form fieldset { margin-top: 10px; }
+.provider-settings--compact .provider-settings__fields { gap: 10px 12px; }
+.provider-settings--compact .provider-settings__form label { gap: 4px; font-size: var(--studio-text-control, 13px); }
+.provider-settings--compact .provider-settings__form :is(input, select) { min-height: 32px; padding: 5px 8px; font-size: var(--studio-text-control, 13px); line-height: 20px; border-radius: 6px; }
+.provider-settings--compact .provider-settings__form small { font-size: var(--studio-text-small, 12px); line-height: 1.5; }
+.provider-settings--compact .provider-settings__clear input { min-height: 0; }
+.provider-settings--compact .provider-settings__form .provider-settings__actions,
+.provider-settings--compact .provider-settings__model-picker { margin-top: 10px; }
+.provider-settings--compact .provider-settings__delete { padding-top: 8px; border-top: 1px solid var(--product-border); gap: 6px; }
+.provider-settings--compact .provider-settings__totals { margin: 10px 0; gap: 0; border-block: 1px solid var(--product-border); }
+.provider-settings--compact .provider-settings__totals > div { padding: 8px 12px; border-right: 1px solid var(--product-border); }
+.provider-settings--compact .provider-settings__totals > div:first-child { padding-left: 0; }
+.provider-settings--compact .provider-settings__totals > div:last-child { border-right: 0; }
+.provider-settings--compact .provider-settings__totals dt { font-size: var(--studio-text-small, 12px); }
+.provider-settings--compact .provider-settings__totals dd { font-size: var(--studio-text-body, 14px); font-weight: 600; margin-top: 2px; }
+.provider-settings--compact .provider-settings__table { margin-top: 8px; }
+.provider-settings--compact .provider-settings__table :is(th, td) { padding: 7px 10px; font-size: var(--studio-text-control, 13px); }
+@media (max-width: 640px) {
+  .settings-compact .studio-settings-section, .studio-settings-section.provider-settings--compact { padding: 12px; }
+  .settings-compact .studio-settings-section--row { align-items: start; flex-wrap: wrap; gap: 10px; }
+  .settings-compact .studio-settings-section--row > header { flex-basis: 100%; }
+  .provider-settings--compact .provider-settings__identity { flex-basis: 100%; }
+  .provider-settings--compact .provider-settings__toolbar { width: 100%; }
+  .provider-settings--compact .provider-settings__agent { margin-right: auto; }
+  .provider-settings--compact .provider-settings__totals > div:nth-child(2) { border-right: 0; }
+  .provider-settings--compact .provider-settings__totals > div:nth-child(3) { padding-left: 0; }
+}
+
+/* Keep native input text at 16px on touch/narrow displays (no focus zoom). */
+@media (max-width: 767px), (pointer: coarse) {
+  .settings-compact select, .provider-settings--compact .provider-settings__form :is(input, select) { font-size: 16px; min-height: 36px; }
+}

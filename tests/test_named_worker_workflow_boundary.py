@@ -25,33 +25,30 @@ def test_named_worker_stays_queued_for_identity_preserving_batch(tmp_path):
     before = sessions.read()
     ledger_before = ledger.path.read_bytes()
 
-    # The real selection entry rejects before changing the queue or claiming
-    # the task. Existing batch execution can still consume the same proposal.
-    with pytest.raises(ValueError, match="named Worker.*batch"):
-        handle_queue_action(SimpleNamespace(workspace=tmp_path, session=lambda *_: sessions.read()),
-                            project_key="DEMO", root=root,
-                            request={"action": "select_queued_task", "proposal_id": proposal["id"],
-                                     "expected_revision": 1})
+    # Non-Workflow validation preserves named identity for the existing queue/batch.
+    assert require_queued_project_task(root, "DEMO", proposal, workflow=False)["id"] == task["id"]
+    with pytest.raises(ValueError, match="named Worker"):
+        require_queued_project_task(root, "DEMO", proposal)
     assert sessions.read() == before
     assert ledger.path.read_bytes() == ledger_before
-    assert sessions.read()["queued_task_proposals"][0]["assignment"]["worker_id"] == "implementation-b"
 
-    # Previously selected drafts pass the same boundary again at confirmation
-    # and start. The durable ledger is authoritative, not editable UI metadata.
     selected = {**proposal, "status": "draft", "assignment": {}}
-    with pytest.raises(ValueError, match="named Worker.*batch"):
+    with pytest.raises(ValueError, match="named Worker"):
         require_queued_project_task(root, "DEMO", selected)
     sessions._mutate(lambda session: _apply(session, {"action": "edit_queued_task",
         "proposal_id": proposal["id"], "expected_revision": 1, "text": "Clarified feature scope",
         "message_id": "clarify-scope"}))
     edited = sessions.read()["queued_task_proposals"][0]
     assert "project_task_id" not in edited
-    with pytest.raises(ValueError, match="named Worker.*batch"):
-        handle_queue_action(SimpleNamespace(workspace=tmp_path, session=lambda *_: sessions.read()),
-                            project_key="DEMO", root=root,
-                            request={"action": "select_queued_task", "proposal_id": proposal["id"],
-                                     "expected_revision": 2})
-    assert sessions.read()["queued_task_proposals"][0]["status"] == "queued"
+    assert require_queued_project_task(root, "DEMO", edited, workflow=False) is None
+    with pytest.raises(ValueError, match="named Worker"):
+        require_queued_project_task(root, "DEMO", edited)
+    handle_queue_action(SimpleNamespace(workspace=tmp_path, session=lambda *_: sessions.read()),
+                        project_key="DEMO", root=root,
+                        request={"action": "select_queued_task", "proposal_id": proposal["id"],
+                                 "expected_revision": 2})
+    assert sessions.read()["proposed_task"]["assignment"]["worker_id"] == "implementation-b"
+    assert not sessions.read()["proposed_task"].get("run_id")
     ordinary = ledger.create_task(title="Ordinary work", description="Default role is intended.", role="implementation")
     assert require_queued_project_task(root, "DEMO", {"project_task_id": ordinary["id"],
         "project_task_digest": task_evidence_digest(ordinary)})["id"] == ordinary["id"]
@@ -85,3 +82,4 @@ def test_previously_confirmed_edited_named_draft_cannot_start_workflow(tmp_path,
     after = sessions.read()["proposed_task"]
     assert not after.get("start_claim_id") and not after.get("run_id")
     assert after["assignment"]["worker_id"] == "implementation-b"
+

@@ -303,6 +303,18 @@ class DispatchWorkspace:
                 raise DispatchWorkspaceError("Dispatch workspace Git directory identity changed.")
         return root
 
+    def source_head(self) -> str:
+        """Read the source revision from the immutable raw snapshot commit."""
+        root = self.artifact_root / "baseline"
+        with AnchoredRepository(root, expected_identity=self.metadata["baseline_root_identity"]):
+            if _git_identity(root) != self.metadata["baseline_git_identity"]:
+                raise DispatchWorkspaceError("Retained dispatch baseline Git identity changed.")
+            lineage = _read_git(root, ["rev-list", "--parents", "-n", "1", "HEAD"]).decode("ascii").split()
+        if (len(lineage) != 2 or lineage[0] != self.metadata["baseline_commit"]
+                or lineage[1] != self.metadata.get("original_head")):
+            raise DispatchWorkspaceError("Retained dispatch source revision does not match its baseline parent.")
+        return lineage[1]
+
     def _baseline_capture(self):
         root = self.artifact_root / "baseline"
         with AnchoredRepository(root, expected_identity=self.metadata["baseline_root_identity"]):

@@ -131,15 +131,13 @@ actual readable Worker reports, limitations and outstanding independent review t
 the conversation, with idempotent publication per batch/recovery attempt. Source
 reports remain separately inspectable. Worker completion never marks delivery done.
 
-Previously saved named Worker assignments use the existing queued batch execution
-path, including a one-item batch. Single-draft Workflows currently resolve by Role
-and do not carry an exact Worker target; selection, confirmation and start reject
-these legacy named assignments rather than silently switching to the default
-Worker. The original queued task remains available for batch execution. Previously
-edited drafts that still retain a named assignment are also rejected at start;
-they are not silently converted into default-Worker execution. Ordinary unnamed
-drafts keep their existing single-draft Workflow behavior. This compatibility
-guard does not restore named-target inputs for new Manager assignments.
+Previously saved named Worker assignments retain their original identity in
+non-Workflow queue, preparation and batch paths. Single-draft Workflows resolve
+by Role and cannot preserve an exact Worker target, so their confirmation/start
+boundary rejects these legacy assignments rather than silently substituting a
+default. This also covers edited drafts that retain assignment metadata after
+losing their ledger binding. Ordinary unnamed drafts are unchanged; this
+compatibility guard does not restore named-target inputs for new Manager work.
 
 The Manager receives current invocation facts from the original Worker jobs:
 the job ID, recorded task association, Role and saved execution state. A queued
@@ -248,3 +246,4 @@ fixture uses temporary workspace, registry and fake Workers. It checks exact sav
 text, task termination and explicit second-task startup, composer continuity,
 history context, unchanged current state/approvals and browser errors. The broader
 business-loop and concurrent-approval acceptance remain required.
+

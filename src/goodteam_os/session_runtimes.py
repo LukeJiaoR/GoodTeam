@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -30,6 +31,7 @@ PI_CAPABILITIES = (
     "entry_replay",
 )
 PI_STARTUP_TIMEOUT_FLOOR_SECONDS = 1.0
+PI_MINIMUM_VERSION = (1, 1, 0)  # agent_settled.aborted is part of our terminal contract.
 MEANINGFUL_EVENTS = {
     "agent_start": "turn_started",
     "agent_end": "turn_ended",
@@ -149,12 +151,16 @@ def pi_backend_doctor(project_root: Path | None = None, overrides: Mapping[str, 
         except (OSError, IndexError, subprocess.TimeoutExpired):
             version = ""
     writable = _directory_writable(config.session_dir)
-    ready = available and bool(version) and writable
+    match = re.fullmatch(r"(?:pi\s+)?v?(\d+)\.(\d+)\.(\d+)(?:[+][A-Za-z0-9.-]+)?", version)
+    compatible = bool(match and tuple(map(int, match.groups())) >= PI_MINIMUM_VERSION)
+    ready = available and compatible and writable
     return {
         "mode": "pi",
         "kind": "session",
         "runtime_kind": PI_RUNTIME_SPEC.runtime_kind,
-        "capabilities": list(PI_CAPABILITIES),
+        "capabilities": list(PI_CAPABILITIES) if compatible else [],
+        "minimum_version": "1.1.0",
+        "protocol_compatible": compatible,
         "command": "pi",
         "command_path": resolved,
         "available": available,
@@ -168,7 +174,7 @@ def pi_backend_doctor(project_root: Path | None = None, overrides: Mapping[str, 
         "hint": (
             "Pi RPC is ready. Authentication remains owned by Pi."
             if ready
-            else "Pi is not ready. Install with `npm install -g @earendil-works/pi-coding-agent` and ensure the local session directory is writable."
+            else "Pi 1.1.0 or newer is required for verified RPC cancellation semantics. Install with `npm install -g @earendil-works/pi-coding-agent` and ensure the local session directory is writable."
         ),
     }
 
@@ -220,7 +226,7 @@ class PiRpcSessionStore:
     def append_event(self, event: str, payload: dict[str, Any] | None = None) -> None:
         self._append(self.events_path, {"recorded_at": _now(), "event": event, **(payload or {})})
 
-    def append_entries(self, entries: list[dict[str, Any]]) -> str:
+    def append_entries(self, entries: list[dict[str, Any]], *, source: dict[str, str] | None = None) -> str:
         existing = self._entry_ids()
         last = ""
         for entry in entries:
@@ -230,7 +236,7 @@ class PiRpcSessionStore:
             last = entry_id
             if entry_id in existing:
                 continue
-            self._append(self.entries_path, entry)
+            self._append(self.entries_path, {**entry, "_goodteam_source": source or {}})
             existing.add(entry_id)
         return last
 
@@ -275,6 +281,8 @@ class PiSessionRuntime:
         runtime_cwd: Path,
         config: PiRuntimeConfig,
         stderr_path: Path,
+        method_input=None,
+        prompt_authorizer=None,
     ) -> None:
         self.project_root = project_root.resolve()
         self.job_root = job_root
@@ -291,13 +299,35 @@ class PiSessionRuntime:
         self._metadata_lock = threading.RLock()
         self._abort_in_flight = False
         self._closing_abort = False
+        self.method_input = method_input
+        self.prompt_authorizer = prompt_authorizer
+        self.method_resources = None
+        self.manager_policy = None
+        self.readonly_policy = None
+        self.tool_policy = None
+        self.tool_contract_key = ""
+        self.web_search = None
+        self._entries_pending = threading.Event()
 
     def start_or_resume(self) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        # This is the ordinary Pi transport, not an admitted Skill envelope.
+        # Keep the check at the actual start/resume boundary too: callers must
+        # not bypass Worker preflight by constructing this Runtime directly.
+        reject_unverified_runtime_entry(self.job_root, self.job, method_input=self.method_input)
+        if self.job.get("phase") == "project_running_observation" and (
+                self.prompt_authorizer is None or self.method_input is None or not self.method_input.manager_tools):
+            raise PiSessionMismatch("Running observation requires its original atomic Manager prompt authority")
+        if self.method_input is not None and self.runtime_cwd != self.method_input.runtime_context().runtime_cwd:
+            raise PiSessionMismatch("Method runtime cwd differs from its original workspace")
         self.config.session_dir.mkdir(parents=True, exist_ok=True)
         policy = str(self.job.get("session_policy") or "new")
         existing = self.store.read_metadata()
         explicit_ref = str(self.job.get("worker_session_ref") or "").strip()
         recovering_current_job = existing is not None
+        if self.method_input is not None and existing is not None:
+            self.method_input.session_binding(existing)
         resume = policy == "resume" or (
             recovering_current_job
             and bool(existing.get("initial_prompt_sent") or existing.get("active_operation"))
@@ -318,7 +348,72 @@ class PiSessionRuntime:
             command.extend(["--provider", self.config.provider])
         if self.config.model:
             command.extend(["--model", self.config.model])
-        self.rpc = PiRpcProcess(command, cwd=self.runtime_cwd, stderr_path=self.stderr_path, on_record=self._on_record)
+        environment = None
+        if self.method_input is not None and (self.method_input.manager_tools or self.method_input.readonly_tools):
+            if self.method_input.manager_tools:
+                from goodteam_os.pi_manager_tools import PiManagerTools
+                self.manager_policy = PiManagerTools()
+                self.tool_policy = self.manager_policy
+                self.tool_contract_key = "manager_tool_contract"
+                extension = "pi_manager_tools.mjs"
+            else:
+                from goodteam_os.pi_read_only import PiReadOnlyTools
+                self.readonly_policy = PiReadOnlyTools(methods=True, authorized_search=self.job.get("web_search") is not None)
+                self.tool_policy = self.readonly_policy
+                self.tool_contract_key = "readonly_tool_contract"
+                extension = "pi_read_only.mjs"
+            contract = {"version": self.tool_policy.version, "tools": list(self.tool_policy.tools),
+                        "guarantee": "tool-level; not an OS sandbox"}
+            if existing is not None and existing.get(self.tool_contract_key) != contract:
+                raise PiSessionMismatch("Original restricted session lacks this exact tool contract")
+            if self.method_input.manager_tools and self.job.get("web_search") is not None:
+                raise PiSessionMismatch("Manager methods cannot acquire a search task capability")
+            command.extend(self.tool_policy.arguments())
+            command.extend(["--extension", str(Path(__file__).with_name(extension))])
+            if resume:
+                if not source:
+                    raise PiSessionMissing("Restricted resume needs its original session")
+                try:
+                    session_file = self.store.validate_session_file(str(source.get("session_file", "")))
+                except (ValueError, FileNotFoundError) as exc:
+                    raise PiSessionMissing(str(exc)) from exc
+                with session_file.open("rb") as stream:
+                    header_bytes = stream.readline(65537)
+                try:
+                    header = json.loads(header_bytes) if len(header_bytes) <= 65536 else None
+                except (ValueError, UnicodeError) as exc:
+                    raise PiSessionMismatch("Restricted session header is unavailable") from exc
+                if (not isinstance(header, dict) or header.get("type") != "session"
+                        or header.get("id") != source.get("session_id")
+                        or not isinstance(header.get("cwd"), str)
+                        or Path(header["cwd"]).resolve() != self.runtime_cwd):
+                    raise PiSessionMismatch("Restricted session header differs from its original identity or cwd")
+                # Restore into a fresh process: session_start produces a fresh
+                # authenticated witness before any next prompt. Never reuse a
+                # ready bit across same-process switch_session.
+                command.extend(["--session", str(session_file)])
+            environment = {**provider_environment(), **self.tool_policy.environment()}
+        if self.job.get("web_search") is not None:
+            from goodteam_os.web_search import JobWebSearch
+            if self.job["id"].startswith(("job-skill-", "job-input-", "job-correction-")) and self.method_input is None:
+                raise ValueError("Protected runtime search requires its own explicit capability contract")
+            self.web_search = JobWebSearch(self.job_root, self.job,
+                active=lambda: self.metadata.get("status") == "running" and not self.aborted
+                    and not self._abort_in_flight and not self._closing_abort
+                    and (self.method_input is None or self.method_input.search_authorized(self.job_root, self.job)))
+            environment = {**(environment or provider_environment()), **self.web_search.start()}
+            command.extend(["--extension", str(Path(__file__).with_name("pi_web_search.mjs"))])
+        if self.method_input is not None:
+            self.method_resources = self.method_input.resource_channel(active=lambda: not self.aborted
+                and not self._abort_in_flight and not self._closing_abort
+                and self.metadata.get("status", "starting") in {"starting", "running"},
+                **({"startup_policy": self.tool_policy} if self.tool_policy else {}))
+            environment = {**(environment or provider_environment()), **self.method_resources.start()}
+            command.extend(["--extension", str(Path(__file__).with_name("pi_skill_resources.mjs"))])
+        self.rpc = PiRpcProcess(command, cwd=self.runtime_cwd, stderr_path=self.stderr_path,
+                                on_record=self._on_record, **({"env": environment} if environment else {}),
+                                **({"request_guard": self._restricted_rpc_guard} if self.tool_policy else {}),
+                                **({"prompt_authorizer": self.prompt_authorizer} if self.prompt_authorizer else {}))
         self.rpc.start()
         startup_timeout = max(self.config.request_timeout, PI_STARTUP_TIMEOUT_FLOOR_SECONDS)
         now = _now()
@@ -346,6 +441,9 @@ class PiSessionRuntime:
             "initial_prompt_sent": False,
             "pid": self.rpc.pid,
         }
+        if self.tool_policy:
+            self.metadata[self.tool_contract_key] = {"version": self.tool_policy.version,
+                "tools": list(self.tool_policy.tools), "guarantee": "tool-level; not an OS sandbox"}
         if source:
             for key in ("last_entry_id", "leaf_id"):
                 self.metadata[key] = source.get(key, self.metadata[key])
@@ -353,8 +451,12 @@ class PiSessionRuntime:
             self.metadata["initial_prompt_sent"] = bool(source.get("initial_prompt_sent"))
             if isinstance(source.get("active_operation"), dict):
                 self.metadata["active_operation"] = dict(source["active_operation"])
+                operation = source["active_operation"]
+                if (operation.get("state") == "settled" and operation.get("id")
+                        and source.get("settled_operation_id") == operation["id"]):
+                    self.metadata["settled_operation_id"] = source["settled_operation_id"]
         self.store.write_metadata(self.metadata)
-        if resume:
+        if resume and not self.tool_policy:
             if not source:
                 raise PiSessionMissing("Pi session metadata is missing")
             try:
@@ -373,6 +475,13 @@ class PiSessionRuntime:
                 {"type": "set_thinking_level", "level": self.config.thinking_level}, timeout=startup_timeout
             )
         state = self.get_state(timeout=startup_timeout)
+        if self.tool_policy:
+            self.tool_policy.require_ready(self.tool_policy.nonce, startup_timeout)
+            self.store.append_event(self.tool_contract_key + "_witnessed", {
+                "version": self.tool_policy.version, "tools": list(self.tool_policy.tools),
+                "restored": resume, "real_model_verification": False})
+        if self.method_input is not None:
+            self.method_input.session_binding(self.metadata, create=not recovering_current_job)
         if recovering_current_job and source and (source.get("initial_prompt_sent") or source.get("active_operation")):
             operation = source.get("active_operation")
             operation_state = str(operation.get("state") or "") if isinstance(operation, dict) else ""
@@ -402,9 +511,27 @@ class PiSessionRuntime:
 
     def abort(self) -> dict[str, Any]:
         if self.aborted:
+            if self.metadata.get("queue_clear_unconfirmed"):
+                raise PiRpcError("Pi abort was acknowledged but clearing queued messages was not confirmed")
             return {"type": "response", "command": "abort", "success": True, "idempotent": True}
         self._abort_in_flight = True
+        if self.web_search:
+            self.web_search.stop()
+        if self.method_resources:
+            self.method_resources.stop()
+        queue_error = None
         try:
+            # Pi abort alone retains queued messages. Stop must remove those
+            # before cancelling the active turn; acknowledgement is not exit.
+            try:
+                self._rpc().request({"type": "clear_queue"}, timeout=min(self.config.request_timeout, 5.0))
+            except PiRpcError as exc:
+                queue_error = exc  # Still attempt abort, but never report full Stop success.
+            # Persist before abort: its asynchronous settled event may arrive
+            # before an acknowledgement that is subsequently lost.
+            with self._metadata_lock:
+                self.metadata["queue_clear_unconfirmed"] = queue_error is not None
+                self.store.write_metadata(self.metadata)
             response = self._rpc().request({"type": "abort"}, timeout=min(self.config.request_timeout, 5.0))
         except PiRpcError:
             self._abort_in_flight = False
@@ -413,11 +540,14 @@ class PiSessionRuntime:
         self._abort_in_flight = False
         with self._metadata_lock:
             self.metadata["status"] = "aborted"
+            self.metadata["queue_clear_unconfirmed"] = queue_error is not None
             operation = self.metadata.get("active_operation")
             if isinstance(operation, dict) and operation.get("state") != "settled":
                 self.metadata["active_operation"] = {**operation, "state": "aborted", "aborted_at": _now()}
             self.store.write_metadata(self.metadata)
-        self.store.append_event("abort")
+        self.store.append_event("abort", {"queue_clear_confirmed": queue_error is None})
+        if queue_error is not None:
+            raise PiRpcError("Pi abort was acknowledged but clearing queued messages was not confirmed") from queue_error
         return response
 
     def get_state(self, *, timeout: float | None = None) -> dict[str, Any]:
@@ -459,18 +589,65 @@ class PiSessionRuntime:
             response = self._rpc().request({"type": "get_entries"}, timeout=self.config.request_timeout)
         data = response.get("data") if isinstance(response.get("data"), dict) else {}
         entries = data.get("entries") if isinstance(data.get("entries"), list) else []
-        last_persisted = self.store.append_entries([entry for entry in entries if isinstance(entry, dict)])
-        if last_persisted:
-            self.metadata["last_entry_id"] = last_persisted
-        self.metadata["leaf_id"] = str(data.get("leafId") or "")
-        self.store.write_metadata(self.metadata)
+        with self._metadata_lock:
+            last_persisted = self.store.append_entries(
+                [entry for entry in entries if isinstance(entry, dict)], source=self._entry_source())
+            if last_persisted:
+                self.metadata["last_entry_id"] = last_persisted
+            self.metadata["leaf_id"] = str(data.get("leafId") or "")
+            self.store.write_metadata(self.metadata)
         return data
+
+    def _entry_source(self) -> dict[str, str]:
+        # Cross-job session history has no safe per-entry invocation boundary.
+        if self.job.get("worker_session_ref") or self.job.get("session_policy") == "resume":
+            return {}
+        session_id = str(self.metadata.get("session_id") or "")
+        return {"job_id": str(self.job["id"]),
+                "execution_id": str(self.job.get("execution_id") or self.job.get("run_id") or ""),
+                "run_id": str(self.job.get("run_id") or ""),
+                "session_digest": hashlib.sha256(session_id.encode()).hexdigest() if session_id else ""}
+
+    def _capture_persisted_entries(self) -> None:
+        """Bounded local evidence only; never block the control loop on an RPC.
+
+        Pi session JSONL is already persisted by the Runtime. Require its header
+        identity as well as the configured root before importing stable entries.
+        Incomplete append tails are ignored until a later real turn event.
+        """
+        with self._metadata_lock:
+            session_id = str(self.metadata.get("session_id") or "")
+            session_file = str(self.metadata.get("session_file") or "")
+        if not session_id:
+            raise ValueError("Pi session identity is unavailable")
+        path = self.store.validate_session_file(session_file)
+        with path.open("rb") as handle:
+            raw = handle.read(2_000_001)
+        if len(raw) > 2_000_000:
+            raise ValueError("Pi local entry snapshot exceeds limit")
+        lines = raw.splitlines(keepends=True)
+        complete = [line for line in lines if line.endswith(b"\n")]
+        if not complete:
+            raise ValueError("Pi session header is unavailable")
+        header = json.loads(complete[0])
+        if not isinstance(header, dict) or header.get("type") != "session" or header.get("id") != session_id:
+            raise ValueError("Pi session header identity mismatch")
+        entries = [json.loads(line) for line in complete[1:]]
+        with self._metadata_lock:
+            if self.metadata.get("session_id") != session_id or self.metadata.get("session_file") != session_file:
+                raise ValueError("Pi session changed during observation")
+            # Do not advance the RPC replay cursor: the final get_entries path
+            # retains responsibility for its own protocol bookkeeping.
+            self.store.append_entries([entry for entry in entries if isinstance(entry, dict)], source=self._entry_source())
 
     def get_last_assistant_text(self) -> str | None:
         response = self._rpc().request({"type": "get_last_assistant_text"}, timeout=self.config.request_timeout)
         data = response.get("data") if isinstance(response.get("data"), dict) else {}
         text = data.get("text")
-        return text if isinstance(text, str) and text.strip() else None
+        text = text if isinstance(text, str) and text.strip() else ""
+        if self.web_search:
+            text += self.web_search.evidence_text()
+        return text or None
 
     def get_session_stats(self) -> dict[str, Any]:
         response = self._rpc().request({"type": "get_session_stats"}, timeout=self.config.request_timeout)
@@ -487,6 +664,14 @@ class PiSessionRuntime:
         while time.monotonic() < deadline:
             if tick is not None:
                 tick()
+            if self._entries_pending.is_set():
+                self._entries_pending.clear()
+                try:
+                    self._capture_persisted_entries()
+                except (OSError, ValueError):
+                    # Local evidence failure never sends an RPC or prompt,
+                    # changes execution status, or authorizes a retry.
+                    self.store.append_event("entry_observation_unavailable")
             rpc = self._rpc()
             if rpc.wait_settled(min(0.2, max(0.01, deadline - time.monotonic()))):
                 if self.agent_error and not self.aborted:
@@ -511,10 +696,23 @@ class PiSessionRuntime:
         raise TimeoutError(f"Pi agent did not settle within {timeout:g}s")
 
     def close(self) -> None:
+        if self.tool_policy:
+            self.tool_policy.invalidate()
+        if self.method_resources:
+            self.method_resources.close()
+        if self.web_search:
+            self.web_search.close()
         if self.rpc is not None:
             abort = self.metadata.get("status") == "running"
             self._closing_abort = abort
             self.rpc.close(abort=abort)
+
+    def _restricted_rpc_guard(self, command):
+        self.tool_policy.guard(command)
+        if command.get("type") in {"prompt", "steer", "follow_up"}:
+            # Recheck immutable methods and task authority before every model
+            # input, including controls sent through the original session API.
+            self.method_input.prompt()
 
     def _message_control(self, command: str, message: str) -> dict[str, Any]:
         if not message.strip():
@@ -590,13 +788,32 @@ class PiSessionRuntime:
 
     def _on_record(self, record: dict[str, Any]) -> None:
         self.store.append_protocol(record)
+        if record.get("type") == "turn_end":
+            # The RPC reader must not synchronously request on its own stream.
+            self._entries_pending.set()
         if record.get("type") == "agent_start":
             with self._metadata_lock:
                 operation = self.metadata.get("active_operation")
                 if isinstance(operation, dict) and operation.get("state") in {"dispatching", "accepted"}:
                     self.metadata["active_operation"] = {**operation, "turn_started_at": _now()}
                     self.store.write_metadata(self.metadata)
-        if record.get("type") == "agent_settled" and not self._abort_in_flight and not self._closing_abort:
+        if record.get("type") == "agent_settled" and record.get("aborted") is True:
+            # Runtime-side cancellation is real even when it was not initiated
+            # by our local abort(). Never promote a cancelled turn to success.
+            self.aborted = True
+            if self.web_search:
+                self.web_search.stop()
+            if self.method_resources:
+                self.method_resources.stop()
+            with self._metadata_lock:
+                self.metadata["status"] = "aborted"
+                operation = self.metadata.get("active_operation")
+                if isinstance(operation, dict):
+                    self.metadata["active_operation"] = {**operation, "state": "aborted", "aborted_at": _now()}
+                self.store.write_metadata(self.metadata)
+            self.store.append_event("runtime_aborted", {"source": "agent_settled"})
+        if (record.get("type") == "agent_settled" and not self.aborted
+                and not self._abort_in_flight and not self._closing_abort):
             with self._metadata_lock:
                 operation = self.metadata.get("active_operation")
                 if (
@@ -645,3 +862,4 @@ def _now() -> str:
 
 def capabilities_dict() -> dict[str, bool]:
     return asdict(PI_RUNTIME_SPEC.capabilities)
+

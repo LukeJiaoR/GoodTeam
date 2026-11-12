@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import TaskSearchConfiguration from './TaskSearchConfiguration';
+import TaskDelegationSummary from './TaskDelegationSummary';
 /** Project advice enters the existing queue; starting requires explicit confirmation. */
 function iterationPlanningRequest(snapshot, language = 'en') {
   if (snapshot?.schema_version !== 'project_iteration_backlog.v1') return '';
@@ -10,10 +13,12 @@ function iterationPlanningRequest(snapshot, language = 'en') {
 export default function ProjectIterationSuggestion({
   snapshot, choice, queuedTasks = [], onPlan, onQueue, onInspect, disabled, language = 'en',
 }) {
+  const [editingSearch, setEditingSearch] = useState({});
   if (snapshot?.schema_version !== 'project_iteration_backlog.v1') return null;
   const zh = String(language).startsWith('zh');
   const candidate = snapshot.next_candidate;
   const chosen = choice?.schema_version === 'project_iteration_choice.v1' ? choice : null;
+  const waiting = chosen && chosen.status === 'waiting' && chosen.backlog_version === snapshot.version;
   const current = chosen && chosen.status === 'recommended' && chosen.backlog_version === snapshot.version;
   const batch = current && chosen.execution_mode === 'parallel' && Array.isArray(chosen.selected_tasks)
     && chosen.selected_tasks.length > 1 ? chosen.selected_tasks : null;
@@ -24,11 +29,13 @@ export default function ProjectIterationSuggestion({
   const queuedCount = selectedIds.filter(id => queued.has(id)).length;
   const fullyQueued = Boolean(current && selectedIds.length && queuedCount === selectedIds.length);
   const selectedQueue = selectedIds.map(id => (queuedTasks || []).find(item => item.project_task_id === id && item.status === 'queued'));
-  const canStartBatch = fullyQueued && selectedQueue.every(Boolean);
+  const canStartBatch = fullyQueued && selectedQueue.every(item => item && Object.hasOwn(item, 'web_search'));
   const activeBatch = (queuedTasks || []).some(item => item.batch_run_id && item.status === 'running');
   const activeQueue = (queuedTasks || []).filter(item => item.batch_run_id && item.status === 'running');
   const batchProgress = (queuedTasks || []).filter(item => item.batch_run_id && ['running', 'review', 'blocked'].includes(item.status));
-  const assignments = queuedTasks.filter(item => item.source === 'manager_conversation' && item.status === 'queued');
+  const assignments = queuedTasks.filter(item => item.project_task_id && item.status === 'queued');
+  const queuedGroups = Object.values(assignments.filter(item => item.source === 'manager_project_iteration' && item.source_event_id)
+    .reduce((groups, item) => { (groups[item.source_event_id] ||= []).push(item); return groups; }, {}));
   const unavailable = snapshot.status === 'unavailable';
   const label = zh ? '下一轮项目迭代' : 'Next project iteration';
   const hint = unavailable
@@ -56,17 +63,32 @@ export default function ProjectIterationSuggestion({
     </div>
     {assignments.map(item => <div key={item.id}>
       <p>{item.exact_request}</p>
+      <TaskDelegationSummary delegation={item.assignment?.delegation} labels={zh
+        ? { purpose: '任务目的', context: '相关 Context', scope: '任务范围' }
+        : { purpose: 'Task purpose', context: 'Relevant Context', scope: 'Task scope' }} />
       {item.assignment?.worker_id && <p>{zh ? '原任务指定成员' : 'Original assignment member'}: <strong>{item.assignment.worker_id}</strong></p>}
       <p>{item.assignment?.role} · {item.assignment?.execution_policy === 'read_only'
         ? (zh ? '只读研究，不修改项目文件' : 'Read only; no project file changes')
         : (item.assignment?.write_domains || []).join(', ')}</p>
       <ul>{(item.assignment?.acceptance_criteria || []).map((criterion, index) => <li key={index}>{criterion}</li>)}</ul>
-      <button type="button" disabled={disabled || activeBatch} onClick={() => onQueue?.({
-        action: 'start_queued_task_batch', proposal_ids: [item.id],
-        expected_revisions: { [item.id]: item.revision }, confirmed: true,
-      })}>{zh ? '确认范围与模型费用并执行此任务' : 'Confirm scope and model charges and run this task'}</button>
+      <TaskSearchConfiguration key={`${item.id}:${item.revision}`} item={item} disabled={disabled || activeBatch} onAction={onQueue} language={language} onEditingChange={value => setEditingSearch(previous => ({ ...previous, [`${item.id}:${item.revision}`]: value }))} />
     </div>)}
-    {current ? (
+    {!current && queuedGroups.filter(group => group.length > 1).map(group => <div key={group[0].source_event_id}>
+      <p>{zh ? '已排队的原批次（使用最新配置逐项确认）' : 'Original queued group (confirm latest configurations)'}</p>
+      <ul>{group.map(item => <li key={item.id}>{item.project_task_id}</li>)}</ul>
+      <button type="button" disabled={disabled || activeBatch || group.some(item => !Object.hasOwn(item, 'web_search') || editingSearch[`${item.id}:${item.revision}`])}
+        onClick={() => onQueue?.({ action: 'start_queued_task_batch', proposal_ids: group.map(item => item.id),
+          expected_revisions: Object.fromEntries(group.map(item => [item.id, item.revision])), confirmed: true })}>
+        {zh ? '确认最新范围、搜索配置与费用并执行原批次' : 'Confirm latest scope, search configuration and charges and run queued group'}
+      </button>
+    </div>)}
+    {waiting ? (
+      <div className="project-iteration-suggestion__choice">
+        <strong>{zh ? 'Manager 建议暂不派发' : 'Manager recommends no dispatch'}</strong>
+        <p>{chosen.rationale}</p>
+        <small>{zh ? '判断已保存；未创建任务、登记问题或启动执行' : 'Judgment saved; no task, question or execution created'}</small>
+      </div>
+    ) : current ? (
       <div className="project-iteration-suggestion__choice">
         <strong>{batch ? (zh ? 'Manager 建议并行任务组' : 'Manager recommends parallel tasks')
           : (zh ? 'Manager 建议' : 'Manager recommends')}: {batch ? '' : chosen.selected_task_id}</strong>
@@ -96,7 +118,7 @@ export default function ProjectIterationSuggestion({
       <p><strong>{candidate.task_id}: {candidate.title}</strong> · {candidate.priority}
         {candidate.description ? <span> — {candidate.description.slice(0, 220)}</span> : null}</p>
     ) : null}
-    {chosen && !current ? <small>{zh ? '旧建议已过期，请重新评估。' : 'Previous recommendation is stale; re-evaluate.'}</small> : null}
+    {chosen && !current && !waiting ? <small>{zh ? '旧建议已过期，请重新评估。' : 'Previous recommendation is stale; re-evaluate.'}</small> : null}
     {batchProgress.length > 0 && <div aria-label={zh ? '批次执行结果' : 'Batch execution progress'}>
       <strong>{zh ? '已确认的项目任务' : 'Confirmed project tasks'}</strong>
       <ul>{batchProgress.map(item => <li key={item.id}>{item.project_task_id} — {
@@ -113,7 +135,7 @@ export default function ProjectIterationSuggestion({
       <div>
         <small>{zh ? '已进入普通任务队列；确认后使用隔离工作区执行，结果需审查与交付确认'
           : 'Queued tasks run in isolated workspaces after confirmation; results need review and delivery confirmation'}</small>
-        {canStartBatch && <button type="button" disabled={disabled || activeBatch} onClick={() => onQueue?.({
+        {canStartBatch && <button type="button" disabled={disabled || activeBatch || selectedQueue.some(item => editingSearch[`${item.id}:${item.revision}`])} onClick={() => onQueue?.({
           action: 'start_queued_task_batch',
           proposal_ids: selectedQueue.map(item => item.id),
           expected_revisions: Object.fromEntries(selectedQueue.map(item => [item.id, item.revision])),

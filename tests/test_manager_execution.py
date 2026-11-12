@@ -48,7 +48,8 @@ def test_manager_chat_turn_runs_configured_orchestrator_and_returns_decision(
 ) -> None:
     captured: dict[str, object] = {}
     action = {"kind": "queue_task", "role": "research", "execution_policy": "read_only",
-              "write_domains": [], "acceptance_criteria": ["Identify the cause with project evidence."]}
+              "write_domains": [], "acceptance_criteria": ["Identify the cause with project evidence."],
+              "delegation": {"purpose": "Investigate login", "context": "Login fails", "scope": "Read only diagnosis"}}
 
     class FakeStore:
         def __init__(self, project_root: Path) -> None:

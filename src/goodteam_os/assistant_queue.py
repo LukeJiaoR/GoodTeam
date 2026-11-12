@@ -10,7 +10,7 @@ from goodteam_os.state import StateStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
-QUEUE_ACTIONS = {"queue_task", "edit_queued_task", "discard_queued_task", "select_queued_task"}
+QUEUE_ACTIONS = {"queue_task", "edit_queued_task", "discard_queued_task", "select_queued_task", "configure_queued_search"}
 
 
 def active_project_run(workspace, project_key):
@@ -24,6 +24,9 @@ def handle_queue_action(service, *, project_key, root, request):
     if action not in QUEUE_ACTIONS:
         raise ValueError("Unknown task queue action")
     with conversation_lock(store):
+        if action == "configure_queued_search":
+            configure_queued_search(store, root, project_key, request)
+            return response(service, project_key, root)
         if action == "select_queued_task":
             from goodteam_os.project_iteration_execution import active_project_batch
 
@@ -34,7 +37,7 @@ def handle_queue_action(service, *, project_key, root, request):
                  if item.get("id") == request.get("proposal_id")), None
             )
             if queued is not None and queued.get("status") == "queued":
-                require_queued_project_task(root, project_key, queued)
+                require_queued_project_task(root, project_key, queued, workflow=False)
             archive_terminal_proposal(store, workspace=service.workspace, root=root)
         store._mutate(lambda session: _apply(session, request))
         return response(service, project_key, root)
@@ -112,21 +115,17 @@ def require_no_active_project_goal(workspace, project_key):
         raise ValueError("Finish or explicitly stop the active Goal before a separate project task.")
 
 
-def require_queued_project_task(root, project_key, proposal):
+def require_queued_project_task(root, project_key, proposal, *, workflow=True):
     """Revalidate an original Manager-selected task before the existing Workflow.
 
     Ordinary human-typed drafts have no project_task_id and remain unchanged.
     A model recommendation is never an independent execution authorization.
     """
-    named_worker_error = (
-        "Tasks with a named Worker cannot use a single-draft Workflow; "
-        "use queued batch execution for the original assignment."
-    )
-    # Human edits can remove the ledger binding while retaining assignment
-    # metadata. They must not silently turn an explicit target into a default.
+    # Edited legacy drafts can retain an exact assignment without a ledger link.
+    # Only a single-draft Workflow replaces that target with a Role default.
     assignment = proposal.get("assignment")
-    if isinstance(assignment, dict) and assignment.get("worker_id"):
-        raise ValueError(named_worker_error)
+    if workflow and isinstance(assignment, dict) and assignment.get("worker_id"):
+        raise ValueError("A named Worker task cannot enter a role-replacing Workflow.")
     task_id = proposal.get("project_task_id")
     if not task_id:
         return None
@@ -146,17 +145,16 @@ def require_queued_project_task(root, project_key, proposal):
     known = {item.get("id"): item for item in tasks}
     if any(known.get(dep, {}).get("status") != "done" for dep in task.get("dependencies", [])):
         raise ValueError("The Manager-selected task has unfinished dependencies.")
-    if task.get("execution_policy") == "read_only":
+    if workflow and task.get("web_search") is not None:
+        raise ValueError("Search-authorized project tasks must retain their confirmed batch search contract.")
+    if workflow and task.get("worker_id"):
+        raise ValueError("A named Worker task cannot enter a role-replacing Workflow.")
+    if workflow and task.get("execution_policy") == "read_only":
         raise ValueError("Read-only Manager work cannot enter a code-writing Workflow.")
-    if task.get("worker_id"):
-        # Single-draft Workflows resolve Workers by Role and cannot preserve
-        # this exact target. Leave the original queue/task identity intact so
-        # the existing batch path can execute it without silently switching.
-        raise ValueError(named_worker_error)
     return task
 
 
-def _project_task_request(task):
+def _project_task_request(task, *, enforce_input_limit=True):
     """Carry exact existing backlog work into the normal human-reviewable draft."""
     parts = [f"Project task {task['id']}: {task['title']}"]
     if task.get("description"):
@@ -167,8 +165,11 @@ def _project_task_request(task):
     domains = task.get("write_domains") or []
     if domains:
         parts.append("Declared write scope (must be independently enforced): " + ", ".join(domains))
+    if task.get("web_search") is not None:
+        import json
+        parts.append("Explicit Web Search allowance (not an amount budget): " + json.dumps(task["web_search"], sort_keys=True))
     result = "\n\n".join(parts)
-    if not 1 <= len(result) <= 8000:
+    if enforce_input_limit and not 1 <= len(result) <= 8000:
         raise ValueError("Project task exceeds the existing Task Assistant draft limit.")
     return result
 
@@ -206,6 +207,8 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
             if choice is None or choice.get("status") != "recommended":
                 raise ValueError("No current persisted Manager recommendation exists.")
             validated = validate_iteration_choice(snapshot, choice)
+            if not validated["selected_task_ids"]:
+                raise ValueError("A non-dispatch judgment cannot be queued.")
             known = {item["id"]: item for item in items}
             selected = [known[task_id] for task_id in validated["selected_task_ids"]]
             # Batch dispatch preserves read-only policy. The ordinary writing
@@ -240,6 +243,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
                     "created_at": datetime.now(UTC).isoformat(),
                     "project_task_id": task["id"],
                     "project_task_digest": digest,
+                    "web_search": task.get("web_search"),
                     "source": "manager_project_iteration",
                 })
 
@@ -278,3 +282,58 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
         "workflow_started": False,
         "task_assistant_session": updated,
     }
+
+
+def configure_queued_search(store, root, project_key, request):
+    """Explicit user configuration only; retain task identity and invalidate old confirmation.
+
+    Caller owns the conversation lock. A crash between ledger and queue writes
+    fails closed at the existing digest check; it never starts a Worker.
+    """
+    from goodteam_os.tasks import LocalTaskStore, task_evidence_digest
+    from goodteam_os.web_search import search_policy
+    from goodteam_os.providers import ProviderStore
+
+    if request.get("confirmed") is not True or "web_search" not in request:
+        raise ValueError("Explicit search configuration confirmation is required.")
+    policy = search_policy(request["web_search"])
+    if policy is not None:
+        ProviderStore().resolve(policy["provider"])
+    tasks = LocalTaskStore(root, project_key)
+    with tasks._lock():
+        session = store.read()
+        proposal = next((item for item in session.get("queued_task_proposals", [])
+                         if item["id"] == request.get("proposal_id")), None)
+        if (proposal is None or proposal.get("status") != "queued" or proposal.get("confirmed")
+                or proposal.get("run_id") or proposal.get("batch_run_id")
+                or type(request.get("expected_revision")) is not int
+                or proposal["revision"] != request["expected_revision"] or not proposal.get("project_task_id")):
+            raise ValueError("Reload an unconfirmed queued project task before configuring search.")
+        task = require_queued_project_task(root, project_key, proposal, workflow=False)
+        original = tasks._read()
+        if policy is not None and not (task.get("execution_policy", "workspace_write") == "workspace_write"
+                or task.get("execution_policy") == "read_only" and task.get("role") in {"research", "planner"}):
+            raise ValueError("Task Web Search requires an explicitly authorized supported Worker task.")
+        updated = {**task, "updated_at": datetime.now(UTC).isoformat()}
+        if policy is None:
+            updated.pop("web_search", None)
+        else:
+            updated["web_search"] = policy
+        ledger = {**original, "tasks": [updated if item["id"] == task["id"] else item for item in original["tasks"]]}
+        tasks._write(ledger)
+        try:
+            text = (proposal["exact_request"] if proposal.get("source") == "manager_conversation"
+                    else _project_task_request(updated, enforce_input_limit=False))
+            def apply(current):
+                item = next(item for item in current["queued_task_proposals"] if item["id"] == proposal["id"])
+                item.update(project_task_digest=task_evidence_digest(updated), exact_request=text,
+                            revision=proposal["revision"] + 1, web_search=policy)
+                current["timeline"].append({"message_id": f"search-config:{item['id']}:{item['revision']}",
+                    "actor": "user", "event": "queued_search_configured", "content": text,
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "details": {"proposal_id": item["id"], "web_search": policy, "execution_started": False}})
+                return current
+            store._mutate(apply)
+        except Exception:
+            tasks._write(original)
+            raise

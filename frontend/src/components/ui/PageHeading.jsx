@@ -1,7 +1,9 @@
+import './compactPageHeading.css';
+
 /** Shared page identity, with distinct places for facts and available actions. */
-export default function PageHeading({ eyebrow, title, description, actions, summary }) {
+export default function PageHeading({ eyebrow, title, description, actions, summary, compact = false }) {
   return (
-    <header className="product-page-heading">
+    <header className={`product-page-heading${compact ? ' product-page-heading--compact' : ''}`}>
       <div className="product-page-heading__identity">
         {eyebrow ? <p className="product-page-heading__eyebrow">{eyebrow}</p> : null}
         <h1>{title}</h1>

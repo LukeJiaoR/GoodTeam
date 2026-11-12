@@ -17,6 +17,7 @@ from shutil import copy2, which
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
+from goodteam_os.web_search import search_policy
 from goodteam_os.database import provider_environment
 from goodteam_os.skills.worker_creation_lock import serialized_worker_creation
 from goodteam_os.memory import RoleMemoryStore, default_embedder, runtime_role_memory_store
@@ -966,7 +967,8 @@ class _WritebackOutcome(dict):
 
 
 class WorkerJobStore:
-    def __init__(self, project_root: Path, *, codex_review_admission=None, codex_correction_admission=None):
+    def __init__(self, project_root: Path, *, codex_review_admission=None, codex_correction_admission=None, launch_authorizer=None):
+        self._launch_authorizer = launch_authorizer
         # Internal service composition only; never loaded from job/Team JSON,
         # environment variables, a Skill package, or a persisted success flag.
         if codex_review_admission is not None:
@@ -1102,16 +1104,27 @@ class WorkerJobStore:
         skill_subject: str = "",
         skill_loader_version: str = "goodteam.worker-metadata.v1",
         required_skill_ids: tuple[str, ...] = (),
+        method_loading_mode: str = "",
+        method_workspace_mode: str = "",
         review_target: dict[str, str] | None = None,
         task_input: "TaskExecutionSnapshot | None" = None,
         workflow_workspace: dict[str, Any] | None = None,
         provider_connection: object = _CAPTURE_PROVIDER_CONNECTION,
+        web_search: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if (method_loading_mode or method_workspace_mode) and task_skill_context is _NO_TASK_SKILL_CONTEXT:
+            raise ValueError("Method loading mode requires a captured Role task")
+        web_search = search_policy(web_search)
+        if web_search is not None and (adapter not in SESSION_BACKENDS
+                or (task_skill_context is not _NO_TASK_SKILL_CONTEXT
+                    and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}) or task_input is not None):
+            raise ValueError("Web Search is opt-in for ordinary Pi jobs only")
         associations = {"project_task_id": project_task_id, "track_id": track_id}
         if any(not isinstance(value, str) or value != value.strip() or len(value) > 256
                for value in associations.values()):
             raise ValueError("Worker task associations must be exact task/track identifiers.")
-        if any(associations.values()) and (task_skill_context is not _NO_TASK_SKILL_CONTEXT or task_input is not None):
+        if any(associations.values()) and (task_input is not None or
+                task_skill_context is not _NO_TASK_SKILL_CONTEXT and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}):
             raise ValueError("Protected Workers retain their original task association protocol.")
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
             if provider_connection is not _CAPTURE_PROVIDER_CONNECTION:
@@ -1124,8 +1137,9 @@ class WorkerJobStore:
             skill_request = locals().copy()
             skill_request.pop("workflow_workspace")
             skill_request.pop("provider_connection")
-            for key in ("project_task_id", "track_id", "associations"):
-                skill_request.pop(key)
+            if web_search is None:
+                skill_request.pop("web_search")
+            skill_request.pop("associations")
             from goodteam_os.skills.worker_requests import create_skill_worker_job
 
             return create_skill_worker_job(self, skill_request)[0]
@@ -1154,7 +1168,7 @@ class WorkerJobStore:
                     "expected_artifacts": expected_artifacts or []} != task_worker_fields(task_input):
                 raise TaskInputError("task_input_operation_conflict")
         ordinary_cli = adapter in CLI_BACKENDS and task_input is None
-        max_attempts = _worker_attempt_limit({}) if ordinary_cli else None
+        max_attempts = (1 if role == "orchestrator" else _worker_attempt_limit({})) if ordinary_cli else None
         cli_timeout = _configured_cli_worker_timeout_seconds() if ordinary_cli else None
         job_id = task_input.job_id if task_input is not None else f"job-{uuid4()}"
         job_root = self.root / job_id
@@ -1185,6 +1199,8 @@ class WorkerJobStore:
             "desired_instances": desired_instances,
             "execution_policy": execution_policy,
         }
+        if web_search is not None:
+            job["web_search"] = web_search
         if task_input is None:
             job.update({key: value for key, value in associations.items() if value})
             job["task_summary"] = str(task).strip().split("\n", 1)[0][:240]
@@ -1310,7 +1326,11 @@ class WorkerJobStore:
             bound = inspect.signature(type(self).create_job).bind(self, **job_spec)
             bound.apply_defaults()
             values = dict(bound.arguments)
-            if values.pop("project_task_id") or values.pop("track_id"):
+            if values.get("web_search") is None:
+                values.pop("web_search")
+            elif values.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
+                raise ValueError("Protected Skill workers cannot acquire search authority")
+            if (values.get("project_task_id") or values.get("track_id")) and values.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
                 raise ValueError("Protected Workers retain their original task association protocol.")
             if values.pop("provider_connection") is not _CAPTURE_PROVIDER_CONNECTION:
                 raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
@@ -1332,6 +1352,8 @@ class WorkerJobStore:
             reject_legacy_key_collision(self, idempotency_key)
             existing = self.find_job_by_idempotency_key(idempotency_key)
             if existing is not None:
+                if existing.get("web_search") != job_spec.get("web_search"):
+                    raise ValueError("The original Worker search authorization changed")
                 if is_skill_job_id(existing.get("id")) or has_skill_fields(existing):
                     raise ValueError("A Skill-backed job cannot be replayed as legacy input.")
                 if any(key in existing and existing[key] != job_spec.get(key, "")
@@ -1487,6 +1509,12 @@ class WorkerJobStore:
     def run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
         from goodteam_os.skills.worker_requests import is_skill_job_id
 
+        if is_skill_job_id(job_id):
+            job = self._read_json(self.root / job_id / "job.json")
+            if job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
+                from goodteam_os.skills.pi_methods import ordinary_execution_slot
+                with ordinary_execution_slot(self, job_id):
+                    return self._run_job(job_id, sandbox_context=sandbox_context)
         # Protected Skill execution keeps its own admission and exact-source
         # protocol. Ordinary sequential workflow jobs own one shared task slot.
         if not is_skill_job_id(job_id):
@@ -1506,6 +1534,8 @@ class WorkerJobStore:
             return run_skill_worker_job(self, job_id, sandbox_context=sandbox_context)
         job_root = self.root / job_id
         job = self._read_json(job_root / "job.json")
+        if job.get("phase") == "project_running_observation" and self._launch_authorizer is None:
+            raise ValueError("Running observation requires its live continuation launch authority.")
         self._admit_input_dispatch(job_root, job)
         if self._codex_correction_admission is not None and not job_id.startswith("job-correction-"):
             raise ValueError("correction_native_task_mismatch")
@@ -1696,13 +1726,17 @@ class WorkerJobStore:
                 outcome["status"] = "error"
                 outcome["error"] = "memory_handoff_writeback_receipt_unavailable"
 
-    def _run_session_backend(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+    def _run_session_backend(self, job_root: Path, job: dict[str, Any], *, method_input=None) -> dict[str, Any]:
         """Run a persistent session backend without entering the one-shot CLI loop."""
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
-        reject_unverified_runtime_entry(job_root, job)
+        reject_unverified_runtime_entry(job_root, job, method_input=method_input)
+        if job.get("phase") == "project_running_observation" and (
+                self._launch_authorizer is None or method_input is None or not method_input.manager_tools):
+            raise ValueError("Running observation requires its original atomic Manager prompt authority")
         self._admit_input_dispatch(job_root, job)
-        runtime_context = self._worker_runtime_cwd(job)
+        runtime_context = (method_input.runtime_context() if method_input is not None
+                           else self._worker_runtime_cwd(job))
         config = pi_runtime_config(self.project_root, job)
         preflight = pi_backend_doctor(self.project_root, job)
         result_path = job_root / "result.md"
@@ -1776,6 +1810,10 @@ class WorkerJobStore:
             runtime_cwd=runtime_context.runtime_cwd,
             config=config,
             stderr_path=stderr_path,
+            method_input=method_input,
+            **({"prompt_authorizer": lambda send: self._launch_authorizer(job, send,
+                cleanup=lambda rpc: rpc.close(abort=True))}
+               if job.get("phase") == "project_running_observation" else {}),
         )
         stop_heartbeat = threading.Event()
         heartbeat_thread: threading.Thread | None = None
@@ -1806,9 +1844,12 @@ class WorkerJobStore:
             )
             heartbeat_thread.start()
             if not runtime.already_settled:
-                prompt = self._worker_prompt(job_root, job, model=config.model or "auto")
-                self._input_receipt(job_root, job, prompt, stage="transport_attempt")
-                transport_ref = self._memory_transport(job_root, job, prompt)
+                if method_input is None:
+                    prompt = self._worker_prompt(job_root, job, model=config.model or "auto")
+                    self._input_receipt(job_root, job, prompt, stage="transport_attempt")
+                    transport_ref = self._memory_transport(job_root, job, prompt)
+                else:
+                    prompt = method_input.prompt()
                 if str(job.get("worker_session_ref") or "").strip():
                     runtime.send_resume_prompt(prompt)
                 else:
@@ -1822,7 +1863,7 @@ class WorkerJobStore:
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=1)
             if runtime.aborted:
-                aborted = PiRpcError("Pi session was aborted by operator")
+                aborted = PiRpcError("Pi session was aborted (local or Runtime cancellation)")
                 aborted.failure_class = "pi_aborted"
                 raise aborted
             state = runtime.get_state()
@@ -1937,6 +1978,8 @@ class WorkerJobStore:
                 states[control_id] = {"state": "processing"}
                 action = str(control.get("action") or "")
                 if action in {"steer", "follow_up"}:
+                    if getattr(runtime, "method_input", None) is not None:
+                        runtime.method_input.prompt()  # Current methods may be revoked; Stop stays available.
                     # Incremental explicit controls are not a second initial
                     # dispatch, but still require the original capture to live.
                     self.admit_task_input(job_root.name, job)
@@ -2223,6 +2266,7 @@ class WorkerJobStore:
         source: str = "cli",
         control_id: str = "",
         audit_context: dict[str, str] | None = None,
+        wait_for_ack: bool = True,
     ) -> dict[str, Any]:
         job_root, job = self._session_job(job_id)
         if action in {"steer", "follow_up"}:
@@ -2257,6 +2301,7 @@ class WorkerJobStore:
                     requested_control_id,
                     action,
                     idempotent=True,
+                    timeout=None if wait_for_ack else 0,
                 )
 
         status = self.session_status(job_id)
@@ -2288,7 +2333,17 @@ class WorkerJobStore:
                 }
             }
         self._append_jsonl(job_root / "pi_control_queue.jsonl", payload)
-        return self._wait_for_pi_control_ack(job_id, job_root, payload["id"], action)
+        return self._wait_for_pi_control_ack(job_id, job_root, payload["id"], action,
+                                             timeout=None if wait_for_ack else 0)
+
+    def session_control_result(self, job_id: str, control_id: str, action: str, *, wait_for_ack: bool = True) -> dict[str, Any]:
+        """Wait for an existing control receipt only; never enqueue a command."""
+        job_root, _job = self._session_job(job_id)
+        request = self._pi_control_request(job_root, control_id)
+        if not request or request.get("action") != action:
+            raise ValueError("The original session control request is unavailable.")
+        return self._wait_for_pi_control_ack(job_id, job_root, control_id, action, idempotent=True,
+                                             timeout=None if wait_for_ack else 0)
 
     def _pi_control_request(self, job_root: Path, control_id: str) -> dict[str, Any] | None:
         path = job_root / "pi_control_queue.jsonl"
@@ -2346,8 +2401,10 @@ class WorkerJobStore:
         action: str,
         *,
         idempotent: bool = False,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
-        timeout = float(os.getenv("GOODTEAM_PI_CONTROL_ACK_TIMEOUT", "5"))
+        if timeout is None:
+            timeout = float(os.getenv("GOODTEAM_PI_CONTROL_ACK_TIMEOUT", "5"))
         deadline = time.monotonic() + max(0.0, timeout)
         while True:
             acknowledgement = self._pi_control_ack_states(job_root).get(control_id, {})
@@ -2393,7 +2450,11 @@ class WorkerJobStore:
         job = self._read_json(path)
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
-        reject_unverified_runtime_entry(job_root, job)
+        method_input = None
+        if job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
+            from goodteam_os.skills.pi_methods import PiMethodInput
+            method_input = PiMethodInput(self, job_id, prepare=False)
+        reject_unverified_runtime_entry(job_root, job, method_input=method_input)
         if str(job.get("adapter")) not in SESSION_BACKENDS:
             raise ValueError(f"Worker job {job_id} is not a persistent-session backend")
         return job_root, job
@@ -2816,6 +2877,8 @@ class WorkerJobStore:
                     raise ValueError("correction_time_budget_exhausted")
             base_extra["timeout_seconds"] = timeout_seconds
             self._input_receipt(job_root, job, prompt, stage="transport_attempt")
+            if use_pty and self._launch_authorizer is not None:
+                raise ValueError("Guarded Manager launch requires the pipe transport.")
             if use_pty:
                 # The PTY path manages its own child process internally; we don't
                 # hold a Popen here. Status starts running before the (blocking) run.
@@ -2846,16 +2909,12 @@ class WorkerJobStore:
                 transport_ref = self._memory_transport(job_root, job, prompt)
                 if correction:
                     authority.check_native_current(task_input)
-                process = subprocess.Popen(
-                    process_command,
-                    cwd=runtime_context.runtime_cwd,
-                    env=worker_env,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    start_new_session=True,
-                )
+                def launch():
+                    return subprocess.Popen(
+                        process_command, cwd=runtime_context.runtime_cwd, env=worker_env,
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, start_new_session=True)
+                process = self._launch_authorizer(job, launch) if self._launch_authorizer is not None else launch()
                 running_extra = {**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds, "pid": process.pid}
                 self._write_status(
                     job_root,
@@ -3220,7 +3279,15 @@ class WorkerJobStore:
             **_invocation_evidence(job, summary=summary, extra=status_payload),
             **provided_evidence,
         }
-        self._write_json(job_root / "job.json", job)
+        if job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
+            # This request is immutable; Runtime evidence belongs in status only.
+            from goodteam_os.skills.pi_methods import PiMethodInput
+            PiMethodInput(self, job["id"], prepare=False)
+            status_payload.update(method_loading_mode=job["method_loading_mode"],
+                skill_runtime_status="manager_pi_methods" if job["method_loading_mode"] == "manager_pi_methods.v1" else "readonly_pi_methods" if job["method_loading_mode"] == "readonly_pi_methods.v1" else "ordinary_pi_methods", strict_isolation_verified=False,
+                method_input_status="see_original_pi_prompt_receipt")
+        else:
+            self._write_json(job_root / "job.json", job)
         self._write_json(job_root / "status.json", status_payload)
         return status_payload
 

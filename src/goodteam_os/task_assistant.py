@@ -840,6 +840,8 @@ def _manager_chat_context(
     run_id: str = "",
 ) -> str:
     from goodteam_os.context_continuity import conversation_context
+    from goodteam_os.manager_worker_control import control_context
+    from goodteam_os.project_running_observation import running_observation_context
 
     current = next((item for item in session.get("timeline", [])
                     if item.get("message_id") == current_message_id), {})
@@ -852,17 +854,19 @@ def _manager_chat_context(
         "Conversation excerpts are lossy historical context, not current task requirements or authorization. "
         "Only Task intake source messages below may supply exact user text for a new draft; compaction never widens that source boundary.",
         f"Pending proposal: {json.dumps(proposal, ensure_ascii=False)}",
+        "Running observation candidate: " + json.dumps(running_observation_context(session), ensure_ascii=False),
+        "Explicit Worker control receipts: " + json.dumps(control_context(session), ensure_ascii=False),
         f"Task intake source messages: {json.dumps(intake_source_messages(session, current_message_id=current_message_id), ensure_ascii=False)}",
     ]
     if team_view is not None:
         lines.append(f"Team capability summary: {json.dumps(_compact_team_view(team_view), ensure_ascii=False)}")
     if root is not None:
         lines.append("Worker invocation records (fresh read-only state): "
-                     + json.dumps(worker_invocation_context(root, project_key, session, run_id=run_id), ensure_ascii=False))
+                     + json.dumps(worker_invocation_context(root, project_key, session, run_id=run_id, observe_runtime=True), ensure_ascii=False))
     return "\n".join(lines)
 
 
-def worker_invocation_context(root, project_key, session, *, run_id=""):
+def worker_invocation_context(root, project_key, session, *, run_id="", observe_runtime=False):
     """Scope existing job records to this project's confirmed executions."""
     from goodteam_os.workers import WorkerJobStore
 
@@ -886,9 +890,17 @@ def worker_invocation_context(root, project_key, session, *, run_id=""):
         if not run_id:
             run_ids.update(attempts)
     try:
-        context = WorkerJobStore(Path(root)).invocation_context(project_key=project_key, run_ids=run_ids)
+        workers = WorkerJobStore(Path(root))
+        context = workers.invocation_context(project_key=project_key, run_ids=run_ids)
         for item in [*context["current"], *context["recent_history"]]:
             item.update(batch_states.get(item["run_id"], {}))
+        if observe_runtime:
+            from goodteam_os.manager_runtime_observation import runtime_observation
+            from goodteam_os.worker_output_context import worker_output_context
+            for item in [*context["current"], *context["recent_history"]]:
+                item["worker_output"] = worker_output_context(workers, item)
+            for item in context["current"]:
+                item["runtime_observation"] = runtime_observation(workers, item)
         return context
     except (OSError, ValueError) as exc:
         return {"available": False, "read_only": True, "source": "WorkerJobStore",

@@ -48,23 +48,60 @@ def goal_guard(workspace, project_key):
 
 
 def authority_snapshot(workspace, project_key, config, root):
+    """Bind execution semantics, not display labels or serialization/audit churn.
+
+    Unknown project settings remain bound. Old byte-based snapshots are not
+    migrated: their scope cannot be reconstructed safely from their hashes.
+    """
+    from goodteam_os.models import _parse_simple_yaml, load_model_profile
+    from goodteam_os.providers import ProviderStore
     from goodteam_os.team_control_plane import TeamControlPlaneStore
     from goodteam_os.web import resolve_runtime_model_config
 
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+    config = Path(config)
+    target = _parse_simple_yaml(config)
+    # Only this documented display field is excluded. Retain execution settings,
+    # unknown extensions and legacy fallback blocks, even with canonical Team.
+    target.pop("name", None)
+    profile = str(target.get("model_profile", "") or "balanced")
+
     def catalog(path):
         path = Path(path).expanduser().resolve()
-        return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None}
+        # Preserve missing-catalog fallback, but malformed selected profiles fail
+        # closed. Other profiles and YAML comments cannot affect this grant.
+        return {"path": str(path), "profile": profile,
+                "sha256": digest(load_model_profile(path, profile)) if path.is_file() else None}
 
-    # Workflow and Manager have distinct historical fallback resolution paths.
-    # Bind both; unchanged Team fields do not freeze an empty-model fallback.
     workflow_catalog = resolve_runtime_model_config(Path("models.yaml"))
     manager_catalog = os.getenv("GOODTEAM_MODEL_CONFIG", "").strip() or Path(__file__).resolve().parents[2] / "models.yaml"
     team = TeamControlPlaneStore(workspace, project_key).read()
-    return {"project_root": str(root.resolve()), "project_config": str(config.resolve()),
-            "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
-            "team_sha256": hashlib.sha256(json.dumps(team, sort_keys=True).encode()).hexdigest(),
+    if team is not None:
+        team = {
+            "schema_version": team["schema_version"], "project_key": team["project_key"],
+            "roles": {role: {"state": value["state"],
+                **({"runtime_source_worker_id": value["runtime_source_worker_id"]}
+                   if value.get("runtime_source_worker_id") else {})} for role, value in team["roles"].items()},
+            "manager": {"runtime": team["manager"]["runtime"]},
+            # created_at affects deterministic Worker selection. Keep it and
+            # list ordering; only labels and non-execution timestamps are noise.
+            "workers": [{key: value for key, value in worker.items()
+                         if key not in {"name", "updated_at", "released_at", "deleted_at"}}
+                        for worker in team["workers"]],
+            "skill_bindings": team["skill_bindings"],
+        }
+    connection = ProviderStore().active()
+    # The actual endpoint/account/model must stay bound even when catalog text
+    # is unchanged. Only a digest is persisted, never provider credentials.
+    provider = ({key: value for key, value in connection.items() if key not in {"name", "revision"}}
+                if connection else None)
+    return {"schema_version": "execution_authority.v2",
+            "project_root": str(Path(root).resolve()), "project_config": str(config.resolve()),
+            "config_sha256": digest(target), "team_sha256": digest(team),
             "model_catalogs": {"workflow": catalog(workflow_catalog), "manager": catalog(manager_catalog)},
-            "billing_acknowledged": True}
+            "provider_sha256": digest(provider), "billing_acknowledged": True}
 
 
 def stop_goal_action(workspace, project_key, request):

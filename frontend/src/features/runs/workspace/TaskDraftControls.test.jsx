@@ -7,6 +7,13 @@ const t = (key) => en[key] || key;
 const draft = { id: 'p1', revision: 2, exact_request: 'Add search.\n\nAlso add tests.', source_message_ids: ['m1', 'm2'] };
 
 describe('Task draft controls', () => {
+  it('shows the bound task contract but not stale metadata after human editing', () => {
+    const assigned = { ...draft, project_task_id: 'T-1', assignment: { delegation: { purpose: 'Trace login', context: 'Observed timeout', scope: 'Diagnosis only' } } };
+    const view = render(<TaskDraftControls draft={assigned} t={t} />);
+    for (const text of ['Trace login', 'Observed timeout', 'Diagnosis only']) expect(screen.getByText(text)).toBeInTheDocument();
+    view.rerender(<TaskDraftControls draft={{ ...assigned, project_task_id: undefined }} t={t} />);
+    expect(screen.queryByText('Trace login')).not.toBeInTheDocument();
+  });
   it('confirms exactly the visible draft version', () => {
     const onConfirm = vi.fn();
     render(<TaskDraftControls draft={draft} onConfirm={onConfirm} t={t} />);

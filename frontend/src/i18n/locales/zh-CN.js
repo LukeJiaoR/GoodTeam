@@ -450,6 +450,9 @@ export const zhCN = {
   'assistant.newProject': '新项目',
   'assistant.existingProject': '已有项目',
   'assistant.confirmMode': '确认项目类型',
+  'assistant.delegationPurpose': '任务目的',
+  'assistant.delegationContext': '相关 Context',
+  'assistant.delegationScope': '任务范围',
   'assistant.taskDraft': '任务草稿',
   'assistant.needsClarification': '任务还需要细化。请继续对话，明确范围和验收标准，或直接编辑草稿后再启动。',
   'assistant.project.closeTasks': '收起任务列表',
@@ -1791,4 +1794,5 @@ export const zhCN = {
   'work.attachments.partial': '已提取部分文本，原文件已保留。',
   'work.attachments.empty': '未提取到文本，已保留原文件；扫描页和内嵌图片需另行查看。',
   'work.attachments.message': '请查看这些附件。',
+  'work.attachments.messageOnly': '附件尚未发送。请切换到“消息”发送附件，或先移除附件再继续。',
 };
