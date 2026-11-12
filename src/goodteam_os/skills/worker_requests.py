@@ -144,6 +144,34 @@ def reject_legacy_key_collision(store, command_key: str) -> None:
 
 def _request(values: dict[str, Any]) -> dict[str, Any]:
     request = deepcopy({key: value for key, value in values.items() if key not in _INPUT_EXCLUSIONS})
+    if not request.get("method_loading_mode"):
+        request.pop("method_loading_mode", None)
+    else:
+        from .pi_methods import PiMethodInput
+        PiMethodInput._check(request)
+    if not request.get("method_workspace_mode"):
+        request.pop("method_workspace_mode", None)
+    elif (request.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}
+          or request["method_workspace_mode"] != "dispatch_isolated"):
+        raise SkillError("ordinary_method_workspace_unsupported", "Method workspace must retain the original isolated dispatcher.")
+    if request.get("web_search") is None:
+        request.pop("web_search", None)  # Preserve historical request digests.
+    else:
+        from goodteam_os.web_search import search_policy
+        if request.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
+            raise SkillError("ordinary_method_search_unsupported", "Search is not authorized for this strict method request.")
+        request["web_search"] = search_policy(request["web_search"])
+    # Ordinary method-bearing batch jobs keep the same task/track attribution.
+    # These fields are part of the immutable request, not runtime authority.
+    for key in ("project_task_id", "track_id"):
+        value = request.get(key, "")
+        if not isinstance(value, str) or value != value.strip() or len(value) > 256:
+            raise SkillError("worker_skill_input_invalid", "Task associations require exact task/track identifiers.")
+        if not value:
+            request.pop(key, None)  # Old request digests remain unchanged.
+        elif (request.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}
+                or request.get("method_workspace_mode") != "dispatch_isolated"):
+            raise SkillError("ordinary_method_association_unsupported", "Task associations require the original ordinary isolated dispatch.")
     # Adding an optional source field must not alter historical request digests.
     if request.get("review_target") is None:
         request.pop("review_target", None)
@@ -313,6 +341,12 @@ def create_skill_worker_job(store, values: dict[str, Any]) -> tuple[dict[str, An
     if (request["project_key"] != task.project_key or not request["run_id"]
             or subject != subject_for_role(request["role"])):
         raise SkillError("snapshot_scope_mismatch", "Worker role/project does not match its bounded task context.")
+    if (request.get("method_loading_mode") == "manager_pi_methods.v1"
+            and (task.kind != "manager_message" or subject != "manager:orchestrator")):
+        raise SkillError("manager_method_identity_invalid", "Manager methods require the original Manager producer task.")
+    if (request.get("method_loading_mode") == "readonly_pi_methods.v1"
+            and (task.kind != "direct_task" or subject not in {"role:research", "role:planner"})):
+        raise SkillError("readonly_method_identity_invalid", "Read-only methods require their original Role dispatch.")
     if task.kind == "workflow_run" and request["run_id"] != task.logical_id:
         raise SkillError("snapshot_scope_mismatch", "Workflow Worker belongs to another run.")
     if task.kind == "issue_execution" and request.get("execution_id") != task.logical_id:
@@ -530,6 +564,12 @@ def run_skill_worker_job(store, job_id: str, *, sandbox_context=None) -> dict[st
                 # Preserve the immutable job request even when a caller tampers
                 # with it. Failure reporting must not silently repair job.json.
                 _write_status(fd, result)
+    if checked == "verified" and snapshot["job_input"]["request"].get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
+        from .pi_methods import PiMethodInput
+
+        method_input = PiMethodInput(store, job_id)
+        method_input.bind_workspace(sandbox_context)
+        return store._run_session_backend(store.root / job_id, expected, method_input=method_input)
     if checked == "verified":
         from .review_execution import continue_review_worker
 
@@ -539,8 +579,14 @@ def run_skill_worker_job(store, job_id: str, *, sandbox_context=None) -> dict[st
     return result
 
 
-def reject_unverified_runtime_entry(job_root: Path, job: dict[str, Any]) -> None:
+def reject_unverified_runtime_entry(job_root: Path, job: dict[str, Any], *, method_input=None) -> None:
     """S5 has not opened any Skill-backed lower-level Runtime entrypoint."""
+    if method_input is not None:
+        from .pi_methods import PiMethodInput
+        if type(method_input) is PiMethodInput:
+            method_input.validate(job_root, job)
+            return
+        raise SkillError("ordinary_method_identity_invalid", "Method input is not a registered invocation.")
     if is_skill_job_id(Path(job_root).name) or is_skill_job_id(job.get("id")) or has_skill_fields(job):
         raise SkillError("skill_runtime_not_connected", "Skill Runtime entry requires an independently verified loader; legacy bypass is forbidden.")
 

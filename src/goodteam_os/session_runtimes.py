@@ -281,6 +281,8 @@ class PiSessionRuntime:
         runtime_cwd: Path,
         config: PiRuntimeConfig,
         stderr_path: Path,
+        method_input=None,
+        prompt_authorizer=None,
     ) -> None:
         self.project_root = project_root.resolve()
         self.job_root = job_root
@@ -297,15 +299,35 @@ class PiSessionRuntime:
         self._metadata_lock = threading.RLock()
         self._abort_in_flight = False
         self._closing_abort = False
+        self.method_input = method_input
+        self.prompt_authorizer = prompt_authorizer
+        self.method_resources = None
+        self.manager_policy = None
+        self.readonly_policy = None
+        self.tool_policy = None
+        self.tool_contract_key = ""
         self.web_search = None
         self._entries_pending = threading.Event()
 
     def start_or_resume(self) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        # This is the ordinary Pi transport, not an admitted Skill envelope.
+        # Keep the check at the actual start/resume boundary too: callers must
+        # not bypass Worker preflight by constructing this Runtime directly.
+        reject_unverified_runtime_entry(self.job_root, self.job, method_input=self.method_input)
+        if self.job.get("phase") == "project_running_observation" and (
+                self.prompt_authorizer is None or self.method_input is None or not self.method_input.manager_tools):
+            raise PiSessionMismatch("Running observation requires its original atomic Manager prompt authority")
+        if self.method_input is not None and self.runtime_cwd != self.method_input.runtime_context().runtime_cwd:
+            raise PiSessionMismatch("Method runtime cwd differs from its original workspace")
         self.config.session_dir.mkdir(parents=True, exist_ok=True)
         policy = str(self.job.get("session_policy") or "new")
         existing = self.store.read_metadata()
         explicit_ref = str(self.job.get("worker_session_ref") or "").strip()
         recovering_current_job = existing is not None
+        if self.method_input is not None and existing is not None:
+            self.method_input.session_binding(existing)
         resume = policy == "resume" or (
             recovering_current_job
             and bool(existing.get("initial_prompt_sent") or existing.get("active_operation"))
@@ -327,17 +349,71 @@ class PiSessionRuntime:
         if self.config.model:
             command.extend(["--model", self.config.model])
         environment = None
+        if self.method_input is not None and (self.method_input.manager_tools or self.method_input.readonly_tools):
+            if self.method_input.manager_tools:
+                from goodteam_os.pi_manager_tools import PiManagerTools
+                self.manager_policy = PiManagerTools()
+                self.tool_policy = self.manager_policy
+                self.tool_contract_key = "manager_tool_contract"
+                extension = "pi_manager_tools.mjs"
+            else:
+                from goodteam_os.pi_read_only import PiReadOnlyTools
+                self.readonly_policy = PiReadOnlyTools(methods=True, authorized_search=self.job.get("web_search") is not None)
+                self.tool_policy = self.readonly_policy
+                self.tool_contract_key = "readonly_tool_contract"
+                extension = "pi_read_only.mjs"
+            contract = {"version": self.tool_policy.version, "tools": list(self.tool_policy.tools),
+                        "guarantee": "tool-level; not an OS sandbox"}
+            if existing is not None and existing.get(self.tool_contract_key) != contract:
+                raise PiSessionMismatch("Original restricted session lacks this exact tool contract")
+            if self.method_input.manager_tools and self.job.get("web_search") is not None:
+                raise PiSessionMismatch("Manager methods cannot acquire a search task capability")
+            command.extend(self.tool_policy.arguments())
+            command.extend(["--extension", str(Path(__file__).with_name(extension))])
+            if resume:
+                if not source:
+                    raise PiSessionMissing("Restricted resume needs its original session")
+                try:
+                    session_file = self.store.validate_session_file(str(source.get("session_file", "")))
+                except (ValueError, FileNotFoundError) as exc:
+                    raise PiSessionMissing(str(exc)) from exc
+                with session_file.open("rb") as stream:
+                    header_bytes = stream.readline(65537)
+                try:
+                    header = json.loads(header_bytes) if len(header_bytes) <= 65536 else None
+                except (ValueError, UnicodeError) as exc:
+                    raise PiSessionMismatch("Restricted session header is unavailable") from exc
+                if (not isinstance(header, dict) or header.get("type") != "session"
+                        or header.get("id") != source.get("session_id")
+                        or not isinstance(header.get("cwd"), str)
+                        or Path(header["cwd"]).resolve() != self.runtime_cwd):
+                    raise PiSessionMismatch("Restricted session header differs from its original identity or cwd")
+                # Restore into a fresh process: session_start produces a fresh
+                # authenticated witness before any next prompt. Never reuse a
+                # ready bit across same-process switch_session.
+                command.extend(["--session", str(session_file)])
+            environment = {**provider_environment(), **self.tool_policy.environment()}
         if self.job.get("web_search") is not None:
             from goodteam_os.web_search import JobWebSearch
-            if self.job["id"].startswith(("job-skill-", "job-input-", "job-correction-")):
+            if self.job["id"].startswith(("job-skill-", "job-input-", "job-correction-")) and self.method_input is None:
                 raise ValueError("Protected runtime search requires its own explicit capability contract")
             self.web_search = JobWebSearch(self.job_root, self.job,
                 active=lambda: self.metadata.get("status") == "running" and not self.aborted
-                    and not self._abort_in_flight and not self._closing_abort)
-            environment = {**provider_environment(), **self.web_search.start()}
+                    and not self._abort_in_flight and not self._closing_abort
+                    and (self.method_input is None or self.method_input.search_authorized(self.job_root, self.job)))
+            environment = {**(environment or provider_environment()), **self.web_search.start()}
             command.extend(["--extension", str(Path(__file__).with_name("pi_web_search.mjs"))])
+        if self.method_input is not None:
+            self.method_resources = self.method_input.resource_channel(active=lambda: not self.aborted
+                and not self._abort_in_flight and not self._closing_abort
+                and self.metadata.get("status", "starting") in {"starting", "running"},
+                **({"startup_policy": self.tool_policy} if self.tool_policy else {}))
+            environment = {**(environment or provider_environment()), **self.method_resources.start()}
+            command.extend(["--extension", str(Path(__file__).with_name("pi_skill_resources.mjs"))])
         self.rpc = PiRpcProcess(command, cwd=self.runtime_cwd, stderr_path=self.stderr_path,
-                                on_record=self._on_record, **({"env": environment} if environment else {}))
+                                on_record=self._on_record, **({"env": environment} if environment else {}),
+                                **({"request_guard": self._restricted_rpc_guard} if self.tool_policy else {}),
+                                **({"prompt_authorizer": self.prompt_authorizer} if self.prompt_authorizer else {}))
         self.rpc.start()
         startup_timeout = max(self.config.request_timeout, PI_STARTUP_TIMEOUT_FLOOR_SECONDS)
         now = _now()
@@ -365,6 +441,9 @@ class PiSessionRuntime:
             "initial_prompt_sent": False,
             "pid": self.rpc.pid,
         }
+        if self.tool_policy:
+            self.metadata[self.tool_contract_key] = {"version": self.tool_policy.version,
+                "tools": list(self.tool_policy.tools), "guarantee": "tool-level; not an OS sandbox"}
         if source:
             for key in ("last_entry_id", "leaf_id"):
                 self.metadata[key] = source.get(key, self.metadata[key])
@@ -372,8 +451,12 @@ class PiSessionRuntime:
             self.metadata["initial_prompt_sent"] = bool(source.get("initial_prompt_sent"))
             if isinstance(source.get("active_operation"), dict):
                 self.metadata["active_operation"] = dict(source["active_operation"])
+                operation = source["active_operation"]
+                if (operation.get("state") == "settled" and operation.get("id")
+                        and source.get("settled_operation_id") == operation["id"]):
+                    self.metadata["settled_operation_id"] = source["settled_operation_id"]
         self.store.write_metadata(self.metadata)
-        if resume:
+        if resume and not self.tool_policy:
             if not source:
                 raise PiSessionMissing("Pi session metadata is missing")
             try:
@@ -392,6 +475,13 @@ class PiSessionRuntime:
                 {"type": "set_thinking_level", "level": self.config.thinking_level}, timeout=startup_timeout
             )
         state = self.get_state(timeout=startup_timeout)
+        if self.tool_policy:
+            self.tool_policy.require_ready(self.tool_policy.nonce, startup_timeout)
+            self.store.append_event(self.tool_contract_key + "_witnessed", {
+                "version": self.tool_policy.version, "tools": list(self.tool_policy.tools),
+                "restored": resume, "real_model_verification": False})
+        if self.method_input is not None:
+            self.method_input.session_binding(self.metadata, create=not recovering_current_job)
         if recovering_current_job and source and (source.get("initial_prompt_sent") or source.get("active_operation")):
             operation = source.get("active_operation")
             operation_state = str(operation.get("state") or "") if isinstance(operation, dict) else ""
@@ -427,6 +517,8 @@ class PiSessionRuntime:
         self._abort_in_flight = True
         if self.web_search:
             self.web_search.stop()
+        if self.method_resources:
+            self.method_resources.stop()
         queue_error = None
         try:
             # Pi abort alone retains queued messages. Stop must remove those
@@ -604,12 +696,23 @@ class PiSessionRuntime:
         raise TimeoutError(f"Pi agent did not settle within {timeout:g}s")
 
     def close(self) -> None:
+        if self.tool_policy:
+            self.tool_policy.invalidate()
+        if self.method_resources:
+            self.method_resources.close()
         if self.web_search:
             self.web_search.close()
         if self.rpc is not None:
             abort = self.metadata.get("status") == "running"
             self._closing_abort = abort
             self.rpc.close(abort=abort)
+
+    def _restricted_rpc_guard(self, command):
+        self.tool_policy.guard(command)
+        if command.get("type") in {"prompt", "steer", "follow_up"}:
+            # Recheck immutable methods and task authority before every model
+            # input, including controls sent through the original session API.
+            self.method_input.prompt()
 
     def _message_control(self, command: str, message: str) -> dict[str, Any]:
         if not message.strip():
@@ -700,6 +803,8 @@ class PiSessionRuntime:
             self.aborted = True
             if self.web_search:
                 self.web_search.stop()
+            if self.method_resources:
+                self.method_resources.stop()
             with self._metadata_lock:
                 self.metadata["status"] = "aborted"
                 operation = self.metadata.get("active_operation")
@@ -757,3 +862,4 @@ def _now() -> str:
 
 def capabilities_dict() -> dict[str, bool]:
     return asdict(PI_RUNTIME_SPEC.capabilities)
+

@@ -6,6 +6,34 @@ from goodteam_os.session_runtimes import pi_backend_doctor
 from goodteam_os.workers import WorkerJobStore
 
 
+def test_ordinary_pi_start_and_resume_reject_skill_identity_before_side_effects(tmp_path, monkeypatch):
+    import pytest
+    from goodteam_os.session_runtimes import PiSessionRuntime, PiRuntimeConfig
+    from goodteam_os.skills.models import SkillError
+
+    def unexpected_process(*_args, **_kwargs):
+        pytest.fail('Protected Skill invocation reached ordinary Pi process construction')
+
+    monkeypatch.setattr('goodteam_os.session_runtimes.PiRpcProcess', unexpected_process)
+    cases = [
+        ('ordinary-root', {'id': 'job-skill-identity'}),
+        ('job-skill-original', {'id': 'ordinary-projection'}),
+        ('metadata-root', {'id': 'ordinary', 'task_skill_context': {}}),
+        ('resume-root', {'id': 'ordinary', 'skill_subject': 'role:research',
+                         'session_policy': 'resume', 'worker_session_ref': 'old-job'}),
+    ]
+    for name, job in cases:
+        root, sessions = tmp_path / name, tmp_path / (name + '-sessions')
+        root.mkdir()
+        runtime = PiSessionRuntime(project_root=tmp_path, job_root=root, job=job, runtime_cwd=tmp_path,
+            config=PiRuntimeConfig('unused', '', '', '', sessions), stderr_path=root / 'stderr.txt')
+        with pytest.raises(SkillError) as blocked:
+            runtime.start_or_resume()
+        assert blocked.value.code == 'skill_runtime_not_connected'
+        assert not sessions.exists() and not list(root.iterdir())
+        assert runtime.rpc is None and runtime.metadata == {}
+
+
 def test_pi_doctor_requires_supported_cancellation_protocol(tmp_path, monkeypatch):
     import subprocess
     monkeypatch.setattr('goodteam_os.session_runtimes.which', lambda _: '/fixture/pi')

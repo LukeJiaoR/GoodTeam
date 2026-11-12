@@ -18,6 +18,7 @@ export default function ProjectIterationSuggestion({
   const zh = String(language).startsWith('zh');
   const candidate = snapshot.next_candidate;
   const chosen = choice?.schema_version === 'project_iteration_choice.v1' ? choice : null;
+  const waiting = chosen && chosen.status === 'waiting' && chosen.backlog_version === snapshot.version;
   const current = chosen && chosen.status === 'recommended' && chosen.backlog_version === snapshot.version;
   const batch = current && chosen.execution_mode === 'parallel' && Array.isArray(chosen.selected_tasks)
     && chosen.selected_tasks.length > 1 ? chosen.selected_tasks : null;
@@ -81,7 +82,13 @@ export default function ProjectIterationSuggestion({
         {zh ? '确认最新范围、搜索配置与费用并执行原批次' : 'Confirm latest scope, search configuration and charges and run queued group'}
       </button>
     </div>)}
-    {current ? (
+    {waiting ? (
+      <div className="project-iteration-suggestion__choice">
+        <strong>{zh ? 'Manager 建议暂不派发' : 'Manager recommends no dispatch'}</strong>
+        <p>{chosen.rationale}</p>
+        <small>{zh ? '判断已保存；未创建任务、登记问题或启动执行' : 'Judgment saved; no task, question or execution created'}</small>
+      </div>
+    ) : current ? (
       <div className="project-iteration-suggestion__choice">
         <strong>{batch ? (zh ? 'Manager 建议并行任务组' : 'Manager recommends parallel tasks')
           : (zh ? 'Manager 建议' : 'Manager recommends')}: {batch ? '' : chosen.selected_task_id}</strong>
@@ -111,7 +118,7 @@ export default function ProjectIterationSuggestion({
       <p><strong>{candidate.task_id}: {candidate.title}</strong> · {candidate.priority}
         {candidate.description ? <span> — {candidate.description.slice(0, 220)}</span> : null}</p>
     ) : null}
-    {chosen && !current ? <small>{zh ? '旧建议已过期，请重新评估。' : 'Previous recommendation is stale; re-evaluate.'}</small> : null}
+    {chosen && !current && !waiting ? <small>{zh ? '旧建议已过期，请重新评估。' : 'Previous recommendation is stale; re-evaluate.'}</small> : null}
     {batchProgress.length > 0 && <div aria-label={zh ? '批次执行结果' : 'Batch execution progress'}>
       <strong>{zh ? '已确认的项目任务' : 'Confirmed project tasks'}</strong>
       <ul>{batchProgress.map(item => <li key={item.id}>{item.project_task_id} — {

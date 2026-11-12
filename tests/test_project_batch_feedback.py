@@ -19,10 +19,10 @@ from goodteam_os import assistant_queue, dispatch_workspace, goal_continuation, 
 from goodteam_os import project_iteration_recovery as recovery
 from goodteam_os import task_assistant_session, tasks, team_control_plane, workflow_recovery
 # Load API aliases before fixture stores are patched, independent of test order.
-from goodteam_os import web
+from goodteam_os import web, project_iteration_execution  # noqa: F401
 
 
-def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_path, monkeypatch):
+def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_path, monkeypatch, readonly_pair=False, live_sibling=False, live_human=False):
     root = tmp_path / "source"
     root.mkdir()
     config = tmp_path / "project.yaml"
@@ -119,7 +119,7 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
     monkeypatch.setattr(continuation, "_require_clean_checkout", lambda *_: None)
     monkeypatch.setattr(memory, "runtime_role_memory_store", lambda *_: SimpleNamespace(build_pickup_packet=lambda *_, **__: {}))
     monkeypatch.setattr(team_control_plane, "team_view_for_config", lambda *_: {
-        "roles": [{"role": "research", "state": "enabled", "workers": [{"dispatchable": True}]}]})
+        "roles": [{"role": "research", "state": "enabled", "capability": "ready", "workers": [{"dispatchable": True}]}]})
     monkeypatch.setattr(discovery, "_remember", lambda *_: None)
     outcome = {"batch_run_id": "seed-run", "delivery": {"receipt_id": "delivery-seed"}, "quality": {}}
     monkeypatch.setattr(discovery, "verified_outcome", lambda **_: deepcopy(outcome))
@@ -155,7 +155,7 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
     monkeypatch.setattr(recovery, "project_batch_recovery_evidence", lambda **_: deepcopy(terminal))
     monkeypatch.setattr(recovery, "effective_dispatch_id", lambda row: row["dispatch_run_id"])
     initial, original_rows = deepcopy(state), deepcopy(rows)
-    original_report, original_terminal, original_outcome = deepcopy(report), deepcopy(terminal), deepcopy(outcome)
+    original_outcome = deepcopy(outcome)
     calls, starts = [], []
     fail_publication = [False]
     stop_during_decision = [False]
@@ -234,6 +234,59 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
         calls.clear()
         starts.clear()
         result.write_text("Partial observation about api.py")
+
+    if readonly_pair:
+        # Reuse the original real observation/Context seams for two different
+        # discovered professional Roles, with NO generic write-feedback grant.
+        grant = state["project_continuation"]
+        grant["discovered_task_ids"] = [row["id"] for row in rows[1:]]
+        grant["discovery"].update(allow_planning=True, **({} if live_sibling else {"allow_backlog_judgment": True}))
+        grant["discovery"].pop("allow_undelivered_feedback", None)
+        for row, role in zip(rows[1:], ("research", "planner")):
+            row.update(role=role, execution_policy="read_only", write_domains=[], status="review")
+            grant["task_intents"][row["id"]] = continuation._intent(row)
+        grant["authorization_digest"] = discovery.authorization_digest(grant)
+        saved_batch = state["project_task_batches"][run_id]
+        saved_batch.update(status="review",
+            task_bindings=[dict(task_id=t["id"], task_intent=tasks.project_task_intent(t)) for t in rows[1:]],
+            tracks=[dict(project_task_id=t["id"], role=t["role"], execution_policy="read_only") for t in rows[1:]])
+        terminal.update(retryable_task_ids=[], preserved_task_ids=[row["id"] for row in rows[1:]])
+        report.update(all_ok=True)
+        for job, role in zip(report["jobs"], ("research", "planner")):
+            job.update(role=role, outcome="ok", status="completed")
+        (artifacts / "report.json").write_text(json.dumps(report))
+        stop_after_feedback[0] = True
+        # Exercise no delivered-code source too: actual captured investigation
+        # results are sufficient Context, not a fabricated Git delivery.
+        def no_delivery(**kwargs):
+            raise discovery.NoVerifiedDelivery("No accepted code delivery available")
+        monkeypatch.setattr(discovery, "verified_outcome", no_delivery)
+        undelivered_mode[0] = True
+        rows[0].update(status="canceled", delivery_verified=False)
+        if live_sibling:
+            rows[0].update(status="in_progress", run_id="sibling-A")
+            state["project_task_batches"]["sibling-A"] = dict(
+                run_id="sibling-A", status="running", expected_continuation_id=grant["id"],
+                task_ids=[seed["id"]], project_root=str(root), confirmed=True)
+        settled = tick()
+        assert len(calls) == 1 and not starts
+        assert calls[0]["batch_feedback"]["read_only_discovery"] is True
+        assert calls[0]["unresolved_batch_task_ids"] == []
+        assert all(feedback.is_observed_investigation(settled, row) for row in rows[1:])
+        assert all(row["status"] == "review" and not row["delivery_verified"] for row in rows[1:])
+        assert not settled.get("pending_batch")
+        if live_sibling:
+            assert settled["status"] == "active" and settled["reason"] == "sibling_execution_pending"
+            assert rows[0]["status"] == "in_progress"
+            assert state["project_task_batches"]["sibling-A"]["status"] == "running"
+            assert not settled.get("discovery_pending")
+            assert settled["manager_calls"] == grant["manager_calls"] + 1
+            return
+        assert calls[0]["authorized_waiting_task_ids"] == [seed["id"]]
+        assert settled["status"] == "active" and settled["reason"] == "backlog_judgment_waiting"
+        tick()
+        assert len(calls) == 1  # Same results do not buy another judgment.
+        return
 
     # A simultaneous chat owns the same project slot. Discovery must not
     # consume a call or freeze its packet before it can actually start.
@@ -422,11 +475,26 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
     answer["receipt_id"] = discovery._digest(answer)
     record["answer"] = answer
     grant["reason"] = "human_answer_received"
+    if live_human:
+        rows[0].update(status="in_progress", run_id="sibling-A")
+        state["project_task_batches"]["sibling-A"] = dict(
+            run_id="sibling-A", status="running", expected_continuation_id=grant["id"],
+            task_ids=[seed["id"]], project_root=str(root), confirmed=True,
+            proposal_ids=["proposal-A"], expected_revisions={"proposal-A": 1})
+        state["queued_task_proposals"].append(dict(id="proposal-A", project_task_id=seed["id"], revision=1))
     manager_action = manager
     assert tick()["status"] == "active" and len(calls) == 2 and len(starts) == 1
     assert calls[-1]["human_answers"] == [answer]
     assert calls[-1]["undelivered_source"] == calls[0]["undelivered_source"]
     assert not calls[-1].get("batch_feedback")
+    if live_human:
+        current = state["project_continuation"]
+        assert rows[0]["status"] == "in_progress"
+        assert state["project_task_batches"]["sibling-A"]["status"] == "running"
+        assert current["pending_batch"]["run_id"] != "sibling-A"
+        assert answer["receipt_id"] in current["discovery_consumed"]
+        assert current["manager_calls"] == 4
+        return
 
     # The same retained anchor survives a read-only feedback-only source lookup;
     # source evidence is still checked, not trusted merely because it is history.
@@ -517,3 +585,17 @@ def test_initial_readonly_flag_requires_explicit_no_delivery_scope():
         discovery.normalize_discovery({**base, "allow_initial_readonly_feedback": "true"})
     assert discovery.normalize_discovery({**base, "allow_initial_readonly_feedback": True,
         "allow_undelivered_feedback": True})["allow_initial_readonly_feedback"] is True
+
+
+def test_discovered_research_and_planner_batch_returns_one_judgment(tmp_path, monkeypatch):
+    test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_path, monkeypatch, readonly_pair=True)
+
+
+def test_completed_investigations_do_not_end_running_sibling_grant(tmp_path, monkeypatch):
+    test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(
+        tmp_path, monkeypatch, readonly_pair=True, live_sibling=True)
+
+
+def test_human_answer_produces_followup_while_original_worker_still_runs(tmp_path, monkeypatch):
+    test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(
+        tmp_path, monkeypatch, live_human=True)

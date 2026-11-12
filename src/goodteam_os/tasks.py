@@ -120,8 +120,9 @@ class LocalTaskStore:
         from goodteam_os.web_search import search_policy
 
         web_search = search_policy(web_search)
-        if web_search is not None and execution_policy != "workspace_write":
-            raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Worker.")
+        if web_search is not None and not (execution_policy == "workspace_write"
+                or execution_policy == "read_only" and role in {"research", "planner"}):
+            raise ValueError("Task Web Search requires an explicitly authorized supported Worker task.")
         if delegation is not None:
             from goodteam_os.task_delegation import validate_delegation
 
@@ -214,8 +215,9 @@ class LocalTaskStore:
                 if policy is None:
                     updated.pop("web_search", None)
                 else:
-                    if updated.get("execution_policy", "workspace_write") != "workspace_write":
-                        raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Worker.")
+                    if not (updated.get("execution_policy", "workspace_write") == "workspace_write"
+                            or updated.get("execution_policy") == "read_only" and updated.get("role") in {"research", "planner"}):
+                        raise ValueError("Task Web Search requires an explicitly authorized supported Worker task.")
                     updated["web_search"] = policy
             tasks[index] = updated
             ledger["tasks"] = tasks
@@ -226,6 +228,31 @@ class LocalTaskStore:
     @_locked
     def create_task_once(self, *, creation_ref: str, intent: dict[str, Any]) -> dict[str, Any]:
         """Publish one confirmed discovery intent; replay never resets progress."""
+        ledger = self._read()
+        count = len(ledger["tasks"])
+        task = self._prepare_discovery_task(ledger, creation_ref=creation_ref, intent=intent)
+        if len(ledger["tasks"]) != count:
+            self._write(ledger)
+        return task
+
+    @_locked
+    def create_tasks_once(self, *, items: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+        """Validate an entire discovery set under the existing ledger lock.
+
+        Preparing all rows before the original atomic write prevents an invalid
+        later task from stranding an earlier card. Existing identities replay
+        unchanged, including a partially published historical decision.
+        """
+        if not items or len({ref for ref, _ in items}) != len(items):
+            raise ValueError("A discovery set requires distinct creation identities.")
+        ledger = self._read()
+        count = len(ledger["tasks"])
+        tasks = [self._prepare_discovery_task(ledger, creation_ref=ref, intent=intent) for ref, intent in items]
+        if len(ledger["tasks"]) != count:
+            self._write(ledger)
+        return tasks
+
+    def _prepare_discovery_task(self, ledger, *, creation_ref, intent):
         required = {"title", "description", "role", "priority", "dependencies", "acceptance_criteria",
                     "write_domains", "execution_policy", "external_refs", "artifact_refs"}
         from goodteam_os.project_iteration import normalize_write_domains
@@ -243,7 +270,6 @@ class LocalTaskStore:
                         and normalize_write_domains(intent["write_domains"]) == intent["write_domains"])
                 or creation_ref not in intent["external_refs"]):
             raise ValueError("A fixed project discovery task intent is required.")
-        ledger = self._read()
         matches = [task for task in ledger["tasks"] if creation_ref in task.get("external_refs", [])]
         if matches:
             if (len(matches) != 1 or any(matches[0].get(key) != value for key, value in intent.items())
@@ -269,7 +295,6 @@ class LocalTaskStore:
         task = {**intent, "id": f"{prefix}-{next_id}", "status": "todo", "created_at": now, "updated_at": now}
         ledger["tasks"].append(task)
         ledger["next_id"] = next_id + 1
-        self._write(ledger)
         return dict(task)
 
     @_locked

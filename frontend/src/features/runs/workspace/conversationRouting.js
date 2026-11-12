@@ -6,6 +6,7 @@ export function isChangeDiscussion(intent) {
 export async function sendConversationInput({ text, attachments = [], intent, onStart, onDiscuss, onKeepDiscussing }) {
   if (!text.trim()) return false;
   if (!isChangeDiscussion(intent)) return attachments.length ? onStart(text, attachments) : onStart(text);
+  if (attachments.length) return false;
   if (!onDiscuss) return false;
   if (intent.status === 'ready_to_confirm') {
     if (!onKeepDiscussing) return false;

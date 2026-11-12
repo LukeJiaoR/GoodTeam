@@ -114,7 +114,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     monkeypatch.setattr(continuation, "_require_clean_checkout", lambda *_: None)
     monkeypatch.setattr(memory, "runtime_role_memory_store", lambda *_: SimpleNamespace(build_pickup_packet=lambda *_, **__: {}))
     monkeypatch.setattr(team_control_plane, "team_view_for_config", lambda *_: {
-        "roles": [{"role": observation_role, "state": "enabled", "workers": [{"dispatchable": True}]}]})
+        "roles": [{"role": observation_role, "state": "enabled", "capability": "ready", "workers": [{"dispatchable": True}]}]})
     monkeypatch.setattr(discovery, "_remember", lambda *_: None)
     outcome = {"batch_run_id": "seed-run", "delivery": {"receipt_id": "delivery-seed"}, "quality": {}}
     monkeypatch.setattr(discovery, "verified_outcome", lambda **_: deepcopy(outcome))

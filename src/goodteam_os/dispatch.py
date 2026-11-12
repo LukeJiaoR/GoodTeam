@@ -136,6 +136,7 @@ def dispatch_tracks(
     codex_review_admission: CodexReviewAdmission | None = None,
     require_isolation: bool = False,
     recovery_source: dict | None = None,
+    capacity_check_start=None,
 ) -> dict[str, object]:
     # Exact-source reviews own a separate immutable source protocol. Ordinary
     # writing tracks must retain one baseline and workspace across replay.
@@ -144,7 +145,7 @@ def dispatch_tracks(
                      projects_dir=projects_dir, allow_unsafe=allow_unsafe,
                      logical_task_id=logical_task_id or str(uuid4()),
                      codex_review_admission=codex_review_admission, require_isolation=require_isolation,
-                     recovery_source=recovery_source)
+                     recovery_source=recovery_source, capacity_check_start=capacity_check_start)
     if any(track.get("review_target") is not None for track in tracks):
         return _dispatch_tracks(**arguments)
     from goodteam_os.skills.task_start import registered_project_scope
@@ -168,6 +169,40 @@ def dispatch_tracks(
         request["recovery_source"] = recovery_source
     def dispatch_locked():
         saved = read_bytes(artifact_root / "request.json")
+        from goodteam_os.skills.role_packages import ROLE_METHODS_VERSION as DEFAULT_ROLE_METHODS, ROLE_PACKAGES
+        capture_defaults = False
+        from goodteam_os.dispatch_methods import new_plan
+        track_methods = (json.loads(saved).get("track_methods") if saved is not None else
+                         new_plan(registered_scope, project_root, logical_id, tracks)
+                         if not (artifact_root / "baseline.json").exists() else None)
+        if track_methods is not None:
+            request["track_methods"] = track_methods
+        arguments["track_methods"] = track_methods
+        if saved is not None:
+            capture_defaults = json.loads(saved).get("default_role_methods") == DEFAULT_ROLE_METHODS
+        elif (registered_scope is not None and not (artifact_root / "baseline.json").exists()
+                and all(track.get("adapter") in {"pi", "pi-rpc"}
+                    and track.get("execution_policy", "standard") == "standard"
+                    and track.get("role") in ROLE_PACKAGES for track in tracks)):
+            # Existing pre-marker jobs are historical, not new default-method starts.
+            history = WorkerJobStore(project_root)
+            capture_defaults = not any(history.find_job_by_idempotency_key(
+                f"direct-job:{registered_scope[1]}:{logical_id}:{index}") for index in range(len(tracks)))
+        if saved is None and capture_defaults:
+            from goodteam_os.service import service_state_dir
+            from goodteam_os.skills.task_locks import TaskSkillIdentity
+            from goodteam_os.skills.task_service import ProjectTaskSkillService
+            if (Path(service_state_dir()) / "skills/task-locks").exists():
+                prior = ProjectTaskSkillService(registered_scope[0], registered_scope[1],
+                    worker_roots=(project_root,)).locks.find_task(
+                    task=TaskSkillIdentity("direct_task", registered_scope[1], logical_id),
+                    command_key=f"direct-start:{registered_scope[1]}:{logical_id}")
+                if prior is not None:
+                    capture_defaults = (prior["lock"]["start_input"]["request"]["confirmed_input"]
+                                        .get("default_role_methods") == DEFAULT_ROLE_METHODS)
+        if capture_defaults:
+            request["default_role_methods"] = DEFAULT_ROLE_METHODS
+        arguments["default_role_methods"] = capture_defaults
         encoded = canonical_json(request).encode("utf-8")
         if saved is not None and saved != encoded:
             if registered_scope is not None:
@@ -188,7 +223,7 @@ def dispatch_tracks(
         except SkillError:
             # Existing protected tasks predate this ordinary-dispatch guard.
             # A rejected first request must not replace their original identity.
-            if saved is None and not (artifact_root / "baseline.json").exists():
+            if saved is None and track_methods is None and not (artifact_root / "baseline.json").exists():
                 (artifact_root / "request.json").unlink(missing_ok=True)
             raise
         # Skill tasks retain their own protected result/revocation checks and
@@ -217,7 +252,8 @@ def _dispatch_tracks(
     allow_unsafe: bool = False, logical_task_id: str = "",
     codex_review_admission: CodexReviewAdmission | None = None,
     require_isolation: bool = False,
-    recovery_source: dict | None = None,
+    recovery_source: dict | None = None, default_role_methods: bool = False, track_methods: dict | None = None,
+    capacity_check_start=None,
 ) -> dict[str, object]:
     safety_kwargs: dict[str, object] = {"allow_unsafe": allow_unsafe}
     if projects_dir is not None:
@@ -264,7 +300,19 @@ def _dispatch_tracks(
     scope = registered_project_scope(project_root)
     context = {}
     key = ""
-    if scope is not None:
+    ordinary_method_mode = ""
+    per_track_methods = None
+    if scope is not None and track_methods is not None:
+        from goodteam_os.dispatch_methods import capture_plan
+        key = scope[1]
+        per_track_methods = capture_plan(track_methods, scope=scope, root=project_root,
+            logical_id=logical_id, tracks=tracks, confirmed_input={
+                "tracks": tracks, "constraints": constraints, "verify_commands": verify_commands or {},
+                "constraints_source": str(constraints_file) if constraints_file else "",
+                "research_report_source": str(research_report_file) if research_report_file else ""})
+        if require_isolation and any(c and not m for c, m in per_track_methods):
+            raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
+    elif scope is not None:
         workspace, key = scope
         task_identity = TaskSkillIdentity("direct_task", key, logical_id)
         command_key = f"direct-start:{key}:{logical_id}"
@@ -275,6 +323,7 @@ def _dispatch_tracks(
         from goodteam_os.service import service_state_dir
         from goodteam_os.skills.task_service import ProjectTaskSkillService
 
+        previous = None
         if (Path(service_state_dir()).expanduser().resolve() / "skills" / "task-locks").exists():
             previous = ProjectTaskSkillService(workspace, key, worker_roots=(project_root,)).locks.find_task(
                 task=task_identity, command_key=command_key)
@@ -285,17 +334,34 @@ def _dispatch_tracks(
 
                     raise SkillError("task_start_input_missing", "The original task confirmation is unavailable.")
                 subjects = tuple(start["request"]["subjects"])
+        # The producer chooses only for NEW confirmed ordinary Pi tasks. A
+        # historical task without this marker retains its original strict path,
+        # even when no Worker was published before interruption.
+        eligible = all(track.get("adapter") in {"pi", "pi-rpc"}
+                       and track.get("execution_policy", "standard") == "standard"
+                       and track.get("role") != "code_review" and not track.get("review_target")
+                       for track in tracks)
+        if previous is None:
+            ordinary_method_mode = "ordinary_pi_methods.v1" if eligible else ""
+        else:
+            ordinary_method_mode = str(start["request"]["confirmed_input"].get("method_loading_mode") or "")
+            if ordinary_method_mode and (ordinary_method_mode != "ordinary_pi_methods.v1" or not eligible):
+                raise ValueError("Original task method mode is incompatible with these tracks.")
+        from goodteam_os.skills.role_packages import ROLE_METHODS_VERSION as DEFAULT_ROLE_METHODS
         context = capture_task_start(
+            default_role_methods=default_role_methods,
             workspace=workspace, project_key=key, worker_root=project_root,
             task=task_identity, command_key=command_key, subjects=subjects,
             confirmed_input={"tracks": tracks, "constraints": constraints, "verify_commands": verify_commands or {},
                              "constraints_source": str(constraints_file) if constraints_file else "",
-                             "research_report_source": str(research_report_file) if research_report_file else ""},
+                             "research_report_source": str(research_report_file) if research_report_file else "",
+                             **({"method_loading_mode": ordinary_method_mode} if ordinary_method_mode else {}),
+                             **({"default_role_methods": DEFAULT_ROLE_METHODS} if default_role_methods else {})},
             **({"protocol_only_review": True} if local_review else {}),
         )
     if local_review and not context:
         raise ValueError("Local execution requires a registered project and its captured task protocol.")
-    if require_isolation and (context or any(track.get("review_target") is not None for track in tracks)):
+    if require_isolation and (context and not ordinary_method_mode or any(track.get("review_target") is not None for track in tracks)):
         raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
     parent_report = None
     retained = []
@@ -314,13 +380,15 @@ def _dispatch_tracks(
             constraints=constraints,
             constraints_source=str(constraints_file) if constraints_file else "",
             research_report_source=str(research_report_file) if research_report_file else "",
-            method_context=context, project_key=key,
+            method_context=per_track_methods[index][0] if per_track_methods is not None else context,
+            project_key=key, method_loading_mode=per_track_methods[index][1] if per_track_methods is not None else ordinary_method_mode,
             command_key=f"direct-job:{key}:{logical_id}:{index}",
         )
         for index, track in enumerate(tracks)
     ]
     isolated = None
-    if not any(job.get("skill_execution_snapshot_ref") for job in jobs_by_role):
+    if all(not job.get("skill_execution_snapshot_ref")
+           or job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"} for job in jobs_by_role):
         from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
 
         isolated = prepare_dispatch_workspace(project_root, run_id, [str(job["id"]) for job in jobs_by_role],
@@ -337,7 +405,7 @@ def _dispatch_tracks(
                             **({"dispatch_context": {"available": True, "mode": "dispatch_isolated",
                                 "workspace_path": str(isolated.workspace(str(job["id"]))),
                                 "execution_id": run_id, "sandbox_id": str(job["id"])}} if isolated else {}),
-                            **_review_runtime_kwargs(codex_review_admission)): job
+                            **_review_runtime_kwargs(codex_review_admission), capacity_check_start=capacity_check_start): job
             for job in jobs_by_role
         }
         for future in as_completed(futures):
@@ -447,6 +515,7 @@ def _create_track_job(
     method_context: dict[str, Any] | None = None,
     project_key: str = "",
     command_key: str = "",
+    method_loading_mode: str = "",
 ) -> dict[str, Any]:
     from goodteam_os.skills.worker_requests import WORKER_METADATA_LOADER, subject_for_role
 
@@ -454,15 +523,22 @@ def _create_track_job(
               "track_id": str(track.get("track_id") or track["role"]),
               "project_task_id": str(track.get("project_task_id") or "")}
     if method_context:
-        fields = {"task_skill_context": method_context, "skill_subject": subject_for_role(str(track["role"])),
+        if method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
+            fields.pop("track_id", None)
+            fields.pop("project_task_id", None)
+        fields = {**fields, "task_skill_context": method_context, "skill_subject": subject_for_role(str(track["role"])),
                   "skill_loader_version": WORKER_METADATA_LOADER, "project_key": project_key,
                   "idempotency_key": command_key}
+        if method_loading_mode:
+            fields.update(method_loading_mode=method_loading_mode, method_workspace_mode="dispatch_isolated")
     if track.get("web_search") is not None:
         from goodteam_os.web_search import search_policy
         from goodteam_os.graph import SESSION_BACKENDS
 
-        if method_context or track.get("adapter") not in SESSION_BACKENDS or track.get("execution_policy", "standard") != "standard":
-            raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Pi Worker.")
+        if (method_context and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}
+                or track.get("adapter") not in SESSION_BACKENDS
+                or track.get("execution_policy", "standard") != ("read_only" if method_loading_mode == "readonly_pi_methods.v1" else "standard")):
+            raise ValueError("Task Web Search requires an explicitly authorized supported Pi Worker.")
         fields["web_search"] = search_policy(track["web_search"])
     fields.update({key: track[key] for key in ("original_failed_job_id", "retry_attempt", "retry_of_idempotency_key") if key in track})
     from goodteam_os.skills.review_protocol import review_execution_fields
@@ -494,6 +570,22 @@ def _run_dispatched_job(
     project_root: Path, job: dict[str, Any], verify_commands: dict[str, str], *,
     codex_review_admission: CodexReviewAdmission | None = None,
     dispatch_context: dict[str, object] | None = None,
+    capacity_check_start=None,
+) -> dict[str, object]:
+    def execute():
+        return _run_dispatched_job_unbounded(project_root, job, verify_commands,
+            codex_review_admission=codex_review_admission, dispatch_context=dispatch_context)
+    if dispatch_context and dispatch_context.get("mode") == "dispatch_isolated":
+        from goodteam_os.dispatch_capacity import run_with_project_capacity
+        return run_with_project_capacity(project_root, job, execute,
+            check_start=(lambda: capacity_check_start(job)) if capacity_check_start is not None else None)
+    return execute()  # Protected review and legacy non-isolated paths retain their own admission.
+
+
+def _run_dispatched_job_unbounded(
+    project_root: Path, job: dict[str, Any], verify_commands: dict[str, str], *,
+    codex_review_admission: CodexReviewAdmission | None = None,
+    dispatch_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     store = WorkerJobStore(project_root, **_review_runtime_kwargs(codex_review_admission))
     try:
@@ -502,6 +594,8 @@ def _run_dispatched_job(
             status = store._read_json(saved_status)
             if status.get("status") == "running":
                 raise ValueError("dispatch_worker_running: the original attempt must be stopped or reconciled first.")
+            if status.get("status") == "queued":
+                status = store.run_job(str(job["id"]), sandbox_context=dispatch_context)
         else:
             status = store.run_job(str(job["id"]), **({"sandbox_context": dispatch_context} if dispatch_context else {}))
     except Exception as exc:

@@ -1,0 +1,9 @@
+/* Opt-in density for migrated pages; existing headings keep their layout. */
+.product-shell.product-shell--workspace .product-page-heading.product-page-heading--compact {
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.product-shell.product-shell--workspace .product-page-heading.product-page-heading--compact h1 {
+  font-size: var(--product-heading-size, 16px);
+  line-height: 1.5;
+}

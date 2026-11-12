@@ -10,6 +10,45 @@ from pathlib import Path
 import re
 
 
+def validate_human_question(question, *, allow_impact=True):
+    fields = {"question", "why_human"}
+    if (not isinstance(question, dict) or not fields.issubset(question)
+            or set(question) - fields - ({"impact"} if allow_impact else set())
+            or any(not isinstance(question[key], str) or not 10 <= len(question[key].strip()) <= 1200 for key in fields)
+            or "impact" in question and (not isinstance(question["impact"], str)
+                                         or not 1 <= len(question["impact"].strip()) <= 1200)):
+        raise ValueError("A Human question needs a specific question and why only Human input can resolve it.")
+    return {key: item.strip() for key, item in question.items()}
+
+
+def retain_observation_question(current, *, project_key, observation_id, record):
+    """Called inside current observation publication's atomic session mutation.
+
+    This is an observation source, never a fabricated discovery reservation.
+    The caller owns current-binding, Stop and authority checks.
+    """
+    from goodteam_os.project_outcome_discovery import _digest
+
+    question = validate_human_question(record["advice"]["human_question"])
+    for existing in pending_questions(current):
+        if existing["planning"]["selection"]["human_question"]["question"] == question["question"]:
+            return existing["id"]  # Retain the original question, including its provenance.
+    packet = {"schema_version": "running_human_question_source.v1", "project_key": project_key,
+              "continuation_id": current["id"], "authorization_digest": current["authorization_digest"],
+              "observation_id": observation_id, "observation": deepcopy(record["packet"])}
+    packet["packet_digest"] = _digest(packet)
+    planning = {"source_kind": "running_observation", "packet": packet, "packet_digest": packet["packet_digest"],
+                "selection": {"human_question": question, "rationale": record["advice"]["rationale"]}}
+    identifier = _question_id(current, planning)
+    questions = current.setdefault("human_questions", {})
+    previous = questions.get(identifier)
+    if previous and previous["planning"] != planning:
+        raise ValueError("Observation question identity already owns different evidence.")
+    questions.setdefault(identifier, {"id": identifier, "planning": planning, "answer": None,
+                                     "created_at": datetime.now(UTC).isoformat()})
+    return identifier
+
+
 def _question_id(value, pending):
     from goodteam_os.project_outcome_discovery import _digest
 
@@ -125,7 +164,7 @@ def record_human_question(store, value, pending):
     identifier = _question_id(value, pending)
     # Publication adds task_id to the outbox. It is not part of the question's
     # immutable decision, and a replay must preserve any answer already saved.
-    planning = {key: deepcopy(item) for key, item in pending.items() if key != "task_id"}
+    planning = {key: deepcopy(item) for key, item in pending.items() if key not in {"task_id", "task_ids"}}
     record = {"id": identifier, "planning": planning, "answer": None,
               "created_at": datetime.now(UTC).isoformat()}
 
@@ -152,7 +191,7 @@ def record_question_updates(store, value, pending):
     if not updates:
         return value
     event_id = "question-decision:" + value["id"] + ":" + pending["packet_digest"]
-    decision = {key: deepcopy(item) for key, item in pending.items() if key != "task_id"}
+    decision = {key: deepcopy(item) for key, item in pending.items() if key not in {"task_id", "task_ids"}}
     details = {"continuation_id": value["id"], "decision": decision}
     captured = {item["id"]: item for item in pending["packet"]["question_board"]["items"]}
 

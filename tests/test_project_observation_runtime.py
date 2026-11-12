@@ -82,6 +82,110 @@ def test_existing_manager_paths_share_nonblocking_slot_and_do_not_retry(tmp_path
     assert job["max_attempts"] == 1
 
 
+def test_lost_completed_observation_is_reconciled_without_retry_or_reviving_stale_advice(tmp_path, monkeypatch):
+    from goodteam_os.project_outcome_discovery import authorization_digest
+    from goodteam_os import memory_storage
+
+    store = TaskAssistantSessionStore(tmp_path, "DEMO")
+    value = {"id": "grant", "status": "active", "authority": "fixed", "manager_calls": 0,
+        "max_manager_calls": 4, "discovery": {"allow_running_observation": True, "worker_follow_up_limit": 1},
+        "pending_batch": {"run_id": "batch", "task_ids": ["task"]}, "seed_task_ids": ["task"],
+        "seed_task_intents": {"task": "intent"}, "approved_backlog_version": "version", "max_batches": 3}
+    value["authorization_digest"] = authorization_digest(value)
+    batch = {"confirmed": True, "expected_continuation_id": "grant", "project_root": str(tmp_path.resolve()),
+        "status": "running", "dispatch_run_id": "attempt"}
+    store._mutate(lambda s: {**s, "project_continuation": value, "project_task_batches": {"batch": batch}})
+    packet = {"binding": _binding(store.read(), tmp_path),
+        "workers": [{"job_id": "worker", "status": "running", "follow_up_supported": True}]}
+    store._mutate(lambda s: {**s, "project_continuation": {**s["project_continuation"],
+        "running_observation": {"digest": "one", "packet": packet}}})
+    monkeypatch.setattr(projects, "load_project_target", lambda p: {})
+    monkeypatch.setattr(graph, "resolve_project_runtime_root", lambda r: tmp_path)
+    monkeypatch.setattr(graph, "resolve_role_adapter", lambda *a: "fake")
+    monkeypatch.setattr(manager, "_configured_manager_model", lambda t: "fixture")
+    monkeypatch.setattr(manager, "_manager_settings", lambda t: {})
+    calls = []
+    output = {"assessment": "wait", "rationale": "Ask for bounded progress on the original task.",
+        "observed_job_ids": ["worker"], "follow_up": {"job_id": "worker", "message": "What is the current progress within the original task?"}}
+    def transport(workers, job_id):
+        calls.append(job_id)
+        job_root = workers.root / job_id
+        job = json.loads((job_root / "job.json").read_text())
+        (job_root / "result.md").write_text(json.dumps(output))
+        workers._write_status(job_root, job, "completed", "Fixture finished; caller lost the return value.")
+        raise TimeoutError("lost caller response after durable completion")
+    monkeypatch.setattr(WorkerJobStore, "run_job", transport)
+    def judge():
+        return judge_with_production_runtime(store=store, root=tmp_path, project_config=tmp_path / "project.yaml",
+            project_key="DEMO", value=store.read()["project_continuation"], authority_check=lambda: True)
+    assert judge()["running_judgments"]["one"]["status"] == "unconfirmed"
+    uncertain = deepcopy(store.read())
+    job_root = WorkerJobStore(tmp_path).root / calls[0]
+    status = (job_root / "status.json").read_bytes()
+    context = (job_root / "context.md").read_bytes()
+    result = (job_root / "result.md").read_bytes()
+    # No heartbeat inference, cross-input fallback or symlink-following reads.
+    (job_root / "status.json").write_text('{"status":"running"}')
+    assert judge()["running_judgments"]["one"]["status"] == "unconfirmed"
+    (job_root / "status.json").write_text(json.dumps({**json.loads(status), "job_id": "foreign"}))
+    assert judge()["running_judgments"]["one"]["status"] == "unconfirmed"
+    (job_root / "status.json").write_bytes(status)
+    (job_root / "context.md").write_text("different input")
+    assert judge()["running_judgments"]["one"]["status"] == "unconfirmed"
+    (job_root / "context.md").write_bytes(context)
+    (job_root / "result.md").unlink()
+    (tmp_path / "foreign-result").write_bytes(result)
+    (job_root / "result.md").symlink_to(tmp_path / "foreign-result")
+    assert judge()["running_judgments"]["one"]["status"] == "unconfirmed"
+    (job_root / "result.md").unlink()
+    (job_root / "result.md").write_bytes(result)
+    recovered = judge()
+    receipt = recovered["running_judgments"]["one"]
+    assert receipt["status"] == "recorded" and receipt["advice"] == output
+    assert receipt["reconciliation"]["job_id"] == calls[0]
+    assert recovered["manager_calls"] == 1 and len(calls) == 1
+    assert judge()["manager_calls"] == 1 and len(calls) == 1
+    # Completed old-attempt evidence can be archived, not acted on.
+    replaced = deepcopy(uncertain)
+    replaced["project_task_batches"]["batch"]["current_dispatch_run_id"] = "new-attempt"
+    store._mutate(lambda s: replaced)
+    assert judge()["running_judgments"]["one"]["status"] == "stale_result"
+    assert len(calls) == 1
+    # Stop racing the local read must never restore an active grant or control.
+    store._mutate(lambda s: deepcopy(uncertain))
+    read = memory_storage.read_bytes
+    def stop_on_result(path, **kwargs):
+        data = read(path, **kwargs)
+        if path.name == "result.md":
+            store._mutate(lambda s: {**s, "project_continuation": {**s["project_continuation"], "status": "stopped"}})
+        return data
+    monkeypatch.setattr(memory_storage, "read_bytes", stop_on_result)
+    stopped = judge()
+    assert stopped["status"] == "stopped" and stopped["running_judgments"]["one"]["status"] == "stale_result"
+    assert stopped["manager_calls"] == 1 and len(calls) == 1
+    # A replacement grant is not authority for the old tick to start a call.
+    store._mutate(lambda s: deepcopy(uncertain))
+    replacement = deepcopy(uncertain)
+    replacement["project_continuation"].update(id="replacement", running_judgments={}, manager_calls=0)
+    replacement["project_continuation"]["authorization_digest"] = authorization_digest(replacement["project_continuation"])
+    replacement["project_task_batches"]["batch"]["expected_continuation_id"] = "replacement"
+    replacement["project_continuation"]["running_observation"]["packet"]["binding"] = _binding(replacement, tmp_path)
+    def replace_on_result(path, **kwargs):
+        data = read(path, **kwargs)
+        if path.name == "result.md":
+            store._mutate(lambda s: deepcopy(replacement))
+        return data
+    monkeypatch.setattr(memory_storage, "read_bytes", replace_on_result)
+    replaced = judge()
+    assert replaced["id"] == "replacement" and replaced["manager_calls"] == 0 and len(calls) == 1
+    monkeypatch.setattr(memory_storage, "read_bytes", read)
+    store._mutate(lambda s: deepcopy(uncertain))
+    (job_root / "result.md").write_text("not a valid Manager response")
+    invalid = judge()["running_judgments"]["one"]
+    assert invalid["status"] == "invalid_response" and invalid["advice"] is None
+    assert not invalid["actions_executed"] and len(calls) == 1
+
+
 def test_new_permission_does_not_expand_old_grants(tmp_path):
     from goodteam_os.project_outcome_discovery import normalize_discovery
     grant = dict(objective="Inspect running Worker evidence safely.", allowed_write_domains=["src"], max_new_tasks=1, max_planning_calls=2)
@@ -227,3 +331,4 @@ def test_human_update_before_spawn_is_known_stale_not_unknown_transport(tmp_path
         runner=lambda **k: {"assessment": "wait", "rationale": "The latest Human evidence was considered.", "observed_job_ids": []},
         authority_check=lambda: True)
     assert result["manager_calls"] == 2 and result["running_judgments"]["new"]["status"] == "recorded"
+

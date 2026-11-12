@@ -86,6 +86,12 @@ function Composer({
   const submit = async (event) => {
     event.preventDefault();
     if (blocked || submitting.current || attachments.pending || (!goal.trim() && !hasAttachments)) return;
+    // Restored files can outlive the tab-local Message mode selection.
+    // Neither change discussion nor queued tasks accepts attachments.
+    if (hasAttachments && (changing || queuing)) {
+      setSubmitError(new Error(t('work.attachments.messageOnly')));
+      return;
+    }
     submitting.current = true;
     setSending(true);
     setSubmitError(null);

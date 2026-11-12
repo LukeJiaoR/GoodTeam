@@ -20,7 +20,7 @@ def capture_task_start(
     *, workspace: Path, project_key: str, worker_root: Path,
     task: TaskSkillIdentity, command_key: str, confirmed_input: dict[str, Any],
     subjects: tuple[str, ...] | None = None, expected_team_revision: int | None = None,
-    protocol_only_review: bool = False,
+    protocol_only_review: bool = False, default_role_methods: bool = False,
 ) -> dict[str, Any]:
     """Capture only at an authorized bounded start; replay saved confirmation.
 
@@ -40,6 +40,17 @@ def capture_task_start(
         raise SkillError("invalid_revision", "Task confirmation requires a valid Team revision.")
     if not isinstance(confirmed_input, dict):
         raise SkillError("invalid_snapshot", "Task start requires its exact confirmed input.")
+    from .role_packages import ROLE_METHODS_VERSION as DEFAULT_ROLE_METHODS
+    if (type(default_role_methods) is not bool
+            or default_role_methods and (confirmed_input.get("default_role_methods") != DEFAULT_ROLE_METHODS
+                or confirmed_input.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"})):
+        raise SkillError("task_scope_unknown", "Default methods require a new ordinary task confirmation.")
+    if (confirmed_input.get("method_loading_mode") == "manager_pi_methods.v1"
+            and (task.kind != "manager_message" or subjects != ("manager:orchestrator",))):
+        raise SkillError("task_scope_unknown", "Manager methods require the original Manager producer.")
+    if (confirmed_input.get("method_loading_mode") == "readonly_pi_methods.v1"
+            and (task.kind != "direct_task" or subjects not in (("role:research",), ("role:planner",)))):
+        raise SkillError("task_scope_unknown", "Read-only methods require an explicit Researcher or Planner dispatch.")
     confirmed = deepcopy(confirmed_input)
     if "producer_binding" in confirmed:
         raise SkillError("invalid_snapshot", "Producer identity cannot come from the caller's confirmation payload.")
@@ -75,7 +86,7 @@ def capture_task_start(
     with team_store._locked():
         team = team_store.read()
         if team is None:
-            if expected_team_revision is not None:
+            if expected_team_revision is not None or default_role_methods:
                 raise SkillError("team_unavailable", "The confirmed project Team is unavailable.")
             return {}
         if expected_team_revision is not None and team["revision"] != expected_team_revision:
@@ -86,7 +97,7 @@ def capture_task_start(
         )))
         if not selected or len(selected) != len(set(selected)) or any(subject not in bindings for subject in selected):
             raise SkillError("binding_subject_unknown", "The task needs an explicit known subject inventory.")
-        if not protocol_only_review and not any(bindings[subject]["mode"] == "custom" for subject in selected):
+        if not protocol_only_review and not default_role_methods and not any(bindings[subject]["mode"] == "custom" for subject in selected):
             # Explicit pre-Skill compatibility. No custom-empty/default switch is
             # inferred here; already captured tasks took the receipt path above.
             return {}
@@ -105,8 +116,14 @@ def capture_task_start(
         contracts["role:code_review"] = review_role_contract(contracts["role:code_review"]["ref"])
     if service is None:
         service = ProjectTaskSkillService(workspace, project_key, worker_roots=(worker_root,))
+    defaults = {}
+    if default_role_methods:
+        from .role_packages import publish_role_methods
+        defaults = publish_role_methods(service.packages,
+            tuple(subject for subject in selected if bindings[subject]["mode"] == "default"))
     return service.begin(task, command_key=command_key, confirmed_input=confirmed,
-                         subjects=selected, role_contracts=contracts, expected_team_revision=revision)
+                         subjects=selected, role_contracts=contracts, expected_team_revision=revision,
+                         default_items=defaults)
 
 
 def workflow_job_fields(state, *, role: str, command_key: str) -> dict[str, Any]:
