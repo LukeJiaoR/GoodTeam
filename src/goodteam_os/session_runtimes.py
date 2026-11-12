@@ -301,6 +301,12 @@ class PiSessionRuntime:
         self._entries_pending = threading.Event()
 
     def start_or_resume(self) -> dict[str, Any]:
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        # This is the ordinary Pi transport, not an admitted Skill envelope.
+        # Keep the check at the actual start/resume boundary too: callers must
+        # not bypass Worker preflight by constructing this Runtime directly.
+        reject_unverified_runtime_entry(self.job_root, self.job)
         self.config.session_dir.mkdir(parents=True, exist_ok=True)
         policy = str(self.job.get("session_policy") or "new")
         existing = self.store.read_metadata()
