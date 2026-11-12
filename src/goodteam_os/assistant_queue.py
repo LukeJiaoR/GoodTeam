@@ -121,6 +121,11 @@ def require_queued_project_task(root, project_key, proposal, *, workflow=True):
     Ordinary human-typed drafts have no project_task_id and remain unchanged.
     A model recommendation is never an independent execution authorization.
     """
+    # Edited legacy drafts can retain an exact assignment without a ledger link.
+    # Only a single-draft Workflow replaces that target with a Role default.
+    assignment = proposal.get("assignment")
+    if workflow and isinstance(assignment, dict) and assignment.get("worker_id"):
+        raise ValueError("A named Worker task cannot enter a role-replacing Workflow.")
     task_id = proposal.get("project_task_id")
     if not task_id:
         return None

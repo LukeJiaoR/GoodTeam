@@ -131,6 +131,14 @@ actual readable Worker reports, limitations and outstanding independent review t
 the conversation, with idempotent publication per batch/recovery attempt. Source
 reports remain separately inspectable. Worker completion never marks delivery done.
 
+Previously saved named Worker assignments retain their original identity in
+non-Workflow queue, preparation and batch paths. Single-draft Workflows resolve
+by Role and cannot preserve an exact Worker target, so their confirmation/start
+boundary rejects these legacy assignments rather than silently substituting a
+default. This also covers edited drafts that retain assignment metadata after
+losing their ledger binding. Ordinary unnamed drafts are unchanged; this
+compatibility guard does not restore named-target inputs for new Manager work.
+
 The Manager receives current invocation facts from the original Worker jobs:
 the job ID, recorded task association, Role and saved execution state. A queued
 job has an identity but has not yet started. A terminal job remains historical
@@ -238,3 +246,4 @@ fixture uses temporary workspace, registry and fake Workers. It checks exact sav
 text, task termination and explicit second-task startup, composer continuity,
 history context, unchanged current state/approvals and browser errors. The broader
 business-loop and concurrent-approval acceptance remain required.
+
