@@ -1,3 +1,5 @@
+import ContinuationScopeAddition from './ContinuationScopeAddition';
+import { continuationActivity } from './continuationActivity';
 import { Fragment, useRef, useState } from 'react';
 
 function qualityAccepted(quality) {
@@ -156,19 +158,20 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
     && new Set(domains.map(path => path.toLowerCase())).size === domains.length
     && domains.every(path => path.length <= 160 && !path.split('/').some(part => ['', '.', '..'].includes(part))
       && ![...path].some(character => character.charCodeAt(0) < 32 || '\\:*?[]'.includes(character)));
+  const scopedTasks = tasks.filter(task => task.status === 'todo' || discover && task.status === 'blocked');
   const discovery = discover ? { objective: objective.trim(), allowed_write_domains: domains,
-    max_new_tasks: newTaskLimit, max_planning_calls: planningLimit,
+    max_new_tasks: newTaskLimit, max_planning_calls: planningLimit, allow_backlog_judgment: true,
     ...(investigate ? { allow_investigation: true } : {}),
     ...(plan ? { allow_planning: true } : {}),
     ...(feedback ? { allow_undelivered_feedback: true } : {}),
     ...(feedback && initialFeedback ? { allow_initial_readonly_feedback: true } : {}),
-    ...(observeRunning ? { allow_running_observation: true } : {}),
+    ...(observeRunning ? { allow_running_observation: true, allow_running_human_question: true } : {}),
     ...(observeRunning && followUp ? { worker_follow_up_limit: followUpLimit } : {}) } : undefined;
   const input = { action: 'start_project_continuation', expected_backlog_version: snapshot.version,
-    task_ids: tasks.map(task => task.task_id), max_batches: maximum, confirmed: true, billing_acknowledged: true,
+    task_ids: scopedTasks.map(task => task.task_id), max_batches: maximum, confirmed: true, billing_acknowledged: true,
     ...(discovery ? { discovery } : {}) };
   const inputIdentity = JSON.stringify([value?.id || 'new', input]);
-  const valid = Number.isInteger(maximum) && maximum >= 1 && maximum <= 50
+  const valid = scopedTasks.length > 0 && Number.isInteger(maximum) && maximum >= 1 && maximum <= 50
     && (!discover || objective.trim().length >= 20 && objective.trim().length <= 2000 && validDomains
       && Number.isInteger(newTaskLimit) && newTaskLimit >= 1 && newTaskLimit <= 50
       && Number.isInteger(planningLimit) && planningLimit >= 1 && planningLimit <= 100
@@ -180,12 +183,12 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
     onAction({ ...input, idempotency_key: `${command}:${lastSubmission.current.revision}` });
   };
   return <>
-    <p>{discover ? (zh ? '授权下方初始任务，并让 Manager 在指定目标与路径范围内发现后续任务。默认依据已核实交付；下方可另行授权调查、规划与未交付结果反馈。'
-      : 'Authorize the initial tasks below and let Manager discover follow-up tasks within the specified objective and paths. Verified delivery is the default source; investigation, planning and undelivered feedback require the separate choices below.')
+    <p>{discover ? (zh ? '授权下方初始任务，并让 Manager 在指定目标与路径范围内发现后续任务。可依据已核实交付或当前已授权任务事实判断、提问及提出后续任务；下方可另行授权调查、规划与未交付结果反馈。'
+      : 'Authorize the initial tasks below and let Manager discover follow-up tasks within the specified objective and paths. Judgment, questions and follow-up tasks may use verified delivery or current authorized task facts; investigation, planning and undelivered feedback require the separate choices below.')
       : (zh ? '仅授权下方列出的现有任务自动规划和执行。' : 'Authorize planning and execution of only the existing tasks listed below.')}
       {' '}{zh ? '交付仍需审查并核实已落地的版本；每批最多同时运行 10 个 Worker，按当前配置产生模型费用。'
         : 'Delivery still requires review and a verified landed version. Up to 10 Workers run concurrently per batch and configured model charges apply.'}</p>
-    <ul>{tasks.map(task => <li key={task.task_id}>{task.task_id}: {task.title}</li>)}</ul>
+    <ul>{scopedTasks.map(task => <li key={task.task_id}>{task.task_id}: {task.title}</li>)}</ul>
     <label><input type="checkbox" checked={discover} onChange={event => setDiscover(event.target.checked)} disabled={disabled} />
       {zh ? '在明确授权范围内发现后续任务' : 'Discover follow-up tasks within an explicit scope'}</label>
     {discover ? <fieldset disabled={disabled} style={{ display: 'grid', gap: '.5rem', minWidth: 0 }}>
@@ -225,6 +228,7 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
       <label><input type="checkbox" checked={observeRunning} onChange={event => setObserveRunning(event.target.checked)} />
         {zh ? '允许执行期间的 Manager 观察判断' : 'Allow Manager observations while Workers run'}</label>
       {observeRunning ? <>
+        <p>{zh ? '观察可将必要的人类决定保存到本项目问题板，不向外发送消息、不停止在途任务，也不增加执行权限。' : 'Observations may save necessary owner decisions on this project’s question board. No external messages, stopping current work or additional execution authority.'}</p>
         <label><input type="checkbox" checked={followUp} onChange={event => setFollowUp(event.target.checked)} />
           {zh ? '允许 Manager 向当前 Pi 调用提出有界进展追问' : 'Allow bounded Manager progress questions to current Pi invocations'}</label>
         {followUp ? <label>{zh ? 'Worker 追问总次数上限' : 'Total Worker follow-up limit'}
@@ -247,8 +251,8 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
     </label>
     <label><input type="checkbox" checked={confirmedInput === inputIdentity}
       onChange={event => setConfirmedInput(event.target.checked ? inputIdentity : '')} disabled={disabled} />
-      {discover ? (zh ? '我确认初始任务、项目目标、允许路径、所选调查/规划/反馈权限、批次与新任务及规划调用上限，并承担已配置模型的调用费用。'
-        : 'I confirm the initial tasks, objective, allowed paths, selected investigation/planning/feedback permissions, batch, new-task and planning-call limits, and configured model charges.')
+      {discover ? (zh ? '我确认初始任务、项目目标、允许路径、依据已核实交付或当前任务事实进行判断、所选调查/规划/反馈权限、批次与新任务及规划调用上限，并承担已配置模型的调用费用。'
+        : 'I confirm the initial tasks, objective, allowed paths, judgment from verified delivery or current task facts, selected investigation/planning/feedback permissions, batch, new-task and planning-call limits, and configured model charges.')
         : (zh ? '我确认上述任务范围、迭代次数和模型费用。' : 'I confirm this task scope, iteration limit and model charges.')}</label>
     <button type="button" disabled={disabled || !canStart || !valid || confirmedInput !== inputIdentity} onClick={start}>
       {zh ? '授权并开始自动迭代' : 'Authorize and start continuation'}
@@ -259,21 +263,22 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
 export default function ProjectContinuationControls({ snapshot, session, projectKey, onAction, disabled, canStart, language = 'en' }) {
   const zh = String(language).startsWith('zh');
   const value = session?.project_continuation;
-  const tasks = (snapshot?.candidates || []).filter(item => item.status === 'todo');
+  const tasks = (snapshot?.candidates || []).filter(item => ['todo', 'blocked'].includes(item.status));
   const batches = Object.values(session?.project_task_batches || {}).filter(item =>
     ['review', 'blocked', 'abandoned'].includes(item.status) || item.quality?.required && item.status !== 'delivered');
   if (!onAction || (!value && !tasks.length && !batches.length)) return null;
   const active = value?.status === 'active';
+  const activity = continuationActivity(session, zh);
   const canFinish = ['no_followup', 'exhausted'].includes(session?.project_continuation_notice?.phase)
     && !value?.pending_batch;
-  const labels = zh ? { active: '自动推进中', stopped: '已停止', blocked: '需要处理阻塞', exhausted: '授权额度已用完', completed: '授权任务已交付' }
-    : { active: 'Running automatically', stopped: 'Stopped', blocked: 'Needs attention', exhausted: 'Approved budget used', completed: 'Approved tasks delivered' };
+  const labels = zh ? { active: '自动推进中', stopped: '已停止', blocked: '需要处理阻塞', exhausted: '授权额度已用完', completed: '本次授权已结束' }
+    : { active: 'Running automatically', stopped: 'Stopped', blocked: 'Needs attention', exhausted: 'Approved budget used', completed: 'This grant has ended' };
   const reasons = zh ? { discovery_no_followup: '本次未发现授权范围内的后续任务。', discovery_task_budget_used: '已用完授权的新任务额度。',
     approved_iteration_budget_used: '已达到授权批次或规划调用上限。', owner_stopped: '所有者已停止后续迭代。' }
     : { discovery_no_followup: 'No follow-up task was proposed within the approved scope.', discovery_task_budget_used: 'Approved new-task budget used.',
       approved_iteration_budget_used: 'Approved batch or planning-call limit reached.', owner_stopped: 'Future iterations were stopped by the owner.' };
   const statusLabel = value?.discovery && value.reason === 'discovery_no_followup'
-    ? (zh ? '本次未发现后续任务' : 'No follow-up proposed') : labels[value?.status] || value?.status;
+    ? (zh ? '本次未发现后续任务' : 'No follow-up proposed') : activity?.label || labels[value?.status] || value?.status;
 
   return <section className="project-continuation-controls" tabIndex={-1}
     data-continuation-id={value?.id} data-notice-id={session?.project_continuation_notice?.id}
@@ -290,6 +295,8 @@ export default function ProjectContinuationControls({ snapshot, session, project
           <ul aria-label={zh ? '已授权的接续能力' : 'Approved continuation capabilities'}>
             {[
               ['allow_investigation', zh ? '只读调查' : 'Read-only investigation'],
+              ['allow_running_human_question', zh ? '运行中内部问题板提问' : 'Internal board questions while running'],
+              ['allow_backlog_judgment', zh ? '依据当前授权任务事实判断' : 'Judgment from authorized backlog facts'],
               ['allow_planning', zh ? 'Planner 委派' : 'Planner delegation'],
               ['allow_undelivered_feedback', zh ? '未交付结果反馈' : 'Undelivered outcome feedback'],
               ['allow_initial_readonly_feedback', zh ? '首次交付前只读接续' : 'Initial read-only continuation'],
@@ -304,12 +311,18 @@ export default function ProjectContinuationControls({ snapshot, session, project
             {value.discovery_last.rationale ? <p>{zh ? '发现依据' : 'Discovery rationale'}: {value.discovery_last.rationale}</p> : null}
           </> : null}
         </> : null}
+        {activity ? <div role="status" aria-label={zh ? '接续实际状态' : 'Continuation activity'}>
+          <p>{activity.detail}</p>
+          {activity.rationale ? <p>{zh ? '上次 Manager 判断依据' : 'Last Manager rationale'}: {activity.rationale}</p> : null}
+        </div> : null}
         {value.status !== 'active' && value.reason ? <p role="status">{reasons[value.reason] || value.reason}</p> : null}
         {active || canFinish ? <button type="button" onClick={() => onAction({
           action: 'stop_project_continuation', continuation_id: value.id,
         })}>{active ? (zh ? '停止后续迭代' : 'Stop future iterations')
           : (zh ? '保留结果并结束' : 'Keep results and finish')}</button> : null}
       </> : null}
+      {active ? <ContinuationScopeAddition key={value.id} value={value} snapshot={snapshot}
+        onAction={onAction} disabled={disabled} zh={zh} /> : null}
       {!active && tasks.length > 0 ? <ContinuationStartForm tasks={tasks} snapshot={snapshot} value={value}
         onAction={onAction} disabled={disabled} canStart={canStart} zh={zh} /> : null}
     </details>

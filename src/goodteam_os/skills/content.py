@@ -64,7 +64,7 @@ class ContentSession:
             bounded_text(value)
         identifier(self.binary_digest, "sha256:")
         identifier(self.config_digest, "sha256:")
-        if self.verification_kind not in {"contract_fixture", "verified_runtime", "local_cli"}:
+        if self.verification_kind not in {"contract_fixture", "verified_runtime", "local_cli", "ordinary_pi_methods"}:
             raise SkillError("runtime_unverified", "Unknown Runtime verification provenance.")
 
 

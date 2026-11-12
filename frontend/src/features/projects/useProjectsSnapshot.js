@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { normalizeProjectsPayload } from './projectList';
 
+const refreshListeners = new Map();
+
+// Invalidate mounted consumers of this API only; each keeps its existing
+// abort, stale-data and retry behavior rather than sharing mutable snapshots.
+export function notifyProjectsChanged(api) {
+  refreshListeners.get(api)?.forEach(refresh => refresh());
+}
+
 export default function useProjectsSnapshot(api) {
   const [requestId, setRequestId] = useState(0);
   const [snapshot, setSnapshot] = useState(null);
@@ -29,5 +37,14 @@ export default function useProjectsSnapshot(api) {
   const status = snapshot?.api === api && snapshot.requestId === requestId
     ? snapshot.status : projects ? 'refreshing' : 'loading';
   const refresh = useCallback(() => setRequestId(value => value + 1), []);
+  useEffect(() => {
+    const listeners = refreshListeners.get(api) || new Set();
+    listeners.add(refresh);
+    refreshListeners.set(api, listeners);
+    return () => {
+      listeners.delete(refresh);
+      if (!listeners.size) refreshListeners.delete(api);
+    };
+  }, [api, refresh]);
   return { projects: projects || [], status, refresh };
 }

@@ -76,7 +76,7 @@ def run_manager_chat_turn(
             ),
         )
         job_id = str(job["id"])
-        result = store.run_job(job_id) if created or job.get("status") == "queued" or job.get("task_skill_context") else job
+        result = _manager_result_or_run(store, job, created=created, skill_retry=True)
     if result.get("skill_error_code"):
         raise ManagerExecutionError("The configured Manager methods are blocked before Runtime execution.",
                                     code=str(result["skill_error_code"]))
@@ -161,7 +161,7 @@ def run_manager_interpretation(
             ),
         )
         job_id = str(job["id"])
-        result = store.run_job(job_id) if created or job.get("status") == "queued" or job.get("task_skill_context") else job
+        result = _manager_result_or_run(store, job, created=created, skill_retry=True)
     if result.get("skill_error_code"):
         raise ManagerExecutionError("The configured Manager methods are blocked before Runtime execution.",
                                     code=str(result["skill_error_code"]))
@@ -188,6 +188,25 @@ def run_manager_interpretation(
             job_id, str(job.get("adapter", adapter)), str(job.get("model", model)),
             {**settings, **{k: job[k] for k in ("reasoning_depth", "additional_prompt") if k in job}}, result),
     }
+
+
+def _manager_result_or_run(store, job, *, created, skill_retry=False):
+    from goodteam_os.manager_completion import completed_manager_result
+
+    if not created:
+        from goodteam_os.skills.models import SkillError
+
+        try:
+            completed = completed_manager_result(store, job)
+        except (SkillError, OSError, ValueError, TypeError, KeyError) as exc:
+            raise ManagerExecutionError(
+                "Original Manager completion is unconfirmed; inspect its evidence without replaying.",
+                code=exc.code if isinstance(exc, SkillError) else "manager_completion_unconfirmed",
+            ) from exc
+        if completed is not None:
+            return completed
+    return (store.run_job(str(job["id"]))
+            if created or job.get("status") == "queued" or skill_retry and job.get("task_skill_context") else job)
 
 
 def _create_manager_job(store, *, project_config: Path, project_root: Path, project_key: str,
@@ -224,6 +243,31 @@ def _create_manager_job(store, *, project_config: Path, project_root: Path, proj
         task = TaskSkillIdentity("manager_message", project_key, logical_id)
         start_key = "manager-start:" + project_key + ":" + logical_id
         confirmed = {key: spec[key] for key in ("run_id", "phase", "task", "context", "constraints", "expected_artifacts")}
+        # Select only at the first capture. An existing markerless task lock
+        # remains strict even when no job was published before interruption.
+        from goodteam_os.service import service_state_dir
+        from goodteam_os.skills.task_service import ProjectTaskSkillService
+        from goodteam_os.skills.role_packages import ROLE_METHODS_VERSION
+
+        manager_mode = (spec.get("adapter") in {"pi", "pi-rpc"}
+                        and spec.get("role") == "orchestrator"
+                        and spec.get("execution_policy") == "read_only")
+        if (Path(service_state_dir()) / "skills" / "task-locks").exists():
+            method_service = ProjectTaskSkillService(config.parent.parent, project_key, worker_roots=(project_root,))
+            captured = method_service.locks.find_task(task=task, command_key=start_key)
+            if captured is not None:
+                start = captured["lock"].get("start_input")
+                if not isinstance(start, dict) or start.get("schema_version") != "task_skill_start_input.v1":
+                    raise SkillError("task_start_input_missing", "The original Manager confirmation is unavailable.")
+                saved_mode = start["request"]["confirmed_input"].get("method_loading_mode")
+                if saved_mode not in {None, "manager_pi_methods.v1"}:
+                    raise SkillError("manager_method_mode_unsupported", "The original Manager method mode is unavailable.")
+                if saved_mode and not manager_mode:
+                    raise SkillConflict("operation_conflict", "The original Manager Runtime contract changed.")
+                manager_mode = saved_mode == "manager_pi_methods.v1"
+        if manager_mode:
+            confirmed.update(method_loading_mode="manager_pi_methods.v1", default_role_methods=ROLE_METHODS_VERSION)
+            spec = {**spec, "method_loading_mode": "manager_pi_methods.v1"}
         if preserve_captured_context:
             from goodteam_os.service import service_state_dir
             from goodteam_os.skills.task_service import ProjectTaskSkillService
@@ -246,7 +290,7 @@ def _create_manager_job(store, *, project_config: Path, project_root: Path, proj
         context = capture_task_start(
             workspace=config.parent.parent, project_key=project_key, worker_root=project_root,
             task=task, command_key=start_key, confirmed_input=confirmed,
-            subjects=("manager:orchestrator",),
+            subjects=("manager:orchestrator",), default_role_methods=manager_mode,
         )
         if context:
             spec = {**spec, "idempotency_key": "manager-job:" + project_key + ":" + logical_id}

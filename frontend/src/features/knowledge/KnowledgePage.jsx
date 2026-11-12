@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpenCheck, BrainCircuit, Files, Search, ShieldCheck, TerminalSquare } from 'lucide-react';
 import { useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import './knowledgeMemory.css';
+import './knowledgeCompact.css';
 import KnowledgeArtifacts from './KnowledgeArtifacts';
 import MemoryEventInspector from './MemoryEventInspector';
 import { isMemoryEventId } from './memoryProvenance';
@@ -87,8 +88,8 @@ function OverviewView({ home, language, overview, t }) {
   const facts = home?.facts || {};
   return (
     <div className="knowledge-overview">
-      <section className="knowledge-intro">
-        <header><div><p className="product-eyebrow">{t('knowledge.workspace.context')}</p><h2>{t('knowledge.overview.title')}</h2><p>{t('knowledge.overview.description')}</p></div><span aria-hidden="true"><BookOpenCheck size={21} /></span></header>
+      <section className="knowledge-intro" aria-label={t('knowledge.overview.title')}>
+        <p className="knowledge-context-description">{t('knowledge.overview.description')}</p>
         <dl><div><dt>{t('knowledge.overview.mode')}</dt><dd>{readiness.project_mode === 'existing_project' ? t('assistant.existingProject') : readiness.project_mode === 'new_project' ? t('assistant.newProject') : readiness.project_mode || '—'}</dd></div><div><dt>{t('knowledge.overview.updated')}</dt><dd>{updatedLabel(readiness.updated_at, language)}</dd></div><div><dt>{t('knowledge.overview.provenance')}</dt><dd>{overview ? t('knowledge.overview.persisted') : t('knowledge.overview.missing')}</dd></div></dl>
       </section>
       <section className="knowledge-confirmed-facts">
@@ -329,13 +330,12 @@ export default function KnowledgePage() {
   if (status === 'error' && !data) return <main id="main-content" className="product-page"><ProductError error={error} onRetry={() => refresh()} t={t} /></main>;
   return (
     <main id="main-content" className="product-page product-knowledge-page">
-      <PageHeading
+      <PageHeading compact
         eyebrow={data?.start_context?.project_name || projectKey}
         title={t('knowledge.title')}
         description={t('knowledge.description')}
-        summary={<div className="knowledge-page-count"><strong>{artifactCount}</strong><span>{t('knowledge.workspace.artifacts')}</span></div>}
       />
-      <nav className="knowledge-view-switcher" aria-label={t('knowledge.views.label')}>{VIEWS.map(([item, Icon]) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => { const next = new URLSearchParams(search); next.set('view', item); setSearch(next); }}><Icon aria-hidden="true" size={17} /><span>{t(`knowledge.views.${item}`)}</span></button>)}</nav>
+      <nav className="knowledge-view-switcher" aria-label={t('knowledge.views.label')}>{VIEWS.map(([item, Icon]) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => { const next = new URLSearchParams(search); next.set('view', item); setSearch(next); }}><Icon aria-hidden="true" size={17} /><span>{t(`knowledge.views.${item}`)}</span>{item === 'artifacts' ? <span className="knowledge-tab-count">{artifactCount}</span> : null}</button>)}</nav>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {view === 'overview' && !overviewReady ? <p role="status">{t('product.states.loading')}</p> : null}
       {view === 'overview' && overviewError ? <ProductError error={overviewError} onRetry={() => setOverviewRequest((value) => value + 1)} t={t} /> : null}

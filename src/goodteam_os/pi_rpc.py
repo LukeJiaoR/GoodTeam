@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import select
 import threading
 import time
 from collections.abc import Callable
@@ -61,11 +62,15 @@ class PiRpcProcess:
         stderr_path: Path,
         on_record: Callable[[dict[str, Any]], None] | None = None,
         env: dict[str, str] | None = None,
+        request_guard: Callable[[dict[str, Any]], None] | None = None,
+        prompt_authorizer: Callable[[Callable[[], object]], object] | None = None,
     ) -> None:
         self.command = list(command)
         self.cwd = cwd
         self.stderr_path = stderr_path
         self.on_record = on_record
+        self.request_guard = request_guard
+        self.prompt_authorizer = prompt_authorizer
         from goodteam_os.database import provider_environment
 
         self.env = provider_environment(env)
@@ -111,6 +116,8 @@ class PiRpcProcess:
         self._stderr_reader.start()
 
     def request(self, command: dict[str, Any], *, timeout: float = 30.0) -> dict[str, Any]:
+        if self.request_guard is not None:
+            self.request_guard(command)
         if not self.alive:
             raise PiRpcExited("Pi RPC process is not running")
         request_id = str(command.get("id") or f"gt-{uuid4()}")
@@ -121,16 +128,65 @@ class PiRpcProcess:
             self._pending[request_id] = (event, response_holder)
         try:
             encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
-            with self._write_lock:
-                process = self.process
-                if process is None or process.stdin is None or process.poll() is not None:
-                    raise PiRpcExited("Pi RPC process exited before request write")
-                process.stdin.write(encoded)
-                process.stdin.flush()
+            def write_request():
+                with self._write_lock:
+                    if self.request_guard is not None:
+                        self.request_guard(command)
+                    process = self.process
+                    if process is None or process.stdin is None or process.poll() is not None:
+                        raise PiRpcExited("Pi RPC process exited before request write")
+                    if self.prompt_authorizer is not None:
+                        # This write is inside the original short authorization
+                        # mutation. A stalled child must not hold Stop behind an
+                        # unbounded pipe write. Model response waiting is below,
+                        # outside both locks.
+                        fd = process.stdin.fileno()
+                        blocking = os.get_blocking(fd)
+                        deadline = time.monotonic() + min(timeout, 1.0)
+                        os.set_blocking(fd, False)
+                        try:
+                            offset = 0
+                            while offset < len(encoded):
+                                remaining = deadline - time.monotonic()
+                                if remaining <= 0 or not select.select([], [fd], [], remaining)[1]:
+                                    raise PiRpcTimeout("Authorized Pi model input write exceeded its short deadline")
+                                try:
+                                    written = os.write(fd, encoded[offset:])
+                                except BlockingIOError:
+                                    continue
+                                if written <= 0:
+                                    raise BrokenPipeError("Pi RPC input made no write progress")
+                                offset += written
+                        finally:
+                            os.set_blocking(fd, blocking)
+                    else:
+                        offset = 0
+                        while offset < len(encoded):
+                            written = process.stdin.write(encoded[offset:])
+                            if not isinstance(written, int) or written <= 0:
+                                raise BrokenPipeError("Pi RPC input made no write progress")
+                            offset += written
+                        process.stdin.flush()
+                return self
+            if self.prompt_authorizer is not None and command.get("type") in {"prompt", "steer", "follow_up"}:
+                try:
+                    self.prompt_authorizer(write_request)
+                except BaseException:
+                    # A short write or lost ledger acknowledgement is not proof
+                    # that no input was sent. Own and close this exact process;
+                    # never manufacture a replacement prompt or identity.
+                    self.close(abort=True)
+                    raise
+            else:
+                write_request()
         except (BrokenPipeError, OSError) as exc:
             with self._pending_lock:
                 self._pending.pop(request_id, None)
             raise PiRpcExited(f"Pi RPC request write failed: {exc}") from exc
+        except BaseException:
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
+            raise
         if not event.wait(timeout):
             with self._pending_lock:
                 self._pending.pop(request_id, None)

@@ -238,7 +238,7 @@ it('requires fresh consent for optional running observations and bounded Worker 
   fireEvent.change(screen.getByLabelText('Total Worker follow-up limit'), { target: { value: '2' } });
   fireEvent.click(consent);
   fireEvent.click(screen.getByRole('button', { name: 'Authorize and start continuation' }));
-  expect(action.mock.lastCall[0].discovery).toMatchObject({ allow_running_observation: true, worker_follow_up_limit: 2 });
+  expect(action.mock.lastCall[0].discovery).toMatchObject({ allow_running_observation: true, allow_running_human_question: true, worker_follow_up_limit: 2 });
   const first = action.mock.lastCall[0];
   fireEvent.change(screen.getByLabelText('Total Worker follow-up limit'), { target: { value: '11' } });
   expect(consent).not.toBeChecked();
@@ -248,6 +248,7 @@ it('requires fresh consent for optional running observations and bounded Worker 
   fireEvent.click(screen.getByRole('button', { name: 'Authorize and start continuation' }));
   expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_running_observation');
   expect(action.mock.lastCall[0].discovery).not.toHaveProperty('worker_follow_up_limit');
+  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_running_human_question');
   expect(action.mock.lastCall[0].idempotency_key).not.toBe(first.idempotency_key);
 });
 
@@ -305,4 +306,22 @@ it('exposes optional Planner and feedback authority without upgrading an existin
     id: 'new', status: 'active', discovery: enabled.discovery } }} />);
   expect(screen.getByText('Planner delegation: Allowed')).toBeInTheDocument();
   expect(screen.getByText('Initial read-only continuation: Allowed')).toBeInTheDocument();
+});
+
+ it('starts from blocked facts only through the existing explicit discovery consent', () => {
+  const action = vi.fn();
+  render(<ProjectContinuationControls snapshot={{version: 'blocked-v1', candidates: [{task_id: 'APP-1', title: 'Audience decision', status: 'blocked'}]}} projectKey="APP" onAction={action} canStart />);
+  const start = screen.getByRole('button', {name: 'Authorize and start continuation'});
+  fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
+  expect(start).toBeDisabled();
+  fireEvent.click(screen.getByLabelText('Discover follow-up tasks within an explicit scope'));
+  fireEvent.change(screen.getByLabelText(/Project objective/), {target: {value: 'Clarify the audience within the approved documentation scope.'}});
+  fireEvent.change(screen.getByLabelText(/Allowed project paths/), {target: {value: 'docs'}});
+  expect(screen.getByText(/I confirm the initial tasks/)).toHaveTextContent('current task facts');
+  fireEvent.click(screen.getByLabelText(/I confirm the initial tasks/));
+  fireEvent.click(start);
+  expect(action).toHaveBeenCalledOnce();
+  expect(action.mock.lastCall[0]).toMatchObject({task_ids: ['APP-1'], discovery: {allow_backlog_judgment: true}});
+  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_investigation');
+  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_planning');
 });

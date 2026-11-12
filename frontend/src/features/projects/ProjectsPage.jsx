@@ -13,7 +13,7 @@ import { translate } from '../../i18n';
 import { routes } from '../../lib/routing/routes';
 import LoadProjectPanel from './LoadProjectPanel';
 import { projectApi } from './projectApi';
-import useProjectsSnapshot from './useProjectsSnapshot';
+import useProjectsSnapshot, { notifyProjectsChanged } from './useProjectsSnapshot';
 import ProjectAttentionOverview from './ProjectAttentionOverview';
 
 function ProjectsSkeleton({ title }) {
@@ -71,6 +71,7 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
   const handleImported = (payload) => {
     const projectKey = payload?.project?.project_key;
     if (!projectKey) return;
+    notifyProjectsChanged(api);
     navigate(routes.projectWork(projectKey));
   };
 

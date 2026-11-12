@@ -98,7 +98,45 @@ def _read_observation(*, workspace, project_key, root, value, run_id):
         "observation_key": run_id + ":" + dispatch_id,
         "dispatch_report_digest": "sha256:" + sha256(raw).hexdigest(),
         "recovery_version": evidence["version"], "tasks": observations, "delivery_verified": False}
+    previous = (value.get("batch_observations") or {}).get(receipt["observation_key"])
+    if ((previous is None or "read_only_discovery" in previous)
+            and can_observe_discovered_readonly(value, [tasks[i] for i in ids])
+            and all(isinstance(row.get("captured_result"), dict)
+                    and row["captured_result"].get("changed_files") == [] for row in observations)):
+        receipt["read_only_discovery"] = True
     return {**receipt, "receipt_id": _digest(receipt)}
+
+
+def can_observe_discovered_readonly(value, tasks):
+    """Multiple original investigations share the single-investigation authority."""
+    from goodteam_os.project_investigation_feedback import _authorized_read_only_role
+
+    return (bool(tasks) and all(task.get("id") in value.get("discovered_task_ids", [])
+        and _authorized_read_only_role(value, task.get("role"))
+        and task.get("execution_policy") == "read_only" and task.get("write_domains", []) == []
+        and task.get("status") in {"review", "blocked"} and task.get("delivery_verified") is not True
+        for task in tasks))
+
+
+def is_observed_discovered_readonly(value, task):
+    """Scheduling settlement from actual batch evidence, not task acceptance."""
+    from goodteam_os.project_iteration_continuation import _intent
+    from goodteam_os.project_investigation_feedback import _authorized_read_only_role
+
+    if not can_observe_discovered_readonly(value, [task]):
+        return False
+    for receipt in (value.get("batch_observations") or {}).values():
+        if (not valid_receipt(value, receipt) or receipt.get("read_only_discovery") is not True
+                or receipt.get("batch_run_id") != task.get("run_id")
+                or not all(_authorized_read_only_role(value, row.get("role")) for row in receipt.get("tasks", []))):
+            continue
+        row = next((row for row in receipt.get("tasks", []) if row.get("task_id") == task["id"]), {})
+        if (row.get("task_intent_digest") == _intent(task) == value.get("task_intents", {}).get(task["id"])
+                and row.get("task_status") == task.get("status") and row.get("role") == task.get("role")
+                and row.get("job_id") == task.get("dispatch_job_id")
+                and row.get("dispatch_run_id") == task.get("dispatch_run_id")):
+            return True
+    return False
 
 
 def can_observe_initial_readonly(value, tasks):
@@ -108,17 +146,33 @@ def can_observe_initial_readonly(value, tasks):
     revalidates terminal processes, original task bindings and captured output.
     """
     from goodteam_os.project_investigation_feedback import _authorized_read_only_role
+    from goodteam_os.project_scope_addition import confirmed_added_task
 
     discovery = value.get("discovery") or {}
     return (discovery.get("allow_initial_readonly_feedback") is True
             and discovery.get("allow_undelivered_feedback") is True
             and bool(tasks)
-            and all(task["id"] in value.get("seed_task_ids", [])
+            and all((task["id"] in value.get("seed_task_ids", []) or confirmed_added_task(value, task))
                     and task.get("status") == "review"
                     and _authorized_read_only_role(value, task.get("role"))
                     and task.get("execution_policy") == "read_only"
-                    and task.get("write_domains") == []
+                    and task.get("write_domains", []) == []
                     for task in tasks))
+
+
+def can_observe_pending_write_review(value, tasks):
+    """Route write outcomes only when every companion has its own authority.
+
+    Read-only companions must pass the original initial-seed predicate, including
+    role permission and empty write scope. This predicate grants no acceptance;
+    the original observer still verifies every invocation and captured result.
+    """
+    writes = [task for task in tasks if task.get("execution_policy", "workspace_write") == "workspace_write"]
+    readonly = [task for task in tasks if task.get("execution_policy") == "read_only"]
+    return ((value.get("discovery") or {}).get("allow_undelivered_feedback") is True
+            and bool(writes) and len(writes) + len(readonly) == len(tasks)
+            and all(task.get("status") == "review" for task in writes)
+            and (not readonly or can_observe_initial_readonly(value, readonly)))
 
 
 def observe_pending_batch(*, workspace, project_key, root, project_config, value):
@@ -130,6 +184,10 @@ def observe_pending_batch(*, workspace, project_key, root, project_config, value
     if not pending.get("run_id") or not value.get("discovery"):
         return None
     receipt = _read_observation(workspace=workspace, project_key=project_key, root=root, value=value, run_id=pending["run_id"])
+    if (not (value.get("discovery") or {}).get("allow_undelivered_feedback")
+            and set(pending["task_ids"]).issubset(value.get("discovered_task_ids", []))
+            and receipt.get("read_only_discovery") is not True):
+        raise ValueError("Discovered investigation feedback requires verified read-only attribution for every task.")
     if set(pending["task_ids"]) != {t["task_id"] for t in receipt["tasks"]}:
         raise ValueError("Pending batch ownership changed before feedback capture.")
     def retain(session):

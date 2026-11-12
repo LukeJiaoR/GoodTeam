@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 from goodteam_os.manager_execution import (
-    ManagerExecutionError, _configured_manager_model, _create_manager_job,
+    ManagerExecutionError, _configured_manager_model, _create_manager_job, _manager_result_or_run,
     _manager_settings, _manager_turn_lock, _model_name,
 )
 from goodteam_os.graph import resolve_role_adapter
@@ -195,7 +195,7 @@ def assess_goal(*, workspace, project_config, project_root, goal, work, state, e
         )
         if not created and job.get("status") not in {"queued", "completed"}:
             raise ManagerExecutionError("Goal assessment execution is interrupted; automatic replay is blocked.")
-        result = store.run_job(str(job["id"])) if created or job.get("status") == "queued" else job
+        result = _manager_result_or_run(store, job, created=created)
     if result.get("status") != "completed" or result.get("skill_error_code"):
         raise ManagerExecutionError("Goal assessment did not complete; inspect the Manager execution.")
     result_path = Path(result.get("result_path") or store.root / str(job["id"]) / "result.md")

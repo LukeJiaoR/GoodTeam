@@ -21,39 +21,86 @@ from goodteam_os.project_iteration import _internal, _validate_parallel_group, r
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore, project_task_intent, task_evidence_digest
 from goodteam_os.tasks import TASK_INTENT_FIELDS as TASK_INTENT_FIELDS
-from goodteam_os.workflow_mutations import workflow_guard
+from goodteam_os.workflow_mutations import workflow_guard, WorkflowBusyError
 
 
 _BACKGROUND_THREADS = {}
 _BACKGROUND_LOCK = threading.Lock()
 
 
-def active_project_batch(workspace, project_key):
+def active_project_batches(workspace, project_key):
+    """Derive occupied execution from the original batches; unknown is occupied."""
     batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
+    result = []
     for batch in batches.values():
         if batch.get("status") in {"claimed", "running"}:
-            return batch
-        if batch.get("status") in {"blocked", "review"}:
+            result.append(batch)
+        elif batch.get("status") in {"blocked", "review"}:
             from goodteam_os.project_iteration_recovery import project_batch_recovery_evidence
-
             try:
-                value = project_batch_recovery_evidence(workspace=workspace, project_key=project_key,
+                evidence = project_batch_recovery_evidence(workspace=workspace, project_key=project_key,
                     root=Path(batch["project_root"]), run_id=batch["run_id"])
-                if value["unknown_task_ids"]:
-                    return batch
+                if evidence["unknown_task_ids"]:
+                    result.append(batch)
             except (OSError, ValueError, KeyError, TypeError):
-                return batch
-    return None
+                result.append(batch)
+    return result
 
 
-def _require_execution_slot(workspace, project_key, run_id, *, continuation_id=None, recovery=None):
+def active_project_batch(workspace, project_key):
+    return next(iter(active_project_batches(workspace, project_key)), None)
+
+
+class ProjectBatchResourceBusy(ValueError):
+    """Valid separate batches temporarily overlap an occupied write domain."""
+
+
+def _require_execution_slot(workspace, project_key, run_id, *, continuation_id=None, recovery=None, task_ids=None):
     require_no_active_project_goal(workspace, project_key)
-    active = active_project_batch(workspace, project_key)
     from goodteam_os.workflow_recovery import linked_parent
-
     parent = linked_parent(workspace, project_key, continuation_id=continuation_id, admitted=recovery)
-    if (active_project_run(workspace, project_key) and parent is None) or (active and active["run_id"] != run_id):
+    if active_project_run(workspace, project_key) and parent is None:
+        raise ValueError("Finish or reconcile the active Workflow before starting another batch.")
+    others = [b for b in active_project_batches(workspace, project_key) if b["run_id"] != run_id]
+    if not others:
+        return
+    if (not continuation_id or recovery or not task_ids
+            or any(b.get("expected_continuation_id") != continuation_id
+                   or b.get("workflow_recovery") or b.get("current_recovery_attempt")
+                   or b.get("status") not in {"claimed", "running"} for b in others)):
         raise ValueError("Finish or reconcile the active project execution before starting another batch.")
+    # Other batches reserve their immutable task identities even before jobs
+    # start. Shared capacity determines when a Worker actually receives a slot.
+    root = Path(others[0]["project_root"])
+    ledger = LocalTaskStore(root, project_key)
+    all_tasks = {t["id"]: t for t in ledger.list_tasks()}
+    occupied = []
+    for batch in others:
+        if Path(batch["project_root"]).resolve() != root.resolve():
+            raise ValueError("Concurrent batch sources differ.")
+        if (not batch.get("confirmed") or not batch.get("task_ids")
+                or {b.get("task_id") for b in batch.get("task_bindings", [])} != set(batch["task_ids"])):
+            raise ValueError("Occupied batch task attribution is incomplete.")
+        for binding in batch.get("task_bindings", []):
+            task = all_tasks.get(binding["task_id"])
+            if task is None or project_task_intent(task) != binding["task_intent"]:
+                raise ValueError("An occupied task's original intent changed.")
+            occupied.append(task["id"])
+        if set(occupied) & set(task_ids):
+            raise ValueError("A task is already reserved by another batch.")
+    snapshot = rank_project_backlog(list(all_tasks.values()), project_key, limit=None)
+    candidates = {t["task_id"]: t for t in snapshot["candidates"]}
+    ids = set(occupied) | set(task_ids)
+    if not ids.issubset(candidates):
+        raise ValueError("Concurrent task scope is unavailable.")
+    # Invalid or internally conflicting batches are not a temporary resource
+    # wait. Only collision between two individually valid scopes may defer.
+    _validate_parallel_group([candidates[i] for i in occupied])
+    _validate_parallel_group([candidates[i] for i in task_ids])
+    try:
+        _validate_parallel_group([candidates[i] for i in ids])
+    except ValueError as exc:
+        raise ProjectBatchResourceBusy(str(exc)) from exc
 
 
 def _require_authority(workspace, project_key, root, project_config, expected):
@@ -135,8 +182,9 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
         if "web_search" in track:
             track["web_search"] = search_policy(track["web_search"])
             if track["web_search"] is not None and (
-                    track["adapter"] not in SESSION_BACKENDS or track["execution_policy"] != "standard"):
-                raise ValueError("Task Web Search requires an explicitly authorized ordinary standard Pi Worker.")
+                    track["adapter"] not in SESSION_BACKENDS or not (track["execution_policy"] == "standard"
+                    or track["execution_policy"] == "read_only" and track["role"] in {"research", "planner"})):
+                raise ValueError("Task Web Search requires an explicitly authorized supported Pi Worker.")
     return tracks
 
 
@@ -202,7 +250,8 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                 # existed. Resuming is execution, so re-admit against current
                 # Workflow/Goal/batch authority, then reserve the same slot.
                 _require_execution_slot(workspace, project_key, run_id,
-                    continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"))
+                    continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"),
+                    task_ids=batch.get("task_ids"))
                 _require_authority(workspace, project_key, root, project_config, batch.get("expected_authority"))
                 if batch.get("current_recovery_attempt"):
                     command = batch["recovery_commands"][batch["current_recovery_attempt"]]
@@ -221,7 +270,6 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                 raise SkillError("team_unavailable", "The confirmed project Team is unavailable.")
             if team["revision"] != expected_team_revision:
                 raise SkillConflict("team_revision_changed", "Team changed after confirmation; review before starting.")
-        _require_execution_slot(workspace, project_key, run_id, continuation_id=expected_continuation_id)
         _require_authority(workspace, project_key, root, project_config, expected_authority)
         _require_continuation(session, expected_continuation_id)
         proposal = session.get("proposed_task")
@@ -259,6 +307,8 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                or task_evidence_digest(task) != item.get("project_task_digest")
                for task, item in zip(tasks, proposals)):
             raise ValueError("Selected project task evidence changed before batch confirmation.")
+        _require_execution_slot(workspace, project_key, run_id, continuation_id=expected_continuation_id,
+                                task_ids=[task["id"] for task in tasks])
         if len(tasks) > 1:
             _validate_parallel_group([candidates[task["id"]] for task in tasks])
         tracks = _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals)
@@ -429,7 +479,10 @@ def _publish_batch_result(workspace, project_key, root, batch, report, status):
 
 
 def _execute_batch(*, workspace, project_key, root, batch):
-    with workflow_guard(workspace, project_key):
+    from goodteam_os.dispatch_workspace import dispatch_workspace_lock
+    from goodteam_os.project_iteration_recovery import effective_dispatch_id
+
+    with dispatch_workspace_lock(Path(root), effective_dispatch_id(batch)):
         batch = TaskAssistantSessionStore(workspace, project_key).read()["project_task_batches"][batch["run_id"]]
         if batch.get("status") in {"delivered", "abandoned"}:
             return {"run_id": batch["run_id"], "status": batch["status"], "execution_started": False}
@@ -443,12 +496,28 @@ def _execute_batch(*, workspace, project_key, root, batch):
                 report = iteration_batch_report(workspace=workspace, project_key=project_key, root=root,
                                                 run_id=batch["run_id"])
                 return _settle_batch(workspace, project_key, root, batch, report=report)
-            _require_execution_slot(workspace, project_key, batch["run_id"],
-                continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"))
-            _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
-            _claim_tasks(root, project_key, batch)
+            try:
+                with workflow_guard(workspace, project_key):
+                    _require_execution_slot(workspace, project_key, batch["run_id"],
+                        continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"),
+                        task_ids=batch.get("task_ids"))
+                    _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
+                    _require_continuation(TaskAssistantSessionStore(workspace, project_key).read(), batch.get("expected_continuation_id"))
+                    _claim_tasks(root, project_key, batch)
+            except WorkflowBusyError:
+                # Only the short, not-yet-executed admission was busy.
+                return {"run_id": batch["run_id"], "status": batch["status"], "execution_started": False}
+            def check_start(*_):
+                _require_continuation(TaskAssistantSessionStore(workspace, project_key).read(), batch.get("expected_continuation_id"))
+                _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
+                known = {t["id"]: t for t in LocalTaskStore(root, project_key).list_tasks()}
+                if any(binding["task_id"] not in known
+                       or project_task_intent(known[binding["task_id"]]) != binding["task_intent"]
+                       for binding in batch["task_bindings"]):
+                    raise ValueError("The original task scope changed before Worker launch.")
             report = dispatch_tracks(project_root=Path(root).resolve(), tracks=batch["tracks"],
-                projects_dir=Path(workspace) / "projects", logical_task_id=batch["run_id"], require_isolation=True)
+                projects_dir=Path(workspace) / "projects", logical_task_id=batch["run_id"], require_isolation=True,
+                capacity_check_start=check_start)
         except Exception as exc:
             _settle_batch(workspace, project_key, root, batch, error=str(exc))
             raise

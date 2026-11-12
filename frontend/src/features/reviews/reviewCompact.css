@@ -1,0 +1,49 @@
+/* #677: review-only density. Keep evidence and approval controls in document flow. */
+.product-shell.product-shell--workspace .product-review-page.product-review-page {
+  font-size: 14px;
+}
+.product-shell.product-shell--workspace .product-review-page .product-page-heading {
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.product-shell.product-shell--workspace .product-review-page .product-page-heading h1 { font-size: 16px; }
+.product-shell.product-shell--workspace .product-review-page .review-page-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+}
+.product-shell.product-shell--workspace .product-review-page .review-page-summary > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+}
+.product-shell.product-shell--workspace .product-review-page .review-page-summary dt { font-size: 12px; }
+.product-shell.product-shell--workspace .product-review-page .review-page-summary dd { margin: 0; font-size: 14px; }
+.product-shell.product-shell--workspace .product-review-page .review-workspace { gap: 12px; }
+.product-shell.product-shell--workspace .product-review-page :is(.review-queue, .review-inspector) { min-width: 0; }
+.product-shell.product-shell--workspace .product-review-page :is(.review-queue__header, .review-inspector__header) { padding: 10px 12px; }
+.product-shell.product-shell--workspace .product-review-page .review-queue a { padding: 8px 12px; }
+.product-shell.product-shell--workspace .product-review-page .review-queue a > span { overflow-wrap: anywhere; }
+.product-shell.product-shell--workspace .product-review-page .review-queue small { font-size: 12px; }
+.product-shell.product-shell--workspace .product-review-page .review-artifact > .review-artifact__header { padding: 10px 12px; gap: 8px; }
+.product-shell.product-shell--workspace .product-review-page :is(.review-artifact__header h2, .review-queue h2, .review-inspector h2, .review-inspector h3, .review-brief-preview h3, .review-recovery > h2) { font-size: 14px; line-height: 1.5; }
+.product-shell.product-shell--workspace .product-review-page .review-view-switcher { flex-wrap: wrap; }
+.product-shell.product-shell--workspace .product-review-page .review-view-switcher button { min-height: 32px; font-size: 13px; }
+.product-shell.product-shell--workspace .product-review-page :is(.review-rendered-container, .review-brief-preview, .review-editor textarea, .review-diff) { padding: 16px; font-size: 14px; line-height: 1.6; }
+.product-shell.product-shell--workspace .product-review-page .review-inspector { gap: 8px; }
+.product-shell.product-shell--workspace .product-review-page .review-inspector > :is(section, details, .review-evidence-summary, .review-decision-panel, .review-editor-actions) { padding: 12px; }
+.product-shell.product-shell--workspace .product-review-page .review-inspector p { font-size: 14px; line-height: 1.5; }
+.product-shell.product-shell--workspace .product-review-page .review-verdict { font-size: 14px; }
+.product-shell.product-shell--workspace .product-review-page .review-recovery { padding: 16px; gap: 12px; }
+.product-shell.product-shell--workspace .product-review-page .review-embedded-summary { margin-bottom: 12px; }
+@media (max-width: 767px) {
+  .product-shell.product-shell--workspace .product-review-page .review-page-summary { gap: 8px 12px; }
+  .product-shell.product-shell--workspace .product-review-page .review-artifact__header { align-items: start; }
+}
+@media (any-pointer: coarse), (max-width: 767px) {
+  .product-shell.product-shell--workspace .product-review-page .review-view-switcher button { min-height: 44px; }
+}

@@ -60,14 +60,14 @@ def test_explicit_search_task_queue_binding_dispatch_receipt_and_replay(tmp_path
     with pytest.raises(ValueError, match='search authorization changed'):
         _create_track_job(workers, **{**kwargs, 'track': {**track, 'web_search': {**POLICY, 'max_requests': 1}}})
     for change in ({'adapter': 'codex'}, {'execution_policy': 'read_only'}):
-        with pytest.raises(ValueError, match='ordinary standard Pi'):
+        with pytest.raises(ValueError, match='explicitly authorized'):
             _create_track_job(workers, **{**kwargs, 'track': {**track, **change}})
-    with pytest.raises(ValueError, match='ordinary standard Pi'):
+    with pytest.raises(ValueError, match='explicitly authorized'):
         _create_track_job(workers, **kwargs, method_context={'protected': True})
-    with pytest.raises(ValueError, match='ordinary standard Worker'):
+    with pytest.raises(ValueError, match='explicitly authorized'):
         ledger.update_task(task['id'], execution_policy='read_only')
-    with pytest.raises(ValueError, match='ordinary standard Worker'):
-        ledger.create_task(title='No', description='No', role='research', execution_policy='read_only', web_search=POLICY)
+    with pytest.raises(ValueError, match='explicitly authorized'):
+        ledger.create_task(title='No', description='No', role='qa', execution_policy='read_only', web_search=POLICY)
     # Search output is bound to the original task/run/job; no real endpoint call.
     calls = []
     class Providers:
@@ -145,6 +145,22 @@ def test_explicit_search_configuration_rebinds_only_unconfirmed_queue(tmp_path, 
         session['queued_task_proposals'][0]['project_task_digest'] = task_evidence_digest(tasks.get_task(task['id']))
         return session
     store._mutate(rebind)
-    with pytest.raises(ValueError, match='ordinary standard'):
+    with pytest.raises(ValueError, match='explicitly authorized'):
         configure_queued_search(store, root, 'DEMO', {**request, 'expected_revision': 3})
     assert 'web_search' not in tasks.get_task(task['id'])
+    # The same original confirmation surface now supports explicitly scoped
+    # read-only research, without confirming execution or inventing a grant.
+    tasks.update_task(task['id'], role='research')
+    store._mutate(rebind)
+    configure_queued_search(store, root, 'DEMO', {**request, 'expected_revision': 3})
+    selected = store.read()['queued_task_proposals'][0]
+    assert not selected['confirmed'] and selected['revision'] == 4
+    readonly = require_queued_project_task(root, 'DEMO', selected, workflow=False)
+    assert readonly['execution_policy'] == 'read_only' and readonly['web_search'] == POLICY
+    config = tmp_path / 'projects/demo.local.yaml'
+    config.parent.mkdir()
+    config.write_text(f'key: DEMO\nrepos:\n  root: {root}\nworker_backend:\n  mode: pi\n')
+    from goodteam_os.project_iteration_execution import _runtime_tracks
+    track = _runtime_tracks(tmp_path, config, 'DEMO', root, [readonly], [selected])[0]
+    assert track['role'] == 'research' and track['execution_policy'] == 'read_only'
+    assert track['web_search'] == POLICY and track['project_task_id'] == task['id']

@@ -25,14 +25,15 @@ export default function TaskSearchConfiguration({ item, disabled, onAction, lang
   const valid = !enabled || (provider && model.trim() && model.trim().length <= 200
     && Number.isInteger(Number(limit)) && Number(limit) >= 1 && Number(limit) <= 20
     && Number.isInteger(Number(timeout)) && Number(timeout) >= 1 && Number(timeout) <= 120);
-  const readOnly = item.assignment?.execution_policy === 'read_only';
+  const readOnly = item.assignment?.execution_policy === 'read_only'
+    && !['research', 'planner'].includes(item.assignment?.role);
   return <section aria-label={zh ? '任务搜索配置' : 'Task search configuration'}>
     <p>{zh ? '已保存的 Web Search：' : 'Saved Web Search: '}{saved
       ? `${saved.provider.id} @ ${saved.provider.revision} · ${saved.model} · ${saved.max_requests} requests · ${saved.timeout_seconds}s`
       : (policyKnown ? (zh ? '关闭' : 'Off') : (zh ? '旧任务配置未投影，请保存明确配置后执行' : 'Legacy policy not projected; save explicit configuration before running'))}</p>
     <p><small>{zh
-      ? '搜索可能产生额外模型和搜索费用。次数限制不是金额上限，也不限制供应商内部子调用；查询会发送到所选供应商。结果不明不会自动重试。仅支持普通 Pi Worker，不放宽只读或 Skill 隔离。'
-      : 'Search may incur extra model and search charges. Request limits are not spending caps or limits on provider subcalls. Queries go to the selected provider. Unknown outcomes are not retried. Ordinary Pi Workers only; read-only and Skill isolation remain enforced.'}</small></p>
+      ? '搜索可能产生额外模型和搜索费用。次数限制不是金额上限，也不限制供应商内部子调用；查询会发送到所选供应商。结果不明不会自动重试。支持普通 Pi Worker，以及已接入只读方法的 Researcher/Planner；不授予写入权限。'
+      : 'Search may incur extra model and search charges. Request limits are not spending caps or limits on provider subcalls. Queries go to the selected provider. Unknown outcomes are not retried. Supports ordinary Pi Workers and method-bound read-only Researcher/Planner tasks; no write permission is granted.'}</small></p>
     {editing ? <form onSubmit={async event => {
       event.preventDefault();
       if (!valid) return;

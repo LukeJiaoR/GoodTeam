@@ -6509,13 +6509,18 @@ def handle_project_api_post(
             except (ValueError, OSError) as exc:
                 raise ProjectApiError("batch_quality_unavailable", str(exc), 409,
                                       recovery=["inspect_project_batch_evidence"]) from exc
-        if action in {"start_project_continuation", "accept_project_batch_delivery"}:
+        if action in {"start_project_continuation", "add_project_continuation_tasks", "accept_project_batch_delivery"}:
             from goodteam_os.project_iteration_continuation import (
                 accept_project_batch_delivery, configure_project_continuation,
             )
 
             try:
-                if action == "start_project_continuation":
+                if action == "add_project_continuation_tasks":
+                    from goodteam_os.project_scope_addition import add_project_continuation_tasks
+                    result = {"project_continuation": add_project_continuation_tasks(
+                        workspace=workspace, project_key=key, root=root,
+                        project_config=_project_config_for_key(workspace, key), request=request)}
+                elif action == "start_project_continuation":
                     result = {"project_continuation": configure_project_continuation(
                         workspace=workspace, project_key=key, root=root,
                         project_config=_project_config_for_key(workspace, key), request=request,

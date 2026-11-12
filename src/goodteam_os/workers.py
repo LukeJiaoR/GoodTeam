@@ -1104,21 +1104,27 @@ class WorkerJobStore:
         skill_subject: str = "",
         skill_loader_version: str = "goodteam.worker-metadata.v1",
         required_skill_ids: tuple[str, ...] = (),
+        method_loading_mode: str = "",
+        method_workspace_mode: str = "",
         review_target: dict[str, str] | None = None,
         task_input: "TaskExecutionSnapshot | None" = None,
         workflow_workspace: dict[str, Any] | None = None,
         provider_connection: object = _CAPTURE_PROVIDER_CONNECTION,
         web_search: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if (method_loading_mode or method_workspace_mode) and task_skill_context is _NO_TASK_SKILL_CONTEXT:
+            raise ValueError("Method loading mode requires a captured Role task")
         web_search = search_policy(web_search)
         if web_search is not None and (adapter not in SESSION_BACKENDS
-                or task_skill_context is not _NO_TASK_SKILL_CONTEXT or task_input is not None):
+                or (task_skill_context is not _NO_TASK_SKILL_CONTEXT
+                    and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}) or task_input is not None):
             raise ValueError("Web Search is opt-in for ordinary Pi jobs only")
         associations = {"project_task_id": project_task_id, "track_id": track_id}
         if any(not isinstance(value, str) or value != value.strip() or len(value) > 256
                for value in associations.values()):
             raise ValueError("Worker task associations must be exact task/track identifiers.")
-        if any(associations.values()) and (task_skill_context is not _NO_TASK_SKILL_CONTEXT or task_input is not None):
+        if any(associations.values()) and (task_input is not None or
+                task_skill_context is not _NO_TASK_SKILL_CONTEXT and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}):
             raise ValueError("Protected Workers retain their original task association protocol.")
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
             if provider_connection is not _CAPTURE_PROVIDER_CONNECTION:
@@ -1131,9 +1137,9 @@ class WorkerJobStore:
             skill_request = locals().copy()
             skill_request.pop("workflow_workspace")
             skill_request.pop("provider_connection")
-            skill_request.pop("web_search")
-            for key in ("project_task_id", "track_id", "associations"):
-                skill_request.pop(key)
+            if web_search is None:
+                skill_request.pop("web_search")
+            skill_request.pop("associations")
             from goodteam_os.skills.worker_requests import create_skill_worker_job
 
             return create_skill_worker_job(self, skill_request)[0]
@@ -1320,9 +1326,11 @@ class WorkerJobStore:
             bound = inspect.signature(type(self).create_job).bind(self, **job_spec)
             bound.apply_defaults()
             values = dict(bound.arguments)
-            if values.pop("web_search") is not None:
+            if values.get("web_search") is None:
+                values.pop("web_search")
+            elif values.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
                 raise ValueError("Protected Skill workers cannot acquire search authority")
-            if values.pop("project_task_id") or values.pop("track_id"):
+            if (values.get("project_task_id") or values.get("track_id")) and values.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
                 raise ValueError("Protected Workers retain their original task association protocol.")
             if values.pop("provider_connection") is not _CAPTURE_PROVIDER_CONNECTION:
                 raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
@@ -1501,6 +1509,12 @@ class WorkerJobStore:
     def run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
         from goodteam_os.skills.worker_requests import is_skill_job_id
 
+        if is_skill_job_id(job_id):
+            job = self._read_json(self.root / job_id / "job.json")
+            if job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
+                from goodteam_os.skills.pi_methods import ordinary_execution_slot
+                with ordinary_execution_slot(self, job_id):
+                    return self._run_job(job_id, sandbox_context=sandbox_context)
         # Protected Skill execution keeps its own admission and exact-source
         # protocol. Ordinary sequential workflow jobs own one shared task slot.
         if not is_skill_job_id(job_id):
@@ -1712,13 +1726,17 @@ class WorkerJobStore:
                 outcome["status"] = "error"
                 outcome["error"] = "memory_handoff_writeback_receipt_unavailable"
 
-    def _run_session_backend(self, job_root: Path, job: dict[str, Any]) -> dict[str, Any]:
+    def _run_session_backend(self, job_root: Path, job: dict[str, Any], *, method_input=None) -> dict[str, Any]:
         """Run a persistent session backend without entering the one-shot CLI loop."""
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
-        reject_unverified_runtime_entry(job_root, job)
+        reject_unverified_runtime_entry(job_root, job, method_input=method_input)
+        if job.get("phase") == "project_running_observation" and (
+                self._launch_authorizer is None or method_input is None or not method_input.manager_tools):
+            raise ValueError("Running observation requires its original atomic Manager prompt authority")
         self._admit_input_dispatch(job_root, job)
-        runtime_context = self._worker_runtime_cwd(job)
+        runtime_context = (method_input.runtime_context() if method_input is not None
+                           else self._worker_runtime_cwd(job))
         config = pi_runtime_config(self.project_root, job)
         preflight = pi_backend_doctor(self.project_root, job)
         result_path = job_root / "result.md"
@@ -1792,6 +1810,10 @@ class WorkerJobStore:
             runtime_cwd=runtime_context.runtime_cwd,
             config=config,
             stderr_path=stderr_path,
+            method_input=method_input,
+            **({"prompt_authorizer": lambda send: self._launch_authorizer(job, send,
+                cleanup=lambda rpc: rpc.close(abort=True))}
+               if job.get("phase") == "project_running_observation" else {}),
         )
         stop_heartbeat = threading.Event()
         heartbeat_thread: threading.Thread | None = None
@@ -1822,9 +1844,12 @@ class WorkerJobStore:
             )
             heartbeat_thread.start()
             if not runtime.already_settled:
-                prompt = self._worker_prompt(job_root, job, model=config.model or "auto")
-                self._input_receipt(job_root, job, prompt, stage="transport_attempt")
-                transport_ref = self._memory_transport(job_root, job, prompt)
+                if method_input is None:
+                    prompt = self._worker_prompt(job_root, job, model=config.model or "auto")
+                    self._input_receipt(job_root, job, prompt, stage="transport_attempt")
+                    transport_ref = self._memory_transport(job_root, job, prompt)
+                else:
+                    prompt = method_input.prompt()
                 if str(job.get("worker_session_ref") or "").strip():
                     runtime.send_resume_prompt(prompt)
                 else:
@@ -1953,6 +1978,8 @@ class WorkerJobStore:
                 states[control_id] = {"state": "processing"}
                 action = str(control.get("action") or "")
                 if action in {"steer", "follow_up"}:
+                    if getattr(runtime, "method_input", None) is not None:
+                        runtime.method_input.prompt()  # Current methods may be revoked; Stop stays available.
                     # Incremental explicit controls are not a second initial
                     # dispatch, but still require the original capture to live.
                     self.admit_task_input(job_root.name, job)
@@ -2423,7 +2450,11 @@ class WorkerJobStore:
         job = self._read_json(path)
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
-        reject_unverified_runtime_entry(job_root, job)
+        method_input = None
+        if job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
+            from goodteam_os.skills.pi_methods import PiMethodInput
+            method_input = PiMethodInput(self, job_id, prepare=False)
+        reject_unverified_runtime_entry(job_root, job, method_input=method_input)
         if str(job.get("adapter")) not in SESSION_BACKENDS:
             raise ValueError(f"Worker job {job_id} is not a persistent-session backend")
         return job_root, job
@@ -3248,7 +3279,15 @@ class WorkerJobStore:
             **_invocation_evidence(job, summary=summary, extra=status_payload),
             **provided_evidence,
         }
-        self._write_json(job_root / "job.json", job)
+        if job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
+            # This request is immutable; Runtime evidence belongs in status only.
+            from goodteam_os.skills.pi_methods import PiMethodInput
+            PiMethodInput(self, job["id"], prepare=False)
+            status_payload.update(method_loading_mode=job["method_loading_mode"],
+                skill_runtime_status="manager_pi_methods" if job["method_loading_mode"] == "manager_pi_methods.v1" else "readonly_pi_methods" if job["method_loading_mode"] == "readonly_pi_methods.v1" else "ordinary_pi_methods", strict_isolation_verified=False,
+                method_input_status="see_original_pi_prompt_receipt")
+        else:
+            self._write_json(job_root / "job.json", job)
         self._write_json(job_root / "status.json", status_payload)
         return status_payload
 
