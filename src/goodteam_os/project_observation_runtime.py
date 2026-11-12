@@ -39,6 +39,8 @@ def judge_with_production_runtime(*, store, root, project_config, project_key, v
     # Acquire BEFORE reserving a Manager call. Busy is not an attempted model call.
     try:
         with manager_resource_slot(Path(root)):
+            reconcile_completed_observations(store=store, root=Path(root),
+                project_key=project_key, value=value, authority_check=authority_check)
             def runner(**kwargs):
                 return _run(store=store, root=Path(root), project_config=Path(project_config),
                     project_key=project_key, authority_check=authority_check, **kwargs)
@@ -48,6 +50,83 @@ def judge_with_production_runtime(*, store, root, project_config, project_key, v
         if exc.code != "manager_resource_busy":
             raise
         return store.read().get("project_continuation") or value
+
+
+def reconcile_completed_observations(*, store, root, project_key, value, authority_check):
+    """Recover a lost Manager response from its original completed local job.
+
+    Called under the existing Manager resource slot. Never run a job, infer a
+    terminal state from heartbeat, refund an allowance or replay a transport.
+    Missing, running, failed and contradictory evidence remains unconfirmed.
+    """
+    from copy import deepcopy
+    import re
+
+    from goodteam_os.memory_storage import read_bytes
+    from goodteam_os.project_observation_judgment import _validate
+    from goodteam_os.workers import WorkerJobStore
+
+    workers = WorkerJobStore(Path(root))
+    original = store.read().get("project_continuation") or {}
+    if original.get("id") != value.get("id"):
+        return original or value
+    for key, record in original.get("running_judgments", {}).items():
+        if record.get("status") not in {"reserved", "unconfirmed"}:
+            continue
+        invocation = record.get("manager_invocation") or {}
+        job_id = invocation.get("job_id")
+        identity = "running-observation:" + sha256((value["id"] + ":" + key).encode()).hexdigest()
+        if (not isinstance(job_id, str) or not re.fullmatch(r"job-[a-f0-9-]{36}", job_id)
+                or invocation.get("idempotency_key") != identity
+                or invocation.get("phase") != "project_running_observation"):
+            continue
+        job_root = workers.root / job_id
+        try:
+            job = json.loads(read_bytes(job_root / "job.json", maximum=256_000) or b"null")
+            terminal = json.loads(read_bytes(job_root / "status.json", maximum=256_000) or b"null")
+            context = read_bytes(job_root / "context.md", maximum=2_000_000)
+            if (not isinstance(job, dict) or not isinstance(terminal, dict)
+                    or job.get("id") != job_id or job.get("idempotency_key") != identity
+                    or job.get("project_key") != project_key or job.get("run_id") != "project-observation:" + project_key
+                    or job.get("role") != "orchestrator" or job.get("phase") != "project_running_observation"
+                    or job.get("execution_policy") != "read_only" or job.get("adapter") not in {"codex", "fake", "noop"}
+                    or job.get("task_skill_context") or job.get("status") != "completed" or terminal.get("status") != "completed"
+                    or terminal.get("job_id") != job_id
+                    or any(terminal.get(field) != job.get(field) for field in
+                           ("run_id", "role", "adapter", "phase", "idempotency_key"))
+                    or terminal.get("skill_error_code") or context is None
+                    or sha256(context).hexdigest() != invocation.get("input_digest")):
+                continue
+            captured = json.loads(context)
+            if captured.get("observation") != record.get("packet"):
+                continue
+            raw = read_bytes(job_root / "result.md", maximum=16_000)
+            if raw is None:
+                continue
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+        try:
+            advice = _validate(json.loads(raw), record["packet"],
+                follow_up_allowed=(original.get("discovery") or {}).get("worker_follow_up_limit", 0) > 0)
+            status = "recorded"
+        except (ValueError, TypeError, KeyError):
+            status, advice = "invalid_response", None
+        def publish(session):
+            current = session.get("project_continuation") or {}
+            target = current.get("running_judgments", {}).get(key)
+            # A normal completion, Stop or replacement can race the file read.
+            if current.get("id") != value["id"] or target != record:
+                return session
+            still_current = (_binding(session, root) == record.get("binding") and authority_check()
+                and (current.get("running_observation") or {}).get("digest") == key
+                and human_observation_current(current, record["packet"]))
+            target.update(status=status if still_current else "stale_result", current_binding=still_current,
+                advice=deepcopy(advice), actions_executed=False, worker_reply_attributed=False,
+                reconciliation={"source": "original_completed_manager_job", "job_id": job_id,
+                    "result_digest": sha256(raw).hexdigest()})
+            return session
+        store._mutate(publish)
+    return store.read().get("project_continuation") or value
 
 
 def _run(*, store, root, project_config, project_key, observation, observation_id,
