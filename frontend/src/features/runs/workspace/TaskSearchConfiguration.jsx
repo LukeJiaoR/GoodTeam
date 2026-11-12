@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getProviders } from '../../settings/providerApi';
 
 /** Saving config does not execute or test a provider. Only the saved revision can run. */
@@ -9,6 +9,9 @@ export default function TaskSearchConfiguration({ item, disabled, onAction, lang
   const [editing, setEditing] = useState(false);
   const [providers, setProviders] = useState([]);
   const [error, setError] = useState('');
+  const [providersReady, setProvidersReady] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const submitting = useRef(false);
   const [enabled, setEnabled] = useState(Boolean(saved));
   const [providerId, setProviderId] = useState(saved?.provider?.id || '');
   const [model, setModel] = useState(saved?.model || '');
@@ -17,12 +20,12 @@ export default function TaskSearchConfiguration({ item, disabled, onAction, lang
   useEffect(() => {
     if (!editing) return;
     const controller = new AbortController();
-    getProviders(controller.signal).then(data => { if (!controller.signal.aborted) setProviders(data.providers || []); })
+    getProviders(controller.signal).then(data => { if (!controller.signal.aborted) { setProviders(data.providers || []); setProvidersReady(true); } })
       .catch(failure => { if (!controller.signal.aborted) setError(failure.message); });
     return () => controller.abort();
   }, [editing]);
   const provider = providers.find(value => value.id === providerId);
-  const valid = !enabled || (provider && model.trim() && model.trim().length <= 200
+  const valid = !enabled || (providersReady && provider && model.trim() && model.trim().length <= 200
     && Number.isInteger(Number(limit)) && Number(limit) >= 1 && Number(limit) <= 20
     && Number.isInteger(Number(timeout)) && Number(timeout) >= 1 && Number(timeout) <= 120);
   const readOnly = item.assignment?.execution_policy === 'read_only';
@@ -35,15 +38,20 @@ export default function TaskSearchConfiguration({ item, disabled, onAction, lang
       : 'Search may incur extra model and search charges. Request limits are not spending caps or limits on provider subcalls. Queries go to the selected provider. Unknown outcomes are not retried. Ordinary Pi Workers only; read-only and Skill isolation remain enforced.'}</small></p>
     {editing ? <form onSubmit={async event => {
       event.preventDefault();
-      if (!valid) return;
-      const result = await onAction?.({ action: 'configure_queued_search', proposal_id: item.id,
-        expected_revision: item.revision, confirmed: true, web_search: enabled ? {
-          provider: { id: provider.id, revision: provider.revision }, model: model.trim(),
-          max_requests: Number(limit), timeout_seconds: Number(timeout),
-        } : null });
-      if (result !== false) { setEditing(false); onEditingChange?.(false); }
+      if (!valid || disabled || submitting.current) return;
+      submitting.current = true;
+      setSaving(true); setError('');
+      try {
+        const result = await onAction?.({ action: 'configure_queued_search', proposal_id: item.id,
+          expected_revision: item.revision, confirmed: true, web_search: enabled ? {
+            provider: { id: provider.id, revision: provider.revision }, model: model.trim(),
+            max_requests: Number(limit), timeout_seconds: Number(timeout),
+          } : null });
+        if (result !== false) { setEditing(false); onEditingChange?.(false); }
+      } catch (failure) { setError(failure.message); }
+      finally { submitting.current = false; setSaving(false); }
     }}>
-      <fieldset disabled={disabled}>
+      <fieldset disabled={disabled || saving}>
         <label><input type="checkbox" checked={enabled} disabled={readOnly} onChange={event => setEnabled(event.target.checked)} />{zh ? '允许本任务搜索' : 'Allow search for this task'}</label>
         {enabled && <>
           <label>{zh ? '供应商' : 'Provider'}<select required value={providerId} onChange={event => setProviderId(event.target.value)}>
@@ -59,7 +67,7 @@ export default function TaskSearchConfiguration({ item, disabled, onAction, lang
         <button type="button" onClick={() => { setEditing(false); onEditingChange?.(false); }}>{zh ? '取消' : 'Cancel'}</button>
       </fieldset>
     </form> : <>
-      <button type="button" disabled={disabled} onClick={() => { setEnabled(Boolean(saved)); setProviderId(saved?.provider?.id || ''); setModel(saved?.model || ''); setLimit(saved?.max_requests || 1); setTimeout(saved?.timeout_seconds || 30); setError(''); setEditing(true); onEditingChange?.(true); }}>{zh ? '配置搜索' : 'Configure search'}</button>
+      <button type="button" disabled={disabled} onClick={() => { setEnabled(Boolean(saved)); setProviderId(saved?.provider?.id || ''); setModel(saved?.model || ''); setLimit(saved?.max_requests || 1); setTimeout(saved?.timeout_seconds || 30); setError(''); setProviders([]); setProvidersReady(false); setEditing(true); onEditingChange?.(true); }}>{zh ? '配置搜索' : 'Configure search'}</button>
       <button type="button" disabled={disabled || !policyKnown} onClick={() => onAction?.({ action: 'start_queued_task_batch',
         proposal_ids: [item.id], expected_revisions: { [item.id]: item.revision }, confirmed: true,
       })}>{zh ? '确认范围、已保存配置与模型费用并执行此任务' : 'Confirm scope, saved configuration and model charges and run this task'}</button>
