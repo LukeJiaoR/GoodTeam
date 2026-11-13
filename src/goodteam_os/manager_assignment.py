@@ -12,6 +12,22 @@ from goodteam_os.tasks import LocalTaskStore, task_evidence_digest
 def queue_assignment(service, *, store, root, message_id, sources, action):
     if "worker_id" in action:
         raise ValueError("Manager assignments select a Role; execution handles are returned after job creation.")
+    from goodteam_os.project_iteration import normalize_write_domains
+
+    # Use the same canonical scope for card creation, retry comparison and
+    # queue publication. Otherwise valid `src/` becomes `src` in the card and
+    # fails the comparison below after the card has already been persisted.
+    domains = action.get("write_domains")
+    policy = action.get("execution_policy")
+    if policy == "read_only" and domains == []:
+        normalized = []
+    elif policy == "workspace_write":
+        normalized = normalize_write_domains(domains)
+    else:
+        normalized = None
+    if normalized is None:
+        raise ValueError("The assignment requires valid write domains for its execution policy.")
+    action = {**action, "write_domains": normalized}
     # Intake only saves unconfirmed future work. Active Goal/Workflow/resource
     # exclusion belongs to the existing execution admission, not this queue.
     team = service.team_view(store.project_key) or {}

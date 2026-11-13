@@ -4,11 +4,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from goodteam_os.memory_storage import role_lock
+from goodteam_os.skills.models import SkillError
 from goodteam_os.workers import CLI_BACKENDS, WorkerJobStore
 
 from .candidate_probe import probe_candidate
 from .candidate_validation import _bound, _read, _write
-from .correction_input import CorrectionAttemptInput
+from .correction_input import CORRECTION_JOB, CorrectionAttemptInput
 from .correction_loop import CorrectionLoopService
 from .correction_store import CorrectionAttemptStore
 from .correction_workspace import CorrectionWorktreeGit, worktree_identity
@@ -169,8 +170,9 @@ class CorrectionWorkerService:
         return self.evidence(execution_id, job_id)
 
     def evidence(self, execution_id, job_id):
-        from .correction_input import correction_runtime_capability
-        authority = CorrectionAttemptStore(self.project_root, job_id)
+        if CORRECTION_JOB.fullmatch(str(job_id)) is None:
+            raise TaskInputError("correction_job_mismatch")
+        authority = self.workers._input_store(job_id=job_id)
         with authority.lock():
             value = authority.load()
             if value.execution_id != execution_id:
@@ -178,9 +180,19 @@ class CorrectionWorkerService:
             started, result = authority.outcome(value)
             native = authority.native_binding(value)
             sealed = authority.sealed_candidate(value) if native and _read(authority.root / "seal-result.json") else None
+            # Report the same exact-attempt authority used by run(), not the
+            # default adapter policy. Expiry/revocation must not hide retained
+            # outcome evidence or imply permission for another invocation.
+            try:
+                runtime_admission = authority.runtime_capability(value)
+            except (TaskInputError, SkillError) as exc:
+                runtime_admission = {"available": False, "status": "blocked", "reason": exc.code}
+            except OSError:
+                runtime_admission = {"available": False, "status": "blocked",
+                                     "reason": "correction_native_authority_unavailable"}
             return {"job_id": job_id, "input": value.reference, "workspace": value.workspace_relative,
                     "status": result["status"] if result else "outcome_unknown" if started else "prepared",
                     "max_invocations": 1, "max_seconds": value.to_dict()["max_seconds"],
                     "provider_receipt": "unknown", "acceptance_status": "unknown", "verification": "unverified",
-                    "runtime_admission": correction_runtime_capability(value.original.to_dict()["adapter"]),
+                    "runtime_admission": runtime_admission,
                     **({"native_runtime": native, "candidate": sealed} if native else {})}

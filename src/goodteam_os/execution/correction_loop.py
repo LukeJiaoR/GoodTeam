@@ -200,7 +200,7 @@ class CorrectionLoopService:
             if "worker_job_id" in entry:
                 authority, value = self._worker_input(snapshot, entry)
                 if (value.to_dict()["loop_id"] != state["loop_id"]
-                        or value.to_dict()["review"] != history[-1][3]
+                        or not value.matches_review(history[-1][3])
                         or value.to_dict()["candidate"] != history[-1][2]["candidate"]):
                     raise TaskInputError("correction_identity_mismatch")
                 checked = _read(authority.root / "check-binding.json")
@@ -254,7 +254,7 @@ class CorrectionLoopService:
         history = self._history(snapshot, state)
         if entry["operation_key"] in {digest(record[0]["request"]["operation_id"].encode()) for record in history}:
             raise TaskInputError("correction_operation_conflict")
-        if value.to_dict()["review"] != history[-1][3] or value.to_dict()["candidate"] != history[-1][2]["candidate"]:
+        if not value.matches_review(history[-1][3]) or value.to_dict()["candidate"] != history[-1][2]["candidate"]:
             raise TaskInputError("correction_feedback_mismatch")
         phase, reason = self._phase(snapshot, state, history)
         if phase != "awaiting_fix" or entry["ordinal"] != len(state["rounds"]) + 1:

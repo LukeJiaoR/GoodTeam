@@ -28,13 +28,14 @@ def render_correction_input(project_root, value, *, host_seals=False):
             raise TaskInputError("correction_feedback_mismatch")
         matches = [row for row in loop._history(snapshot, state) if row[2] is not None
                    and row[2]["receipt_id"] == captured["review"].get("validation_receipt_id")]
-        if (len(matches) != 1 or matches[0][3] != captured["review"]
+        if (len(matches) != 1 or not value.matches_review(matches[0][3])
                 or matches[0][2]["candidate"] != captured["candidate"]):
             raise TaskInputError("correction_feedback_mismatch")
         _plan, _started, result, review = matches[0]
         feedback = {"validation_receipt_id": result["receipt_id"],
                     "review_receipt_id": review["receipt_id"], "candidate": result["candidate"],
-                    "host_check_observation": result["observation"]}
+                    "host_check_observation": result["observation"],
+                    "review_receipt": review}
         if review.get("schema_version") == "candidate_machine_review.v1":
             # _history already verifies the full machine receipt against its
             # frozen request and report. Bind this second read to that exact
