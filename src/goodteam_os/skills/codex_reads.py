@@ -11,10 +11,16 @@ from __future__ import annotations
 import re
 import shlex
 
-from .codex_contract import ADAPTER_VERSION, CODEX_BINARY_DIGEST, CODEX_VERSION
+from .codex_contract import ADAPTER_VERSION
 from .content import _bytes
 from .models import SkillError, content_digest, identifier, resource_path
 from .review_capture import CapturedCommand
+
+# The original decoder was scoped to this exact binary. Retain its historical
+# receipts; no other binary inherits resource-read evidence or live conformance.
+_LEGACY_WITNESS_IDENTITY = (
+    "0.155.1", "sha256:298d3d73d0bbc1367e58a370df5b6216fe30ce0a92e8b6b0afb0377a958dc335",
+)
 
 
 def _path(command):
@@ -38,7 +44,7 @@ def _path(command):
 def resource_witnesses(capture, record, packages):
     session = record["runtime_session"]
     if (session["adapter"] != "codex" or session["adapter_version"] != ADAPTER_VERSION
-            or session["binary_version"] != CODEX_VERSION or session["binary_digest"] != CODEX_BINARY_DIGEST):
+            or (session["binary_version"], session["binary_digest"]) != _LEGACY_WITNESS_IDENTITY):
         # Other versions/adapters do not inherit a parser's capabilities.
         return []
     methods = {item["skill_id"]: item for item in record["methods"]}
@@ -75,7 +81,7 @@ def validate_witnesses(witnesses, *, capture, record, packages):
         raise SkillError("review_result_corrupt", "Invalid native resource observation list.")
     session = record["runtime_session"]
     if witnesses and (session["adapter"] != "codex" or session["adapter_version"] != ADAPTER_VERSION
-                      or session["binary_version"] != CODEX_VERSION or session["binary_digest"] != CODEX_BINARY_DIGEST):
+                      or (session["binary_version"], session["binary_digest"]) != _LEGACY_WITNESS_IDENTITY):
         raise SkillError("review_result_corrupt", "Another Runtime cannot borrow pinned Codex resource witnesses.")
     methods = {item["skill_id"]: item for item in record["methods"]}
     ids = set()

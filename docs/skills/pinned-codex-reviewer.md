@@ -25,9 +25,11 @@ changes approval, merge, deployment or memory-writeback state. It uses generic
 
 ## What is implemented
 
-- Fixed **Codex 0.155.1 / Linux ARM64**, binary SHA-256
-  `298d3d73d0bbc1367e58a370df5b6216fe30ce0a92e8b6b0afb0377a958dc335`.
-  The command uses the pinned version's strict config, fresh ephemeral session,
+- Linux ARM64 Codex identity is supplied by the independent server-side
+  admission. The exact observed version and binary SHA-256 are bound to the
+  session and checked by the container guard before execution. This does not
+  make an unverified binary or a saved configuration an admission authority.
+  The command uses strict config, a fresh ephemeral session,
   JSONL, ignored user config/rules and explicit model. Required content and
   original task/source data remain complete; oversized input fails, not trims.
 - Explicit config disables bundled instructions, plugins/hooks, additional
@@ -69,8 +71,10 @@ changes approval, merge, deployment or memory-writeback state. It uses generic
   silently change image, guard, network/provider policy or model. This is a
   runtime pin at first admission, not a claim those fields existed in older
   task-start records. Existing saved results recover without reacquiring a
-  provider route or launching another process. Interrupted native containers
-  are not automatically reattached; uncertain state remains blocked.
+  provider route or launching another process. Changing the guard or the
+  selected binary changes the task binding; an existing binding cannot silently
+  continue with a different contract. Interrupted native containers are not
+  automatically reattached; uncertain state remains blocked.
 
 ## Preparation failure and recovery
 
@@ -98,7 +102,11 @@ with stable item IDs and commands. Only a successful exact
 bash/sh `-c` wrapper) with complete output equal to the locked package resource
 is recognized. Prose/JSON inside an agent message is not an event. Aliases,
 shell expressions/substitutions, relative paths, multiple files, login shells,
-unknown versions and truncated/normalized output remain unobserved.
+unknown binaries and truncated/normalized output remain unobserved. The
+historical decoder remains tied to the exact binary and source schema for which
+it was designed; this does not prove live model conformance. Another admitted
+binary cannot produce resource-read witnesses without independently established
+event-protocol evidence.
 
 Receipts bind item IDs, both event hashes, transcript hash, context/session,
 Skill/version/package/resource digests and byte count. They contain **no method
@@ -243,10 +251,12 @@ still uses the private empty Docker configuration and the existing container
 inspection, ownership and confirmed-removal checks.
 
 `scripts/codex-review/Dockerfile` builds the selected Linux ARM64 filesystem with
-the verified 0.155.1 runtime included in the image. Supply a clean build context
-containing only the verified package's `runtime/` tree, including its executable
-`codex-resources/bwrap`; build with `--platform=linux/arm64 --network=none
---pull=false`. The final stage clears inherited image environment metadata and
+an independently verified runtime included in the image. Supply a clean build
+context containing only the verified package's `runtime/` tree, including its
+executable `codex-resources/bwrap`; build with `--platform=linux/arm64
+--network=none --pull=false --build-arg CODEX_BINARY_SHA256=<verified-sha256>`.
+The build argument is a byte-identity check, not runtime admission. The final
+stage clears inherited image environment metadata and
 entrypoints. An ordinary Node image's `NODE_VERSION` and `YARN_VERSION` are
 rejected by the existing image policy. Preserve executable resource modes:
 removing bwrap's executable bit prevents the native sandbox from starting.

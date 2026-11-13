@@ -9,11 +9,12 @@ import hashlib
 import os
 from pathlib import Path
 import platform
+import re
 import stat
+import subprocess
 import sys
 
 BINARY = "/runtime/bin/codex"
-BINARY_SHA256 = "298d3d73d0bbc1367e58a370df5b6216fe30ce0a92e8b6b0afb0377a958dc335"
 # Exact version's system/config + repo/ancestor/user roots. All must be absent
 # before CLI startup; bundled skills are separately disabled in strict config.
 # SKILL.md underneath sources/{base,head}/ is deliberately NOT removed.
@@ -25,7 +26,11 @@ FORBIDDEN_ROOTS = (
 )
 
 
-def verify():
+def verify(expected_digest, expected_version):
+    if (re.fullmatch(r"sha256:[0-9a-f]{64}", expected_digest) is None
+            or len(expected_version) > 128
+            or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?", expected_version) is None):
+        raise ValueError("invalid admitted native identity")
     if platform.system() != "Linux" or platform.machine() != "aarch64" or os.getuid() != 65534 or os.getgid() != 65534:
         raise ValueError("native platform or uid mismatch")
     if os.getcwd() != "/review":
@@ -44,20 +49,24 @@ def verify():
             raise ValueError("unsafe native executable")
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
-    if digest.hexdigest() != BINARY_SHA256:
+    if "sha256:" + digest.hexdigest() != expected_digest:
         raise ValueError("native executable digest mismatch")
     if os.environ != {"PATH": "/runtime/bin:/usr/bin:/bin", "HOME": "/home/worker", "CODEX_HOME": "/codex-state",
                       "TMPDIR": "/tmp", "LANG": "C.UTF-8"}:
         raise ValueError("unexpected native environment")
+    version = subprocess.run([BINARY, "--version"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, timeout=10, check=False)
+    if version.returncode or version.stdout.strip() != ("codex-cli " + expected_version).encode("ascii"):
+        raise ValueError("native executable version mismatch")
 
 
 def main():
     try:
-        verify()
-        if len(sys.argv) < 3 or sys.argv[1:3] != [BINARY, "exec"]:
+        if len(sys.argv) < 5 or sys.argv[3:5] != [BINARY, "exec"]:
             raise ValueError("unexpected native command")
-        os.execve(BINARY, sys.argv[1:], dict(os.environ))
-    except (OSError, ValueError):
+        verify(sys.argv[1], sys.argv[2])
+        os.execve(BINARY, sys.argv[3:], dict(os.environ))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         # Never dump config, raw daemon details, paths or provider responses.
         sys.stderr.write("goodteam: pinned Codex pre-exec guard failed\n")
         return 78
