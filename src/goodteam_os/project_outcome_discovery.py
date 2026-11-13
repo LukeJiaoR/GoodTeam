@@ -274,23 +274,6 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         packet["undelivered_source"] = undelivered
     if backlog_source is not None:
         packet["backlog_judgment_source"] = backlog_source
-    if project_config is not None:
-        from goodteam_os.models import _parse_simple_yaml
-        from goodteam_os.project_worker_environment import inspect_environment
-
-        environment_ref = _parse_simple_yaml(Path(project_config)).get("worker_environment_ref")
-        if environment_ref:
-            try:
-                environment = inspect_environment(project_root=root, ref=environment_ref, source_root=root)
-            except (OSError, ValueError):
-                packet["worker_environment"] = {"status": "unavailable", "environment_ref": environment_ref,
-                    "note": "The configured environment needs local inspection; do not assume dependencies are available."}
-            else:
-                packet["worker_environment"] = {"status": "available_for_matching_inputs",
-                    "environment_ref": environment_ref, "artifact_paths": environment["artifacts"],
-                    "preparation_command_verified": False,
-                    "note": "Each isolated Worker receives a separate copy when its candidate inputs match. "
-                            "Existing task and sandbox permissions remain in force."}
     if value["discovery"].get("allow_backlog_judgment") is True:
         # Delivery proves only its own tasks. Keep current authorized facts as
         # a separate input, without relabeling them as accepted execution.
@@ -754,6 +737,26 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         if all(item in value.get("discovery_consumed", []) for item in inputs):
             _current(store.read(), value)
             return value  # No new feedback, including when a question is still open.
+        # Full template inspection is for a new Manager input, not the idle
+        # service scan. Rehashing every dependency on every scan monopolizes
+        # the project's Manager slot even when no new decision is possible.
+        from goodteam_os.models import _parse_simple_yaml
+        from goodteam_os.project_worker_environment import inspect_environment
+
+        environment_ref = _parse_simple_yaml(Path(project_config)).get("worker_environment_ref")
+        if environment_ref:
+            try:
+                environment = inspect_environment(project_root=root, ref=environment_ref, source_root=root)
+            except (OSError, ValueError):
+                packet["worker_environment"] = {"status": "unavailable", "environment_ref": environment_ref,
+                    "note": "The configured environment needs local inspection; do not assume dependencies are available."}
+            else:
+                packet["worker_environment"] = {"status": "available_for_matching_inputs",
+                    "environment_ref": environment_ref, "artifact_paths": environment["artifacts"],
+                    "preparation_command_verified": False,
+                    "note": "Each isolated Worker receives a separate copy when its candidate inputs match. "
+                            "Existing task and sandbox permissions remain in force."}
+            packet["packet_digest"] = _digest({key: item for key, item in packet.items() if key != "packet_digest"})
         if outcome is not None:
             _remember(root, outcome)
         if value["manager_calls"] >= value["max_manager_calls"]:
