@@ -411,8 +411,8 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
         if not work or work["status"] != "dispatching":
             store.sync_tasks(goal_id, tasks)
             return goal
-        # The project Goal lock spans claim and dispatch. Stop/Gate actions use
-        # the same lock, so authority cannot be silently revoked between them.
+        # The Goal lock spans claim and dispatch. A Stop may bypass it only
+        # after the exact claimed workflow has a durable checkpoint.
         store.sync_tasks(goal_id, tasks)
         try:
             (starter or start_workflow)(workspace=workspace, idea=work["task"], project_key=key,

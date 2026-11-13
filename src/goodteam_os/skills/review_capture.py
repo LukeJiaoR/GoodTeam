@@ -104,7 +104,7 @@ def capture_final_turn(stdout: bytes, *, returncode: int, forbid_tools: bool = F
             if not isinstance(item, dict) or not isinstance(item.get("type"), str):
                 raise SkillError("review_capture_json", "The Reviewer emitted an invalid item.")
             if not started:
-                # Native 0.160.0 emits non-fatal configuration warnings after
+                # Native Codex can emit non-fatal configuration warnings after
                 # thread.started but before turn.started. They are diagnostics,
                 # not model output or command/resource-read evidence. Keep them
                 # in the transcript digest/count without relaxing turn ordering.
