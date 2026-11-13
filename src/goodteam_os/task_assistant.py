@@ -890,6 +890,9 @@ def _batch_review_context(root, evidence, review):
     report = detail["report"]
     findings = report["findings"]
     unfinished = [check for check in report["checks"] if check["status"] != "checked"]
+    citations = {item["id"]: {key: item[key] for key in
+                 ("id", "path", "line_start", "line_end", "source_digest")}
+                 for item in report["evidence"]}
 
     def excerpt(value, limit):
         return {"text": value[:limit], "truncated": len(value) > limit}
@@ -899,13 +902,13 @@ def _batch_review_context(root, evidence, review):
             "findings": [{"id": item["id"], "severity": item["severity"],
                           "title": excerpt(item["title"], 256), "detail": excerpt(item["detail"], 512),
                           "recommendation": excerpt(item["recommendation"], 512),
-                          "evidence_ids": item["evidence_ids"][:3],
+                          "evidence": [citations[key] for key in item["evidence_ids"][:3]],
                           "omitted_evidence_count": max(0, len(item["evidence_ids"]) - 3)}
                          for item in findings[:3]],
             "omitted_finding_count": max(0, len(findings) - 3),
             "unfinished_checks": [{"name": excerpt(item["name"], 256), "status": item["status"],
                                    "detail": excerpt(item["detail"], 512),
-                                   "evidence_ids": item["evidence_ids"][:3],
+                                   "evidence": [citations[key] for key in item["evidence_ids"][:3]],
                                    "omitted_evidence_count": max(0, len(item["evidence_ids"]) - 3)}
                                   for item in unfinished[:3]],
             "omitted_unfinished_check_count": max(0, len(unfinished) - 3)}
