@@ -850,8 +850,14 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         current = _current(session, value)
         _revalidate(workspace, project_key, root, project_config, current, pending)
         ledger = LocalTaskStore(root, project_key)
-        created_tasks = ([ledger.create_task_once(creation_ref=refs[0], intent=intents[0])] if len(intents) == 1
-                         else ledger.create_tasks_once(items=list(zip(refs, intents))))
+        # Only the original frozen Team-capability packet can extend the
+        # legacy fixed-role publication path; public task input cannot do so.
+        authorized_roles = (frozenset(role["role"] for role in pending["packet"]["role_capabilities"]
+                                      if role.get("dispatchable") is True)
+                            if current["discovery"].get("allow_team_roles") is True else None)
+        created_tasks = ([ledger.create_task_once(creation_ref=refs[0], intent=intents[0],
+                                                  authorized_roles=authorized_roles)] if len(intents) == 1
+                         else ledger.create_tasks_once(items=list(zip(refs, intents)), authorized_roles=authorized_roles))
         identifiers = []
         for created in created_tasks:
             identifiers.append(created["id"])

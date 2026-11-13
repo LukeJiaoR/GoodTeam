@@ -226,17 +226,18 @@ class LocalTaskStore:
         raise ValueError(f"Unknown task id: {task_id}")
 
     @_locked
-    def create_task_once(self, *, creation_ref: str, intent: dict[str, Any]) -> dict[str, Any]:
+    def create_task_once(self, *, creation_ref: str, intent: dict[str, Any], authorized_roles=None) -> dict[str, Any]:
         """Publish one confirmed discovery intent; replay never resets progress."""
         ledger = self._read()
         count = len(ledger["tasks"])
-        task = self._prepare_discovery_task(ledger, creation_ref=creation_ref, intent=intent)
+        task = self._prepare_discovery_task(ledger, creation_ref=creation_ref, intent=intent,
+                                            authorized_roles=authorized_roles)
         if len(ledger["tasks"]) != count:
             self._write(ledger)
         return task
 
     @_locked
-    def create_tasks_once(self, *, items: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+    def create_tasks_once(self, *, items: list[tuple[str, dict[str, Any]]], authorized_roles=None) -> list[dict[str, Any]]:
         """Validate an entire discovery set under the existing ledger lock.
 
         Preparing all rows before the original atomic write prevents an invalid
@@ -247,15 +248,25 @@ class LocalTaskStore:
             raise ValueError("A discovery set requires distinct creation identities.")
         ledger = self._read()
         count = len(ledger["tasks"])
-        tasks = [self._prepare_discovery_task(ledger, creation_ref=ref, intent=intent) for ref, intent in items]
+        tasks = [self._prepare_discovery_task(ledger, creation_ref=ref, intent=intent,
+                                               authorized_roles=authorized_roles) for ref, intent in items]
         if len(ledger["tasks"]) != count:
             self._write(ledger)
         return tasks
 
-    def _prepare_discovery_task(self, ledger, *, creation_ref, intent):
+    def _prepare_discovery_task(self, ledger, *, creation_ref, intent, authorized_roles=None):
         required = {"title", "description", "role", "priority", "dependencies", "acceptance_criteria",
                     "write_domains", "execution_policy", "external_refs", "artifact_refs"}
         from goodteam_os.project_iteration import normalize_write_domains
+        from goodteam_os.team_control_plane import MANAGER_ROLE, ROLE_KEYS
+
+        team_role = (isinstance(authorized_roles, frozenset) and isinstance(intent, dict)
+                     and intent.get("role") in authorized_roles and intent.get("role") in ROLE_KEYS
+                     and intent.get("role") != MANAGER_ROLE and "worker_id" not in intent
+                     and (intent.get("execution_policy") == "read_only" and intent.get("write_domains") == []
+                          or intent.get("execution_policy") == "workspace_write"
+                          and normalize_write_domains(intent.get("write_domains")) is not None
+                          and normalize_write_domains(intent.get("write_domains")) == intent.get("write_domains")))
 
         if (not isinstance(creation_ref, str) or not creation_ref.startswith("project-discovery:")
                 or len(creation_ref) > 256 or not isinstance(intent, dict) or not required.issubset(intent)
@@ -263,7 +274,7 @@ class LocalTaskStore:
                 or "worker_id" in intent and (not isinstance(intent["worker_id"], str) or not intent["worker_id"].strip()
                     or intent["worker_id"] != intent["worker_id"].strip() or len(intent["worker_id"]) > 256)
                 or intent["priority"] != "medium"
-                or not (intent["role"] in {"research", "planner"} and intent["execution_policy"] == "read_only"
+                or not (team_role or intent["role"] in {"research", "planner"} and intent["execution_policy"] == "read_only"
                         and intent["write_domains"] == []
                         or intent["role"] == "implementation" and intent["execution_policy"] == "workspace_write"
                         and normalize_write_domains(intent["write_domains"]) is not None
