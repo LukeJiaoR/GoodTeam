@@ -45,6 +45,8 @@ def record_runtime(store, snapshot, status):
 
 def safe_failure(error):
     # Only return fixed diagnostics; provider logs may contain credentials or prompts.
+    if getattr(error, "code", None) == "manager_resource_busy":
+        return {"code": "manager_resource_busy", "message": "The Manager is processing another request. Retry this saved message when it is available."}
     raw = str(error).lower()
     categories = (
         ("model_unavailable", ("model is not supported", "unsupported model", "model_not_found", "model not found", "does not exist")),

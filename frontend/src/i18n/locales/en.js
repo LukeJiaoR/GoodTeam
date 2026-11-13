@@ -529,6 +529,7 @@ export const en = {
   'assistant.error.timed_out': "The model call timed out. Check the connection, then retry.",
   'assistant.error.invalid_response': "The model returned an invalid response. Retry or update the runtime.",
   'assistant.error.execution_failed': "Execution failed. Check the runtime configuration and connection before retrying.",
+  'assistant.error.manager_resource_busy': "The Manager is processing another request. This message is saved; retry it shortly.",
   'assistant.error.interrupted': "The result is uncertain. Inspect the timeline, task proposal and Team state before sending a new request. Automatic retry is disabled.",
   'assistant.command.disable_role': "Disable role",
   'assistant.command.enable_role': "Enable role",

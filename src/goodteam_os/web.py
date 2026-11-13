@@ -6426,6 +6426,8 @@ def handle_project_api_post(
                 attachments=request.get("attachments", []),
             )
         except ManagerExecutionError as exc:
+            if exc.code == "manager_resource_busy":
+                raise ProjectApiError("manager_resource_busy", str(exc), 409, recovery=["retry_request"]) from exc
             raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
         except ValueError as exc:
             raise ProjectApiError("invalid_request", str(exc), 409) from exc
@@ -6621,6 +6623,8 @@ def handle_project_api_post(
                     expected_attempt=request.get("expected_attempt"),
                 )
             except ManagerExecutionError as exc:
+                if exc.code == "manager_resource_busy":
+                    raise ProjectApiError("manager_resource_busy", str(exc), 409, recovery=["retry_request"]) from exc
                 raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
             except ValueError as exc:
                 raise ProjectApiError("invalid_request", str(exc), 409) from exc
