@@ -667,10 +667,36 @@ def _retain_changed_discovery(store, root, project_key, config, value, pending, 
         return current
 
 
+def _discovery_packet(*, workspace, project_key, root, project_config, value):
+    """Read the current feedback before reserving the shared Manager runtime."""
+    backlog_source = None
+    try:
+        outcome = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value)
+    except NoVerifiedDelivery:
+        if (value["discovery"].get("allow_backlog_judgment") is True
+                and not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor")):
+            backlog_source = _backlog_source(root, project_key, value)
+        elif value["discovery"].get("allow_undelivered_feedback") is not True:
+            if not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor"):
+                raise
+            _undelivered_source(workspace=workspace, project_key=project_key, root=root, value=value)
+        outcome = None
+    return outcome, _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config),
+                            backlog_source=backlog_source)
+
+
 def discover_next_iteration(*, workspace, project_key, root, project_config, value, manager_runner=None):
     from goodteam_os.manager_execution import manager_resource_slot
 
     try:
+        if value.get("discovery_pending") is None:
+            _, packet = _discovery_packet(workspace=workspace, project_key=project_key, root=root,
+                                          project_config=project_config, value=value)
+            if all(item in value.get("discovery_consumed", []) for item in _input_receipts(packet)):
+                _current(TaskAssistantSessionStore(workspace, project_key).read(), value)
+                return value
+        # The slot protects a new/reserved Manager decision, not an idle scan.
+        # Rebuild and revalidate inside the slot before reserving or invoking.
         with manager_resource_slot(Path(root)) as resource_slot:
             return _discover_next_iteration(workspace=workspace, project_key=project_key, root=root,
                 project_config=project_config, value=value, manager_runner=manager_runner, resource_slot=resource_slot)
@@ -717,22 +743,8 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
 
     pending = value.get("discovery_pending")
     if pending is None:
-        backlog_source = None
-        try:
-            outcome = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value)
-        except NoVerifiedDelivery:
-            if (value["discovery"].get("allow_backlog_judgment") is True
-                    and not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor")):
-                backlog_source = _backlog_source(root, project_key, value)
-            elif value["discovery"].get("allow_undelivered_feedback") is not True:
-                if not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor"):
-                    raise
-                # Revalidate the original batch before using the existing
-                # investigation permission; a marker alone is not evidence.
-                _undelivered_source(workspace=workspace, project_key=project_key, root=root, value=value)
-            outcome = None
-        packet = _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config),
-                         backlog_source=backlog_source)
+        outcome, packet = _discovery_packet(workspace=workspace, project_key=project_key, root=root,
+                                            project_config=project_config, value=value)
         inputs = _input_receipts(packet)
         if all(item in value.get("discovery_consumed", []) for item in inputs):
             _current(store.read(), value)

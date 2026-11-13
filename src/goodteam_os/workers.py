@@ -2629,13 +2629,10 @@ class WorkerJobStore:
                 prompt_index = command.index("-")
                 command[prompt_index:prompt_index] = ["--sandbox", sandbox_mode, "-c", 'approval_policy="never"']
         if isinstance(job.get("sandbox_context"), dict) and job["sandbox_context"].get("worker_environment"):
-            policy = _runtime_policy_evidence(command)
-            if (adapter != "codex" or policy["runtime_unsafe_mode"]
-                    or policy["runtime_sandbox_mode"] not in {"read-only", "workspace-write"}):
-                raise ValueError("The selected Worker runtime has no verified sandbox for a shared project environment.")
-            if policy["runtime_sandbox_mode"] == "workspace-write":
-                prompt_index = command.index("-")
-                command[prompt_index:prompt_index] = ["-c", "sandbox_workspace_write.writable_roots=[]"]
+            # workspace-write restricts writes but still permits reads elsewhere
+            # on the host. Do not claim project read isolation until an owned,
+            # independently verified runtime boundary is available.
+            raise ValueError("Shared Worker environments require a verified project read boundary; this runtime is unavailable.")
         runtime_evidence = {
             **({"provider_connection": {key: connection[key] for key in
                 ("id", "revision", "name", "protocol", "base_url")}} if connection else {}),

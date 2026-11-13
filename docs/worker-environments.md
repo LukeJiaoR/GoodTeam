@@ -56,17 +56,14 @@ Worker changing a dependency or a declared input stops the next launch. A
 missing or changed environment fails closed. Receipts record the selected
 environment and do not claim its contents stayed unchanged after execution.
 
-The prepared-environment path currently admits ordinary Codex Workers with
-`read-only` or `workspace-write` sandbox mode. Set
-`GOODTEAM_CODEX_SANDBOX_MODE=workspace-write` in the GoodTeam service environment
-for writable Workers; read-only Workers retain their existing policy. Other
-runtimes, including Pi method Workers, are not admitted to this path until their
-sandbox behavior is verified. Existing protected candidate-check and review
-paths are separate and do not automatically acquire this environment.
+Worker launch with a prepared environment is currently blocked: the ordinary
+local Codex sandbox can read other host paths, so it does not provide the
+required project read boundary. Pi method Workers are also blocked. Existing
+protected candidate-check and review paths remain separate and do not
+automatically acquire this environment. A future runtime must prove its own
+read and write boundaries before this launch guard can be removed.
 
 The isolated Git workspace and independent dependency copies prevent accidental
-cross-Worker writes through those copies. They do not create an operating-system
-read boundary: Workers on the same machine may be able to read other paths.
-Actual access restrictions depend on the selected runtime sandbox and host.
-GoodTeam does not automatically install missing dependencies or change
-permissions to make an environment pass.
+cross-Worker writes through those copies; they do not create an operating-system
+read boundary. GoodTeam does not automatically install missing dependencies or
+change permissions to make an environment pass.
