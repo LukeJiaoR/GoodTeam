@@ -381,6 +381,8 @@ export const en = {
   'work.current.draftPending': "Review the exact task before explicitly starting it.",
   'work.current.requestRecovery': "An assistant request failed or was interrupted. Inspect the saved attempt.",
   'work.current.start': "Tell the team what to work on. No task has started.",
+  'work.current.stopped': "Future iterations were stopped. Check execution records for Workers already started.",
+  'work.current.status.stopped': "Future iterations stopped",
   'work.current.ended': "Execution ended. Inspect the result and its actual verification before accepting it.",
   'work.current.intent.stale': "The change target is out of date. Inspect the current review before starting a new discussion.",
   'work.current.intent.ambiguous': "The change outcome is uncertain. Inspect recovery; do not submit it again blindly.",

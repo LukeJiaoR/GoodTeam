@@ -381,6 +381,8 @@ export const zhCN = {
   'work.current.draftPending': "请核对准确任务内容，再明确开始。",
   'work.current.requestRecovery': "助手请求失败或中断，请查看已保存的尝试。",
   'work.current.start': "告诉团队要做什么；尚未启动任务。",
+  'work.current.stopped': "后续迭代已停止。已启动的 Worker 状态以执行记录为准。",
+  'work.current.status.stopped': "后续迭代已停止",
   'work.current.ended': "执行已结束。请检查产物及实际验证，再决定是否验收。",
   'work.current.intent.stale': "修改目标已过期，请核对当前评审后再开始新的讨论。",
   'work.current.intent.ambiguous': "修改结果尚不确定，请查看恢复信息，不要盲目重复提交。",
