@@ -261,6 +261,7 @@ class LocalTaskStore:
         from goodteam_os.team_control_plane import MANAGER_ROLE, ROLE_KEYS
 
         team_role = (isinstance(authorized_roles, frozenset) and isinstance(intent, dict)
+                     and isinstance(intent.get("role"), str)
                      and intent.get("role") in authorized_roles and intent.get("role") in ROLE_KEYS
                      and intent.get("role") != MANAGER_ROLE and "worker_id" not in intent
                      and (intent.get("execution_policy") == "read_only" and intent.get("write_domains") == []
