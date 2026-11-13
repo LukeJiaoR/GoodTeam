@@ -70,19 +70,17 @@ def _binding(workspace, *, project_key: str, run_id: str) -> dict:
         "workspace_root_identity": metadata["jobs"][SLOT]["root_identity"],
         "workspace_git_identity": metadata["jobs"][SLOT]["git_identity"],
         "workspace_path": str(workspace.workspace(SLOT)),
-        **({"worker_environment": metadata["jobs"][SLOT]["worker_environment"]}
-           if metadata["jobs"][SLOT].get("worker_environment") else {}),
+        **({"worker_setup": metadata["worker_setup"]} if metadata.get("worker_setup") else {}),
     }
 
 
 @_workspace_errors
 def prepare_workflow_workspace(source_root: Path, *, project_key: str, run_id: str,
-                               worker_environment_ref: str | None = None) -> dict:
+                               worker_setup: dict | None = None) -> dict:
     """Capture at an authorized new-task start, before its first live Worker."""
     source, execution_id = _scope(source_root, project_key, run_id)
     with dispatch_workspace_lock(source, execution_id):
-        workspace = prepare_dispatch_workspace(source, execution_id, [SLOT],
-            **({"worker_environment_ref": worker_environment_ref} if worker_environment_ref else {}))
+        workspace = prepare_dispatch_workspace(source, execution_id, [SLOT], worker_setup=worker_setup)
         return _binding(workspace, project_key=project_key, run_id=run_id)
 
 
@@ -120,8 +118,7 @@ def context_for_job(source_root: Path, binding: object, *, project_key: str, run
         "workflow_run_id": run_id, "project_key": project_key, "job_id": job_id,
         "source_root": workspace.metadata["project_root"],
         "baseline_commit": workspace.metadata["baseline_commit"],
-        **({"worker_environment": workspace.metadata["jobs"][SLOT]["worker_environment"]}
-           if workspace.metadata["jobs"][SLOT].get("worker_environment") else {}),
+        **({"worker_setup": workspace.metadata["worker_setup"]} if workspace.metadata.get("worker_setup") else {}),
     }
 
 

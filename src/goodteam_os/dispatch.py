@@ -137,7 +137,7 @@ def dispatch_tracks(
     require_isolation: bool = False,
     recovery_source: dict | None = None,
     candidate_source: dict | None = None,
-    worker_environment_ref: str | None = None,
+    worker_setup: dict | None = None,
     capacity_check_start=None,
 ) -> dict[str, object]:
     # Exact-source reviews own a separate immutable source protocol. Ordinary
@@ -148,7 +148,7 @@ def dispatch_tracks(
                      logical_task_id=logical_task_id or str(uuid4()),
                      codex_review_admission=codex_review_admission, require_isolation=require_isolation,
                      recovery_source=recovery_source, candidate_source=candidate_source,
-                     worker_environment_ref=worker_environment_ref,
+                     worker_setup=worker_setup,
                      capacity_check_start=capacity_check_start)
     if any(track.get("review_target") is not None for track in tracks):
         return _dispatch_tracks(**arguments)
@@ -173,8 +173,8 @@ def dispatch_tracks(
         request["recovery_source"] = recovery_source
     if candidate_source is not None:
         request["candidate_source"] = candidate_source
-    if worker_environment_ref is not None:
-        request["worker_environment_ref"] = worker_environment_ref
+    if worker_setup:
+        request["worker_setup"] = worker_setup
     def dispatch_locked():
         saved = read_bytes(artifact_root / "request.json")
         from goodteam_os.skills.role_packages import ROLE_METHODS_VERSION as DEFAULT_ROLE_METHODS, ROLE_PACKAGES
@@ -261,7 +261,7 @@ def _dispatch_tracks(
     codex_review_admission: CodexReviewAdmission | None = None,
     require_isolation: bool = False,
     recovery_source: dict | None = None, candidate_source: dict | None = None,
-    worker_environment_ref: str | None = None,
+    worker_setup: dict | None = None,
     default_role_methods: bool = False, track_methods: dict | None = None,
     capacity_check_start=None,
 ) -> dict[str, object]:
@@ -319,8 +319,7 @@ def _dispatch_tracks(
             logical_id=logical_id, tracks=tracks, confirmed_input={
                 "tracks": tracks, "constraints": constraints, "verify_commands": verify_commands or {},
                 "constraints_source": str(constraints_file) if constraints_file else "",
-                "research_report_source": str(research_report_file) if research_report_file else "",
-                **({"worker_environment_ref": worker_environment_ref} if worker_environment_ref is not None else {})})
+                "research_report_source": str(research_report_file) if research_report_file else ""})
         if require_isolation and any(c and not m for c, m in per_track_methods):
             raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
     elif scope is not None:
@@ -366,7 +365,6 @@ def _dispatch_tracks(
             confirmed_input={"tracks": tracks, "constraints": constraints, "verify_commands": verify_commands or {},
                              "constraints_source": str(constraints_file) if constraints_file else "",
                              "research_report_source": str(research_report_file) if research_report_file else "",
-                             **({"worker_environment_ref": worker_environment_ref} if worker_environment_ref is not None else {}),
                              **({"method_loading_mode": ordinary_method_mode} if ordinary_method_mode else {}),
                              **({"default_role_methods": DEFAULT_ROLE_METHODS} if default_role_methods else {})},
             **({"protocol_only_review": True} if local_review else {}),
@@ -377,8 +375,6 @@ def _dispatch_tracks(
         raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
     if candidate_source is not None and (not require_isolation or recovery_source is not None):
         raise ValueError("A continuation candidate requires a new isolated project batch.")
-    if worker_environment_ref is not None and not require_isolation:
-        raise ValueError("A project Worker environment requires isolated dispatch.")
     parent_report = None
     retained = []
     if recovery_source is not None:
@@ -410,7 +406,7 @@ def _dispatch_tracks(
         isolated = prepare_dispatch_workspace(project_root, run_id, [str(job["id"]) for job in jobs_by_role],
             **({"baseline_from": recovery_source["run_id"]} if recovery_source is not None else {}),
             **({"candidate_source": candidate_source} if candidate_source is not None else {}),
-            **({"worker_environment_ref": worker_environment_ref} if worker_environment_ref is not None else {}))
+            **({"worker_setup": worker_setup} if worker_setup else {}))
     if require_isolation and isolated is None:
         raise ValueError("Project batch isolation was not established; no Worker was started.")
     results_by_id: dict[str, dict[str, object]] = {}
@@ -423,9 +419,7 @@ def _dispatch_tracks(
                             **({"dispatch_context": {"available": True, "mode": "dispatch_isolated",
                                 "workspace_path": str(isolated.workspace(str(job["id"]))),
                                 "execution_id": run_id, "sandbox_id": str(job["id"]),
-                                **({"worker_environment": isolated.metadata["jobs"][str(job["id"])]["worker_environment"]}
-                                   if isolated.metadata["jobs"][str(job["id"])].get("worker_environment") else {})}}
-                               if isolated else {}),
+                                **({"worker_setup": worker_setup} if worker_setup else {})}} if isolated else {}),
                             **_review_runtime_kwargs(codex_review_admission), capacity_check_start=capacity_check_start): job
             for job in jobs_by_role
         }
@@ -509,7 +503,6 @@ def _dispatch_tracks(
         "integration": integration,
         **({"recovery_source": recovery_source} if recovery_source is not None else {}),
         **({"candidate_source": candidate_source} if candidate_source is not None else {}),
-        **({"worker_environment_ref": worker_environment_ref} if worker_environment_ref is not None else {}),
         "worker_capacity": {
             "configured_max_concurrent_workers": DEFAULT_MAX_CONCURRENT_WORKERS,
             "pool_size": max_workers,
@@ -618,12 +611,8 @@ def _run_dispatched_job_unbounded(
             if status.get("status") == "running":
                 raise ValueError("dispatch_worker_running: the original attempt must be stopped or reconciled first.")
             if status.get("status") == "queued":
-                if dispatch_context.get("worker_environment"):
-                    raise ValueError("Shared Worker environments require a verified project read boundary; this runtime is unavailable.")
                 status = store.run_job(str(job["id"]), sandbox_context=dispatch_context)
         else:
-            if dispatch_context and dispatch_context.get("worker_environment"):
-                raise ValueError("Shared Worker environments require a verified project read boundary; this runtime is unavailable.")
             status = store.run_job(str(job["id"]), **({"sandbox_context": dispatch_context} if dispatch_context else {}))
     except Exception as exc:
         return _job_report(

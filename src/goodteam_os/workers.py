@@ -221,13 +221,8 @@ def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
         safe.update({key: str(context.get(key, "")) for key in (
             "workflow_run_id", "project_key", "job_id", "source_root", "baseline_commit",
         )})
-    environment = context.get("worker_environment")
-    if isinstance(environment, dict):
-        paths = environment.get("artifact_paths")
-        if isinstance(paths, list) and all(isinstance(path, str) for path in paths):
-            safe["worker_environment"] = {
-                "environment_ref": str(environment.get("environment_ref", "")), "artifact_paths": list(paths),
-            }
+    if context.get("worker_setup"):
+        safe["worker_setup"] = context["worker_setup"]
     return safe
 
 
@@ -375,7 +370,8 @@ def _codex_build_command(binary: str, model: str, project_root: Path, result_pat
         "--skip-git-repo-check",
         "--cd",
         str(project_root),
-        "--dangerously-bypass-approvals-and-sandbox",
+        "--sandbox", "workspace-write",
+        "-c", 'approval_policy="never"',
         "--output-last-message",
         str(result_path),
         "-",
@@ -588,6 +584,9 @@ def _command_with_execution_policy(
         if value not in {"--dangerously-bypass-approvals-and-sandbox", "--dangerously-skip-permissions"}
     ]
     if normalized_adapter == "codex":
+        if "--sandbox" in updated:
+            index = updated.index("--sandbox")
+            del updated[index:index + 2]
         arguments = ["--sandbox", "read-only", "--ignore-user-config", "--ignore-rules", "--ephemeral"]
         if "-" in updated:
             prompt_index = updated.index("-")
@@ -1563,21 +1562,11 @@ class WorkerJobStore:
             job = self._attach_sandbox_context(job_root, job, sandbox_context)
         if (job.get("workflow_workspace") is not None or isinstance(job.get("sandbox_context"), dict)
                 and job["sandbox_context"].get("mode") in {"dispatch_isolated", "workflow_isolated"}):
-            runtime = self._worker_runtime_cwd(job)
-            environment = job["sandbox_context"].get("worker_environment")
-            if environment:
-                from goodteam_os.project_worker_environment import verify_environment_instance
-
-                verify_environment_instance(project_root=self.project_root, ref=environment["environment_ref"],
-                    source_root=runtime.runtime_cwd, job_root=runtime.runtime_cwd)
+            self._worker_runtime_cwd(job)
         handoff = self._ordinary_memory_handoff(job_root, job)
         if handoff is not None:
             handoff.load(job)  # Retained partial enrollment cannot become legacy.
         adapter = str(job["adapter"])
-        if (isinstance(job.get("sandbox_context"), dict)
-                and job["sandbox_context"].get("worker_environment")
-                and adapter in SESSION_BACKENDS):
-            raise ValueError("This Worker runtime has no verified sandbox for a shared project environment.")
         # Compatibility references for builtin adapters are host observations only.
         memory_citations = list(self._validated_worker_memory(job_root, role=str(job["role"])).citations) if adapter in BUILTIN_WORKER_MODES else []
         if str(job.get("execution_policy", "standard")) == "read_only" and (
@@ -2626,13 +2615,11 @@ class WorkerJobStore:
                 raise ValueError("GOODTEAM_CODEX_SANDBOX_MODE must be workspace-write or read-only.")
             if str(job.get("execution_policy", "standard")) != "read_only":
                 command = [value for value in command if value != "--dangerously-bypass-approvals-and-sandbox"]
+                if "--sandbox" in command:
+                    index = command.index("--sandbox")
+                    del command[index:index + 2]
                 prompt_index = command.index("-")
                 command[prompt_index:prompt_index] = ["--sandbox", sandbox_mode, "-c", 'approval_policy="never"']
-        if isinstance(job.get("sandbox_context"), dict) and job["sandbox_context"].get("worker_environment"):
-            # workspace-write restricts writes but still permits reads elsewhere
-            # on the host. Do not claim project read isolation until an owned,
-            # independently verified runtime boundary is available.
-            raise ValueError("Shared Worker environments require a verified project read boundary; this runtime is unavailable.")
         runtime_evidence = {
             **({"provider_connection": {key: connection[key] for key in
                 ("id", "revision", "name", "protocol", "base_url")}} if connection else {}),
@@ -2729,7 +2716,7 @@ class WorkerJobStore:
                                                    None)
             if (str(context.get("sandbox_id", "")) != str(job["id"])
                     or workspace.workspace(str(job["id"])) != workspace_path
-                    or context.get("worker_environment") != workspace.metadata["jobs"][str(job["id"])].get("worker_environment")):
+                    or context.get("worker_setup") != workspace.metadata.get("worker_setup")):
                 raise ValueError("dispatch_workspace_mismatch")
         if _is_repo_workspace(workspace_path):
             return WorkerRuntimeContext(
@@ -2856,6 +2843,12 @@ class WorkerJobStore:
         }
         prompt = self._worker_prompt(job_root, job, model=model)
         process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
+        setup = (job.get("sandbox_context") or {}).get("worker_setup")
+        if setup:
+            from goodteam_os.worker_setup import with_setup
+
+            process_command = with_setup(process_command, setup=setup, job_root=job_root,
+                cwd=runtime_context.runtime_cwd, binary=which("codex") or DEFAULT_CODEX_PATH)
         process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
         provider_key = (worker_env or {}).get(PROVIDER_KEY_ENV, "")
@@ -3007,6 +3000,8 @@ class WorkerJobStore:
                         if stream is not None:
                             stream.close()
         stdout, stderr = safe_output(stdout), safe_output(stderr)
+        if setup and (job_root / "setup-result.json").is_file():
+            base_extra["worker_setup"] = json.loads((job_root / "setup-result.json").read_text(encoding="utf-8"))
         stdout_path.write_text(stdout, encoding="utf-8")
         stderr_path.write_text(stderr, encoding="utf-8")
         if provider_key and result_path.is_file():

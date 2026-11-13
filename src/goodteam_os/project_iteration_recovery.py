@@ -440,11 +440,6 @@ def execute_recovery(*, workspace, project_key, root, batch):
         report = json.loads(read_bytes(report_path))
     else:
         _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
-        if batch.get("worker_environment_ref"):
-            from goodteam_os.models import _parse_simple_yaml
-
-            if _parse_simple_yaml(Path(batch["project_config"])).get("worker_environment_ref") != batch["worker_environment_ref"]:
-                raise ValueError("The original Worker environment changed before recovery.")
         read_dispatch_recovery(Path(root), command["source"])
         if command["started"]:
             # A reserved transport is not a new permission after restart. All
@@ -464,5 +459,5 @@ def execute_recovery(*, workspace, project_key, root, batch):
         report = dispatch_tracks(project_root=Path(root).resolve(), tracks=command["tracks"],
             projects_dir=Path(workspace) / "projects", logical_task_id=command["attempt_id"],
             require_isolation=True, recovery_source=command["source"],
-            **({"worker_environment_ref": batch["worker_environment_ref"]} if batch.get("worker_environment_ref") else {}))
+            **({"worker_setup": batch["worker_setup"]} if batch.get("worker_setup") else {}))
     return _settle_batch(workspace, project_key, root, batch, report=report)

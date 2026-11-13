@@ -565,8 +565,6 @@ def run_skill_worker_job(store, job_id: str, *, sandbox_context=None) -> dict[st
                 # with it. Failure reporting must not silently repair job.json.
                 _write_status(fd, result)
     if checked == "verified" and snapshot["job_input"]["request"].get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
-        if isinstance(sandbox_context, dict) and sandbox_context.get("worker_environment"):
-            raise ValueError("This Worker runtime has no verified sandbox for a shared project environment.")
         from .pi_methods import PiMethodInput
 
         method_input = PiMethodInput(store, job_id)

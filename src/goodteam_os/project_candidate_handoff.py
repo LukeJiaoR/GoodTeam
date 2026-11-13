@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def candidate_for_tasks(*, workspace, project_key, root, session, tasks, continuation_id):
-    """Select only the feedback already cited by every queued follow-up."""
+    """Use the project's current candidate when the owner enabled continuation."""
     from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
     from goodteam_os.project_batch_feedback import valid_receipt
 
@@ -17,11 +17,6 @@ def candidate_for_tasks(*, workspace, project_key, root, session, tasks, continu
         return None
     if not valid_receipt(value, receipt):
         raise ValueError("The original candidate feedback is invalid.")
-    cited = [receipt["receipt_id"] in task.get("external_refs", []) for task in tasks]
-    if not any(cited):
-        return None
-    if not all(cited):
-        raise ValueError("Parallel follow-ups do not share the same candidate source.")
     previous = prepare_dispatch_workspace(Path(root), receipt["dispatch_run_id"], None)
     if (not previous.metadata.get("candidate_source")
             and not any((row.get("captured_result") or {}).get("changed_files") for row in receipt["tasks"])):
@@ -53,20 +48,15 @@ def _source(*, workspace, project_key, root, value, key):
 def verify_candidate_for_batch(*, workspace, project_key, root, batch):
     """Recheck the frozen source without granting it delivery or new authority."""
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
-    from goodteam_os.tasks import LocalTaskStore
 
     frozen = batch.get("candidate_source")
     if frozen is None:
         return None
     session = TaskAssistantSessionStore(workspace, project_key).read()
     value = session.get("project_continuation") or {}
-    tasks = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
     if (value.get("id") != batch.get("expected_continuation_id")
             or value.get("authority") != batch.get("expected_authority")
-            or (value.get("discovery") or {}).get("allow_candidate_handoff") is not True
-            or any(binding["task_id"] not in tasks
-                   or frozen["receipt_id"] not in tasks[binding["task_id"]].get("external_refs", [])
-                   for binding in batch["task_bindings"])):
+            or (value.get("discovery") or {}).get("allow_candidate_handoff") is not True):
         raise ValueError("The candidate is outside this continuation's confirmed task scope.")
     if _source(workspace=workspace, project_key=project_key, root=root, value=value,
                key=frozen["observation_key"]) != frozen:

@@ -33,6 +33,8 @@ own evidence; a Worker completion does not mark the project task delivered.
 
 **GoodTeam owns the control plane; coding agents and external tools are adapters.** A Worker can produce a patch, a test result, or a recommendation. It cannot turn its own output into approval.
 
+Isolated CLI Workers can run a project's existing [setup command](docs/worker-setup.md) and reuse its package cache.
+
 **Open repo → Describe task → Confirm plan → Follow execution → Review result**
 
 The desktop Web experience stays centered on one project conversation:
@@ -154,8 +156,6 @@ goodteam stop
 4. Review the bounded proposal and explicitly confirm it before starting work. Inspect the resulting evidence in **Review**.
 
 Import records GoodTeam metadata; it does not treat the selected repository as disposable workspace state. Machine-specific configuration belongs in `projects/<key>.local.yaml`. Never commit credentials or private secrets.
-
-For projects whose ignored dependencies are needed by isolated Workers, a local operator can [register a prepared Worker environment](docs/worker-environments.md).
 
 <details>
 <summary><strong>CLI setup and doctor checks</strong></summary>
