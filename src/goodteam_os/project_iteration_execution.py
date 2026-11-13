@@ -133,6 +133,16 @@ def _identity(proposal_ids, expected_revisions):
     return run_id, "dispatch-" + sha256(run_id.encode()).hexdigest()
 
 
+def dispatch_policy(task):
+    """Translate a task's stored policy to the existing dispatch vocabulary."""
+    policy = task.get("execution_policy", "workspace_write")
+    if policy == "read_only":
+        return "read_only"
+    if policy == "workspace_write":
+        return "standard"
+    raise ValueError("Unrecognized project task execution policy.")
+
+
 def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals):
     from goodteam_os.graph import _worker_job_fields, resolve_project_runtime_root
     from goodteam_os.projects import load_project_target
@@ -171,7 +181,7 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
         **({"web_search": task["web_search"]} if "web_search" in task else {}),
         "context": "Execute only this confirmed project task in the assigned isolated repository. "
                    "Do not merge, deploy or change shared project state. Results require independent review.",
-        "execution_policy": "read_only" if task.get("execution_policy") == "read_only" else "standard",
+        "execution_policy": dispatch_policy(task),
         **({"write_domains": task["write_domains"]} if task.get("write_domains") else {}),
         "constraints": ["Do not write outside the declared task paths: " + ", ".join(task.get("write_domains") or [])],
     } for task, proposal in zip(tasks, proposals)]
