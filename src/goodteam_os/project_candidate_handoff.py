@@ -9,7 +9,7 @@ def candidate_for_tasks(*, workspace, project_key, root, session, tasks, continu
 
     value = session.get("project_continuation") or {}
     if (not continuation_id or value.get("id") != continuation_id
-            or (value.get("discovery") or {}).get("allow_undelivered_feedback") is not True):
+            or (value.get("discovery") or {}).get("allow_candidate_handoff") is not True):
         return None
     key = value.get("undelivered_feedback_anchor")
     receipt = (value.get("batch_observations") or {}).get(key)
@@ -63,7 +63,7 @@ def verify_candidate_for_batch(*, workspace, project_key, root, batch):
     tasks = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
     if (value.get("id") != batch.get("expected_continuation_id")
             or value.get("authority") != batch.get("expected_authority")
-            or (value.get("discovery") or {}).get("allow_undelivered_feedback") is not True
+            or (value.get("discovery") or {}).get("allow_candidate_handoff") is not True
             or any(binding["task_id"] not in tasks
                    or frozen["receipt_id"] not in tasks[binding["task_id"]].get("external_refs", [])
                    for binding in batch["task_bindings"])):

@@ -159,7 +159,7 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
   const scopedTasks = tasks.filter(task => task.status === 'todo' || discover && task.status === 'blocked');
   const discovery = discover ? { objective: objective.trim(), allowed_write_domains: domains,
     max_new_tasks: newTaskLimit, max_planning_calls: planningLimit, allow_backlog_judgment: true, allow_team_roles: true,
-    ...(feedback ? { allow_undelivered_feedback: true } : {}),
+    ...(feedback ? { allow_undelivered_feedback: true, allow_candidate_handoff: true } : {}),
     ...(feedback && initialFeedback ? { allow_initial_readonly_feedback: true } : {}),
     ...(observeRunning ? { allow_running_observation: true, allow_running_human_question: true } : {}),
     ...(observeRunning && followUp ? { worker_follow_up_limit: followUpLimit } : {}) } : undefined;
@@ -204,7 +204,8 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
         setFeedback(event.target.checked);
         if (!event.target.checked) setInitialFeedback(false);
       }} />
-        {zh ? '允许根据未交付任务的已知结果继续判断' : 'Allow decisions from known outcomes without a delivered result'}</label>
+        {zh ? '允许根据未交付任务的已知结果继续判断，并在隔离工作区向后续任务交接已引用的候选'
+          : 'Allow decisions from known undelivered outcomes and pass cited candidates to follow-up tasks in isolated workspaces'}</label>
       {feedback ? <>
         <label><input type="checkbox" checked={initialFeedback} onChange={event => setInitialFeedback(event.target.checked)} />
           {zh ? '首次工程交付前，允许根据初始只读任务结果接续' : 'Allow initial read-only task outcomes before the first engineering delivery'}</label>
@@ -287,6 +288,7 @@ export default function ProjectContinuationControls({ snapshot, session, project
               ['allow_running_human_question', zh ? '运行中内部问题板提问' : 'Internal board questions while running'],
               ['allow_backlog_judgment', zh ? '依据当前授权任务事实判断' : 'Judgment from authorized backlog facts'],
               ['allow_undelivered_feedback', zh ? '未交付结果反馈' : 'Undelivered outcome feedback'],
+              ['allow_candidate_handoff', zh ? '隔离候选交接' : 'Isolated candidate handoff'],
               ['allow_initial_readonly_feedback', zh ? '首次交付前只读接续' : 'Initial read-only continuation'],
             ].map(([flag, label]) => <li key={flag}>{label}: {value.discovery[flag] === true
               ? (zh ? '已授权' : 'Allowed') : (zh ? '未授权' : 'Not allowed')}</li>)}

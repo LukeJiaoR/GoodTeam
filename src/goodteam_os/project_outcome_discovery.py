@@ -34,7 +34,7 @@ def normalize_discovery(value):
         return None
     required = {"objective", "allowed_write_domains", "max_new_tasks", "max_planning_calls"}
     if (not isinstance(value, dict) or not required.issubset(value)
-            or set(value) - required - {"allow_investigation", "allow_planning", "allow_team_roles", "allow_undelivered_feedback", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question"}):
+            or set(value) - required - {"allow_investigation", "allow_planning", "allow_team_roles", "allow_undelivered_feedback", "allow_candidate_handoff", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question"}):
         raise ValueError("Confirm an explicit discovery objective, paths and finite task/planning budgets.")
     if "allow_team_roles" in value and type(value["allow_team_roles"]) is not bool:
         raise ValueError("Team Role delegation permission must be an explicit boolean.")
@@ -50,6 +50,9 @@ def normalize_discovery(value):
         raise ValueError("Planning permission must be an explicit boolean.")
     if "allow_undelivered_feedback" in value and type(value["allow_undelivered_feedback"]) is not bool:
         raise ValueError("Undelivered feedback permission must be an explicit boolean.")
+    if "allow_candidate_handoff" in value and (type(value["allow_candidate_handoff"]) is not bool
+            or value["allow_candidate_handoff"] and value.get("allow_undelivered_feedback") is not True):
+        raise ValueError("Candidate handoff requires explicit undelivered feedback permission.")
     if "allow_running_observation" in value and type(value["allow_running_observation"]) is not bool:
         raise ValueError("Running observation permission must be an explicit boolean.")
     if "allow_initial_readonly_feedback" in value and type(value["allow_initial_readonly_feedback"]) is not bool:
