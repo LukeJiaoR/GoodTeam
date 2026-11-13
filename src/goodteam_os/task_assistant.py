@@ -896,7 +896,7 @@ def batch_quality_context(workspace, root, project_key, session, *, run_id=""):
             row.update({key: evidence.get(key) for key in (
                 "required", "status", "reason", "check_status", "review_status", "acceptance_status",
                 "execution_id", "input_digest", "candidate_commit", "validation_receipt_id",
-                "review_receipt_id", "correction_job_id", "correction_input", "next_action")})
+                "review_receipt_id", "correction_job_id", "correction_input", "previous_blocker", "next_action")})
             review = (evidence.get("validation") or {}).get("review") or {}
             row["review"] = {key: review.get(key) for key in (
                 "schema_version", "receipt_id", "validation_receipt_id", "reviewer", "decision", "reason")}
