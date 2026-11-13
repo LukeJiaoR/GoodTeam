@@ -326,20 +326,13 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
         candidate_source = candidate_for_tasks(workspace=workspace, project_key=project_key, root=root,
             session=session, tasks=tasks, continuation_id=expected_continuation_id)
         from goodteam_os.models import _parse_simple_yaml
-        from goodteam_os.project_worker_environment import load_environment
 
         environment_ref = _parse_simple_yaml(Path(project_config)).get("worker_environment_ref")
-        environment = None
         if environment_ref:
-            source = (Path(candidate_source["source"]["integration"]["candidate_path"])
-                      if candidate_source is not None else Path(root))
-            environment = load_environment(project_root=root, ref=environment_ref, source_root=source)
+            # Do not reserve a task or copy a large environment when this
+            # installation cannot yet enforce the required read boundary.
+            raise ValueError("Shared Worker environments require a verified project read boundary; this runtime is unavailable.")
         tracks = _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals)
-        if environment is not None:
-            for track in tracks:
-                track["context"] += ("\nThe project has provided a private Worker copy of its locally prepared "
-                    "dependency environment: " + ", ".join(environment["artifacts"]) + ". "
-                    "Its preparation command was not independently verified. Existing task scope and sandbox apply.")
         _require_authority(workspace, project_key, root, project_config, expected_authority)
         batch = {"run_id": run_id, "dispatch_run_id": dispatch_id, "proposal_ids": list(proposal_ids),
             "task_ids": [task["id"] for task in tasks], "expected_revisions": expected_revisions,
@@ -353,7 +346,6 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                if expected_continuation_id and session["project_continuation"].get("workflow_recovery") else {}),
             "selected_proposal_id": selected_proposal_id, "expected_team_revision": expected_team_revision,
             **({"candidate_source": candidate_source} if candidate_source is not None else {}),
-            **({"worker_environment_ref": environment_ref} if environment is not None else {}),
             "tracks": tracks, "status": "claimed", "confirmed": True,
             "created_at": datetime.now(UTC).isoformat()}
 

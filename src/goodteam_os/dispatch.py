@@ -618,8 +618,12 @@ def _run_dispatched_job_unbounded(
             if status.get("status") == "running":
                 raise ValueError("dispatch_worker_running: the original attempt must be stopped or reconciled first.")
             if status.get("status") == "queued":
+                if dispatch_context.get("worker_environment"):
+                    raise ValueError("Shared Worker environments require a verified project read boundary; this runtime is unavailable.")
                 status = store.run_job(str(job["id"]), sandbox_context=dispatch_context)
         else:
+            if dispatch_context and dispatch_context.get("worker_environment"):
+                raise ValueError("Shared Worker environments require a verified project read boundary; this runtime is unavailable.")
             status = store.run_job(str(job["id"]), **({"sandbox_context": dispatch_context} if dispatch_context else {}))
     except Exception as exc:
         return _job_report(
