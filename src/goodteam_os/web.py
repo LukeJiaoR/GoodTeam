@@ -3845,7 +3845,8 @@ def start_workflow(
         if _workflow_requires_repository(target, source_type=source_type, project_config=project_config):
             if runtime_root is None:
                 raise ValueError("A real workflow requires its configured Git repository baseline.")
-            state.repository_baseline = prepare_workflow_workspace(runtime_root, project_key=key, run_id=state.run_id)
+            state.repository_baseline = prepare_workflow_workspace(runtime_root, project_key=key, run_id=state.run_id,
+                **({"worker_environment_ref": target["worker_environment_ref"]} if target.get("worker_environment_ref") else {}))
     if not dry_run:
         from goodteam_os.skills.task_context import workflow_skill_context
         from goodteam_os.skills.task_locks import TaskSkillIdentity

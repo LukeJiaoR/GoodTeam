@@ -103,6 +103,28 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--trusted-codex-review-policy", type=Path)
             command.add_argument("--trusted-codex-correction-policy", type=Path)
 
+    worker_environment = subparsers.add_parser(
+        "worker-environment", help="Capture or inspect a locally prepared project Worker environment")
+    environment_commands = worker_environment.add_subparsers(dest="environment_command", required=True)
+    environment_capture = environment_commands.add_parser("capture")
+    environment_capture.add_argument("--project-root", type=Path, required=True)
+    environment_capture.add_argument("--prepared-root", type=Path, required=True)
+    environment_capture.add_argument("--input", action="append", required=True,
+                                     help="Project-relative captured-file pattern; repeat for each dependency input")
+    environment_capture.add_argument("--artifact", action="append", required=True,
+                                     help="Project-relative ignored directory to copy; repeat as needed")
+    environment_capture.add_argument("--tool", action="append", required=True,
+                                     help="Absolute executable path used by the prepared environment")
+    environment_status = environment_commands.add_parser("status")
+    environment_status.add_argument("--project-root", type=Path, required=True)
+    environment_status.add_argument("--environment-ref", required=True)
+    environment_activate = environment_commands.add_parser("activate")
+    environment_activate.add_argument("--workspace", type=Path, required=True)
+    environment_activate.add_argument("--project-key", required=True)
+    environment_activate.add_argument("--environment-ref", required=True)
+    environment_activate.add_argument("--replace-from", default=None,
+                                      help="Replace this exact previous environment reference when the project is idle")
+
     retirement = subparsers.add_parser("batch-retire-worker", help="Locally confirm an interrupted batch Worker's processes have stopped")
     retirement.add_argument("--workspace", type=Path, default=Path("."))
     retirement.add_argument("--project-key", required=True)
@@ -340,6 +362,30 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAdmission | None = None,
          codex_correction_admission: TrustedCodexCorrectionAdmission | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "worker-environment":
+        from goodteam_os.project_worker_environment import activate_environment, capture_environment, inspect_environment
+
+        try:
+            if args.environment_command == "capture":
+                value = capture_environment(project_root=args.project_root, prepared_root=args.prepared_root,
+                    inputs=args.input, artifacts=args.artifact, tools=args.tool)
+                value["project_config_line"] = "worker_environment_ref: " + json.dumps(value["environment_ref"])
+            elif args.environment_command == "activate":
+                value = activate_environment(workspace=args.workspace, project_key=args.project_key,
+                                             ref=args.environment_ref, replace_from=args.replace_from)
+            else:
+                record = inspect_environment(project_root=args.project_root, ref=args.environment_ref,
+                                             source_root=args.project_root)
+                value = {"environment_ref": args.environment_ref, "project_root": record["project_root"],
+                         "artifact_paths": record["artifacts"], "input_patterns": record["input_patterns"],
+                         "tool_commands": [item["command"] for item in record["tools"]],
+                         "preparation_command_verified": record["provenance"]["preparation_command_verified"],
+                         "template_contents_verified": True}
+            print(json.dumps(value, ensure_ascii=False, indent=2))
+            return 0
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"worker-environment: {exc}", file=sys.stderr)
+            return 1
     batch_quality_entry = args.command == "batch-quality" and args.quality_command == "advance"
     correction_entry = (args.command == "execution" and args.execution_command in {
         "run-correction-worker", "continue-automatic-review"}) or batch_quality_entry or args.command == "serve"

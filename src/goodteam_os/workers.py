@@ -221,6 +221,13 @@ def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
         safe.update({key: str(context.get(key, "")) for key in (
             "workflow_run_id", "project_key", "job_id", "source_root", "baseline_commit",
         )})
+    environment = context.get("worker_environment")
+    if isinstance(environment, dict):
+        paths = environment.get("artifact_paths")
+        if isinstance(paths, list) and all(isinstance(path, str) for path in paths):
+            safe["worker_environment"] = {
+                "environment_ref": str(environment.get("environment_ref", "")), "artifact_paths": list(paths),
+            }
     return safe
 
 
@@ -1556,11 +1563,21 @@ class WorkerJobStore:
             job = self._attach_sandbox_context(job_root, job, sandbox_context)
         if (job.get("workflow_workspace") is not None or isinstance(job.get("sandbox_context"), dict)
                 and job["sandbox_context"].get("mode") in {"dispatch_isolated", "workflow_isolated"}):
-            self._worker_runtime_cwd(job)
+            runtime = self._worker_runtime_cwd(job)
+            environment = job["sandbox_context"].get("worker_environment")
+            if environment:
+                from goodteam_os.project_worker_environment import verify_environment_instance
+
+                verify_environment_instance(project_root=self.project_root, ref=environment["environment_ref"],
+                    source_root=runtime.runtime_cwd, job_root=runtime.runtime_cwd)
         handoff = self._ordinary_memory_handoff(job_root, job)
         if handoff is not None:
             handoff.load(job)  # Retained partial enrollment cannot become legacy.
         adapter = str(job["adapter"])
+        if (isinstance(job.get("sandbox_context"), dict)
+                and job["sandbox_context"].get("worker_environment")
+                and adapter in SESSION_BACKENDS):
+            raise ValueError("This Worker runtime has no verified sandbox for a shared project environment.")
         # Compatibility references for builtin adapters are host observations only.
         memory_citations = list(self._validated_worker_memory(job_root, role=str(job["role"])).citations) if adapter in BUILTIN_WORKER_MODES else []
         if str(job.get("execution_policy", "standard")) == "read_only" and (
@@ -2611,6 +2628,14 @@ class WorkerJobStore:
                 command = [value for value in command if value != "--dangerously-bypass-approvals-and-sandbox"]
                 prompt_index = command.index("-")
                 command[prompt_index:prompt_index] = ["--sandbox", sandbox_mode, "-c", 'approval_policy="never"']
+        if isinstance(job.get("sandbox_context"), dict) and job["sandbox_context"].get("worker_environment"):
+            policy = _runtime_policy_evidence(command)
+            if (adapter != "codex" or policy["runtime_unsafe_mode"]
+                    or policy["runtime_sandbox_mode"] not in {"read-only", "workspace-write"}):
+                raise ValueError("The selected Worker runtime has no verified sandbox for a shared project environment.")
+            if policy["runtime_sandbox_mode"] == "workspace-write":
+                prompt_index = command.index("-")
+                command[prompt_index:prompt_index] = ["-c", "sandbox_workspace_write.writable_roots=[]"]
         runtime_evidence = {
             **({"provider_connection": {key: connection[key] for key in
                 ("id", "revision", "name", "protocol", "base_url")}} if connection else {}),
@@ -2706,7 +2731,8 @@ class WorkerJobStore:
             workspace = prepare_dispatch_workspace(self.project_root, str(context.get("execution_id", "")),
                                                    None)
             if (str(context.get("sandbox_id", "")) != str(job["id"])
-                    or workspace.workspace(str(job["id"])) != workspace_path):
+                    or workspace.workspace(str(job["id"])) != workspace_path
+                    or context.get("worker_environment") != workspace.metadata["jobs"][str(job["id"])].get("worker_environment")):
                 raise ValueError("dispatch_workspace_mismatch")
         if _is_repo_workspace(workspace_path):
             return WorkerRuntimeContext(

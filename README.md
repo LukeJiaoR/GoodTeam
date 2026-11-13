@@ -155,6 +155,8 @@ goodteam stop
 
 Import records GoodTeam metadata; it does not treat the selected repository as disposable workspace state. Machine-specific configuration belongs in `projects/<key>.local.yaml`. Never commit credentials or private secrets.
 
+For projects whose ignored dependencies are needed by isolated Workers, a local operator can [register a prepared Worker environment](docs/worker-environments.md).
+
 <details>
 <summary><strong>CLI setup and doctor checks</strong></summary>
 

@@ -325,7 +325,21 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
 
         candidate_source = candidate_for_tasks(workspace=workspace, project_key=project_key, root=root,
             session=session, tasks=tasks, continuation_id=expected_continuation_id)
+        from goodteam_os.models import _parse_simple_yaml
+        from goodteam_os.project_worker_environment import load_environment
+
+        environment_ref = _parse_simple_yaml(Path(project_config)).get("worker_environment_ref")
+        environment = None
+        if environment_ref:
+            source = (Path(candidate_source["source"]["integration"]["candidate_path"])
+                      if candidate_source is not None else Path(root))
+            environment = load_environment(project_root=root, ref=environment_ref, source_root=source)
         tracks = _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals)
+        if environment is not None:
+            for track in tracks:
+                track["context"] += ("\nThe project has provided a private Worker copy of its locally prepared "
+                    "dependency environment: " + ", ".join(environment["artifacts"]) + ". "
+                    "Its preparation command was not independently verified. Existing task scope and sandbox apply.")
         _require_authority(workspace, project_key, root, project_config, expected_authority)
         batch = {"run_id": run_id, "dispatch_run_id": dispatch_id, "proposal_ids": list(proposal_ids),
             "task_ids": [task["id"] for task in tasks], "expected_revisions": expected_revisions,
@@ -339,6 +353,7 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                if expected_continuation_id and session["project_continuation"].get("workflow_recovery") else {}),
             "selected_proposal_id": selected_proposal_id, "expected_team_revision": expected_team_revision,
             **({"candidate_source": candidate_source} if candidate_source is not None else {}),
+            **({"worker_environment_ref": environment_ref} if environment is not None else {}),
             "tracks": tracks, "status": "claimed", "confirmed": True,
             "created_at": datetime.now(UTC).isoformat()}
 
@@ -537,9 +552,15 @@ def _execute_batch(*, workspace, project_key, root, batch):
 
             candidate_source = verify_candidate_for_batch(workspace=workspace, project_key=project_key,
                                                           root=root, batch=batch)
+            environment_ref = batch.get("worker_environment_ref")
+            if environment_ref:
+                from goodteam_os.models import _parse_simple_yaml
+                if _parse_simple_yaml(Path(batch["project_config"])).get("worker_environment_ref") != environment_ref:
+                    raise ValueError("The project Worker environment changed after batch confirmation.")
             report = dispatch_tracks(project_root=Path(root).resolve(), tracks=batch["tracks"],
                 projects_dir=Path(workspace) / "projects", logical_task_id=batch["run_id"], require_isolation=True,
                 capacity_check_start=check_start,
+                **({"worker_environment_ref": environment_ref} if environment_ref else {}),
                 **({"candidate_source": candidate_source} if candidate_source is not None else {}))
         except Exception as exc:
             _settle_batch(workspace, project_key, root, batch, error=str(exc))

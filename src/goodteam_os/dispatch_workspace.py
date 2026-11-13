@@ -341,7 +341,10 @@ class DispatchWorkspace:
         changed = _git(root, ["diff", "--name-only", "--no-renames", "-z", self.metadata["baseline_commit"], commit]).stdout
         result = {"job_id": job_id, "baseline_commit": self.metadata["baseline_commit"],
                   "result_commit": commit, "changed_files": [os.fsdecode(path) for path in changed.split(b"\0") if path],
-                  "workspace_path": str(root)}
+                  "workspace_path": str(root),
+                  **({"worker_environment": {**self.metadata["jobs"][job_id]["worker_environment"],
+                                              "final_contents": "not_assessed"}}
+                     if self.metadata["jobs"][job_id].get("worker_environment") else {})}
         _write_json(self.artifact_root / f"result-{hashlib.sha256(job_id.encode()).hexdigest()[:24]}.json",
                     {**result, "files": _file_manifest(second)})
         if include_source_preview:
@@ -398,7 +401,8 @@ class DispatchWorkspace:
 def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[str] | None, *,
                                artifact_root: Path | None = None, limits: SnapshotLimits = SnapshotLimits(),
                                baseline_from: str | None = None,
-                               candidate_source: dict | None = None) -> DispatchWorkspace:
+                               candidate_source: dict | None = None,
+                               worker_environment_ref: str | None = None) -> DispatchWorkspace:
     """Prepare or reopen one fixed task baseline; caller holds the task lock."""
     project_root = _absolute_root(project_root)
     _identifier(run_id)
@@ -416,6 +420,7 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
                 or metadata.get("project_root") != str(project_root)
                 or baseline_from is not None and metadata.get("baseline_from") != baseline_from
                 or candidate_source is not None and metadata.get("candidate_source") != candidate_source
+                or job_ids is not None and metadata.get("worker_environment_ref") != worker_environment_ref
                 or (job_ids is not None and set(metadata.get("jobs", {})) != set(job_ids))):
             raise DispatchWorkspaceError("Dispatch replay does not match the retained task identity.")
         with AnchoredRepository(project_root, expected_identity=metadata["source_root_identity"]):
@@ -439,6 +444,8 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
         if baseline_from == run_id:
             raise DispatchWorkspaceError("A retry cannot replace its original baseline.")
         original = prepare_dispatch_workspace(project_root, baseline_from, None, limits=limits)
+        if original.metadata.get("worker_environment_ref") != worker_environment_ref:
+            raise DispatchWorkspaceError("A retry cannot replace its original Worker environment.")
         second = original._baseline_capture()
         second.update(original_head=original.metadata["original_head"],
                       original_index=read_bytes(original.artifact_root / "original.index", maximum=32 * 1024 * 1024))
@@ -501,6 +508,7 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
                 "baseline_git_identity": _git_identity(baseline),
                 **({"baseline_from": baseline_from} if baseline_from is not None else {}),
                 **({"candidate_source": candidate_source} if candidate_source is not None else {}),
+                **({"worker_environment_ref": worker_environment_ref} if worker_environment_ref is not None else {}),
                 **({"root_guard": root_guard} if root_guard is not None else {}),
                 "exclusion_policy": ["Git ignored untracked files", "untracked .pnpm-store cache",
                                      ".goodteam metadata", "empty directories"]}
@@ -516,6 +524,11 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
         shutil.copyfile(root / "original.index", job_root / ".git/index")
         metadata["jobs"][job_id] = {"root_identity": _expected_root_identity(job_root, None),
                                      "git_identity": _git_identity(job_root)}
+        if worker_environment_ref is not None:
+            from goodteam_os.project_worker_environment import materialize_environment
+
+            metadata["jobs"][job_id]["worker_environment"] = materialize_environment(
+                project_root=project_root, ref=worker_environment_ref, source_root=baseline, job_root=job_root)
     _write_json(manifest, metadata)
     return workspace
 
@@ -530,7 +543,8 @@ def verify_dispatch_result(project_root: Path, result: dict) -> dict:
     retained = json.loads(raw) if raw is not None else {}
     if (retained.get("job_id") != job_id or retained.get("workspace_path") != str(root)
             or retained.get("baseline_commit") != workspace.metadata["baseline_commit"]
-            or retained.get("result_commit") != result.get("result_commit")):
+            or retained.get("result_commit") != result.get("result_commit")
+            or retained.get("worker_environment") != result.get("worker_environment")):
         raise DispatchWorkspaceError("Retained Worker receipt differs from its published result.")
     first = _capture(root, workspace.limits, extra_paths=workspace.metadata["files"])
     second = _capture(root, workspace.limits, extra_paths=workspace.metadata["files"])
@@ -539,7 +553,8 @@ def verify_dispatch_result(project_root: Path, result: dict) -> dict:
     if (_read_git(root, ["rev-parse", "refs/goodteam/dispatch-result^{commit}"]).strip().decode("ascii")
             != retained["result_commit"]):
         raise DispatchWorkspaceError("Retained Worker result commit changed after publication.")
-    return {key: retained[key] for key in ("job_id", "workspace_path", "baseline_commit", "result_commit", "changed_files")}
+    return {key: retained[key] for key in ("job_id", "workspace_path", "baseline_commit", "result_commit", "changed_files", "worker_environment")
+            if key in retained}
 
 
 def dispatch_job_terminal(project_root: Path, result: dict) -> tuple[dict, str]:
