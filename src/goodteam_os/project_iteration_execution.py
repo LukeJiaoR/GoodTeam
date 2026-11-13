@@ -321,6 +321,10 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                                 task_ids=[task["id"] for task in tasks])
         if len(tasks) > 1:
             _validate_parallel_group([candidates[task["id"]] for task in tasks])
+        from goodteam_os.project_candidate_handoff import candidate_for_tasks
+
+        candidate_source = candidate_for_tasks(workspace=workspace, project_key=project_key, root=root,
+            session=session, tasks=tasks, continuation_id=expected_continuation_id)
         tracks = _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals)
         _require_authority(workspace, project_key, root, project_config, expected_authority)
         batch = {"run_id": run_id, "dispatch_run_id": dispatch_id, "proposal_ids": list(proposal_ids),
@@ -334,6 +338,7 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
             **({"workflow_recovery": session["project_continuation"]["workflow_recovery"]}
                if expected_continuation_id and session["project_continuation"].get("workflow_recovery") else {}),
             "selected_proposal_id": selected_proposal_id, "expected_team_revision": expected_team_revision,
+            **({"candidate_source": candidate_source} if candidate_source is not None else {}),
             "tracks": tracks, "status": "claimed", "confirmed": True,
             "created_at": datetime.now(UTC).isoformat()}
 
@@ -525,9 +530,17 @@ def _execute_batch(*, workspace, project_key, root, batch):
                        or project_task_intent(known[binding["task_id"]]) != binding["task_intent"]
                        for binding in batch["task_bindings"]):
                     raise ValueError("The original task scope changed before Worker launch.")
+                from goodteam_os.project_candidate_handoff import verify_candidate_for_batch
+
+                verify_candidate_for_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)
+            from goodteam_os.project_candidate_handoff import verify_candidate_for_batch
+
+            candidate_source = verify_candidate_for_batch(workspace=workspace, project_key=project_key,
+                                                          root=root, batch=batch)
             report = dispatch_tracks(project_root=Path(root).resolve(), tracks=batch["tracks"],
                 projects_dir=Path(workspace) / "projects", logical_task_id=batch["run_id"], require_isolation=True,
-                capacity_check_start=check_start)
+                capacity_check_start=check_start,
+                **({"candidate_source": candidate_source} if candidate_source is not None else {}))
         except Exception as exc:
             _settle_batch(workspace, project_key, root, batch, error=str(exc))
             raise

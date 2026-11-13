@@ -397,7 +397,8 @@ class DispatchWorkspace:
 
 def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[str] | None, *,
                                artifact_root: Path | None = None, limits: SnapshotLimits = SnapshotLimits(),
-                               baseline_from: str | None = None) -> DispatchWorkspace:
+                               baseline_from: str | None = None,
+                               candidate_source: dict | None = None) -> DispatchWorkspace:
     """Prepare or reopen one fixed task baseline; caller holds the task lock."""
     project_root = _absolute_root(project_root)
     _identifier(run_id)
@@ -414,6 +415,7 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
         if (metadata.get("schema") != "dispatch_workspace.v1" or metadata.get("run_id") != run_id
                 or metadata.get("project_root") != str(project_root)
                 or baseline_from is not None and metadata.get("baseline_from") != baseline_from
+                or candidate_source is not None and metadata.get("candidate_source") != candidate_source
                 or (job_ids is not None and set(metadata.get("jobs", {})) != set(job_ids))):
             raise DispatchWorkspaceError("Dispatch replay does not match the retained task identity.")
         with AnchoredRepository(project_root, expected_identity=metadata["source_root_identity"]):
@@ -427,8 +429,11 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
         raise DispatchWorkspaceError("No retained dispatch baseline exists for this run.")
     if (root / "baseline").exists() or (root / "jobs").exists():
         raise DispatchWorkspaceError(f"Incomplete dispatch preparation retained at {root}; use a new run identity.")
+    if baseline_from is not None and candidate_source is not None:
+        raise DispatchWorkspaceError("A retry cannot replace its original source with a candidate.")
     identity = _expected_root_identity(project_root, None)
     baseline = root / "baseline"
+    root_guard = None
     if baseline_from is not None:
         _identifier(baseline_from)
         if baseline_from == run_id:
@@ -439,6 +444,44 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
                       original_index=read_bytes(original.artifact_root / "original.index", maximum=32 * 1024 * 1024))
         _clone(original.artifact_root / "baseline", baseline)
         baseline_commit = original.metadata["baseline_commit"]
+        root_guard = original.metadata.get("root_guard")
+    elif candidate_source is not None:
+        from goodteam_os.execution.candidate_probe import probe_candidate
+
+        source = candidate_source["source"]
+        integration = source["integration"]
+        selected = candidate_source["selected"]
+        prior = prepare_dispatch_workspace(project_root, candidate_source["dispatch_run_id"], None, limits=limits)
+        candidate = Path(integration["candidate_path"]).absolute()
+        head = integration["candidate_commit"]
+        if (selected["project_root"] != str(project_root) or selected["candidate_commit"] != head
+                or candidate.resolve() != candidate or candidate.name != "candidate"
+                or candidate.parent.parent != prior.artifact_root
+                or json.loads(read_bytes(candidate.parent / "integration.json")) != integration
+                or _git_identity(candidate) != source["git_identity"]):
+            raise DispatchWorkspaceError("The continuation candidate identity changed.")
+        root_guard = prior.metadata.get("root_guard") or {
+            "head": prior.metadata["original_head"], "files": prior.metadata["files"],
+            "index_sha256": prior.metadata["original_index_sha256"]}
+        def check_project_source():
+            capture = _capture(project_root, limits, expected_identity=identity, original=True)
+            observed = {"head": capture["original_head"], "files": _file_manifest(capture),
+                        "index_sha256": hashlib.sha256(capture["original_index"]).hexdigest()}
+            if observed != root_guard:
+                raise DispatchWorkspaceError("The project source changed after the candidate was captured.")
+
+        check_project_source()
+        probe_candidate(candidate, head)
+        candidate_identity = _expected_root_identity(candidate, None)
+        first = _capture(candidate, limits, expected_identity=candidate_identity, original=True)
+        _clone(candidate, baseline)
+        second = _capture(candidate, limits, expected_identity=candidate_identity, original=True)
+        if (_capture_identity(first) != _capture_identity(second)
+                or _git_identity(candidate) != source["git_identity"]):
+            raise DispatchWorkspaceError("The candidate changed during isolated dispatch preparation.")
+        probe_candidate(candidate, head)
+        check_project_source()
+        baseline_commit = _raw_commit(baseline, second, second["original_head"], root)
     else:
         first = _capture(project_root, limits, expected_identity=identity, original=True)
         _clone(project_root, baseline)
@@ -457,6 +500,8 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
                 "baseline_root_identity": _expected_root_identity(baseline, None),
                 "baseline_git_identity": _git_identity(baseline),
                 **({"baseline_from": baseline_from} if baseline_from is not None else {}),
+                **({"candidate_source": candidate_source} if candidate_source is not None else {}),
+                **({"root_guard": root_guard} if root_guard is not None else {}),
                 "exclusion_policy": ["Git ignored untracked files", "untracked .pnpm-store cache",
                                      ".goodteam metadata", "empty directories"]}
     (root / "jobs").mkdir()

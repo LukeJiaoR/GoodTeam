@@ -136,6 +136,7 @@ def dispatch_tracks(
     codex_review_admission: CodexReviewAdmission | None = None,
     require_isolation: bool = False,
     recovery_source: dict | None = None,
+    candidate_source: dict | None = None,
     capacity_check_start=None,
 ) -> dict[str, object]:
     # Exact-source reviews own a separate immutable source protocol. Ordinary
@@ -145,7 +146,8 @@ def dispatch_tracks(
                      projects_dir=projects_dir, allow_unsafe=allow_unsafe,
                      logical_task_id=logical_task_id or str(uuid4()),
                      codex_review_admission=codex_review_admission, require_isolation=require_isolation,
-                     recovery_source=recovery_source, capacity_check_start=capacity_check_start)
+                     recovery_source=recovery_source, candidate_source=candidate_source,
+                     capacity_check_start=capacity_check_start)
     if any(track.get("review_target") is not None for track in tracks):
         return _dispatch_tracks(**arguments)
     from goodteam_os.skills.task_start import registered_project_scope
@@ -167,6 +169,8 @@ def dispatch_tracks(
                **({"require_isolation": True} if require_isolation else {})}
     if recovery_source is not None:
         request["recovery_source"] = recovery_source
+    if candidate_source is not None:
+        request["candidate_source"] = candidate_source
     def dispatch_locked():
         saved = read_bytes(artifact_root / "request.json")
         from goodteam_os.skills.role_packages import ROLE_METHODS_VERSION as DEFAULT_ROLE_METHODS, ROLE_PACKAGES
@@ -252,7 +256,8 @@ def _dispatch_tracks(
     allow_unsafe: bool = False, logical_task_id: str = "",
     codex_review_admission: CodexReviewAdmission | None = None,
     require_isolation: bool = False,
-    recovery_source: dict | None = None, default_role_methods: bool = False, track_methods: dict | None = None,
+    recovery_source: dict | None = None, candidate_source: dict | None = None,
+    default_role_methods: bool = False, track_methods: dict | None = None,
     capacity_check_start=None,
 ) -> dict[str, object]:
     safety_kwargs: dict[str, object] = {"allow_unsafe": allow_unsafe}
@@ -363,6 +368,8 @@ def _dispatch_tracks(
         raise ValueError("Local execution requires a registered project and its captured task protocol.")
     if require_isolation and (context and not ordinary_method_mode or any(track.get("review_target") is not None for track in tracks)):
         raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
+    if candidate_source is not None and (not require_isolation or recovery_source is not None):
+        raise ValueError("A continuation candidate requires a new isolated project batch.")
     parent_report = None
     retained = []
     if recovery_source is not None:
@@ -392,7 +399,8 @@ def _dispatch_tracks(
         from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
 
         isolated = prepare_dispatch_workspace(project_root, run_id, [str(job["id"]) for job in jobs_by_role],
-            **({"baseline_from": recovery_source["run_id"]} if recovery_source is not None else {}))
+            **({"baseline_from": recovery_source["run_id"]} if recovery_source is not None else {}),
+            **({"candidate_source": candidate_source} if candidate_source is not None else {}))
     if require_isolation and isolated is None:
         raise ValueError("Project batch isolation was not established; no Worker was started.")
     results_by_id: dict[str, dict[str, object]] = {}
@@ -487,6 +495,7 @@ def _dispatch_tracks(
         "project_root": str(project_root),
         "integration": integration,
         **({"recovery_source": recovery_source} if recovery_source is not None else {}),
+        **({"candidate_source": candidate_source} if candidate_source is not None else {}),
         "worker_capacity": {
             "configured_max_concurrent_workers": DEFAULT_MAX_CONCURRENT_WORKERS,
             "pool_size": max_workers,
