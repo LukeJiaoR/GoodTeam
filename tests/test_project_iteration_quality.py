@@ -61,7 +61,7 @@ from uuid import uuid4
 
 mode = sys.argv.pop(1)
 if '--version' in sys.argv:
-    print('codex-cli ' + ('0.160.0' if mode == 'review' else '0.159.2'))
+    print('codex-cli ' + '.'.join(map(str, sys.version_info[:3])))
     raise SystemExit(0)
 prompt = sys.stdin.read()
 assert prompt
@@ -172,7 +172,9 @@ def _correction_admission(tmp_path, source, job_id, binary, native_home):
     captured = attempt.load()
     policy = dict(schema_version="goodteam.trusted-codex-correction-policy.v1",
         project_root=str(source), input=captured.reference, workspace=str(attempt.workspace(captured)),
-        codex=str(binary), codex_home=str(native_home), version="0.159.2",
+        codex=str(binary), codex_home=str(native_home),
+        version=subprocess.run([str(binary), "--version"], check=True, capture_output=True,
+                               text=True).stdout.strip().removeprefix("codex-cli "),
         binary_digest="sha256:" + hashlib.sha256(binary.read_bytes()).hexdigest(), model="offline-fixture",
         expires_at=int(time.time()) + 600, max_seconds=30, max_invocations=1, trusted_task_inputs=True,
         accept_native_managed_configuration=True, accept_unknown_cost=True,
