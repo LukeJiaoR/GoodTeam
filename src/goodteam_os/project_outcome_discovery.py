@@ -34,8 +34,10 @@ def normalize_discovery(value):
         return None
     required = {"objective", "allowed_write_domains", "max_new_tasks", "max_planning_calls"}
     if (not isinstance(value, dict) or not required.issubset(value)
-            or set(value) - required - {"allow_investigation", "allow_planning", "allow_undelivered_feedback", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question"}):
+            or set(value) - required - {"allow_investigation", "allow_planning", "allow_team_roles", "allow_undelivered_feedback", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question"}):
         raise ValueError("Confirm an explicit discovery objective, paths and finite task/planning budgets.")
+    if "allow_team_roles" in value and type(value["allow_team_roles"]) is not bool:
+        raise ValueError("Team Role delegation permission must be an explicit boolean.")
     if "allow_running_human_question" in value and (
             type(value["allow_running_human_question"]) is not bool
             or value["allow_running_human_question"] and value.get("allow_running_observation") is not True):
@@ -242,7 +244,7 @@ def _authorized_task_context(root, project_key, value, *, exclude_ref=None):
 def _packet(workspace, project_key, root, value, outcome, *, project_config=None, backlog_source=None):
     from goodteam_os.memory import runtime_role_memory_store
     from goodteam_os.project_iteration_planner import _project_evidence
-    from goodteam_os.team_control_plane import team_view_for_config
+    from goodteam_os.team_control_plane import MANAGER_ROLE, team_view_for_config
 
     snapshot = rank_project_backlog(LocalTaskStore(root, project_key).list_tasks(), project_key, limit=None)
     undelivered = None if outcome is not None or backlog_source is not None else _undelivered_source(
@@ -281,14 +283,17 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
             if task["id"] in value["task_ids"] and not (task["status"] == "done" and task.get("delivery_verified") is True)
             and not is_observed_investigation(value, task)]
     team = team_view_for_config(Path(workspace), project_key, project_config) or {}
+    all_team_roles = value["discovery"].get("allow_team_roles") is True
     allowed_roles = {"implementation", "research"} if value["discovery"].get("allow_investigation") is True else {"implementation"}
     if value["discovery"].get("allow_planning") is True:
         allowed_roles.add("planner")
     packet["role_capabilities"] = [
         {"role": role["role"], "state": role.get("state"), "capability": role.get("capability", ""),
+         **({"label": role.get("label", role["role"])} if all_team_roles else {}),
          "dispatchable": role.get("state") == "enabled"
              and role.get("capability") == "ready"}
-        for role in team.get("roles", []) if role.get("role") in allowed_roles
+        for role in team.get("roles", []) if role.get("role") != MANAGER_ROLE
+        and (all_team_roles or role.get("role") in allowed_roles)
     ]
     if value["discovery"].get("allow_investigation") is True:
         role = next((item for item in packet["role_capabilities"] if item["role"] == "research"), {})
@@ -431,9 +436,10 @@ def _validate_discovered_single(packet, response):
     if task is None:
         return {"new_task": None, "rationale": reason.strip(), **actions}
     fields = {"title", "description", "acceptance_criteria", "write_domains", "dependencies", "source_refs"}
+    team_roles = packet["discovery"].get("allow_team_roles") is True
     investigation_allowed = packet["discovery"].get("allow_investigation") is True
     planning_allowed = packet["discovery"].get("allow_planning") is True
-    optional = {"task_type"} if investigation_allowed or planning_allowed else set()
+    optional = {"role"} if team_roles else {"task_type"} if investigation_allowed or planning_allowed else set()
     # Only frozen packets from the former member-selection contract accept
     # that field. Newly captured Role capabilities never select an instance.
     if "worker_capabilities" in packet and "role_capabilities" not in packet:
@@ -442,19 +448,30 @@ def _validate_discovered_single(packet, response):
             or not isinstance(task["title"], str) or not 5 <= len(task["title"].strip()) <= 240
             or not isinstance(task["description"], str) or not 20 <= len(task["description"].strip()) <= 4000):
         raise ValueError("A follow-up needs an explicit bounded task, not runtime commands or new permissions.")
-    task_type = task.get("task_type", "implementation")
-    if task_type not in ("implementation", "investigation", "planning"):
-        raise ValueError("Discovery task type must be implementation, investigation or planning.")
-    investigation = task_type == "investigation"
-    planning = task_type == "planning"
-    if investigation and (not investigation_allowed
-            or (packet.get("investigation_capability") or {}).get("dispatchable") is not True):
-        raise ValueError("Investigation requires explicit authority and an available Researcher.")
-    if planning and (not planning_allowed
-            or (packet.get("planning_capability") or {}).get("dispatchable") is not True):
-        raise ValueError("Planning requires explicit authority and an available Planner.")
-    if (investigation or planning) and task["write_domains"] != []:
-        raise ValueError("A research or planning task must be read-only and declare no write domains.")
+    if team_roles:
+        from goodteam_os.team_control_plane import MANAGER_ROLE
+
+        role = task.get("role")
+        if (not isinstance(role, str) or role == MANAGER_ROLE
+                or not any(item.get("role") == role and item.get("dispatchable") is True
+                           for item in packet.get("role_capabilities", []))):
+            raise ValueError("Choose an enabled and available project Team Role.")
+        investigation = task["write_domains"] == []
+        planning = False
+    else:
+        task_type = task.get("task_type", "implementation")
+        if task_type not in ("implementation", "investigation", "planning"):
+            raise ValueError("Discovery task type must be implementation, investigation or planning.")
+        investigation = task_type == "investigation"
+        planning = task_type == "planning"
+        if investigation and (not investigation_allowed
+                or (packet.get("investigation_capability") or {}).get("dispatchable") is not True):
+            raise ValueError("Investigation requires explicit authority and an available Researcher.")
+        if planning and (not planning_allowed
+                or (packet.get("planning_capability") or {}).get("dispatchable") is not True):
+            raise ValueError("Planning requires explicit authority and an available Planner.")
+        if (investigation or planning) and task["write_domains"] != []:
+            raise ValueError("A research or planning task must be read-only and declare no write domains.")
     if "worker_id" in task:
         worker_id = task["worker_id"]
         role = "planner" if planning else "research" if investigation else "implementation"
@@ -495,12 +512,14 @@ def _discovered_task_intent(packet, selection, creation_ref):
     task = validate_discovered_task(packet, selection)["new_task"]
     if task is None:
         raise ValueError("No follow-up task was proposed.")
-    investigation = task.get("task_type") == "investigation"
-    planning = task.get("task_type") == "planning"
+    team_roles = packet["discovery"].get("allow_team_roles") is True
+    investigation = task["write_domains"] == [] if team_roles else task.get("task_type") == "investigation"
+    planning = not team_roles and task.get("task_type") == "planning"
     intent = {key: task[key] for key in ("title", "description", "acceptance_criteria", "write_domains", "dependencies")}
     if "worker_id" in task:
         intent["worker_id"] = task["worker_id"]
-    intent.update(role="planner" if planning else "research" if investigation else "implementation", priority="medium",
+    role = task["role"] if team_roles else "planner" if planning else "research" if investigation else "implementation"
+    intent.update(role=role, priority="medium",
                   execution_policy="read_only" if investigation or planning else "workspace_write",
                   external_refs=[creation_ref, *task["source_refs"]], artifact_refs=list(task["source_refs"]))
     return intent

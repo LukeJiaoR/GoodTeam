@@ -143,10 +143,8 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
   const [paths, setPaths] = useState('');
   const [newTaskLimit, setNewTaskLimit] = useState(3);
   const [planningLimit, setPlanningLimit] = useState(6);
-  const [investigate, setInvestigate] = useState(false);
-  const [plan, setPlan] = useState(false);
-  const [feedback, setFeedback] = useState(false);
-  const [initialFeedback, setInitialFeedback] = useState(false);
+  const [feedback, setFeedback] = useState(true);
+  const [initialFeedback, setInitialFeedback] = useState(true);
   const [observeRunning, setObserveRunning] = useState(false);
   const [followUp, setFollowUp] = useState(false);
   const [followUpLimit, setFollowUpLimit] = useState(1);
@@ -160,9 +158,7 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
       && ![...path].some(character => character.charCodeAt(0) < 32 || '\\:*?[]'.includes(character)));
   const scopedTasks = tasks.filter(task => task.status === 'todo' || discover && task.status === 'blocked');
   const discovery = discover ? { objective: objective.trim(), allowed_write_domains: domains,
-    max_new_tasks: newTaskLimit, max_planning_calls: planningLimit, allow_backlog_judgment: true,
-    ...(investigate ? { allow_investigation: true } : {}),
-    ...(plan ? { allow_planning: true } : {}),
+    max_new_tasks: newTaskLimit, max_planning_calls: planningLimit, allow_backlog_judgment: true, allow_team_roles: true,
     ...(feedback ? { allow_undelivered_feedback: true } : {}),
     ...(feedback && initialFeedback ? { allow_initial_readonly_feedback: true } : {}),
     ...(observeRunning ? { allow_running_observation: true, allow_running_human_question: true } : {}),
@@ -183,8 +179,8 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
     onAction({ ...input, idempotency_key: `${command}:${lastSubmission.current.revision}` });
   };
   return <>
-    <p>{discover ? (zh ? '授权下方初始任务，并让 Manager 在指定目标与路径范围内发现后续任务。可依据已核实交付或当前已授权任务事实判断、提问及提出后续任务；下方可另行授权调查、规划与未交付结果反馈。'
-      : 'Authorize the initial tasks below and let Manager discover follow-up tasks within the specified objective and paths. Judgment, questions and follow-up tasks may use verified delivery or current authorized task facts; investigation, planning and undelivered feedback require the separate choices below.')
+    <p>{discover ? (zh ? '授权下方初始任务，并让 Manager 在指定目标与路径范围内发现后续任务，按需使用项目中已启用的 Team Role。可依据已核实交付或当前已授权任务事实判断、提问及提出后续任务；未交付结果反馈可在下方授权。'
+      : 'Authorize the initial tasks below and let Manager discover follow-up tasks within the specified objective and paths, using enabled Team Roles as needed. Judgment and follow-up tasks may use verified delivery or authorized task facts; undelivered feedback can be authorized below.')
       : (zh ? '仅授权下方列出的现有任务自动规划和执行。' : 'Authorize planning and execution of only the existing tasks listed below.')}
       {' '}{zh ? '交付仍需审查并核实已落地的版本；每批最多同时运行 10 个 Worker，按当前配置产生模型费用。'
         : 'Delivery still requires review and a verified landed version. Up to 10 Workers run concurrently per batch and configured model charges apply.'}</p>
@@ -202,28 +198,18 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
       </label>
       <p>{zh ? '填写 1–12 个项目相对目录或文件路径。每个获准来源结果最多产生一个后续任务；现有任务仍可并行执行。'
         : 'Enter 1–12 project-relative directories or files. Each authorized source outcome can produce at most one follow-up task; existing tasks can still run in parallel.'}</p>
-      <label><input type="checkbox" checked={investigate} onChange={event => {
-        setInvestigate(event.target.checked);
-        if (!event.target.checked && !plan) setInitialFeedback(false);
-      }} />
-        {zh ? '允许 Manager 按需委派只读调查任务' : 'Allow Manager to delegate read-only investigation when needed'}</label>
-      <label><input type="checkbox" checked={plan} onChange={event => {
-        setPlan(event.target.checked);
-        if (!event.target.checked && !investigate) setInitialFeedback(false);
-      }} />
-        {zh ? '允许 Manager 按需委派 Planner' : 'Allow Manager to delegate Planner when needed'}</label>
-      <p>{zh ? '调查与规划并非必经步骤；任务占用上述批次、新任务和模型额度。仍需可用且获准的 Runtime，不会自动启用搜索或绕过隔离。'
-        : 'Investigation and planning are optional, using the batch, new-task and model allowances. An available admitted Runtime is still required; this does not enable search or bypass isolation.'}</p>
+      <p>{zh ? 'Manager 可按需选择项目中已启用且可用的 Team Role；只读任务不获得写权限，写入仍限于上述路径。'
+        : 'Manager can select enabled and available Team Roles as needed. Read-only tasks receive no write access; other writes remain within the paths above.'}</p>
       <label><input type="checkbox" checked={feedback} onChange={event => {
         setFeedback(event.target.checked);
         if (!event.target.checked) setInitialFeedback(false);
       }} />
         {zh ? '允许根据未交付任务的已知结果继续判断' : 'Allow decisions from known outcomes without a delivered result'}</label>
       {feedback ? <>
-        <label><input type="checkbox" checked={initialFeedback} disabled={!investigate && !plan} onChange={event => setInitialFeedback(event.target.checked)} />
+        <label><input type="checkbox" checked={initialFeedback} onChange={event => setInitialFeedback(event.target.checked)} />
           {zh ? '首次工程交付前，允许根据初始只读任务结果接续' : 'Allow initial read-only task outcomes before the first engineering delivery'}</label>
-        <p>{zh ? '仅消费原授权任务的已知结果、失败或部分成果，仍占用 Manager 额度；不重试未知执行，不把报告当作工程交付。首次只读接续还须勾选对应的调查或 Planner 权限。'
-          : 'Use only known outcomes, failures or partial results of originally authorized tasks, within the Manager allowance. No unknown execution is retried and reports are not engineering delivery. Initial read-only continuation also requires the matching investigation or Planner permission.'}</p>
+        <p>{zh ? '仅消费原授权任务的已知结果、失败或部分成果，仍占用 Manager 额度；不重试未知执行，不把报告当作工程交付。'
+          : 'Use only known outcomes, failures or partial results of originally authorized tasks, within the Manager allowance. No unknown execution is retried and reports are not engineering delivery.'}</p>
       </> : null}
       <label><input type="checkbox" checked={observeRunning} onChange={event => setObserveRunning(event.target.checked)} />
         {zh ? '允许执行期间的 Manager 观察判断' : 'Allow Manager observations while Workers run'}</label>
@@ -294,10 +280,12 @@ export default function ProjectContinuationControls({ snapshot, session, project
           <p>{zh ? '已创建新任务' : 'New tasks created'}: {value.new_tasks_created ?? 0} / {value.discovery.max_new_tasks}</p>
           <ul aria-label={zh ? '已授权的接续能力' : 'Approved continuation capabilities'}>
             {[
-              ['allow_investigation', zh ? '只读调查' : 'Read-only investigation'],
+              ...(value.discovery.allow_team_roles === true
+                ? [['allow_team_roles', zh ? '按需使用已启用的 Team Role' : 'Enabled Team Roles as needed']]
+                : [['allow_investigation', zh ? '只读调查' : 'Read-only investigation'],
+                  ['allow_planning', zh ? 'Planner 委派' : 'Planner delegation']]),
               ['allow_running_human_question', zh ? '运行中内部问题板提问' : 'Internal board questions while running'],
               ['allow_backlog_judgment', zh ? '依据当前授权任务事实判断' : 'Judgment from authorized backlog facts'],
-              ['allow_planning', zh ? 'Planner 委派' : 'Planner delegation'],
               ['allow_undelivered_feedback', zh ? '未交付结果反馈' : 'Undelivered outcome feedback'],
               ['allow_initial_readonly_feedback', zh ? '首次交付前只读接续' : 'Initial read-only continuation'],
             ].map(([flag, label]) => <li key={flag}>{label}: {value.discovery[flag] === true

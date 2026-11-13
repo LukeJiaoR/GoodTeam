@@ -81,6 +81,14 @@ Read an existing batch report at
 response contains `task_assistant_session.project_continuation` and
 `project_task_batches` for status and review presentation.
 
+New outcome-discovery grants may include `allow_team_roles: true`. This lets
+Manager select an enabled, available project Team Role for each follow-up;
+the existing queue allocates the Worker. Empty write domains produce a read-only
+task, while writes remain within the grant's original paths. Team/runtime checks,
+Stop, evidence binding and delivery approval remain unchanged. Older grants without
+this field keep their original Role permissions and frozen planning inputs.
+The Work page includes this authority when the owner enables follow-up discovery.
+
 ## Recover a batch after a local host interruption
 
 If a host dies before saving the ordinary isolated Codex implementation
