@@ -13,7 +13,8 @@ export default function ContinuationScopeAddition({ value, snapshot, onAction, d
   const identity = JSON.stringify(input);
   const ready = ids.length > 0 && ids.length + (value.task_ids || []).length <= 128 && snapshot?.version && !value.workflow_recovery
     && !value.planning_backlog_version && !value.discovery_pending
-    && value.batches_started < value.max_batches && value.manager_calls < value.max_manager_calls;
+    && (value.max_batches == null || value.batches_started < value.max_batches)
+    && (value.max_manager_calls == null || value.manager_calls < value.max_manager_calls);
   if (!tasks.length) return null;
   return <fieldset disabled={disabled}>
     <legend>{zh ? '确认加入后续任务' : 'Confirm additional later tasks'}</legend>

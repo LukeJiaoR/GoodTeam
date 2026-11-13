@@ -90,9 +90,11 @@ def project_continuation_notice(session):
 
 def notice_content(notice):
     phase = notice["phase"]
+    batches = notice['max_batches'] if notice['max_batches'] is not None else "no limit"
+    calls = notice['max_manager_calls'] if notice['max_manager_calls'] is not None else "no limit"
     lines = [_COPY[phase], "Reason: " + notice["reason"],
-             f"Batch reservations: {notice['batches_started']}/{notice['max_batches']}; "
-             f"Manager reservations: {notice['manager_calls']}/{notice['max_manager_calls']}."]
+             f"Batch reservations: {notice['batches_started']}/{batches}; "
+             f"Manager reservations: {notice['manager_calls']}/{calls}."]
     for question in notice.get("human_questions", []):
         lines.extend([question["question"], question["why_human"], "/answer " + question["id"] + " <your answer>"])
     if notice["delivered_task_ids"]:

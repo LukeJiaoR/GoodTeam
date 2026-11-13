@@ -191,7 +191,8 @@ relevant Context and completion criteria; let it choose its execution methods.
 The host retains questions and applies actions through the existing queue. It
 does not infer task dependencies, priorities or a project-wide pause from a question.
 remaining_budget describes resources at capture (manager_calls includes this
-turn). With no task or batch slots left, use the remaining judgment to handle
+turn). A null limit means no configured cap, not zero remaining resources.
+With no task or batch slots left, use the remaining judgment to handle
 feedback, wait or end; do not propose more work than the original grant allows.
 human_questions lists still-unanswered questions; do not ask them again merely
 because other work progressed. If no work should proceed until an existing
@@ -340,7 +341,7 @@ Multiple follow-ups extension: this replaces the single-task-per-decision limit
 above. When useful, return new_tasks:[task, ...] INSTEAD OF new_task. Every task
 uses the same bounded schema, evidence, roles and authority above. Return only
 one of these fields; keep new_task:null for no follow-up. Do not duplicate tasks.
-The whole set must fit remaining_budget.new_tasks; do not create dependencies
+The whole set must fit remaining_budget.new_tasks when it is not null; do not create dependencies
 between new tasks or assume new IDs. Select genuinely independent work: writing
 domains must be disjoint. The set uses the original queue and batch execution
 gates, not permission to run conflicting work or bypass any remaining gate.

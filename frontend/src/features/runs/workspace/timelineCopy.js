@@ -8,8 +8,8 @@ export function timelineCopy(item, t) {
     const answerCommands = questions.map(question => `/answer ${question.id} <your answer>`);
     const lines = [t(`work.manager.continuation.${notice.phase}`),
       t('work.manager.continuation.reason', { reason: translated(t, `work.manager.continuation.reason.${notice.reason}`, notice.reason) }),
-      t('work.manager.continuation.budget', { batches: `${notice.batches_started}/${notice.max_batches}`,
-        calls: `${notice.manager_calls}/${notice.max_manager_calls}` })];
+      t('work.manager.continuation.budget', { batches: `${notice.batches_started}/${notice.max_batches ?? t('work.manager.continuation.no_limit')}`,
+        calls: `${notice.manager_calls}/${notice.max_manager_calls ?? t('work.manager.continuation.no_limit')}` })];
     if (notice.delivered_task_ids?.length) {
       lines.push(t('work.manager.continuation.delivered', { tasks: notice.delivered_task_ids.join(', ') }));
       lines.push(t('work.manager.continuation.receipts', { receipts: notice.delivery_receipt_ids.join(', ') }));
@@ -26,7 +26,8 @@ export function timelineCopy(item, t) {
   }
   if (['project_continuation_authorized', 'project_continuation_batch_started'].includes(item.event)) {
     return t(`work.manager.events.${item.event}`, { tasks: (item.details?.task_ids || []).join(', '),
-      batches: item.details?.max_batches, calls: item.details?.max_manager_calls });
+      batches: item.details?.max_batches ?? t('work.manager.continuation.no_limit'),
+      calls: item.details?.max_manager_calls ?? t('work.manager.continuation.no_limit') });
   }
   if (item.actor === 'user' && item.event === 'mission_requested') return item.content;
   if (item.content && ['intent_clarification_requested', 'project_question_answered'].includes(item.event)) return item.content;

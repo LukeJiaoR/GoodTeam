@@ -44,7 +44,8 @@ def add_project_continuation_tasks(*, workspace, project_key, root, project_conf
                 raise ValueError('Workflow recovery retains its original fixed task scope.')
             if value.get('planning_backlog_version') or value.get('discovery_pending'):
                 raise ValueError('Reconcile the original reserved Manager decision before changing its task scope.')
-            if value['batches_started'] >= value['max_batches'] or value['manager_calls'] >= value['max_manager_calls']:
+            if (value['max_batches'] is not None and value['batches_started'] >= value['max_batches']
+                    or value['max_manager_calls'] is not None and value['manager_calls'] >= value['max_manager_calls']):
                 raise ValueError('The existing iteration or Manager allowance is exhausted; no budget is added.')
             if authority_snapshot(workspace, project_key, project_config, root) != value['authority']:
                 raise ValueError('The original effective authority changed.')

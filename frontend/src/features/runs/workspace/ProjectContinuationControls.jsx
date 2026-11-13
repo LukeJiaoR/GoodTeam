@@ -137,12 +137,12 @@ function DeliveryConfirmation({ batch, projectKey, onAction, disabled, zh }) {
 }
 
 function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, canStart, zh }) {
-  const [maximum, setMaximum] = useState(3);
+  const [maximum, setMaximum] = useState('');
   const [discover, setDiscover] = useState(false);
   const [objective, setObjective] = useState('');
   const [paths, setPaths] = useState('');
-  const [newTaskLimit, setNewTaskLimit] = useState(3);
-  const [planningLimit, setPlanningLimit] = useState(6);
+  const [newTaskLimit, setNewTaskLimit] = useState('');
+  const [planningLimit, setPlanningLimit] = useState('');
   const [feedback, setFeedback] = useState(true);
   const [initialFeedback, setInitialFeedback] = useState(true);
   const [observeRunning, setObserveRunning] = useState(false);
@@ -158,19 +158,20 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
       && ![...path].some(character => character.charCodeAt(0) < 32 || '\\:*?[]'.includes(character)));
   const scopedTasks = tasks.filter(task => task.status === 'todo' || discover && task.status === 'blocked');
   const discovery = discover ? { objective: objective.trim(), allowed_write_domains: domains,
-    max_new_tasks: newTaskLimit, max_planning_calls: planningLimit, allow_backlog_judgment: true, allow_team_roles: true,
+    max_new_tasks: newTaskLimit === '' ? null : Number(newTaskLimit),
+    max_planning_calls: planningLimit === '' ? null : Number(planningLimit), allow_backlog_judgment: true, allow_team_roles: true,
     ...(feedback ? { allow_undelivered_feedback: true, allow_candidate_handoff: true } : {}),
     ...(feedback && initialFeedback ? { allow_initial_readonly_feedback: true } : {}),
     ...(observeRunning ? { allow_running_observation: true, allow_running_human_question: true } : {}),
     ...(observeRunning && followUp ? { worker_follow_up_limit: followUpLimit } : {}) } : undefined;
   const input = { action: 'start_project_continuation', expected_backlog_version: snapshot.version,
-    task_ids: scopedTasks.map(task => task.task_id), max_batches: maximum, confirmed: true, billing_acknowledged: true,
+    task_ids: scopedTasks.map(task => task.task_id), max_batches: maximum === '' ? null : Number(maximum), confirmed: true, billing_acknowledged: true,
     ...(discovery ? { discovery } : {}) };
   const inputIdentity = JSON.stringify([value?.id || 'new', input]);
-  const valid = scopedTasks.length > 0 && Number.isInteger(maximum) && maximum >= 1 && maximum <= 50
+  const validLimits = [maximum, ...(discover ? [newTaskLimit, planningLimit] : [])]
+    .every(limit => limit === '' || Number.isInteger(Number(limit)) && Number(limit) >= 1);
+  const valid = scopedTasks.length > 0 && validLimits
     && (!discover || objective.trim().length >= 20 && objective.trim().length <= 2000 && validDomains
-      && Number.isInteger(newTaskLimit) && newTaskLimit >= 1 && newTaskLimit <= 50
-      && Number.isInteger(planningLimit) && planningLimit >= 1 && planningLimit <= 100
       && (!observeRunning || !followUp || Number.isInteger(followUpLimit) && followUpLimit >= 1 && followUpLimit <= 10));
   const start = () => {
     if (lastSubmission.current.input !== inputIdentity) {
@@ -196,8 +197,8 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
         <textarea value={paths} onChange={event => setPaths(event.target.value)} rows={3} spellCheck={false}
           placeholder={'src\ntests'} />
       </label>
-      <p>{zh ? '填写 1–12 个项目相对目录或文件路径。每个获准来源结果最多产生一个后续任务；现有任务仍可并行执行。'
-        : 'Enter 1–12 project-relative directories or files. Each authorized source outcome can produce at most one follow-up task; existing tasks can still run in parallel.'}</p>
+      <p>{zh ? '填写 1–12 个项目相对目录或文件路径。Manager 可选择后续任务，独立任务可以并行执行。'
+        : 'Enter 1–12 project-relative directories or files. Manager can select follow-up tasks and run independent tasks in parallel.'}</p>
       <p>{zh ? 'Manager 可按需选择项目中已启用且可用的 Team Role；只读任务不获得写权限，写入仍限于上述路径。'
         : 'Manager can select enabled and available Team Roles as needed. Read-only tasks receive no write access; other writes remain within the paths above.'}</p>
       <label><input type="checkbox" checked={feedback} onChange={event => {
@@ -225,22 +226,24 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
           : 'Observations use the Manager allowance; each follow-up may add Worker model charges, at most once per invocation. Original tasks only: no steer, abort, expanded scope or unknown-result retries. Existing grants are not upgraded.'}</p>
       </> : null}
       <label>{zh ? '新任务总量上限' : 'Maximum new tasks in total'}
-        <input type="number" min="1" max="50" value={newTaskLimit} onChange={event => setNewTaskLimit(Number(event.target.value))} />
+        <input type="number" min="1" value={newTaskLimit} placeholder={zh ? '留空不限制' : 'No limit'} onChange={event => setNewTaskLimit(event.target.value)} />
       </label>
       <label>{zh ? 'Manager 调用总量上限（含后续任务发现）' : 'Total Manager calls (including follow-up discovery)'}
-        <input type="number" min="1" max="100" value={planningLimit} onChange={event => setPlanningLimit(Number(event.target.value))} />
+        <input type="number" min="1" value={planningLimit} placeholder={zh ? '留空不限制' : 'No limit'} onChange={event => setPlanningLimit(event.target.value)} />
       </label>
     </fieldset> : null}
     <label>{discover ? (zh ? '最多执行批次' : 'Maximum batches')
       : (zh ? '最多执行批次（同时限制 Manager 调用次数）' : 'Maximum batches (also limits Manager calls)')}
-      <input type="number" min="1" max="50" value={maximum} disabled={disabled}
-        onChange={event => setMaximum(Number(event.target.value))} />
+      <input type="number" min="1" value={maximum} disabled={disabled} placeholder={zh ? '留空不限制' : 'No limit'}
+        onChange={event => setMaximum(event.target.value)} />
     </label>
+    <p>{zh ? '上限均可留空。留空时不限制相应次数，仍记录用量，可随时停止后续迭代。'
+      : 'Limits are optional. Blank fields leave the corresponding counts uncapped; usage is recorded and you can stop future iterations.'}</p>
     <label><input type="checkbox" checked={confirmedInput === inputIdentity}
       onChange={event => setConfirmedInput(event.target.checked ? inputIdentity : '')} disabled={disabled} />
-      {discover ? (zh ? '我确认初始任务、项目目标、允许路径、依据已核实交付或当前任务事实进行判断、所选调查/规划/反馈权限、批次与新任务及规划调用上限，并承担已配置模型的调用费用。'
-        : 'I confirm the initial tasks, objective, allowed paths, judgment from verified delivery or current task facts, selected investigation/planning/feedback permissions, batch, new-task and planning-call limits, and configured model charges.')
-        : (zh ? '我确认上述任务范围、迭代次数和模型费用。' : 'I confirm this task scope, iteration limit and model charges.')}</label>
+      {discover ? (zh ? '我确认初始任务、项目目标、允许路径、所选能力与可选上限，并承担已配置模型的调用费用。'
+        : 'I confirm the initial tasks, objective, allowed paths, selected capabilities, optional limits and configured model charges.')
+        : (zh ? '我确认上述任务范围、可选上限和模型费用。' : 'I confirm this task scope, optional limits and model charges.')}</label>
     <button type="button" disabled={disabled || !canStart || !valid || confirmedInput !== inputIdentity} onClick={start}>
       {zh ? '授权并开始自动迭代' : 'Authorize and start continuation'}
     </button>
@@ -274,11 +277,11 @@ export default function ProjectContinuationControls({ snapshot, session, project
     <details className="project-iteration-suggestion" open={Boolean(value)}>
       <summary>{zh ? '项目自动迭代' : 'Automatic project iteration'}{value ? ` · ${statusLabel}` : ''}</summary>
       {value ? <>
-        <p>{zh ? '已预留批次' : 'Batch reservations'}: {value.batches_started} / {value.max_batches} · {zh ? '已预留规划次数' : 'Planning reservations'}: {value.manager_calls} / {value.max_manager_calls}</p>
+        <p>{zh ? '已预留批次' : 'Batch reservations'}: {value.batches_started} / {value.max_batches ?? (zh ? '未设上限' : 'No limit')} · {zh ? '已预留规划次数' : 'Planning reservations'}: {value.manager_calls} / {value.max_manager_calls ?? (zh ? '未设上限' : 'No limit')}</p>
         {value.discovery ? <>
           <p>{zh ? '项目目标' : 'Project objective'}: {value.discovery.objective}</p>
           <p>{zh ? '允许写入的路径' : 'Allowed write paths'}: {value.discovery.allowed_write_domains.join(', ')}</p>
-          <p>{zh ? '已创建新任务' : 'New tasks created'}: {value.new_tasks_created ?? 0} / {value.discovery.max_new_tasks}</p>
+          <p>{zh ? '已创建新任务' : 'New tasks created'}: {value.new_tasks_created ?? 0} / {value.discovery.max_new_tasks ?? (zh ? '未设上限' : 'No limit')}</p>
           <ul aria-label={zh ? '已授权的接续能力' : 'Approved continuation capabilities'}>
             {[
               ...(value.discovery.allow_team_roles === true

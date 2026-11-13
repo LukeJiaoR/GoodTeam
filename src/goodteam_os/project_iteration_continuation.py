@@ -84,7 +84,7 @@ def pending_project_batch(session, root, project_key):
 
 
 def configure_project_continuation(*, workspace, project_key, root, project_config, request):
-    """Confirm existing task identities and finite iteration/model-call limits."""
+    """Confirm existing task identities and optional iteration/model-call limits."""
     from goodteam_os.project_import import read_bound_project_readiness
     from goodteam_os.project_readiness import build_capabilities
     from goodteam_os.team_control_plane import ensure_team_state
@@ -104,8 +104,8 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     if (not isinstance(ids, list) or not 1 <= len(ids) <= 128
             or any(not isinstance(item, str) or not item for item in ids) or len(set(ids)) != len(ids)):
         raise ValueError("Select 1–128 distinct existing project tasks.")
-    if type(maximum) is not int or not 1 <= maximum <= 50:
-        raise ValueError("Authorize between 1 and 50 project batches.")
+    if maximum is not None and (type(maximum) is not int or maximum < 1):
+        raise ValueError("The optional project batch limit must be a positive integer.")
     workspace, root, project_config = Path(workspace), Path(root), Path(project_config)
     store = TaskAssistantSessionStore(workspace, project_key)
     identity = sha256(key.encode()).hexdigest()[:32]
@@ -336,8 +336,8 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             if pending is None and all(task["status"] == "done" for task in selected):
                 return _save(store, {**value, "status": "completed", "reason": "authorized_tasks_delivered"})
             if pending is None:
-                if (value["batches_started"] >= value["max_batches"]
-                        or value["manager_calls"] >= value["max_manager_calls"]
+                if (value["max_batches"] is not None and value["batches_started"] >= value["max_batches"]
+                        or value["max_manager_calls"] is not None and value["manager_calls"] >= value["max_manager_calls"]
                         and not value.get("planning_backlog_version") and not value.get("waiting_attempt_id")):
                     return _save(store, {**value, "status": "exhausted", "reason": "approved_iteration_budget_used"})
                 from goodteam_os.manager_execution import manager_resource_slot
@@ -371,7 +371,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                                     or current.get("manager_calls") != value["manager_calls"]):
                                 raise ValueError("Planning reservation changed before invocation.")
                             if not planning:
-                                if current["manager_calls"] >= current["max_manager_calls"]:
+                                if current["max_manager_calls"] is not None and current["manager_calls"] >= current["max_manager_calls"]:
                                     raise ManagerPlanningBudgetExhausted("Approved Manager planning budget is exhausted.")
                                 current.update(planning_backlog_version=snapshot["version"],
                                                planning_input_version=5 if parallel_planning else 4, manager_calls=planned_call)

@@ -32,10 +32,13 @@ def _digest(value):
 def normalize_discovery(value):
     if value is None:
         return None
-    required = {"objective", "allowed_write_domains", "max_new_tasks", "max_planning_calls"}
+    required = {"objective", "allowed_write_domains"}
+    limits = {"max_new_tasks", "max_planning_calls"}
     if (not isinstance(value, dict) or not required.issubset(value)
-            or set(value) - required - {"allow_investigation", "allow_planning", "allow_team_roles", "allow_undelivered_feedback", "allow_candidate_handoff", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question"}):
-        raise ValueError("Confirm an explicit discovery objective, paths and finite task/planning budgets.")
+            or set(value) - required - limits - {"allow_investigation", "allow_planning", "allow_team_roles", "allow_undelivered_feedback", "allow_candidate_handoff", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question"}):
+        raise ValueError("Confirm an explicit discovery objective and paths.")
+    if any(value.get(key) is not None and (type(value[key]) is not int or value[key] < 1) for key in limits):
+        raise ValueError("Optional task and planning limits must be positive integers.")
     if "allow_team_roles" in value and type(value["allow_team_roles"]) is not bool:
         raise ValueError("Team Role delegation permission must be an explicit boolean.")
     if "allow_running_human_question" in value and (
@@ -68,11 +71,10 @@ def normalize_discovery(value):
     objective = value["objective"]
     domains = normalize_write_domains(value["allowed_write_domains"])
     if (not isinstance(objective, str) or not 20 <= len(objective.strip()) <= 2000
-            or domains is None or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/"))
-            or type(value["max_new_tasks"]) is not int or not 1 <= value["max_new_tasks"] <= 50
-            or type(value["max_planning_calls"]) is not int or not 1 <= value["max_planning_calls"] <= 100):
-        raise ValueError("Discovery needs a 20–2000 character objective, explicit project paths, 1–50 new tasks and 1–100 planning calls.")
-    return {**value, "objective": objective.strip(), "allowed_write_domains": domains}
+            or domains is None or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/"))):
+        raise ValueError("Discovery needs a 20–2000 character objective and explicit project paths.")
+    return {**value, **{key: value.get(key) for key in limits},
+            "objective": objective.strip(), "allowed_write_domains": domains}
 
 
 def authorization_digest(value):
@@ -258,9 +260,10 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
     packet = {"schema_version": "project_outcome_discovery_packet.v1", "project_key": project_key,
         "authorization_digest": value["authorization_digest"], "discovery": value["discovery"],
         "multiple_followups_supported": True,
-        "remaining_budget": {"manager_calls": value["max_manager_calls"] - value["manager_calls"],
-                             "batches": value["max_batches"] - value["batches_started"],
-                             "new_tasks": value["discovery"]["max_new_tasks"] - value["new_tasks_created"]},
+        "remaining_budget": {key: None if limit is None else limit - used for key, limit, used in (
+            ("manager_calls", value["max_manager_calls"], value["manager_calls"]),
+            ("batches", value["max_batches"], value["batches_started"]),
+            ("new_tasks", value["discovery"]["max_new_tasks"], value["new_tasks_created"]))},
         "authorized_task_ids": list(value["task_ids"]),
         "authorized_task_context": _authorized_task_context(root, project_key, value),
         "authorized_done_task_ids": [task["id"] for task in LocalTaskStore(root, project_key).list_tasks()
@@ -377,7 +380,8 @@ def validate_discovered_task(packet, response):
     if packet.get("multiple_followups_supported") is not True or "new_task" in response:
         raise ValueError("Multiple follow-ups require a current packet and one unambiguous task field.")
     proposed = response["new_tasks"]
-    if not isinstance(proposed, list) or not 1 <= len(proposed) <= packet["discovery"]["max_new_tasks"]:
+    maximum = packet["discovery"]["max_new_tasks"]
+    if not isinstance(proposed, list) or not proposed or maximum is not None and len(proposed) > maximum:
         raise ValueError("The whole follow-up set must fit the authorized task limit.")
     common = {key: value for key, value in response.items() if key != "new_tasks"}
     validated = [_validate_discovered_single(packet, {**common, "new_task": task}) for task in proposed]
@@ -751,7 +755,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
             return value  # No new feedback, including when a question is still open.
         if outcome is not None:
             _remember(root, outcome)
-        if value["manager_calls"] >= value["max_manager_calls"]:
+        if value["max_manager_calls"] is not None and value["manager_calls"] >= value["max_manager_calls"]:
             return _budget_exhausted(store, value, "approved_iteration_budget_used")
         trigger_ref = _digest(inputs)
         pending = {"packet": packet, "packet_digest": packet["packet_digest"],
@@ -844,11 +848,12 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
 
     # Task capacity constrains task publication, not a budgeted Manager judgment
     # about new feedback. Replaying an already-created task spends no new slot.
-    if value["batches_started"] >= value["max_batches"]:
+    if value["max_batches"] is not None and value["batches_started"] >= value["max_batches"]:
         return _budget_exhausted(store, value, "approved_iteration_budget_used")
     proposed = _selection_tasks(selection)
     recorded_ids = pending.get("task_ids", [pending["task_id"]] if pending.get("task_id") else [])
-    if value["new_tasks_created"] + len(proposed) - len(recorded_ids) > value["discovery"]["max_new_tasks"]:
+    maximum = value["discovery"]["max_new_tasks"]
+    if maximum is not None and value["new_tasks_created"] + len(proposed) - len(recorded_ids) > maximum:
         return _budget_exhausted(store, value, "discovery_task_budget_used")
     refs = _creation_refs(value, pending)
     intents = [_discovered_task_intent(pending["packet"], {"new_task": task, "rationale": selection["rationale"]}, ref)

@@ -45,8 +45,9 @@ def select_pending(session, value, tasks):
 
 
 def ready_parallel_tasks(workspace, project_key, root, session, value, tasks):
-    if (value.get('workflow_recovery') or value['batches_started'] >= value.get('max_batches', value['batches_started'])
-            or value['manager_calls'] >= value['max_manager_calls']):
+    if (value.get('workflow_recovery')
+            or value['max_batches'] is not None and value['batches_started'] >= value['max_batches']
+            or value['max_manager_calls'] is not None and value['manager_calls'] >= value['max_manager_calls']):
         return []
     from goodteam_os.dispatch_capacity import available_dispatch_slots
     if available_dispatch_slots(root) < 1:

@@ -145,7 +145,8 @@ def running_observation_context(session):
     result["current_binding"] = bool(batch.get("project_root") and
         _binding(session, batch["project_root"]) == binding)
     # Informational only: must never mint or extend the existing authority.
-    result["remaining_manager_calls"] = max(0, value.get("max_manager_calls", 0) - value.get("manager_calls", 0))
+    maximum = value.get("max_manager_calls")
+    result["remaining_manager_calls"] = None if maximum is None else max(0, maximum - value.get("manager_calls", 0))
     judgment = (value.get("running_judgments") or {}).get(receipt["digest"])
     if judgment:
         result["judgment"] = {key: deepcopy(judgment[key]) for key in (
