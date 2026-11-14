@@ -68,8 +68,11 @@ def _input(provider, context_ref, record):
     catalog = [{key: deepcopy(item[key]) for key in
                 ("skill_id", "version_id", "package_digest", "name", "description", "activation", "resources")}
                for item in private["catalog"]]
+    from .codex_trusted import ADAPTER as TRUSTED_ADAPTER
+
+    method_root = "../input/methods" if record["runtime_session"]["adapter_version"] == TRUSTED_ADAPTER else "methods"
     text = (base + "\n# Locked methods\n" + required + "\n# Optional method catalog\n"
-            + canonical_json(catalog) + "\nResources: methods/<skill_id>/<relative path>. Read only when relevant.\n"
+            + canonical_json(catalog) + "\nResources: " + method_root + "/<skill_id>/<relative path>. Read only when relevant.\n"
             + "# Exact review target\n" + canonical_json(record["target"])
             + _source_input(record)
             + "\n# Result channel contract\n" + report_output_instructions(list(record["sources"])))
@@ -289,3 +292,4 @@ def continue_review_worker(workers, job_id, snapshot, ref):
                 code = "review_result_save_failed"
         return _mirror(workers, job_id, snapshot, ref, status="failed", error_code=code,
                        runtime_status=record["runtime_session"]["verification_kind"] if process_started else "blocked")
+
