@@ -1,24 +1,5 @@
 # Project setup for isolated Workers
 
-> **Temporarily unavailable after the #730 security review.** Automatic setup
-> now fails closed for both online and offline commands. The native
-> `:workspace` sandbox permits host reads: deleting environment credentials or
-> disabling network access does not prevent install hooks from reading
-> credential files and leaving them in outputs for later exfiltration.
->
-> New configuration and previously captured setup invocations are rejected with
-> `worker_setup_read_isolation_unavailable`; installation is not silently skipped
-> and the agent is not started through this wrapper. Workers without
-> `worker_setup` keep their existing execution path. Restoring automatic setup
-> requires an implemented and verified host-read-isolated runtime, not a boolean
-> opt-in, credential denylist, or permission bypass.
->
-> The configuration below documents the retained format, not a currently
-> executable setup capability. `network_access` accepts only explicit booleans
-> (including the YAML parser's `true`/`false` strings), never Python truthiness.
-
-## Retained configuration contract
-
 Configure the existing project installation command once in the local project
 configuration. Each ordinary CLI Worker runs it in its own captured workspace
 before starting the agent. The package manager can reuse a project cache while
@@ -36,6 +17,8 @@ worker_setup:
 
 Choose the command and cache paths for the actual project. `network_access: true`
 can permit an explicitly configured installation to fetch missing packages.
+`network_access` accepts only explicit booleans (including the YAML parser's
+`true`/`false` strings), never Python truthiness.
 GoodTeam does not select installation commands from model output. Package
 installation scripts run as part of the configured command.
 
@@ -53,3 +36,13 @@ cross-project confidentiality boundary. Dependency directories are not shared
 as writable symlinks between Worker workspaces. Protected review/correction and
 Pi method runtimes retain their existing protocols; this setup hook is for the
 ordinary CLI path.
+
+## Known credential-isolation limitation
+
+The #731 boolean and candidate-handoff fixes do not resolve #730's credential
+read exposure. Setup retains the existing execution path: inherited credentials
+beyond the small environment denylist, `setup.env` overrides, and host credential
+files may remain accessible. Disabling network access alone does not prevent
+secrets being left in outputs for a later process. Do not treat this native setup
+path as verified host-credential isolation. A functionality-preserving isolation
+replacement remains to be implemented and validated.
