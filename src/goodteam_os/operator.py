@@ -85,32 +85,16 @@ def enqueue_github_issue(
     parsed = parse_github_issue_url(issue_url)
     project = resolve_known_project(workspace, parsed.repository)
     client = github_client or GhCliGitHubClient(cwd=project.project_root)
-    snapshot = client.fetch_issue(project.repository, parsed.issue_number)
     queue = DurableOperatorQueue(state_dir)
-    return queue.enqueue(
-        idempotency_key=f"github_issue:{project.key}:{parsed.repository.lower()}#{parsed.issue_number}",
-        source_url=parsed.url,
-        source_revision=snapshot.updated_at,
-        project_key=project.key,
-        repository_identity=project.repository,
-        metadata={
-            "issue_number": parsed.issue_number,
-            "issue_title": snapshot.title,
-            "project_config": str(project.config_path),
-            "project_root": str(project.project_root),
-            "worker_backend": project.worker_backend,
-            "merge_method": project.merge_method,
-            "default_branch": project.base_branch or snapshot.default_branch,
-            "required_checks": list(project.required_checks),
-            "head_sha": "",
-            "base_sha": "",
-            "pr_number": 0,
-            "pr_url": "",
-            "decision": {},
-            "review": {},
-            "ci": {},
-        },
-    )
+    key = f"github_issue:{project.key}:{parsed.repository.lower()}#{parsed.issue_number}"
+    # Existing work keeps its original execution/PR/decision identity. Never
+    # create a competing Manager task for a historically accepted Operator item.
+    existing = next((item for item in queue.list_items() if item["idempotency_key"] == key), None)
+    if existing is not None and existing["status"] != "transferred":
+        return existing, False
+    from goodteam_os.operator_manager_intake import intake_issue
+
+    return intake_issue(workspace=workspace, project=project, parsed=parsed, client=client)
 
 
 def record_operator_decision(
@@ -162,9 +146,11 @@ class OperatorExecutionStateMachine:
         self.queue = queue
         self.actions = actions
 
-    def tick(self) -> dict[str, Any] | None:
+    def tick(self, *, allow_claim=True) -> dict[str, Any] | None:
         item = self.queue.active_item()
         if item is None:
+            if not allow_claim:
+                return None
             item = self.queue.claim_next()
             return item
         phase = str(item["phase"])
@@ -365,6 +351,8 @@ class OperatorExecutionStateMachine:
     def _effect(self, item: Mapping[str, Any], kind: str) -> dict[str, Any]:
         head = str(dict(item.get("metadata", {})).get("head_sha", ""))
         operation_id = f"{item['id']}:{item['attempt']}:{kind}:{head or 'none'}"
+        if kind == "preflight":
+            operation_id += ":development-v2"
         if kind == "preflight" and item["metadata"].get("candidate_configuration_resumed") is True:
             operation_id += ":configured"
         operation, created = self.queue.record_operation_intent(
@@ -460,6 +448,14 @@ class OperatorService:
             return None
         phase = str(item["phase"])
         if (phase == "paused" and item["last_failure_class"] == "policy_preflight_block"
+                and item["metadata"].get("pause_reason") ==
+                    "no required checks configured and the base branch has no protected check contexts"
+                and not item.get("execution_id")
+                and not any(op.get("kind") == "execute" for op in item["operations"].values())):
+            return self.queue.transition(item["id"], expected_phase="paused", phase="preflight", status="active",
+                updates={"last_failure_class": "", "metadata": {**item["metadata"], "pause_reason": ""}},
+                event="development_preflight_resumed", payload={"previous_phase": "paused"})
+        if (phase == "paused" and item["last_failure_class"] == "policy_preflight_block"
                 and item["metadata"].get("pause_reason") == "operator_candidate_configuration_required"
                 and not item.get("execution_id")
                 and not any(op.get("kind") == "execute" for op in item["operations"].values())
@@ -490,7 +486,45 @@ class OperatorService:
         return self.queue.get(item["id"])
 
     def tick(self) -> dict[str, Any] | None:
-        return self.machine.tick()
+        # In-flight/ambiguous legacy effects retain their original reconciliation.
+        if self.queue.active_item() is not None:
+            return self.machine.tick(allow_claim=False)
+        if self.queue.summary()["desired_state"] != "running":
+            return None
+        pending = next((item for item in self.queue.list_items()
+                        if item["status"] == "queued" and not item["metadata"].get("migration_blocked")), None)
+        if pending is None:
+            return None
+        from goodteam_os.operator_manager_intake import intake_issue
+
+        def capture(item):
+            if (item["source_url"] != pending["source_url"]
+                    or item["source_revision"] != pending["source_revision"]):
+                raise ValueError("Historical source changed during snapshot fetch.")
+            parsed = parse_github_issue_url(item["source_url"])
+            project = resolve_known_project(self.workspace, parsed.repository)
+            if (item["source_type"] != "github_issue" or project.key != item["project_key"]
+                    or project.repository.lower() != item["repository_identity"].lower() or
+                    str(project.project_root.resolve()) != str(Path(item["metadata"]["project_root"]).resolve())):
+                raise ValueError("Historical Operator project binding changed.")
+            receipt, _created = intake_issue(workspace=self.workspace, project=project, parsed=parsed,
+                client=None, expected_revision=item["source_revision"], captured_snapshot=snapshot)
+            return {"message_id": receipt["message_id"], "source_digest": receipt["source_digest"],
+                    "route": "manager"}
+
+        try:
+            # Network IO must not hold the legacy queue lock (including Stop).
+            from dataclasses import asdict
+            parsed = parse_github_issue_url(pending["source_url"])
+            project = resolve_known_project(self.workspace, parsed.repository)
+            snapshot = asdict(GhCliGitHubClient(cwd=project.project_root).fetch_issue(
+                project.repository, parsed.issue_number))
+            return self.queue.transfer_unstarted(pending["id"], capture)
+        except (RuntimeError, ValueError) as exc:
+            # Never fall through to the old Builder path on a failed migration.
+            return self.queue.transition(pending["id"], expected_phase="queued",
+                updates={"metadata": {**pending["metadata"], "migration_blocked": str(exc)}},
+                event="manager_handoff_blocked", payload={"reason": str(exc)})
 
 
 class LocalOperatorActions:
@@ -576,6 +610,9 @@ class LocalOperatorActions:
         checks = self._client(item).fetch_checks(repo, head_sha)
         runs = [run for run in checks.get("check_runs", []) if isinstance(run, dict)]
         required = _required_check_names(metadata.get("required_checks", []))
+        protected = self._client(item).fetch_required_checks(
+            repo, str(metadata.get("default_branch", "main")))
+        required = list(dict.fromkeys([*required, *protected]))
         if not required:
             return {
                 "status": "missing",
@@ -681,26 +718,17 @@ class LocalOperatorActions:
         report = worker_backend_doctor(backend)
         required_checks = _required_check_names(metadata.get("required_checks", target.get("required_checks", [])))
         source = "project_config"
-        if not required_checks:
-            required_checks = self._client(item).fetch_required_checks(
-                str(item["repository_identity"]),
-                str(metadata.get("default_branch", "main")),
-            )
-            source = "branch_protection"
-        checks_ready = bool(required_checks)
         backend_ready = bool(report.get("ready"))
         reason = ""
         if not backend_ready:
             reason = str(report.get("hint", "worker backend is not ready"))
-        elif not checks_ready:
-            reason = "no required checks configured and the base branch has no protected check contexts"
         elif backend_ready:
             try:
                 configuration_for(self.candidate_reviews, item)
             except TaskInputError as exc:
                 return {"ready": False, "reason": exc.code}
         return {
-            "ready": backend_ready and checks_ready,
+            "ready": backend_ready,
             "worker_backend": backend,
             "preflight": _redacted_preflight(report),
             "required_checks": required_checks,
@@ -1071,3 +1099,4 @@ def _contract_requirements(contract):
     source = value.pop("source_intent")
     value.pop("metadata")
     return {**value, "source_identity": {key: source.get(key) for key in ("source_type", "repo", "issue_number", "url")}}
+

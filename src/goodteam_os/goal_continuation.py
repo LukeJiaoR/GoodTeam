@@ -474,10 +474,18 @@ def start_goal_service(workspace):
                     from goodteam_os.project_iteration_continuation import tick_authorized_project_continuations
 
                     tick_authorized_project_continuations(workspace)
+                    # External input receipt processing shares this service; it
+                    # creates no execution scheduler or additional Worker pool.
+                    from goodteam_os.operator_manager_intake import consume_manager_inputs
+                    from goodteam_os.operator_queue import DurableOperatorQueue
+                    from goodteam_os.service import service_state_dir
+                    if not stop.is_set() and DurableOperatorQueue(service_state_dir()).summary()["desired_state"] == "running":
+                        consume_manager_inputs(workspace, stop=stop)
             except Exception:
                 validated_idle.clear()
                 _LOG.exception("Goal continuation ledger unavailable; no work dispatched")
     stop.thread = threading.Thread(target=run, name="goodteam-goal-continuation", daemon=True)
     stop.thread.start()
     return stop
+
 

@@ -225,6 +225,11 @@ def run_dialogue(service, *, store, project_key, root, text, message_id, attempt
                 message_id=turn_input["attempt_id"], logical_message_id=turn_input["message_id"],
                 text=current_text, context=context)
         operation = (turn or {}).get("project_operation") or {}
+        external = session.get("external_inputs", {}).get(turn_input["message_id"])
+        if external and (external["kind"] == "source_update" or operation.get("kind")):
+            return {"pending": pending, "result": _reply(store, turn_input,
+                str((turn or {}).get("response") or "External context retained for the Manager."),
+                execution=(turn or {}).get("manager_execution") or {})}
         if snapshot["continuation"] and operation.get("kind") and operation.get("target_id") != snapshot["continuation"].get("id"):
             raise ManagerExecutionError("The Manager returned a stale project operation target.")
         execution = (turn or {}).get("manager_execution") or {}
@@ -299,3 +304,4 @@ def run_dialogue(service, *, store, project_key, root, text, message_id, attempt
         "thread_id": config["configurable"]["thread_id"]}})
     result = graph.invoke(command, config, durability="sync")
     return result["result"]
+

@@ -1224,7 +1224,7 @@ def _process_telegram_command(
             token=token,
             chat_id=chat_id,
             text=(
-                f"{'Queued' if created else 'Already queued'}: {item['id']}\n"
+                f"{'Sent to Manager' if item.get('route') == 'manager' else 'Operator history'}: {item['id']}\n"
                 f"Project: {item['project_key']}\n"
                 f"Issue: {item['source_url']}\n"
                 f"Phase: {item['phase']}"
@@ -2721,3 +2721,4 @@ def _safe_part(value: str) -> str:
     if ":" in value or not value:
         raise ValueError("Telegram callback values cannot be empty or contain ':'.")
     return value
+
