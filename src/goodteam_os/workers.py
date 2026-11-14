@@ -10,7 +10,7 @@ import threading
 import time
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import copy2, which
@@ -1750,6 +1750,10 @@ class WorkerJobStore:
                            else self._worker_runtime_cwd(job))
         config = pi_runtime_config(self.project_root, job)
         preflight = pi_backend_doctor(self.project_root, job)
+        if preflight.get("command_path"):
+            # Execute the binary the existing doctor checked, not a namesake
+            # supplied by the project's dependency PATH at process launch.
+            config = replace(config, binary=str(preflight["command_path"]))
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"

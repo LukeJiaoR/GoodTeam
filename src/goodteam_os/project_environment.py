@@ -194,7 +194,7 @@ def bind_environment(workspace, environment):
     workspace = Path(workspace).resolve()
     shared = Path(environment["environment_root"])
     # Creating an empty location is not installation or successful preparation.
-    if not environment.get("setup"):
+    if not environment.get("setup_configured"):
         return
     with environment_directory(environment):
         pass
@@ -295,6 +295,20 @@ def prepare_environment_source(workspace, environment):
                         os.unlink(name, dir_fd=parent_fd)
             except FileNotFoundError:
                 pass
+        # Remove only obsolete empty source directories, deepest first. Installed
+        # dependency contents are not removed by a source file/directory change.
+        obsolete_dirs = {str(parent) for relative in set(previous) - set(paths)
+                         for parent in Path(relative).parents if str(parent) != "."}
+        for relative in sorted(obsolete_dirs, key=lambda value: len(Path(value).parts), reverse=True):
+            try:
+                with _relative_parent(root_fd, relative) as (parent_fd, name):
+                    os.rmdir(name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                import errno
+                if exc.errno not in {errno.ENOTEMPTY, errno.EEXIST, errno.ENOTDIR}:
+                    raise
         for relative in paths:
             original = source / relative
             input_fd = os.open(original, os.O_RDONLY | os.O_NOFOLLOW)
@@ -341,8 +355,12 @@ def preparation_planning_scope(project_config, tasks, authorized_ids):
     if not any(task.get("execution_policy", "workspace_write") != "read_only"
                for task in authorized):
         return None
-    preparation = [task for task in authorized if task.get("write_domains") == [".goodteam/environment"]]
-    if any(task["status"] == "done" and task.get("delivery_verified") is True for task in preparation):
+    dependency_ids = {dependency for task in authorized for dependency in task.get("dependencies", [])}
+    preparation_evidence = [task for task in tasks
+                            if task["id"] in set(authorized_ids) | dependency_ids
+                            and task.get("write_domains") == [".goodteam/environment"]]
+    preparation = [task for task in preparation_evidence if task["id"] in authorized_ids]
+    if any(task["status"] == "done" and task.get("delivery_verified") is True for task in preparation_evidence):
         return None
     return {
         "needs_discovery": not preparation,

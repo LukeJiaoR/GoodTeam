@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import which
@@ -137,6 +137,8 @@ def pi_backend_doctor(project_root: Path | None = None, overrides: Mapping[str, 
     root = (project_root or Path.cwd()).resolve()
     config = pi_runtime_config(root, overrides)
     resolved = which(config.binary) or (str(Path(config.binary).resolve()) if Path(config.binary).is_file() else "")
+    if resolved:
+        resolved = str(Path(resolved).absolute())
     available = bool(resolved)
     version = ""
     if available:
@@ -289,7 +291,13 @@ class PiSessionRuntime:
         self.job_root = job_root
         self.job = job
         self.runtime_cwd = runtime_cwd.resolve()
-        self.config = config
+        # Resolve before adding project dependency bins to the child PATH. The
+        # Worker passes the exact absolute executable returned by its doctor.
+        # Direct runtime callers get the same host-PATH resolution here.
+        binary = config.binary
+        if not Path(binary).is_absolute():
+            binary = str(Path(which(binary) or binary).absolute())
+        self.config = replace(config, binary=binary)
         self.store = PiRpcSessionStore(job_root, config.session_dir)
         self.stderr_path = stderr_path
         self.rpc: PiRpcProcess | None = None

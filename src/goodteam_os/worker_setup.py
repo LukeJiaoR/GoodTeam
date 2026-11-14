@@ -71,12 +71,9 @@ def with_setup(command, *, setup, job_root, cwd, binary, reuse_completed=False, 
     return [sys.executable, str(Path(__file__).resolve()), str(path), *command]
 
 
-# Setup never needs the Worker's model/provider environment. Keep this list
-# explicit: arbitrary setup.env values can reintroduce credential variables.
-_SETUP_ENV = {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "CI",
-              "npm_config_cache", "PIP_CACHE_DIR", "YARN_CACHE_FOLDER",
-              "PNPM_HOME", "CARGO_HOME", "RUSTUP_HOME"}
-
+# Do not inherit the host's provider/authentication environment. Explicit project
+# installation variables are configuration owned by Planner, not a fixed list
+# of package managers. Credential provisioning still follows its own authority.
 
 def _setup_command(value, private):
     setup = value["setup"]
@@ -96,9 +93,10 @@ def _setup_command(value, private):
     environment = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
                    if key in os.environ}
     configured = setup.get("env", {})
-    if not isinstance(configured, dict) or any(key not in _SETUP_ENV or not isinstance(val, str)
+    if not isinstance(configured, dict) or any(not isinstance(key, str) or not key or "=" in key or "\0" in key
+                                             or not isinstance(val, str) or "\0" in val
                                              for key, val in configured.items()):
-        raise ValueError("worker_setup.env contains unsupported installation variables.")
+        raise ValueError("worker_setup.env requires valid environment names and string values.")
     environment.update(configured)
     # Fresh for every invocation, not a shared HOME retained from another job.
     home, temporary = private / "home", private / "tmp"

@@ -63,6 +63,12 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
 
         if not service.project_config or not load_worker_setup(service.project_config):
             raise ValueError("The project has no configured installation; Planner must determine its actual environment requirements first.")
+    from goodteam_os.assistant_queue import _project_task_request
+
+    def preparation_request(task):
+        return _project_task_request({**task,
+            "description": "Prepare the configured project environment. Report installation results and remaining environment problems; do not implement the dependent development request."})
+
     prerequisites = []
     session = store.read()
     proposals = [*session.get("queued_task_proposals", [])]
@@ -86,7 +92,9 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
                 preparation = existing[-1]
             else:
                 preparation = tasks.create_task(
-                    title="Prepare the shared project environment", description=text, role=action["role"],
+                    title="Prepare the shared project environment",
+                    description="Prepare the configured project environment. Report installation results and remaining environment problems; do not implement the dependent development request.",
+                    role=action["role"],
                     acceptance_criteria=["The configured restricted project installation succeeds and retains its exit status and logs."],
                     external_refs=[reference + ":environment"], execution_policy="workspace_write",
                     write_domains=[".goodteam/environment"],
@@ -95,7 +103,7 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
                                 "scope": "Shared project environment preparation only; the original development task is retained separately.",
                                 "source_messages": [{"message_id": item["message_id"], "content": item["content"]} for item in sources]})
                 preparation_id = sha256((identity + ":environment").encode()).hexdigest()[:32]
-                prerequisites.append({"id": preparation_id, "exact_request": text, "revision": 1,
+                prerequisites.append({"id": preparation_id, "exact_request": preparation_request(preparation), "revision": 1,
                     "source_message_ids": [item["message_id"] for item in sources],
                     "source_event_id": "reply:" + message_id, "status": "queued", "confirmed": False,
                     "run_id": "", "created_at": datetime.now(UTC).isoformat(), "project_task_id": preparation["id"],
@@ -126,7 +134,7 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
         preparation = tasks.get_task(dependency)
         if reference + ":environment" in preparation.get("external_refs", []) and not prerequisites:
             prerequisites.append({"id": sha256((identity + ":environment").encode()).hexdigest()[:32],
-                "exact_request": text, "revision": 1,
+                "exact_request": preparation_request(preparation), "revision": 1,
                 "source_message_ids": [item["message_id"] for item in sources],
                 "source_event_id": "reply:" + message_id, "status": "queued", "confirmed": False,
                 "run_id": "", "created_at": preparation["created_at"], "project_task_id": preparation["id"],

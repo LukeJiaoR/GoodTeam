@@ -11,7 +11,7 @@ Planner uses the existing task discovery and dependency flow:
    `.goodteam/environment` prepares the configured installation.
 2. The task uses the existing restricted `worker_setup` command executor. The
    command runs in the shared environment, not once in every Worker worktree.
-   Setup keeps its private HOME, environment allowlist, filesystem policy,
+   Setup keeps its private HOME, minimal inherited host environment, filesystem policy,
    configured network policy and per-job command/result logs.
 3. Once its normal task delivery is accepted, later development tasks reference
    that actual task ID through `dependencies`. Preparation and dependent work
@@ -67,3 +67,16 @@ model call, concurrent execution or failure/recovery runtime validation has run.
 Do not report the project environment or full GoodTeam delivery as verified from
 these code changes. Real package-manager behavior, including workspace-local
 package links, still requires project-specific execution evidence.
+
+## Explicit installation configuration
+
+Planner-owned `worker_setup.env` accepts explicit project installation variables
+(such as proxy, registry and compiler configuration), without a hardcoded
+package-manager name allowlist. Only OS environment name/value validity is
+checked. The host environment is not inherited wholesale. Private installation
+HOME/temp/CODEX_HOME remain controlled by the installer; credentials still need
+their own explicit provisioning authority, not implicit host inheritance.
+
+The Pi executable is pinned to the absolute host-preflight path before adding
+project dependency tools to PATH. Project executables cannot replace that
+selected runtime merely by sharing its name.
