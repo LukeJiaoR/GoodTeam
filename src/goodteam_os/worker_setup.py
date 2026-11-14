@@ -18,7 +18,7 @@ def load_worker_setup(config_path):
     return value
 
 
-def configured_setup_tool(job_root, context):
+def configured_setup_tool(job_root, context, *, workspace):
     """Describe an optional command using this task's captured setup context."""
     import json
     import sys
@@ -29,7 +29,7 @@ def configured_setup_tool(job_root, context):
     if not setup or not environment:
         return None
     path = Path(job_root) / "configured-setup.json"
-    atomic_write(path, json.dumps({"setup": setup, "cwd": environment["environment_root"]}).encode())
+    atomic_write(path, json.dumps({"setup": setup, "cwd": str(Path(workspace).resolve())}).encode())
     return [sys.executable, str(Path(__file__).resolve()), str(path)]
 
 

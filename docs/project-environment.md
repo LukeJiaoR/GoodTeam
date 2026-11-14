@@ -20,9 +20,13 @@ can describe other existing dependency directories. The setup command remains
 project context, not a command automatically executed before an agent starts.
 The optional configured setup tool is exposed to the Worker as a command, not
 run by startup. When an assigned task calls for installation, the Worker may
-invoke it; it uses the captured command and environment location (the actual project root
-for new tasks). Historical tasks retain their originally recorded location; the
-helper does not move their installation to a different directory. Only that
+invoke it; it uses the captured command in the current Worker's actual source
+worktree, not the project environment root. Lockfile and generated source writes
+therefore enter the same candidate collection as ordinary Worker edits. Existing
+project dependencies are still reused through the existing bindings and runtime
+paths. The selected command may target shared dependency outputs explicitly;
+Planner arranges those changes as ordinary environment tasks rather than moving
+all source-affecting commands into the user's original checkout. Only that
 installation subprocess receives `worker_setup.env`; the agent's HOME,
 CODEX_HOME and provider variables are not changed by installation settings.
 Values are not copied into model context. The tool inherits the invoking

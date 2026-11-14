@@ -177,9 +177,10 @@ class PiMethodInput:
             from goodteam_os.project_environment import worker_environment_instructions
             from goodteam_os.worker_setup import configured_setup_tool
 
+            setup_workspace = self.runtime_context().runtime_cwd
             prompt += "\n\n" + worker_environment_instructions(
-                context["project_environment"],
-                setup_tool=configured_setup_tool(self.workers.root / self.job_id, context))
+                context["project_environment"], workspace=setup_workspace,
+                setup_tool=configured_setup_tool(self.workers.root / self.job_id, context, workspace=setup_workspace))
         return prompt
 
     def search_authorized(self, job_root, job):

@@ -112,3 +112,5 @@ this patch does not silently reintroduce either, nor claim the P1 is fully close
 
 These changes have static checks only. Real assessment retries, quality-disabled
 batch delivery, Telegram submission and installation remain unexecuted acceptance.
+
+The configured installer now binds cwd to the actual CLI/Pi Worker runtime worktree, not environment_root. Dependency reuse is unchanged; lockfile/generated source changes are captured with the Worker candidate. Static inspection only, no installer run.

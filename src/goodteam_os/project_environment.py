@@ -26,7 +26,6 @@ def environment_for_task(project_root, setup, write_domains=(), *, source_root=N
     if setup:
         value["setup"] = setup
         value["configured_setup_command"] = setup["command"]
-        value["configured_setup_cwd"] = str(root)
     return value
 
 
@@ -139,14 +138,16 @@ def bind_environment(workspace, environment):
             stream.write("\n" + "\n".join(missing) + "\n")
 
 
-def worker_environment_instructions(environment, *, setup_tool=None):
+def worker_environment_instructions(environment, *, setup_tool=None, workspace=None):
     import json
 
-    context = {key: val for key, val in environment.items() if key != "setup"}
+    context = {key: val for key, val in environment.items() if key not in {"setup", "configured_setup_cwd"}}
     setup = environment.get("setup")
     if setup:
         context["configured_setup_command"] = setup["command"]
-        context["configured_setup_cwd"] = environment["environment_root"]
+        if workspace is not None:
+            context["configured_setup_cwd"] = str(workspace)
+        context["installation_method"] = ("Run source-affecting installation in the assigned worktree so lockfile and generated source changes enter its candidate. Reuse existing project dependency locations; Planner assigns shared environment changes as ordinary tasks.")
     if setup_tool is not None:
         context["configured_setup_tool"] = setup_tool
     return "Project runtime context (configuration, not a readiness verdict):\n" + json.dumps(context, ensure_ascii=False)

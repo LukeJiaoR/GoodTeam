@@ -33,3 +33,5 @@ manager and current task manifests to target the chosen existing installation;
 do not create a second source copy or assume a private worktree installation is
 shared. Report an actual execution/access failure through the ordinary result
 path rather than inventing another pre-dispatch readiness check.
+
+Run source-affecting install commands from the assigned worktree, including lockfile updates and generated source. Use its current manifests while reusing the project installation; choose package-manager arguments for shared dependency outputs where needed. Do not change the original checkout as an unnoticed side effect of environment preparation.

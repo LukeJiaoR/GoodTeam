@@ -3094,8 +3094,10 @@ class WorkerJobStore:
 
             from goodteam_os.worker_setup import configured_setup_tool
 
+            setup_workspace = self._worker_runtime_cwd(job).runtime_cwd
             sandbox_context += "\n" + worker_environment_instructions(
-                environment, setup_tool=configured_setup_tool(job_root, job["sandbox_context"]))
+                environment, workspace=setup_workspace,
+                setup_tool=configured_setup_tool(job_root, job["sandbox_context"], workspace=setup_workspace))
         markdown_artifact = "Output markdown only." in (job_root / "constraints.md").read_text(encoding="utf-8")
         final_output_instruction = (
             "Return the complete requested markdown artifact as your final assistant response, "
