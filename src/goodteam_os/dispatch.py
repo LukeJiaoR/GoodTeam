@@ -384,6 +384,12 @@ def _dispatch_tracks(
             raise ValueError("Recovery must execute only its explicitly confirmed failed task subset.")
         parent_report = read_dispatch_recovery(project_root, recovery_source)
         retained = [job for job in parent_report["jobs"] if job["project_task_id"] not in track_ids]
+    if require_isolation or worker_setup:
+        from goodteam_os.project_environment import environment_for_task, worker_environment_instructions
+
+        tracks = [{**track, "context": str(track.get("context", "")) + "\n" +
+                   worker_environment_instructions(environment_for_task(
+                       project_root, worker_setup, track.get("write_domains", [])))} for track in tracks]
     jobs_by_role = [
         _create_track_job(
             store,
@@ -407,6 +413,15 @@ def _dispatch_tracks(
             **({"baseline_from": recovery_source["run_id"]} if recovery_source is not None else {}),
             **({"candidate_source": candidate_source} if candidate_source is not None else {}),
             **({"worker_setup": worker_setup} if worker_setup else {}))
+    if isolated:
+        from goodteam_os.project_environment import environment_for_task, bind_environment
+
+        for job, track in zip(jobs_by_role, tracks):
+            environment = environment_for_task(project_root, worker_setup, track.get("write_domains", []),
+                                               source_root=isolated.workspace(str(job["id"])))
+            bind_environment(isolated.workspace(str(job["id"])), environment)
+            # The shared paths are runtime inputs; the source cwd stays isolated.
+            job["project_environment"] = environment
     if require_isolation and isolated is None:
         raise ValueError("Project batch isolation was not established; no Worker was started.")
     results_by_id: dict[str, dict[str, object]] = {}
@@ -419,6 +434,7 @@ def _dispatch_tracks(
                             **({"dispatch_context": {"available": True, "mode": "dispatch_isolated",
                                 "workspace_path": str(isolated.workspace(str(job["id"]))),
                                 "execution_id": run_id, "sandbox_id": str(job["id"]),
+                                "project_environment": {key: value for key, value in job["project_environment"].items() if key != "setup"},
                                 **({"worker_setup": worker_setup} if worker_setup else {})}} if isolated else {}),
                             **_review_runtime_kwargs(codex_review_admission), capacity_check_start=capacity_check_start): job
             for job in jobs_by_role
@@ -702,6 +718,10 @@ def _job_report(
     return {
         **{key: job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref") if key in job},
         **{key: status[key] for key in ("skill_error_code", "skill_preflight_status", "skill_runtime_status", "invocation_evidence") if key in status},
+        **({"project_environment_setup": {
+            key: value for key, value in status["worker_setup"].items()
+            if key in {"exit_code", "cwd", "stdout_path", "stderr_path", "seconds", "error"}
+        }} if isinstance(status.get("worker_setup"), dict) else {}),
         "job_id": str(job["id"]),
         **{key: job[key] for key in ("project_task_id", "track_id") if job.get(key)},
         **{key: job[key] for key in ("worker_id", "worker_name") if job.get(key)},
@@ -758,3 +778,4 @@ def _constraints_from_file(path: Path | None) -> list[str]:
 def _output_tail(text: str, *, max_lines: int = 20) -> str:
     lines = text.splitlines()
     return "\n".join(lines[-max_lines:])
+

@@ -10,7 +10,7 @@ import threading
 import time
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import copy2, which
@@ -223,6 +223,8 @@ def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
         )})
     if context.get("worker_setup"):
         safe["worker_setup"] = context["worker_setup"]
+    if context.get("project_environment"):
+        safe["project_environment"] = context["project_environment"]
     return safe
 
 
@@ -230,7 +232,10 @@ def _worker_sandbox_context_prompt(job: dict[str, Any]) -> str:
     context = job.get("sandbox_context")
     if not isinstance(context, dict):
         return "No sandbox context provided."
-    return json.dumps(context, indent=2, sort_keys=True)
+    visible = {key: value for key, value in context.items() if key != "worker_setup"}
+    if "project_environment" in visible:
+        visible["project_environment"] = {key: value for key, value in visible["project_environment"].items() if key != "setup"}
+    return json.dumps(visible, indent=2, sort_keys=True)
 
 
 def parse_result_sections(text: str) -> list[tuple[str, str]]:
@@ -1223,7 +1228,7 @@ class WorkerJobStore:
 
             job["workflow_workspace"] = workflow_workspace
             job["sandbox_context"] = context_for_job(
-                self.project_root, workflow_workspace, project_key=project_key, run_id=run_id, job_id=job_id,
+                self.project_root, workflow_workspace, project_key=project_key, run_id=run_id, job_id=job_id, role=role,
             )
         for key, value in {
             "pi_path": pi_path,
@@ -1745,6 +1750,10 @@ class WorkerJobStore:
                            else self._worker_runtime_cwd(job))
         config = pi_runtime_config(self.project_root, job)
         preflight = pi_backend_doctor(self.project_root, job)
+        if preflight.get("command_path"):
+            # Execute the binary the existing doctor checked, not a namesake
+            # supplied by the project's dependency PATH at process launch.
+            config = replace(config, binary=str(preflight["command_path"]))
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"
@@ -1828,7 +1837,16 @@ class WorkerJobStore:
         prompt = None
         transport_ref = None
         try:
-            state = runtime.start_or_resume()
+            startup_heartbeat = 0.0
+            def startup_tick():
+                nonlocal startup_heartbeat
+                if time.monotonic() - startup_heartbeat >= 1.0:
+                    self._write_status(job_root, job, "running", "Preparing project environment before Pi starts.",
+                        extra={**base_extra, "started_at": started_at,
+                               "pid": runtime.rpc.pid if runtime.rpc else None, "heartbeat_at": self._now()})
+                    startup_heartbeat = time.monotonic()
+                self._process_pi_controls(job_root, job, runtime)
+            state = runtime.start_or_resume(tick=startup_tick)
             session_extra = {
                 **base_extra,
                 "started_at": started_at,
@@ -2579,6 +2597,10 @@ class WorkerJobStore:
         result_path = job_root / "result.md"
         runtime_context = self._worker_runtime_cwd(job)
         worker_env = self._worker_env(job_root, spec, runtime_context.runtime_cwd)
+        from goodteam_os.project_environment import runtime_environment
+
+        worker_env = runtime_environment((job.get("sandbox_context") or {}).get("project_environment"),
+                                         worker_env or provider_environment(), workspace=runtime_context.runtime_cwd)
         pythonpath_workspace_src = (runtime_context.runtime_cwd / "src").is_dir()
         preflight = _cli_preflight(spec, binary, model)
         if connection:
@@ -2843,12 +2865,15 @@ class WorkerJobStore:
         }
         prompt = self._worker_prompt(job_root, job, model=model)
         process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
-        setup = (job.get("sandbox_context") or {}).get("worker_setup")
-        if setup:
+        environment = (job.get("sandbox_context") or {}).get("project_environment")
+        if environment and environment.get("preparation_task") and (job.get("sandbox_context") or {}).get("worker_setup"):
+            from goodteam_os.project_environment import prepare_environment_source
             from goodteam_os.worker_setup import with_setup
 
-            process_command = with_setup(process_command, setup=setup, job_root=job_root,
-                cwd=runtime_context.runtime_cwd, binary=which("codex") or DEFAULT_CODEX_PATH)
+            prepare_environment_source(runtime_context.runtime_cwd, environment)
+            process_command = with_setup(process_command, setup=job["sandbox_context"]["worker_setup"], job_root=job_root,
+                cwd=Path(environment["environment_root"]), binary=which("codex") or DEFAULT_CODEX_PATH,
+                reuse_completed=True, project_environment=environment, workspace=runtime_context.runtime_cwd)
         process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
         provider_key = (worker_env or {}).get(PROVIDER_KEY_ENV, "")
@@ -3000,7 +3025,7 @@ class WorkerJobStore:
                         if stream is not None:
                             stream.close()
         stdout, stderr = safe_output(stdout), safe_output(stderr)
-        if setup and (job_root / "setup-result.json").is_file():
+        if environment and environment.get("preparation_task") and (job_root / "setup-result.json").is_file():
             base_extra["worker_setup"] = json.loads((job_root / "setup-result.json").read_text(encoding="utf-8"))
         stdout_path.write_text(stdout, encoding="utf-8")
         stderr_path.write_text(stderr, encoding="utf-8")
@@ -3069,6 +3094,11 @@ class WorkerJobStore:
         memory = self._validated_worker_memory(job_root, role=str(job["role"]))
         pickup_context = memory.fragment
         sandbox_context = _worker_sandbox_context_prompt(job)
+        environment = (job.get("sandbox_context") or {}).get("project_environment")
+        if environment:
+            from goodteam_os.project_environment import worker_environment_instructions
+
+            sandbox_context += "\n" + worker_environment_instructions(environment)
         markdown_artifact = "Output markdown only." in (job_root / "constraints.md").read_text(encoding="utf-8")
         final_output_instruction = (
             "Return the complete requested markdown artifact as your final assistant response, "
@@ -3270,6 +3300,10 @@ class WorkerJobStore:
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         extra_payload = dict(extra or {})
+        environment = (job.get("sandbox_context") or {}).get("project_environment")
+        setup_result = job_root / "setup-result.json"
+        if setup_result.is_file():
+            extra_payload["worker_setup"] = json.loads(setup_result.read_text(encoding="utf-8"))
         now = str(extra_payload.get("heartbeat_at") or self._now())
         if status == "running" and "heartbeat_at" not in extra_payload:
             extra_payload["heartbeat_at"] = now
@@ -4057,3 +4091,4 @@ def _last_relevant_error(stderr: str) -> str:
         if "error:" in lowered or "unexpected status" in lowered or "stream disconnected" in lowered:
             return stripped
     return ""
+

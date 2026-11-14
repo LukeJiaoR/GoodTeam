@@ -19,6 +19,7 @@ from goodteam_os.dispatch_workspace import (
     dispatch_artifact_root,
     dispatch_workspace_lock,
     prepare_dispatch_workspace,
+    _write_json,
 )
 from goodteam_os.repository_snapshot import _absolute_root, _canonical_json
 from goodteam_os.repository_access import canonical_relative_path
@@ -71,16 +72,30 @@ def _binding(workspace, *, project_key: str, run_id: str) -> dict:
         "workspace_git_identity": metadata["jobs"][SLOT]["git_identity"],
         "workspace_path": str(workspace.workspace(SLOT)),
         **({"worker_setup": metadata["worker_setup"]} if metadata.get("worker_setup") else {}),
+        **({"project_environment": metadata["project_environment"]} if "project_environment" in metadata else {}),
     }
 
 
 @_workspace_errors
 def prepare_workflow_workspace(source_root: Path, *, project_key: str, run_id: str,
-                               worker_setup: dict | None = None) -> dict:
+                               worker_setup: dict | None = None, write_domains: list[str] | None = None) -> dict:
     """Capture at an authorized new-task start, before its first live Worker."""
     source, execution_id = _scope(source_root, project_key, run_id)
     with dispatch_workspace_lock(source, execution_id):
         workspace = prepare_dispatch_workspace(source, execution_id, [SLOT], worker_setup=worker_setup)
+        from goodteam_os.project_environment import environment_for_task, bind_environment
+
+        environment = environment_for_task(source, worker_setup, write_domains or [],
+                                           source_root=workspace.workspace(SLOT))
+        # Retain the task's preparation intent with its original source baseline.
+        # Reopening a run never recaptures configuration or task scope.
+        previous = workspace.metadata.get("project_environment")
+        if previous is not None and previous != environment:
+            raise WorkflowWorkspaceError("Workflow project environment changed from its original task.")
+        if previous is None:
+            workspace.metadata["project_environment"] = environment
+            _write_json(workspace.artifact_root / "baseline.json", workspace.metadata)
+        bind_environment(workspace.workspace(SLOT), environment)
         return _binding(workspace, project_key=project_key, run_id=run_id)
 
 
@@ -106,10 +121,19 @@ def workspace_for_workflow(source_root: Path, binding: object, *, project_key: s
     return _reopen(source_root, binding, project_key=project_key, run_id=run_id).workspace(SLOT)
 
 
-def context_for_job(source_root: Path, binding: object, *, project_key: str, run_id: str, job_id: str) -> dict:
+def context_for_job(source_root: Path, binding: object, *, project_key: str, run_id: str, job_id: str, role: str = "") -> dict:
     workspace = _reopen(source_root, binding, project_key=project_key, run_id=run_id)
     if not isinstance(job_id, str) or not job_id or Path(job_id).name != job_id or job_id in {".", ".."}:
         raise WorkflowWorkspaceError("Workflow execution requires a bounded Worker job identity.")
+    environment = workspace.metadata.get("project_environment")
+    if environment is not None:
+        from goodteam_os.project_environment import bind_environment
+
+        bind_environment(workspace.workspace(SLOT), environment)
+        # A preparation task runs its installer at implementation, not again for
+        # every planning/review role traversing the same Workflow task.
+        environment = {**environment, "preparation_task":
+                       environment.get("preparation_task", False) and role == "implementation"}
     return {
         "available": True, "schema_version": SCHEMA, "mode": "workflow_isolated",
         "execution_id": workspace.metadata["run_id"], "sandbox_id": SLOT,
@@ -118,6 +142,7 @@ def context_for_job(source_root: Path, binding: object, *, project_key: str, run
         "workflow_run_id": run_id, "project_key": project_key, "job_id": job_id,
         "source_root": workspace.metadata["project_root"],
         "baseline_commit": workspace.metadata["baseline_commit"],
+        **({"project_environment": environment} if environment is not None else {}),
         **({"worker_setup": workspace.metadata["worker_setup"]} if workspace.metadata.get("worker_setup") else {}),
     }
 
@@ -125,7 +150,7 @@ def context_for_job(source_root: Path, binding: object, *, project_key: str, run
 def validate_workflow_job_context(source_root: Path, job: dict) -> Path:
     expected = context_for_job(source_root, job.get("workflow_workspace"),
                                project_key=job.get("project_key", ""), run_id=job.get("run_id", ""),
-                               job_id=job.get("id", ""))
+                               job_id=job.get("id", ""), role=job.get("role", ""))
     if job.get("sandbox_context") != expected:
         raise WorkflowWorkspaceError("Workflow Worker context no longer matches its original task and job.")
     return Path(expected["workspace_path"])

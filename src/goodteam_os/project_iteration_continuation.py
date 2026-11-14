@@ -320,9 +320,23 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 parallel_planning = True
             if pending and pending.get("run_id") and saved_batch.get("status") in {"review", "blocked"}:
                 return value
+            from goodteam_os.project_environment import preparation_planning_scope
+
+            environment_plan = preparation_planning_scope(project_config, list(known.values()), value["task_ids"])
+            if environment_plan and environment_plan["needs_discovery"] and not value.get("discovery"):
+                return _save(store, {**value, "status": "blocked",
+                    "reason": "project_environment_preparation_requires_planning"})
+            if (environment_plan and environment_plan["needs_discovery"] and value.get("discovery")
+                    and value["discovery"].get("allow_backlog_judgment") is not True
+                    and not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor")):
+                # Initial task creation remains Manager/Planner's ordinary assignment
+                # operation. Do not forge a delivered outcome to enter discovery.
+                return _save(store, {**value, "status": "blocked",
+                    "reason": "project_environment_preparation_needs_manager_assignment"})
             ready_authorized = any(task["eligible_to_plan"] and task["task_id"] in value["task_ids"]
                 for task in rank_project_backlog(list(known.values()), project_key, limit=None).get("candidates", []))
             if (value.get("discovery") and pending is None and not parallel_planning and (value.get("discovery_pending")
+                    or environment_plan is not None and environment_plan["needs_discovery"]
                     or value["discovery"].get("allow_backlog_judgment") is True and not ready_authorized
                     or value.get("investigation_pending") or value.get("batch_feedback_pending") or value.get("reason") == "awaiting_human_decision" and not ready_authorized
                     or any(item["receipt_id"] not in value.get("discovery_consumed", []) for item in human_feedback(value))
@@ -425,7 +439,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                     result = plan_next_iteration(
                         workspace=workspace, project_key=project_key, root=root, project_config=project_config,
                         expected_backlog_version=snapshot["version"], confirmed=True,
-                        allowed_task_ids=value["task_ids"],
+                        allowed_task_ids=(environment_plan["task_ids"] if environment_plan else value["task_ids"]),
                         **({"concurrent_continuation_id": value["id"], "eligible_task_ids": parallel_eligible} if parallel_planning else {}),
                         allow_wait=not planning or value.get("planning_input_version") in {3, 4, 5},
                         include_question_context=not planning or value.get("planning_input_version") in {4, 5},
@@ -721,3 +735,4 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
         # The existing service observes these same done cards and automatically
         # replans. The request itself does not launch or approve another run.
         return _record_delivery(store, run_id, receipt, [task["id"] for task in matched])
+
