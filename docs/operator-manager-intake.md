@@ -48,3 +48,8 @@ CI prerequisite resume through a fresh preflight receipt; execution/ambiguous
 effects are not reset. PR-stage CI observation still resolves current protected
 checks and combines them with configured requirements. Branch protection and
 merge enforcement are unchanged; this does not fabricate CI success.
+
+Migration fetches GitHub before taking the queue lock, then rechecks the locked
+source identity/revision and unstarted state before storing the local receipt.
+Latest-source projection advances only for a strictly newer source timestamp;
+late or equal-timestamp conflicting snapshots remain history, not latest memory.

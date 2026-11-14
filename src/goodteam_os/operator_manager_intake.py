@@ -1,5 +1,6 @@
 """Source receipts consumed by the existing Manager service, never a dispatcher."""
 from dataclasses import asdict
+from datetime import datetime
 import hashlib
 import json
 import logging
@@ -8,9 +9,13 @@ from pathlib import Path
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
-def intake_issue(*, workspace, project, parsed, client, expected_revision=None):
+def intake_issue(*, workspace, project, parsed, client, expected_revision=None, captured_snapshot=None):
     key = f"github_issue:{project.key}:{parsed.repository.lower()}#{parsed.issue_number}"
-    snapshot = asdict(client.fetch_issue(project.repository, parsed.issue_number))
+    snapshot = (dict(captured_snapshot) if captured_snapshot is not None
+                else asdict(client.fetch_issue(project.repository, parsed.issue_number)))
+    revision_time = datetime.fromisoformat(snapshot["updated_at"].replace("Z", "+00:00"))
+    if revision_time.tzinfo is None:
+        raise ValueError("External source revision must include a timezone.")
     if expected_revision is not None and snapshot["updated_at"] != expected_revision:
         raise ValueError("Historical source revision changed; reconcile before transferring it.")
     source_id = "external-issue-" + hashlib.sha256(key.encode()).hexdigest()
@@ -35,7 +40,11 @@ def intake_issue(*, workspace, project, parsed, client, expected_revision=None):
                 "project_root": str(Path(project.project_root).resolve()),
                 "snapshot": snapshot, "previous_message_id": previous,
                 "kind": "source_update" if previous else "work_intake"}
-            latest[source_id] = message_id
+            # Fetch completion order is not source revision order. Keep late or
+            # equal-revision conflicting snapshots as history, not latest memory.
+            if (previous is None or revision_time > datetime.fromisoformat(
+                    inputs[previous]["source_revision"].replace("Z", "+00:00"))):
+                latest[source_id] = message_id
             created = True
         elif inputs[message_id]["project_root"] != str(Path(project.project_root).resolve()):
             raise ValueError("External input belongs to a different registered project root.")
@@ -63,7 +72,9 @@ def consume_manager_inputs(workspace, *, stop=None):
             session = store.read()
             requests = session.get("assistant_requests", {})
             pending = next((value for identity, value in session.get("external_inputs", {}).items()
-                            if identity not in requests), None)
+                            if identity not in requests
+                            and (value["kind"] != "source_update" or
+                                 session.get("external_source_latest", {}).get(value["source_id"]) == identity)), None)
             if pending is None:
                 continue
             key, _target, root = _project_target_and_root(workspace, key)

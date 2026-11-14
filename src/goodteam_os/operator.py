@@ -498,6 +498,9 @@ class OperatorService:
         from goodteam_os.operator_manager_intake import intake_issue
 
         def capture(item):
+            if (item["source_url"] != pending["source_url"]
+                    or item["source_revision"] != pending["source_revision"]):
+                raise ValueError("Historical source changed during snapshot fetch.")
             parsed = parse_github_issue_url(item["source_url"])
             project = resolve_known_project(self.workspace, parsed.repository)
             if (item["source_type"] != "github_issue" or project.key != item["project_key"]
@@ -505,11 +508,17 @@ class OperatorService:
                     str(project.project_root.resolve()) != str(Path(item["metadata"]["project_root"]).resolve())):
                 raise ValueError("Historical Operator project binding changed.")
             receipt, _created = intake_issue(workspace=self.workspace, project=project, parsed=parsed,
-                client=GhCliGitHubClient(cwd=project.project_root), expected_revision=item["source_revision"])
+                client=None, expected_revision=item["source_revision"], captured_snapshot=snapshot)
             return {"message_id": receipt["message_id"], "source_digest": receipt["source_digest"],
                     "route": "manager"}
 
         try:
+            # Network IO must not hold the legacy queue lock (including Stop).
+            from dataclasses import asdict
+            parsed = parse_github_issue_url(pending["source_url"])
+            project = resolve_known_project(self.workspace, parsed.repository)
+            snapshot = asdict(GhCliGitHubClient(cwd=project.project_root).fetch_issue(
+                project.repository, parsed.issue_number))
             return self.queue.transfer_unstarted(pending["id"], capture)
         except (RuntimeError, ValueError) as exc:
             # Never fall through to the old Builder path on a failed migration.
