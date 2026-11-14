@@ -866,154 +866,18 @@ class ProjectReadinessStore:
 
 
 def build_capabilities(readiness: dict[str, object]) -> dict[str, object]:
-    mode = readiness.get("project_mode")
-    project_key = readiness.get("project_key")
-    canonical_root = readiness.get("canonical_root")
-    expected_step_ids = (
-        {"project_record", "safe_preflight", "project_mode", *MODE_STEPS[mode]}
-        if isinstance(mode, str) and mode in MODE_STEPS
-        else set()
-    )
-    steps = readiness.get("steps")
-    artifacts = readiness.get("artifacts")
-    execution = readiness.get("execution")
+    """Project discovery is context, not permission to execute a task.
 
-    def execution_pair(value: object) -> tuple[str, int] | None:
-        if not isinstance(value, dict):
-            return None
-        execution_id = value.get("execution_id", value.get("id"))
-        attempt = value.get("attempt")
-        if (
-            not isinstance(execution_id, str)
-            or not execution_id
-            or not isinstance(attempt, int)
-            or isinstance(attempt, bool)
-            or attempt < 1
-        ):
-            return None
-        return execution_id, attempt
-
-    step_contract_valid = False
-    if (
-        readiness.get("schema_version") == 2
-        and isinstance(project_key, str)
-        and bool(project_key)
-        and isinstance(canonical_root, str)
-        and bool(canonical_root)
-        and isinstance(steps, list)
-        and isinstance(artifacts, dict)
-        and all(isinstance(step, dict) for step in steps)
-    ):
-        typed_steps = [step for step in steps if isinstance(step, dict)]
-        all_ids = [step.get("id") for step in typed_steps]
-        steps_by_id = {str(step.get("id", "")): step for step in typed_steps}
-        artifact_step_ids = {
-            "repository_understanding",
-            "new_project_init",
-            "project_brief",
-            "worker_preflight",
-        }
-
-        def step_artifacts_valid(step: dict[str, object]) -> bool:
-            raw_refs = step.get("artifact_refs", [])
-            if not isinstance(raw_refs, list) or any(not isinstance(ref, str) for ref in raw_refs):
-                return False
-            refs = list(raw_refs)
-            step_id = str(step.get("id", ""))
-            if (step_id in artifact_step_ids) != bool(refs):
-                return False
-            if len(refs) != len(set(refs)):
-                return False
-            pair = execution_pair(step)
-            return pair is not None and all(
-                isinstance(artifacts.get(ref), dict)
-                and artifacts[ref].get("id") == ref
-                and ref == f"readiness://{pair[0]}/{pair[1]}/{step_id}"
-                and artifacts[ref].get("project_key") == project_key
-                and artifacts[ref].get("canonical_root") == canonical_root
-                and artifacts[ref].get("step_id") == step_id
-                and execution_pair(artifacts[ref]) == pair
-                for ref in refs
-            )
-
-        all_steps_valid = (
-            len(all_ids) == len(set(all_ids))
-            and set(all_ids) == expected_step_ids
-            and len(typed_steps) == len(expected_step_ids)
-            and all(
-                step.get("required") is True
-                and step.get("status") == "complete"
-                and step.get("project_key") == project_key
-                and step.get("canonical_root") == canonical_root
-                and execution_pair(step) is not None
-                and bool(step.get("started_at"))
-                and bool(step.get("completed_at"))
-                and step_artifacts_valid(step)
-                for step in typed_steps
-            )
-        )
-        current_pair = execution_pair(execution)
-        foundation_pairs = {
-            execution_pair(steps_by_id[step_id])
-            for step_id in {"project_record", "safe_preflight", "project_mode"}
-            if step_id in steps_by_id
-        }
-        if mode == "existing_project" and all_steps_valid:
-            repository_pair = execution_pair(steps_by_id["repository_understanding"])
-            provenance_valid = (
-                repository_pair is not None
-                and execution_pair(steps_by_id["command_verification"])
-                == repository_pair
-                and execution_pair(steps_by_id["constraints_confirmation"])
-                == repository_pair
-                and execution_pair(steps_by_id["worker_preflight"])
-                == current_pair
-            )
-        elif mode == "new_project" and all_steps_valid:
-            provenance_valid = (
-                execution_pair(steps_by_id["new_project_init"])
-                == execution_pair(steps_by_id["project_brief"])
-                and execution_pair(steps_by_id["worker_preflight"])
-                == current_pair
-            )
-        else:
-            provenance_valid = False
-        step_contract_valid = (
-            all_steps_valid
-            and len(foundation_pairs) == 1
-            and next(iter(foundation_pairs), ("", 0))[0].startswith("foundation:")
-            and provenance_valid
-        )
-    execution_contract_valid = (
-        isinstance(execution, dict)
-        and execution.get("status") == "complete"
-        and execution.get("project_key") == project_key
-        and execution.get("canonical_root") == canonical_root
-        and not execution.get("current_step_id")
-        and execution_pair(execution) is not None
-        and bool(execution.get("started_at"))
-        and bool(execution.get("completed_at"))
-    )
-    ready = bool(
-        expected_step_ids
-        and step_contract_valid
-        and execution_contract_valid
-        and readiness.get("lifecycle") == "ready"
-    )
+    Keep the readiness document and its evidence intact. Execution entry points
+    resolve their actual repository/runtime configuration and task dependencies;
+    an unfinished discovery checklist does not disable those entry points.
+    """
     return {
         "inspect_project_facts": True,
         "edit_project_settings": True,
         "run_readiness_steps": True,
-        "start_workflow": ready,
-        "start_workflow_reason": (
-            ""
-            if ready
-            else (
-                "project_mode_unconfirmed"
-                if mode == "unconfirmed"
-                else "mode_specific_readiness_pending"
-            )
-        ),
+        "start_workflow": True,
+        "start_workflow_reason": "",
     }
 
 

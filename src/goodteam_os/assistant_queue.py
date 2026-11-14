@@ -13,11 +13,6 @@ from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 QUEUE_ACTIONS = {"queue_task", "edit_queued_task", "discard_queued_task", "select_queued_task", "configure_queued_search"}
 
 
-def active_project_run(workspace, project_key):
-    state = StateStore(workspace).read_project_current(project_key)
-    return state if state and state.current_node not in {"complete", "rejected"} and state.next_node != "rejected" else None
-
-
 def handle_queue_action(service, *, project_key, root, request):
     store = TaskAssistantSessionStore(service.workspace, project_key)
     action = request.get("action")
@@ -28,10 +23,6 @@ def handle_queue_action(service, *, project_key, root, request):
             configure_queued_search(store, root, project_key, request)
             return response(service, project_key, root)
         if action == "select_queued_task":
-            from goodteam_os.project_iteration_execution import active_project_batch
-
-            if active_project_run(service.workspace, project_key) or active_project_batch(service.workspace, project_key):
-                raise ValueError("Finish or cancel the active task before preparing another task.")
             queued = next(
                 (item for item in store.read().get("queued_task_proposals", [])
                  if item.get("id") == request.get("proposal_id")), None
@@ -50,8 +41,8 @@ def _apply(session, request):
     timestamp = datetime.now(UTC).isoformat()
     if action in {"queue_task", "edit_queued_task"}:
         text, message_id = request.get("text"), request.get("message_id")
-        if not isinstance(text, str) or not text.strip() or len(text) > 8000 or not isinstance(message_id, str) or not message_id.strip():
-            raise ValueError("A task of 1–8000 characters and a message ID are required.")
+        if not isinstance(text, str) or not text.strip() or not isinstance(message_id, str) or not message_id.strip():
+            raise ValueError("Nonempty task text and a message ID are required.")
         identity = {key: request.get(key) for key in ("action", "proposal_id", "expected_revision")}
         previous = next((item for item in timeline if item.get("message_id") == message_id), None)
         if previous:
@@ -101,20 +92,6 @@ def _apply(session, request):
     return session
 
 
-def require_no_active_project_goal(workspace, project_key):
-    """Do not silently launch an unrelated Manager task inside a bounded Goal."""
-    from pathlib import Path
-
-    from goodteam_os.goals import goal_store_exists
-
-    if not goal_store_exists(workspace):
-        return
-    from goodteam_os.goals import GoalStore
-
-    if GoalStore(Path(workspace), project_key).list_goals(active_only=True):
-        raise ValueError("Finish or explicitly stop the active Goal before a separate project task.")
-
-
 def require_queued_project_task(root, project_key, proposal, *, workflow=True):
     """Revalidate an original Manager-selected task before the existing Workflow.
 
@@ -154,7 +131,7 @@ def require_queued_project_task(root, project_key, proposal, *, workflow=True):
     return task
 
 
-def _project_task_request(task, *, enforce_input_limit=True):
+def _project_task_request(task):
     """Carry exact existing backlog work into the normal human-reviewable draft."""
     parts = [f"Project task {task['id']}: {task['title']}"]
     if task.get("description"):
@@ -169,8 +146,6 @@ def _project_task_request(task, *, enforce_input_limit=True):
         import json
         parts.append("Explicit Web Search allowance (not an amount budget): " + json.dumps(task["web_search"], sort_keys=True))
     result = "\n\n".join(parts)
-    if enforce_input_limit and not 1 <= len(result) <= 8000:
-        raise ValueError("Project task exceeds the existing Task Assistant draft limit.")
     return result
 
 
@@ -193,7 +168,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
     store = TaskAssistantSessionStore(workspace, project_key)
     tasks = LocalTaskStore(root, project_key)
     with conversation_lock(store):
-        require_no_active_project_goal(workspace, project_key)
+        # Intake records future work; an active Goal does not own the queue.
         # Follow the existing Assistant->Task lock order, pinning task facts
         # until the atomic queue write completes. Other tasks may be queued
         # meanwhile; per-task digests later survive unrelated ledger updates.
@@ -323,7 +298,7 @@ def configure_queued_search(store, root, project_key, request):
         tasks._write(ledger)
         try:
             text = (proposal["exact_request"] if proposal.get("source") == "manager_conversation"
-                    else _project_task_request(updated, enforce_input_limit=False))
+                    else _project_task_request(updated))
             def apply(current):
                 item = next(item for item in current["queued_task_proposals"] if item["id"] == proposal["id"])
                 item.update(project_task_digest=task_evidence_digest(updated), exact_request=text,
@@ -337,3 +312,52 @@ def configure_queued_search(store, root, project_key, request):
         except Exception:
             tasks._write(original)
             raise
+
+
+def queue_project_request(*, workspace, project_key, root, request_id, text,
+                          acceptance_criteria=None, runtime_request=None, metadata=None):
+    """Adapt an unassigned request into an ordinary Planner task in this queue.
+
+    Planner methods decide the decomposition. This intake neither implements the
+    request nor invents Worker assignments from natural-language text.
+    """
+    from goodteam_os.tasks import LocalTaskStore, task_evidence_digest
+
+    identity = sha256(f"project-request:{project_key}:{request_id}".encode()).hexdigest()
+    reference = "project-request:" + identity
+    store = TaskAssistantSessionStore(workspace, project_key)
+    tasks = LocalTaskStore(root, project_key)
+    with conversation_lock(store):
+        session = store.read()
+        old = next((item for item in session.get("queued_task_proposals", []) if item["id"] == identity), None)
+        criteria = list(acceptance_criteria or [])
+        runtime = dict(runtime_request or {})
+        context = dict(metadata or {})
+        if old:
+            if (old["exact_request"] != text or old.get("runtime_request", {}) != runtime
+                    or old.get("request_metadata", {}) != context or old.get("request_criteria", []) != criteria):
+                raise ValueError("This request ID already names different task input.")
+            return old
+        matches = [task for task in tasks.list_tasks() if reference in task.get("external_refs", [])]
+        if len(matches) > 1:
+            raise ValueError("The original request task identity is ambiguous.")
+        task = matches[0] if matches else tasks.create_task(
+            title=text.splitlines()[0][:180], description=text, role="planner",
+            execution_policy="read_only", acceptance_criteria=criteria,
+            external_refs=[reference],
+        )
+        if (task["description"] != text or task["acceptance_criteria"] != criteria or task["role"] != "planner"
+                or task.get("execution_policy") != "read_only" or task.get("dependencies")
+                or task.get("worker_id") or task.get("delegation") or task.get("web_search")
+                or task.get("write_domains")):
+            raise ValueError("The original request task changed before queue publication.")
+        proposal = {"id": identity, "revision": 1, "exact_request": text,
+            "source_message_ids": [request_id], "source": "project_request", "status": "queued",
+            "confirmed": False, "run_id": "", "created_at": datetime.now(UTC).isoformat(),
+            "project_task_id": task["id"], "project_task_digest": task_evidence_digest(task),
+            "runtime_request": runtime, "request_metadata": context, "request_criteria": criteria}
+        def enqueue(current):
+            current.setdefault("queued_task_proposals", []).append(proposal)
+            return current
+        store._mutate(enqueue)
+        return proposal

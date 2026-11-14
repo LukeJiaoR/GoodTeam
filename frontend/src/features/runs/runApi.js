@@ -48,6 +48,8 @@ export const getMessages = (projectKey, runId, gate = '', { signal } = {}) => {
   return requestJson(`/api/messages?${params}`, { signal });
 };
 
+// The request owner supplies and retains body.run_id for retries. Do not generate
+// a new identity per HTTP attempt. New starts return a task batch, not Workflow state.
 export const startRun = (body, options) => jsonPost('/api/start', body, options);
 export const sendTaskAssistantMessage = (projectKey, body, options) => jsonPost(
   `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/messages`, body, options,

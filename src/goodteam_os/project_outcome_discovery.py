@@ -256,12 +256,6 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
 
     environment = environment_for_task(root, load_worker_setup(project_config) if project_config else None)
     environment.pop("setup", None)  # The model plans a task, not installation argv or credentials.
-    environment["preparation_tasks"] = [
-        {"id": task["id"], "status": task["status"],
-         "delivery_verified": task.get("delivery_verified", False),
-         "description": task.get("description", ""), "artifact_refs": task.get("artifact_refs", [])}
-        for task in LocalTaskStore(root, project_key).list_tasks()
-        if task["id"] in value["task_ids"] and task.get("write_domains") == [".goodteam/environment"]]
     snapshot = rank_project_backlog(LocalTaskStore(root, project_key).list_tasks(), project_key, limit=None)
     undelivered = None if outcome is not None or backlog_source is not None else _undelivered_source(
         workspace=workspace, project_key=project_key, root=root, value=value)
@@ -501,18 +495,11 @@ def _validate_discovered_single(packet, response):
     criteria = task["acceptance_criteria"]
     domains = [] if investigation or planning else normalize_write_domains(task["write_domains"])
     allowed = packet["discovery"]["allowed_write_domains"]
-    preparation = (domains == [".goodteam/environment"] and not investigation and not planning
-                   and (packet.get("project_environment") or {}).get("setup_configured") is True)
-    environment = packet.get("project_environment") or {}
-    if (environment.get("setup_configured") is True and not investigation and not planning and not preparation
-            and not any(task["status"] == "done" and task.get("delivery_verified") is True
-                        for task in environment.get("preparation_tasks", []))):
-        raise ValueError("Planner must arrange the project's preparation task before dependent development.")
     if (not isinstance(criteria, list) or not 1 <= len(criteria) <= 12
             or any(not isinstance(item, str) or not 5 <= len(item.strip()) <= 500 for item in criteria)
-            or domains is None or (not preparation and (
+            or domains is None or (
                 any(not any(path == parent or path.startswith(parent + "/") for parent in allowed) for path in domains)
-                or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/"))))):
+                or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/")))):
         raise ValueError("The follow-up's acceptance criteria and write paths must fit the approved discovery scope.")
     dependencies, sources = task["dependencies"], task["source_refs"]
     done = set(packet["authorized_done_task_ids"])
@@ -760,7 +747,7 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
     """One existing continuation step: observe, reserve, create once and queue."""
     from goodteam_os.assistant_queue import queue_manager_iteration_choice
     from goodteam_os.project_iteration_continuation import _intent
-    from goodteam_os.project_iteration_planner import _require_planning_idle, run_manager_iteration_choice
+    from goodteam_os.project_iteration_planner import run_manager_iteration_choice
 
     store = TaskAssistantSessionStore(workspace, project_key)
     from goodteam_os.project_human_feedback import human_feedback, record_human_question, record_question_updates
@@ -788,7 +775,6 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
             return session
         value = store._mutate(reserve)["project_continuation"]
     _current(store.read(), value)
-    _require_planning_idle(Path(workspace), project_key)
     _revalidate(workspace, project_key, root, project_config, value, pending)
     if "selection" not in pending:
         packet = pending["packet"]

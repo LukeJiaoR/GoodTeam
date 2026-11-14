@@ -62,7 +62,7 @@ from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
 from goodteam_os.manager_execution import ManagerExecutionError, run_manager_interpretation
 from goodteam_os.task_assistant import TaskAssistantService
-from goodteam_os.assistant_drafts import confirm_and_prepare, handle_draft_action
+from goodteam_os.assistant_drafts import handle_draft_action
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.team_control_plane import (
     TeamControlPlaneError,
@@ -1683,7 +1683,7 @@ def _start_smoke_run_background(
                 error=str(exc),
             )
             return
-        status = "failed" if str(report.get("status", "")) == "failed" else "completed"
+        status = "completed" if report.get("status") in {"passed", "planned"} else str(report.get("status") or "incomplete")
         _write_smoke_run_status(
             workspace,
             run_id=run_id,
@@ -3760,208 +3760,58 @@ def _workflow_requires_repository(target, *, source_type, project_config):
     )
 
 
-@serialized_workflow
 def start_workflow(
-    *,
-    workspace: Path,
-    idea: str,
-    project_key: str,
-    model_config: Path,
-    model_profile: str,
-    delivery_mode: str = "",
-    delivery_standards: list[str] | str = "",
-    source_type: str = "new_project",
-    project_config: Path | None = None,
-    role_model_overrides: list[str] | None = None,
-    load_profile: str = "greenfield",
-    dry_run: bool = False,
-    run_id: str = "",
-    expected_team_revision: int | None = None,
+    *, workspace: Path, idea: str, project_key: str, model_config: Path,
+    model_profile: str, delivery_mode: str = "", delivery_standards: list[str] | str = "",
+    source_type: str = "new_project", project_config: Path | None = None,
+    role_model_overrides: list[str] | None = None, load_profile: str = "greenfield",
+    dry_run: bool = False, run_id: str = "", expected_team_revision: int | None = None,
     task_skill_context: dict[str, object] | None = None,
     task_write_domains: list[str] | None = None,
 ) -> dict[str, object]:
+    """Compatibility API name; new requests use ordinary task/batch execution.
+
+    A free-form request starts Planner work, not an implicit PRD/adoption/fix
+    state machine. Historical Workflow records remain readable and resumable
+    through their existing controls; this function never creates a new one.
+    """
     if not idea.strip():
-        raise ValueError("Workflow goal is required.")
+        raise ValueError("A project request is required.")
     key = normalize_project_key(project_key)
-    requested_run_id = str(run_id).strip()
-    if not dry_run:
-        from goodteam_os.project_iteration_execution import active_project_batch
-
-        if active_project_batch(workspace, key):
-            raise ValueError("A queued task batch owns the project execution slot; finish or reconcile it first.")
-    if not dry_run and is_active_run(resolve_dashboard_state(workspace, project_key=key)):
-        raise ValueError("An active run already exists. Finish, archive, or resume it before starting another run.")
-
-    if source_type not in {"new_project", "existing_project"}:
-        raise ValueError(f"Unknown workflow source type: {source_type}")
-    if source_type == "existing_project" and project_config is None:
-        raise ValueError("Project config is required for existing project adoption.")
-
-    if project_config is not None:
-        project_config = project_config.expanduser()
-        if project_config.is_file():
-            project_config = project_config.resolve()
-    target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
-    if not dry_run and project_config is not None and project_config.is_file():
-        project_root = resolve_project_runtime_root(dict(target.get("repos", {})))
-        if project_root is not None:
-            try:
-                readiness = read_bound_project_readiness(workspace, key, project_root)
-            except ValueError as exc:
-                if not str(exc).startswith("No readiness found for project:"):
-                    raise
-            else:
-                if not build_capabilities(readiness)["start_workflow"]:
-                    raise ValueError("Project readiness must be complete before starting a workflow.")
-    resolved_profile, role_models = resolve_project_model_profile(
-        resolve_runtime_model_config(model_config),
-        target,
-        explicit_profile=model_profile,
-        role_overrides=role_model_overrides or [],
-    )
-    state = create_initial_state(
-        run_id=requested_run_id or str(uuid4()),
-        project_key=key,
-        idea=idea.strip(),
-    )
-    state.source_type = source_type
-    state.source_ref = str(project_config) if project_config is not None and project_config.is_file() else "manual"
-    state.model_profile = resolved_profile
-    state.delivery_mode = normalize_delivery_mode(delivery_mode or str(target.get("delivery_mode", "") or "init_project"))
-    state.delivery_standards = _normalize_start_delivery_standards(delivery_standards) if state.delivery_mode == "custom" else []
-    state.role_models = role_models
-    if not dry_run and project_config is not None and project_config.is_file():
-        # Bind the immutable Team execution snapshot for this durable run so
-        # later Team changes never rewrite historical execution truth. A
-        # workflow start is an explicit team touchpoint and may migrate once.
-        from goodteam_os.team_control_plane import build_team_execution_snapshot, ensure_team_state
-
-        team_state = ensure_team_state(workspace, key, project_config)
-        if team_state is not None:
-            state.team_snapshot = build_team_execution_snapshot(team_state)
-    if not dry_run and target:
-        from goodteam_os.workflow_workspace import prepare_workflow_workspace
-
-        runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
-        if _workflow_requires_repository(target, source_type=source_type, project_config=project_config):
-            if runtime_root is None:
-                raise ValueError("A real workflow requires its configured Git repository baseline.")
-            from goodteam_os.worker_setup import load_worker_setup
-
-            state.repository_baseline = prepare_workflow_workspace(runtime_root, project_key=key, run_id=state.run_id,
-                                                                    worker_setup=load_worker_setup(project_config),
-                                                                    write_domains=task_write_domains)
-    if not dry_run:
-        from goodteam_os.skills.task_context import workflow_skill_context
-        from goodteam_os.skills.task_locks import TaskSkillIdentity
-        from goodteam_os.skills.task_start import capture_task_start
-
-        runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
-        if task_skill_context is not None:
-            state.task_skill_context = workflow_skill_context(task_skill_context, run_id=state.run_id, project_key=key)
-            if not state.task_skill_context:
-                from goodteam_os.skills.task_start import reject_missing_task_context
-
-                reject_missing_task_context(TaskSkillIdentity("workflow_run", key, state.run_id))
-            if state.task_skill_context:
-                from goodteam_os.skills.task_service import ProjectTaskSkillService
-
-                if runtime_root is None:
-                    raise ValueError("Task Skill execution requires its bound project runtime root.")
-                lock = ProjectTaskSkillService(workspace, key, worker_roots=(runtime_root,)).read(state.task_skill_context)
-                confirmation = lock.get("start_input", {}).get("request", {}).get("confirmed_input", {})
-                if str(confirmation.get("exact_request", "")).strip() != state.idea:
-                    raise ValueError("Workflow input differs from its original task confirmation.")
-                binding = confirmation.get("producer_binding", {})
-                if binding != {"workspace": str(Path(workspace).expanduser().resolve()),
-                               "worker_root": str(Path(runtime_root).expanduser().resolve())}:
-                    raise ValueError("Workflow root differs from its original task confirmation.")
-        elif runtime_root is not None:
-            state.task_skill_context = capture_task_start(
-                workspace=workspace, project_key=key, worker_root=runtime_root,
-                task=TaskSkillIdentity("workflow_run", key, state.run_id),
-                command_key=f"workflow-start:{key}:{state.run_id}",
-                confirmed_input={"exact_request": idea, "source_type": source_type,
-                                 "delivery_mode": state.delivery_mode, "delivery_standards": state.delivery_standards},
-                expected_team_revision=expected_team_revision,
-            )
-    profile = resolve_profile(load_profile or "greenfield")
-    state.load_profile = profile.name
-    use_fix_profile = profile.name == "fix" and source_type != "existing_project"
-
+    request_id = str(run_id).strip() or str(uuid4())
+    if run_id:
+        previous = StateStore(workspace).read_project_current(key)
+        if previous and previous.run_id == run_id:
+            if previous.idea != idea.strip():
+                raise ValueError("The original Workflow request has different input.")
+            return {**asdict(previous), "historical_workflow": True, "execution_started": False}
+    if task_skill_context:
+        raise ValueError("An original Workflow method capture must be recovered through its original run, not a new task.")
     if dry_run:
-        if source_type == "existing_project":
-            planned_artifacts = {"takeover": str(workspace / "artifacts" / "runs" / state.run_id / "takeover" / "takeover-brief.md")}
-            state.current_node = "takeover_review_gate"
-            state.next_node = "await_takeover_approval"
-            state.approvals["takeover"] = ApprovalDecision.PENDING
-        elif use_fix_profile:
-            planned_artifacts = {"fix_plan": str(workspace / "artifacts" / "runs" / state.run_id / "fix_plan" / "fix-plan.md")}
-            state.current_node = "fix_plan_review_gate"
-            state.next_node = "await_fix_plan_approval"
-            state.approvals["fix_plan"] = ApprovalDecision.PENDING
-        else:
-            planned_artifacts = {"prd": str(workspace / "artifacts" / "runs" / state.run_id / "prd" / "prd.md")}
-            state.current_node = "prd_review_gate"
-            state.next_node = "await_prd_approval"
-        payload = asdict(state)
-        payload["dry_run"] = True
-        payload["planned_artifacts"] = planned_artifacts
-        return payload
+        return {"dry_run": True, "project_key": key, "request_id": request_id, "phase": "planning",
+                "role": "planner", "exact_request": idea.strip(),
+                "execution_started": False, "workflow_started": False}
+    config = Path(project_config).expanduser() if project_config is not None else _project_config_for_key(workspace, key)
+    target = load_project_target(config)
+    root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    if root is None:
+        raise ValueError("Select this project's actual repository before starting its task.")
+    criteria = _normalize_start_delivery_standards(delivery_standards) if delivery_standards else []
+    metadata = {"source_type": source_type, "delivery_mode": delivery_mode or target.get("delivery_mode", ""),
+                "load_profile": load_profile, "requested_write_domains": task_write_domains or []}
+    runtime = {"model_config": str(resolve_runtime_model_config(model_config)),
+               "model_profile": model_profile, "role_model_overrides": role_model_overrides or []}
+    from goodteam_os.assistant_queue import queue_project_request
+    from goodteam_os.project_iteration_execution import run_queued_iteration_batch
 
-    previous = StateStore(workspace).read_project_current(key)
-    if previous is not None and not is_active_run(previous):
-        StateStore(workspace).archive_project_current(key, reason="rejected" if previous.next_node == "rejected" else "complete")
-    if state.task_skill_context or state.repository_baseline:
-        # Lock ownership and the portable reference are durable BEFORE any graph
-        # node may dispatch. Failure leaves an inspectable blocked task, not a
-        # template-generated success or a recapture from current methods.
-        StateStore(workspace).write_project_current(state)
-        StateStore(workspace).write_project_checkpoint(state)
-    from goodteam_os.skills.models import SkillError
-
-    try:
-        if source_type == "existing_project":
-            result = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        elif use_fix_profile:
-            result = run_fix_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        else:
-            result = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-    except SkillError as exc:
-        if not state.task_skill_context:
-            raise
-        state.blockers = [*state.blockers, f"{exc.code}: Task methods are locked but execution is blocked."]
-        result = state
-    state_store = StateStore(root=workspace)
-    state_store.write_project_current(result)
-    state_store.write_project_checkpoint(result)
-    append_action(
-        workspace,
-        run_id=result.run_id,
-        actor="human",
-        action="workflow_started",
-        project_key=result.project_key,
-        before_node="",
-        after_node=result.next_node,
-    )
-    for artifact, artifact_path in result.artifacts.items():
-        if artifact in {"task_ledger"}:
-            continue
-        append_action(
-            workspace,
-            run_id=result.run_id,
-            actor="system",
-            action=f"{artifact}_generated",
-            project_key=result.project_key,
-            before_node="",
-            after_node=result.next_node,
-            artifact=artifact,
-            artifact_path=artifact_path,
-        )
-    notify_current_approval_gate(result, workspace=workspace)
-    payload = asdict(result)
-    payload["dry_run"] = False
-    return payload
+    proposal = queue_project_request(workspace=workspace, project_key=key, root=root,
+        request_id=request_id, text=idea.strip(), acceptance_criteria=criteria,
+        runtime_request=runtime, metadata=metadata)
+    result = run_queued_iteration_batch(workspace=workspace, project_key=key, root=root,
+        project_config=config, proposal_ids=[proposal["id"]], expected_revisions={proposal["id"]: proposal["revision"]},
+        confirmed=True, background=True, expected_team_revision=expected_team_revision)
+    return {**result, "project_key": key, "request_id": request_id,
+            "task_id": proposal["project_task_id"], "phase": "planning", "dry_run": False}
 
 
 def report_bug(
@@ -3971,14 +3821,9 @@ def report_bug(
     description: str,
     title: str = "",
     severity: str = "p2",
+    run_id: str = "",
 ) -> dict[str, object]:
-    """Start a lightweight `fix` workflow run from a human-reported bug.
-
-    Builds the defect context (`[BUG] ...`) into the run idea and dispatches the
-    `fix` load profile, which stops at the `await_fix_plan_approval` gate with a
-    `fix_plan` artifact. The active-run guard in `start_workflow` still applies;
-    its ValueError propagates so the route can map it to a 400.
-    """
+    """Submit defect context to the same ordinary planning task entry."""
     title = (title or "").strip()
     description = (description or "").strip()
     severity = (severity or "p2").strip() or "p2"
@@ -4008,6 +3853,7 @@ def report_bug(
         source_type="new_project",
         project_config=project_config,
         load_profile="fix",
+        run_id=run_id,
     )
     result["severity"] = severity
     result["title"] = title
@@ -6089,11 +5935,7 @@ def build_project_home(
         "git_baseline": _project_git_baseline(root),
         "capabilities": {
             **build_capabilities(readiness),
-            "workflow_entry_url": (
-                f"/projects/{quote(key, safe='')}/work"
-                if build_capabilities(readiness)["start_workflow"]
-                else ""
-            ),
+            "workflow_entry_url": f"/projects/{quote(key, safe='')}/work",
         },
         "next_action": pending
         or {"id": "shared_readiness_complete", "status": "complete"},
@@ -6671,160 +6513,20 @@ def handle_project_api_post(
             raise ProjectApiError("task_draft_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
         if selected_result is not None:
             return 202, selected_result
-        if action == "confirm_task":
-            service = TaskAssistantService(workspace, readiness_executor=executor,
-                                           project_config=_project_config_for_key(workspace, key))
-            try:
-                session, readiness = confirm_and_prepare(service, project_key=key, root=root, request=request)
-            except ValueError as exc:
-                raise ProjectApiError("task_draft_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
-        else:
-            raw_values = request.get("values", {})
-            if not isinstance(raw_values, dict):
-                raise ProjectApiError(
-                    "invalid_request",
-                    "Project preparation values must be a JSON object.",
-                    400,
-                    recovery=["retry_request"],
-                )
-            readiness = executor.submit_input(
-                key,
-                root,
-                str(request.get("step_id", "")),
-                raw_values,
-                background=False,
-            )
-            session = TaskAssistantService(
-                workspace,
-                readiness_executor=executor,
-            ).session(key, root)
-        if not build_capabilities(readiness)["start_workflow"]:
-            return 202, {
-                "task_assistant_session": session,
-                "workflow_started": False,
-                "status": "preparing_project",
-            }
-        proposal = dict(session.get("proposed_task") or {})
-        if not proposal.get("confirmed"):
-            return 200, {
-                "task_assistant_session": session,
-                "workflow_started": False,
-                "status": "ready_for_request",
-            }
-        proposal_id = str(proposal.get("id", ""))
-        project_config = _project_config_for_key(workspace, key)
-        # A known missing prerequisite has no execution ambiguity. Check before
-        # claiming the start so the same confirmed draft remains resumable.
-        if not proposal.get("run_id") and not proposal.get("start_claim_id") and _workflow_requires_repository(
-            target, source_type=str(readiness.get("project_mode") or "existing_project"),
-            project_config=project_config,
-        ):
-            baseline = _project_git_baseline(root)
-            if baseline["baseline_required"]:
-                raise ProjectApiError("git_baseline_required", str(baseline["error"]), 409,
-                                      recovery=["initialize_project_git", "retry_request"])
-        claim_id = uuid4().hex
-        start_run_id = f"task-{proposal_id}"
-        session = store.claim_workflow_start(proposal_id, claim_id, start_run_id)
-        proposal = dict(session.get("proposed_task") or {})
-        bound_run_id = str(proposal.get("run_id", ""))
-        if bound_run_id:
-            return 200, {
-                "task_assistant_session": session,
-                "workflow_started": True,
-                "status": "workflow_started",
-                "run_id": bound_run_id,
-            }
-        claimed_run_id = str(proposal.get("start_run_id", ""))
-        current_state = StateStore(workspace).read_project_current(key)
-        if (
-            current_state is not None
-            and current_state.run_id == claimed_run_id
-            and current_state.current_node != "start"
-        ):
-            session = store.reconcile_workflow(proposal_id, claimed_run_id)
-            return 200, {
-                "task_assistant_session": session,
-                "workflow_started": True,
-                "status": "workflow_started",
-                "run_id": claimed_run_id,
-            }
-        if str(proposal.get("start_status", "")) == "indeterminate":
-            raise ProjectApiError(
-                "workflow_start_indeterminate",
-                "The prior workflow start could not be proven complete; automatic retry is blocked to prevent a duplicate run.",
-                409,
-                recovery=["inspect_workflow_state", "retry_after_manual_reconciliation"],
-            )
-        if str(proposal.get("start_claim_id", "")) != claim_id:
-            session = store.mark_workflow_start_indeterminate(
-                proposal_id,
-                reason="The workflow start owner exited before completion was durably recorded.",
-            )
-            proposal = dict(session.get("proposed_task") or {})
-            if str(proposal.get("start_status", "")) == "indeterminate":
-                raise ProjectApiError(
-                    "workflow_start_indeterminate",
-                    "The prior workflow start could not be proven complete; automatic retry is blocked to prevent a duplicate run.",
-                    409,
-                    recovery=["inspect_workflow_state", "retry_after_manual_reconciliation"],
-                )
-            return 202, {
-                "task_assistant_session": session,
-                "workflow_started": False,
-                "status": "workflow_starting",
-                "run_id": "",
-            }
-        project_config = _project_config_for_key(workspace, key)
-        # Revalidate edited legacy drafts even after their ledger binding was removed.
-        from goodteam_os.assistant_queue import require_no_active_project_goal, require_queued_project_task
-
-        try:
-            project_task = require_queued_project_task(root, key, proposal)
-            if proposal.get("project_task_id"):
-                # Claim the original ledger identity BEFORE any Worker effect.
-                require_no_active_project_goal(workspace, key)
-                existing = StateStore(workspace).read_project_current(key)
-                if existing and is_active_run(existing) and existing.run_id != start_run_id:
-                    raise ValueError("Another project Workflow owns the execution slot.")
-                LocalTaskStore(root, key).claim_project_workflow(
-                    str(proposal["project_task_id"]),
-                    expected_digest=str(proposal["project_task_digest"]),
-                    run_id=start_run_id,
-                )
-        except ValueError as exc:
-            store.release_workflow_start(proposal_id, claim_id)
-            raise ProjectApiError("iteration_task_changed", str(exc), 409,
-                                  recovery=["reload_project"]) from exc
-        try:
-            result = start_workflow(
-                workspace=workspace,
-                idea=str(proposal.get("exact_request", "")),
-                project_key=key,
-                model_config=Path("models.yaml"),
-                model_profile=str(target.get("model_profile", "") or "balanced"),
-                delivery_mode=str(target.get("delivery_mode", "") or "init_project"),
-                source_type=str(readiness.get("project_mode", "") or "existing_project"),
-                project_config=project_config,
-                load_profile="greenfield",
-                run_id=start_run_id,
-                task_skill_context=proposal.get("task_skill_context", {}),
-                task_write_domains=project_task.get("write_domains", []) if project_task else [],
-            )
-        except Exception as exc:
-            store.mark_workflow_start_indeterminate(proposal_id, claim_id=claim_id, reason=str(exc))
-            raise
-        session = store.bind_workflow(
-            proposal_id,
-            str(result.get("run_id", "")),
-            claim_id=claim_id,
-        )
-        return 200, {
-            "task_assistant_session": session,
-            "workflow_started": True,
-            "status": "workflow_started",
-            "run_id": str(result.get("run_id", "")),
-        }
+        # Only an already-started legacy Workflow can reach this branch.
+        # New free-form and assigned drafts are consumed by the task adapter.
+        proposal = store.read().get("proposed_task") or {}
+        original_run = proposal.get("run_id") or proposal.get("start_run_id")
+        current = StateStore(workspace).read_project_current(key)
+        if original_run and current and current.run_id == original_run:
+            if current.idea != str(proposal.get("exact_request", "")).strip():
+                raise ProjectApiError("workflow_start_indeterminate", "The original Workflow input differs.", 409)
+            session = store.reconcile_workflow(str(proposal["id"]), original_run)
+            return 200, {"task_assistant_session": session, "workflow_started": False,
+                         "historical_workflow": True, "status": "workflow_reconciled", "run_id": original_run}
+        raise ProjectApiError("workflow_start_indeterminate",
+            "This retained Workflow attempt has no matching execution record; inspect its original attempt rather than launching a replacement.",
+            409, recovery=["inspect_workflow_state"])
     team_commands_match = re.fullmatch(r"/api/projects/([^/]+)/team/commands", path)
     if team_commands_match:
         key = _decode_project_api_key(team_commands_match.group(1))
@@ -6966,15 +6668,6 @@ def handle_project_api_post(
     if workflow_match:
         key = _decode_project_api_key(workflow_match.group(1))
         key, _target, root = _project_target_and_root(workspace, key)
-        readiness = ProjectReadinessExecutor(workspace).status(key, root)
-        capabilities = build_capabilities(readiness)
-        if not capabilities["start_workflow"]:
-            raise ReadinessExecutionError(
-                "readiness_not_ready",
-                "Complete project readiness before starting a workflow.",
-                details={"project_key": key},
-                recovery=["continue_readiness", "reload_project"],
-            )
         return 200, {
             "project_key": key,
             "workflow_url": f"/projects/{quote(key, safe='')}/work",
@@ -8586,6 +8279,7 @@ def serve(
                         role_model_overrides=[str(value) for value in request.get("role_model_overrides", [])],
                         dry_run=bool(request.get("dry_run", False)),
                         expected_team_revision=request.get("expected_team_revision"),
+                        run_id=str(request.get("run_id", "")),
                     )
                 elif normalized_path == "/report-bug":
                     result = report_bug(
@@ -8594,6 +8288,7 @@ def serve(
                         description=str(request.get("description", "")),
                         title=str(request.get("title", "")),
                         severity=str(request.get("severity", "p2")),
+                        run_id=str(request.get("run_id", "")),
                     )
                 elif normalized_path == "/context-estimate":
                     result = context_estimate_for_request(workspace, request)

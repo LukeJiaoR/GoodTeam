@@ -1594,7 +1594,7 @@ def _process_telegram_command(
         from goodteam_os.web import report_bug
 
         try:
-            report_bug(
+            result = report_bug(
                 workspace=workspace,
                 project_key=project_key,
                 description=description,
@@ -1605,10 +1605,11 @@ def _process_telegram_command(
             return {"status": "processed", "command": "bug"}
 
         confirm = (
-            "🐛 Bug 已上报 · fix 工作流已启动\n"
+            "🐛 Bug 已提交为 Planner 任务\n"
             f"严重度: {severity}\n"
-            "门: FIX_PLAN 待审\n"
-            "回复审批卡或用 /gt approve 处理"
+            f"任务: {result['task_id']}\n"
+            f"批次: {result['run_id']} · {result['status']}\n"
+            "在项目任务页查看规划结果，后续修复沿任务队列推进；此提交不是已完成修复，也没有 FIX_PLAN 审批门。"
         )
         _send_masked_telegram_message(token=token, chat_id=chat_id, text=confirm)
         return {"status": "processed", "command": "bug"}

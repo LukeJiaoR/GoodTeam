@@ -1816,7 +1816,10 @@ class WorkerJobStore:
                 job,
                 "failed",
                 summary,
-                extra={**base_extra, "exit_code": None, "failure_class": "pi_not_installed" if not preflight.get("available") else "pi_preflight_failed"},
+                extra={**base_extra, "exit_code": None,
+                       "invocation_evidence": {**base_extra["invocation_evidence"], "external_invocation": False,
+                                               "reason": "Pi runtime was not started"},
+                       "failure_class": "pi_not_installed" if not preflight.get("available") else "pi_preflight_failed"},
             )
         runtime = PiSessionRuntime(
             project_root=self.project_root,
@@ -1841,7 +1844,7 @@ class WorkerJobStore:
             def startup_tick():
                 nonlocal startup_heartbeat
                 if time.monotonic() - startup_heartbeat >= 1.0:
-                    self._write_status(job_root, job, "running", "Preparing project environment before Pi starts.",
+                    self._write_status(job_root, job, "running", "Starting Pi session.",
                         extra={**base_extra, "started_at": started_at,
                                "pid": runtime.rpc.pid if runtime.rpc else None, "heartbeat_at": self._now()})
                     startup_heartbeat = time.monotonic()
@@ -2865,15 +2868,6 @@ class WorkerJobStore:
         }
         prompt = self._worker_prompt(job_root, job, model=model)
         process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
-        environment = (job.get("sandbox_context") or {}).get("project_environment")
-        if environment and environment.get("preparation_task") and (job.get("sandbox_context") or {}).get("worker_setup"):
-            from goodteam_os.project_environment import prepare_environment_source
-            from goodteam_os.worker_setup import with_setup
-
-            prepare_environment_source(runtime_context.runtime_cwd, environment)
-            process_command = with_setup(process_command, setup=job["sandbox_context"]["worker_setup"], job_root=job_root,
-                cwd=Path(environment["environment_root"]), binary=which("codex") or DEFAULT_CODEX_PATH,
-                reuse_completed=True, project_environment=environment, workspace=runtime_context.runtime_cwd)
         process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
         provider_key = (worker_env or {}).get(PROVIDER_KEY_ENV, "")
@@ -3025,7 +3019,7 @@ class WorkerJobStore:
                         if stream is not None:
                             stream.close()
         stdout, stderr = safe_output(stdout), safe_output(stderr)
-        if environment and environment.get("preparation_task") and (job_root / "setup-result.json").is_file():
+        if (job_root / "setup-result.json").is_file():
             base_extra["worker_setup"] = json.loads((job_root / "setup-result.json").read_text(encoding="utf-8"))
         stdout_path.write_text(stdout, encoding="utf-8")
         stderr_path.write_text(stderr, encoding="utf-8")
@@ -3098,7 +3092,12 @@ class WorkerJobStore:
         if environment:
             from goodteam_os.project_environment import worker_environment_instructions
 
-            sandbox_context += "\n" + worker_environment_instructions(environment)
+            from goodteam_os.worker_setup import configured_setup_tool
+
+            setup_workspace = self._worker_runtime_cwd(job).runtime_cwd
+            sandbox_context += "\n" + worker_environment_instructions(
+                environment, workspace=setup_workspace,
+                setup_tool=configured_setup_tool(job_root, job["sandbox_context"], workspace=setup_workspace))
         markdown_artifact = "Output markdown only." in (job_root / "constraints.md").read_text(encoding="utf-8")
         final_output_instruction = (
             "Return the complete requested markdown artifact as your final assistant response, "
@@ -3300,7 +3299,6 @@ class WorkerJobStore:
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         extra_payload = dict(extra or {})
-        environment = (job.get("sandbox_context") or {}).get("project_environment")
         setup_result = job_root / "setup-result.json"
         if setup_result.is_file():
             extra_payload["worker_setup"] = json.loads(setup_result.read_text(encoding="utf-8"))

@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import re
 
-from goodteam_os.assistant_queue import active_project_run, queue_manager_iteration_choice, require_no_active_project_goal
+from goodteam_os.assistant_queue import queue_manager_iteration_choice
 from goodteam_os.goal_continuation import authority_snapshot, goal_guard
 from goodteam_os.manager_execution import ManagerExecutionError, ManagerResourceBusy
 from goodteam_os.project_iteration import _internal, project_iteration_backlog, rank_project_backlog
@@ -85,8 +85,6 @@ def pending_project_batch(session, root, project_key):
 
 def configure_project_continuation(*, workspace, project_key, root, project_config, request):
     """Confirm existing task identities and optional iteration/model-call limits."""
-    from goodteam_os.project_import import read_bound_project_readiness
-    from goodteam_os.project_readiness import build_capabilities
     from goodteam_os.team_control_plane import ensure_team_state
     from goodteam_os.project_outcome_discovery import authorization_digest, normalize_discovery
 
@@ -129,19 +127,6 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
             raise ValueError("Stop the existing continuation and settle its current batch first.")
         if recovery is not None:
             recovery = confirm_parent(workspace, project_key, root, recovery)
-        if active_project_run(workspace, project_key) and recovery is None:
-            raise ValueError("Finish the active workflow before starting project continuation.")
-        require_no_active_project_goal(workspace, project_key)
-        try:
-            ready = read_bound_project_readiness(workspace, project_key, root)
-        except ValueError as exc:
-            # Retain the existing Workflow/batch compatibility for configured
-            # legacy projects. A present readiness record is never bypassed.
-            if not str(exc).startswith("No readiness found for project:"):
-                raise
-        else:
-            if not build_capabilities(ready)["start_workflow"]:
-                raise ValueError("Complete project preparation before starting project continuation.")
         ensure_team_state(workspace, project_key, project_config)
         tasks = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
         version = rank_project_backlog(list(tasks.values()), project_key, limit=None)["version"]
@@ -219,12 +204,6 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
         try:
             if value["authority"] != authority_snapshot(workspace, project_key, project_config, root):
                 raise ValueError("Project configuration, Team or model settings changed; authorization is stale.")
-            require_no_active_project_goal(workspace, project_key)
-            from goodteam_os.workflow_recovery import linked_parent
-
-            parent = linked_parent(workspace, project_key, continuation_id=value["id"]) if value.get("workflow_recovery") else None
-            if active_project_run(workspace, project_key) and parent is None:
-                raise ValueError("Another Workflow owns the project; continuation is paused.")
             known, selected = _scope_tasks(value, LocalTaskStore(root, project_key).list_tasks())
             from goodteam_os.project_parallel_dispatch import select_pending, ready_parallel_tasks
             pending = select_pending(store.read(), value, known)
@@ -320,23 +299,9 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 parallel_planning = True
             if pending and pending.get("run_id") and saved_batch.get("status") in {"review", "blocked"}:
                 return value
-            from goodteam_os.project_environment import preparation_planning_scope
-
-            environment_plan = preparation_planning_scope(project_config, list(known.values()), value["task_ids"])
-            if environment_plan and environment_plan["needs_discovery"] and not value.get("discovery"):
-                return _save(store, {**value, "status": "blocked",
-                    "reason": "project_environment_preparation_requires_planning"})
-            if (environment_plan and environment_plan["needs_discovery"] and value.get("discovery")
-                    and value["discovery"].get("allow_backlog_judgment") is not True
-                    and not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor")):
-                # Initial task creation remains Manager/Planner's ordinary assignment
-                # operation. Do not forge a delivered outcome to enter discovery.
-                return _save(store, {**value, "status": "blocked",
-                    "reason": "project_environment_preparation_needs_manager_assignment"})
             ready_authorized = any(task["eligible_to_plan"] and task["task_id"] in value["task_ids"]
                 for task in rank_project_backlog(list(known.values()), project_key, limit=None).get("candidates", []))
             if (value.get("discovery") and pending is None and not parallel_planning and (value.get("discovery_pending")
-                    or environment_plan is not None and environment_plan["needs_discovery"]
                     or value["discovery"].get("allow_backlog_judgment") is True and not ready_authorized
                     or value.get("investigation_pending") or value.get("batch_feedback_pending") or value.get("reason") == "awaiting_human_decision" and not ready_authorized
                     or any(item["receipt_id"] not in value.get("discovery_consumed", []) for item in human_feedback(value))
@@ -439,7 +404,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                     result = plan_next_iteration(
                         workspace=workspace, project_key=project_key, root=root, project_config=project_config,
                         expected_backlog_version=snapshot["version"], confirmed=True,
-                        allowed_task_ids=(environment_plan["task_ids"] if environment_plan else value["task_ids"]),
+                        allowed_task_ids=value["task_ids"],
                         **({"concurrent_continuation_id": value["id"], "eligible_task_ids": parallel_eligible} if parallel_planning else {}),
                         allow_wait=not planning or value.get("planning_input_version") in {3, 4, 5},
                         include_question_context=not planning or value.get("planning_input_version") in {4, 5},

@@ -245,8 +245,8 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
     if context_run_id or attachments or expected_attempt is not None:
         raise ValueError("Answer the current project question without a historical task, attachment or runtime retry.")
     match = re.fullmatch(r"/answer\s+(human-[0-9a-f]{32})\s+([\s\S]+)", text.strip())
-    if match is None or not 1 <= len(match[2].strip()) <= 8000:
-        raise ValueError("Use /answer <question-id> <answer of 1-8000 characters> from the current question.")
+    if match is None or not match[2].strip():
+        raise ValueError("Use /answer <question-id> <nonempty answer> from the current question.")
     identifier, answer_text = match[1], match[2]
     if not isinstance(message_id, str) or not 1 <= len(message_id.strip()) <= 256:
         raise ValueError("A stable answer message ID is required.")
