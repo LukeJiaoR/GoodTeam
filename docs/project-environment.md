@@ -80,3 +80,30 @@ their own explicit provisioning authority, not implicit host inheritance.
 The Pi executable is pinned to the absolute host-preflight path before adding
 project dependency tools to PATH. Project executables cannot replace that
 selected runtime merely by sharing its name.
+
+## Task source worktrees
+
+Dispatch now creates detached Git worktrees in the registered project repository
+for its baseline, each task, and the integrated candidate. Tasks retain separate
+source working directories and indexes, but share the repository object database
+and the project dependency environment. There is no new per-task clone route.
+Integration merges the recorded task commits and materializes the merged Git
+objects; it does not install another environment or rewrite the project branch.
+Python source resolution includes the current task's `src` directory when present.
+
+New dispatch records use `dispatch_workspace.v2`. Existing clone-era records and
+frozen review receipts are left untouched, not silently rebound to another Git
+identity. Existing records retain their original identity and result refs for recovery.
+An existing v1 run resumed in place keeps its original task directories; newly
+created attempts always use project worktrees. No new clone route is retained.
+When starting a new attempt or integrating their results, their exact Git objects
+are imported into the project repository and new directories use worktrees.
+Old candidates and frozen review receipts are not rewritten or discarded.
+Whether such unfinished records exist on the user's computer has not been verified. The retained artifact policy remains unchanged: this change
+does not automatically delete old workspaces or their task results.
+
+This worktree replacement has static validation only. Actual parallel worktree
+execution, conflict integration, failure recovery and shared dependency reuse
+remain unverified. Pinning the Pi executable does not itself pin an interpreter
+selected by an `env` shebang; the actual installed launcher must be inspected
+before claiming that interpreter resolution is fixed.

@@ -215,12 +215,11 @@ def bind_environment(workspace, environment):
         local.parent.mkdir(parents=True, exist_ok=True)
         local.symlink_to(target, target_is_directory=True)
     # Dependencies are runtime inputs, not source changes in a candidate.
-    git_dir = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=workspace,
-                             check=True, capture_output=True, text=True).stdout.strip()
-    exclude = Path(git_dir)
+    exclude_name = subprocess.run(["git", "rev-parse", "--git-path", "info/exclude"], cwd=workspace,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+    exclude = Path(exclude_name)
     if not exclude.is_absolute():
         exclude = workspace / exclude
-    exclude = exclude / "info" / "exclude"
     exclude.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude.read_text() if exclude.exists() else ""
     entries = ["/" + path for path in paths]
@@ -251,6 +250,12 @@ def runtime_environment(environment, inherited, *, workspace=None):
     import os
 
     result = dict(inherited)
+    # Editable installations retain the preparation source path. Prefer this
+    # Worker's current src tree while sharing the installed third-party tools.
+    if workspace and (Path(workspace) / "src").is_dir():
+        source_path = str(Path(workspace) / "src")
+        existing = result.get("PYTHONPATH", "")
+        result["PYTHONPATH"] = os.pathsep.join([source_path, existing]) if existing else source_path
     if not environment or not environment.get("setup_configured"):
         return result
     root = Path(environment["environment_root"])

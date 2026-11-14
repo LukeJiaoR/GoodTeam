@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_command.add_argument("--heartbeat-token", default="", help=argparse.SUPPRESS)
     serve_command.add_argument("--local-codex-policy", type=Path, help="Explicit task-bound local Reviewer exposure policy.")
     serve_command.add_argument("--trusted-codex-review-policy", type=Path,
-                               help="Private permission to reuse native Codex for one trusted, method-free review task.")
+                               help="Private permission to reuse native Codex for one trusted review task and its locked methods.")
     serve_command.add_argument("--trusted-codex-correction-policy", type=Path,
                                help="Existing exact-attempt correction policy for a prepared project batch; no grant is inferred from HTTP.")
 
@@ -225,7 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--review-model", default="", help="Exact model for that Codex review; does not grant provider access.")
     dispatch.add_argument("--local-codex-policy", type=Path, help="Explicit task-bound local Reviewer exposure policy.")
     dispatch.add_argument("--trusted-codex-review-policy", type=Path,
-                          help="Private permission to reuse native Codex for one trusted, method-free review task.")
+                          help="Private permission to reuse native Codex for one trusted review task and its locked methods.")
 
     inspect_local = subparsers.add_parser("local-codex-inspect", help="Inspect existing Codex without calling a model")
     inspect_local.add_argument("--codex", type=Path, required=True)
@@ -848,3 +848,4 @@ def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=N
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

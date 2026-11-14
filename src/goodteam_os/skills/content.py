@@ -167,7 +167,10 @@ class SkillContextProvider:
         original = snapshot["job_input"]["request"]
         if session.adapter != original["adapter"] or session.model != original["model"]:
             raise SkillError("runtime_identity_changed", "Runtime differs from the original task request.")
-        if session.verification_kind == "local_cli" and (snapshot["methods"]["items"] or snapshot["required_skill_ids"]):
+        from .codex_trusted import ADAPTER as TRUSTED_ADAPTER
+
+        if (session.verification_kind == "local_cli" and session.adapter_version != TRUSTED_ADAPTER
+                and (snapshot["methods"]["items"] or snapshot["required_skill_ids"])):
             raise SkillError("local_codex_skills_unsupported", "Local CLI permission does not establish strict Skill isolation.")
         return asdict(session)
 
@@ -358,3 +361,4 @@ class SkillContextProvider:
                 "stages": {name: "unobserved" for name in OBSERVED_STAGES},
                 "items": [{key: item[key] for key in ("skill_id", "version_id", "package_digest", "activation")}
                           for item in record["input"]["catalog"]]}
+

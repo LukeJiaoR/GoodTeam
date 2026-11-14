@@ -260,25 +260,67 @@ def _raw_commit(root: Path, capture, parent: str, artifact_root: Path) -> str:
         index.unlink(missing_ok=True)
 
 
-def _clone(source: Path, destination: Path):
-    _git(destination.parent, ["clone", "--quiet", "--local", "--no-hardlinks", "--no-checkout", "--", str(source), str(destination)])
-    _git(destination, ["remote", "remove", "origin"])
+def _git_path(root: Path, name: str) -> Path:
+    value = Path(os.fsdecode(_read_git(root, ["rev-parse", "--git-path", name]).strip()))
+    return value if value.is_absolute() else root / value
+
+
+def _import_retained_commit(repository: Path, source: Path, commit: str):
+    # Only old retained clones need object import; new tasks already share Git.
+    if _git_path(repository, "objects").resolve() != _git_path(source, "objects").resolve():
+        _git(repository, ["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", str(source), commit])
+
+
+def _worktree(source: Path, destination: Path, commit: str, *, repository: Path):
+    _import_retained_commit(repository, source, commit)
+    # Same project repository/object store; HEAD and index belong to this task.
+    _git(repository, ["worktree", "add", "--quiet", "--detach", "--no-checkout", str(destination), commit])
 
 
 def _git_identity(root: Path):
     value = (root / ".git").lstat()
-    if not stat.S_ISDIR(value.st_mode):
-        raise DispatchWorkspaceError("Dispatch workspace Git directory was replaced.")
-    if os.fsdecode(_read_git(root, ["rev-parse", "--absolute-git-dir"]).strip()) != str(root / ".git"):
-        raise DispatchWorkspaceError("Dispatch workspace no longer owns its Git directory.")
-    if os.fsdecode(_read_git(root, ["rev-parse", "--show-toplevel"]).strip()) != str(root):
-        raise DispatchWorkspaceError("Dispatch workspace no longer owns its worktree.")
-    common = Path(os.fsdecode(_read_git(root, ["rev-parse", "--git-common-dir"]).strip()))
-    if not common.is_absolute():
-        common = root / common
-    if common != root / ".git" or (root / ".git/objects/info/alternates").exists():
-        raise DispatchWorkspaceError("Dispatch workspace must have independent Git metadata and objects.")
-    return {"device": value.st_dev, "inode": value.st_ino}
+    if stat.S_ISDIR(value.st_mode):
+        if os.fsdecode(_read_git(root, ["rev-parse", "--absolute-git-dir"]).strip()) != str(root / ".git"):
+            raise DispatchWorkspaceError("Dispatch workspace no longer owns its Git directory.")
+        if os.fsdecode(_read_git(root, ["rev-parse", "--show-toplevel"]).strip()) != str(root):
+            raise DispatchWorkspaceError("Dispatch workspace no longer owns its worktree.")
+        common = Path(os.fsdecode(_read_git(root, ["rev-parse", "--git-common-dir"]).strip()))
+        if not common.is_absolute():
+            common = root / common
+        if common != root / ".git" or (root / ".git/objects/info/alternates").exists():
+            raise DispatchWorkspaceError("Dispatch workspace must have independent Git metadata and objects.")
+        return {"device": value.st_dev, "inode": value.st_ino}
+    if not stat.S_ISREG(value.st_mode):
+        raise DispatchWorkspaceError("Dispatch workspace must be a linked Git worktree.")
+    gitdir = Path(os.fsdecode(_read_git(root, ["rev-parse", "--absolute-git-dir"]).strip()))
+    common = Path(os.fsdecode(_read_git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).strip()))
+    if (gitdir.parent != common / "worktrees"
+            or (gitdir / "gitdir").read_text().strip() != str(root / ".git")
+            or os.fsdecode(_read_git(root, ["rev-parse", "--show-toplevel"]).strip()) != str(root)):
+        raise DispatchWorkspaceError("Dispatch worktree registration changed.")
+    info = gitdir.stat()
+    return {"device": value.st_dev, "inode": value.st_ino,
+            "gitdir": str(gitdir), "common": str(common),
+            "gitdir_device": info.st_dev, "gitdir_inode": info.st_ino}
+
+
+def _tree_capture(root: Path, tree: str, limits: SnapshotLimits):
+    # Read Git's merged objects, not a checkout filtered by shared attributes.
+    files, total = {}, 0
+    for row in _read_git(root, ["ls-tree", "-r", "-z", tree]).split(b"\0"):
+        if not row:
+            continue
+        metadata, raw = row.split(b"\t", 1)
+        mode, kind, oid = metadata.split()
+        path = canonical_relative_path(os.fsdecode(raw))
+        if mode not in {b"100644", b"100755"} or kind != b"blob":
+            raise DispatchWorkspaceError("Dispatch integration requires regular source files.")
+        data = _read_git(root, ["cat-file", "blob", oid.decode("ascii")], max_output_bytes=limits.max_file_bytes)
+        total += len(data)
+        if len(files) >= limits.max_files or total > limits.max_total_bytes:
+            raise DispatchWorkspaceError("Dispatch integration exceeded its retained source size.")
+        files[path] = {"data": data, "mode": mode.decode("ascii")}
+    return {"files": files}
 
 
 def _write_json(path: Path, value):
@@ -337,7 +379,8 @@ class DispatchWorkspace:
         if _capture_identity(first) != _capture_identity(second):
             raise DispatchWorkspaceError("Worker files changed during result collection.")
         commit = _raw_commit(root, second, self.metadata["baseline_commit"], self.artifact_root)
-        _git(root, ["update-ref", "refs/goodteam/dispatch-result", commit])
+        result_ref = "refs/goodteam/dispatch-result" if self.metadata["schema"] == "dispatch_workspace.v1" else "refs/worktree/goodteam-result"
+        _git(root, ["update-ref", result_ref, commit])
         changed = _git(root, ["diff", "--name-only", "--no-renames", "-z", self.metadata["baseline_commit"], commit]).stdout
         result = {"job_id": job_id, "baseline_commit": self.metadata["baseline_commit"],
                   "result_commit": commit, "changed_files": [os.fsdecode(path) for path in changed.split(b"\0") if path],
@@ -369,26 +412,33 @@ class DispatchWorkspace:
         if len({item["job_id"] for item in results}) != len(results):
             raise DispatchWorkspaceError("Integration result identities must be unique.")
         candidate = Path(tempfile.mkdtemp(prefix="integration-", dir=self.artifact_root)) / "candidate"
-        _clone(self.artifact_root / "baseline", candidate)
         baseline = self.metadata["baseline_commit"]
-        # Checkout attributes must not normalize the preserved raw baseline.
-        (candidate / ".git/info/attributes").write_text("* -text -filter -ident -eol -working-tree-encoding\n", encoding="utf-8")
-        _git(candidate, ["checkout", "--quiet", "--detach", baseline])
-        _overlay(candidate, baseline_capture)
-        _git(candidate, ["update-index", "--refresh"])
+        _worktree(self.artifact_root / "baseline", candidate, baseline, repository=Path(self.metadata["project_root"]))
+        head = baseline
+        merged_tree = _read_git(candidate, ["rev-parse", baseline + "^{tree}"]).strip().decode("ascii")
         conflicts = []
+        conflicted = False
         for result in results:
-            _git(candidate, ["fetch", "--quiet", "--no-tags", "--", result["workspace_path"], result["result_commit"]])
-            merged = _git(candidate, ["merge", "--no-edit", "--no-ff", result["result_commit"]], check=False)
-            if merged.returncode:
-                conflicts = [os.fsdecode(path) for path in
-                             _git(candidate, ["diff", "--name-only", "--diff-filter=U", "-z"]).stdout.split(b"\0") if path]
-                if not conflicts:
-                    raise DispatchWorkspaceError(f"Dispatch integration failed; retained at {candidate}: {os.fsdecode(merged.stderr)[:500]}")
+            _import_retained_commit(candidate, Path(result["workspace_path"]), result["result_commit"])
+            merged = _git(candidate, ["merge-tree", "--write-tree", "--name-only", "--no-messages", "-z",
+                                      head, result["result_commit"]], check=False)
+            if merged.returncode not in {0, 1}:
+                raise DispatchWorkspaceError(f"Dispatch integration failed: {os.fsdecode(merged.stderr)[:500]}")
+            fields = merged.stdout.split(b"\0")
+            merged_tree = fields[0].decode("ascii").strip()
+            if merged.returncode == 1:
+                conflicted = True
+                conflicts = [os.fsdecode(path) for path in fields[1:] if path]
                 break
-        changed = _git(candidate, ["diff", "--name-only", "--no-renames", "-z", baseline]).stdout
-        result = {"status": "conflicted" if conflicts else "succeeded", "candidate_path": str(candidate),
-                  "candidate_commit": None if conflicts else _git(candidate, ["rev-parse", "HEAD"]).stdout.strip().decode("ascii"),
+            head = _read_git(candidate, ["commit-tree", merged_tree, "-p", head,
+                                         "-p", result["result_commit"], "-m", "Integrate GoodTeam task result"]).strip().decode("ascii")
+        # Materialize exact merged bytes without changing common Git attributes.
+        _overlay(candidate, _tree_capture(candidate, merged_tree, self.limits))
+        _git(candidate, ["read-tree", merged_tree])
+        _git(candidate, ["update-ref", "HEAD", head])
+        changed = _git(candidate, ["diff", "--name-only", "--no-renames", "-z", baseline, merged_tree]).stdout
+        result = {"status": "conflicted" if conflicted else "succeeded", "candidate_path": str(candidate),
+                  "candidate_commit": None if conflicted else _git(candidate, ["rev-parse", "HEAD"]).stdout.strip().decode("ascii"),
                   "baseline_commit": baseline, "original_head": self.metadata["original_head"],
                   "changed_files": [os.fsdecode(path) for path in changed.split(b"\0") if path], "conflicts": conflicts}
         _write_json(candidate.parent / "integration.json", result)
@@ -413,7 +463,7 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
     manifest = root / "baseline.json"
     if manifest.exists():
         metadata = json.loads(read_bytes(manifest, maximum=32 * 1024 * 1024))
-        if (metadata.get("schema") != "dispatch_workspace.v1" or metadata.get("run_id") != run_id
+        if (metadata.get("schema") not in {"dispatch_workspace.v1", "dispatch_workspace.v2"} or metadata.get("run_id") != run_id
                 or metadata.get("project_root") != str(project_root)
                 or baseline_from is not None and metadata.get("baseline_from") != baseline_from
                 or candidate_source is not None and metadata.get("candidate_source") != candidate_source
@@ -446,7 +496,7 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
         second = original._baseline_capture()
         second.update(original_head=original.metadata["original_head"],
                       original_index=read_bytes(original.artifact_root / "original.index", maximum=32 * 1024 * 1024))
-        _clone(original.artifact_root / "baseline", baseline)
+        _worktree(original.artifact_root / "baseline", baseline, original.metadata["baseline_commit"], repository=project_root)
         baseline_commit = original.metadata["baseline_commit"]
         root_guard = original.metadata.get("root_guard")
     elif candidate_source is not None:
@@ -478,7 +528,7 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
         probe_candidate(candidate, head)
         candidate_identity = _expected_root_identity(candidate, None)
         first = _capture(candidate, limits, expected_identity=candidate_identity, original=True)
-        _clone(candidate, baseline)
+        _worktree(candidate, baseline, head, repository=project_root)
         second = _capture(candidate, limits, expected_identity=candidate_identity, original=True)
         if (_capture_identity(first) != _capture_identity(second)
                 or _git_identity(candidate) != source["git_identity"]):
@@ -488,7 +538,7 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
         baseline_commit = _raw_commit(baseline, second, second["original_head"], root)
     else:
         first = _capture(project_root, limits, expected_identity=identity, original=True)
-        _clone(project_root, baseline)
+        _worktree(project_root, baseline, first["original_head"], repository=project_root)
         second = _capture(project_root, limits, expected_identity=identity, original=True)
         if _capture_identity(first) != _capture_identity(second):
             raise DispatchWorkspaceError(f"Source changed during dispatch preparation; incomplete artifacts retained at {root}.")
@@ -497,7 +547,7 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
     _git(baseline, ["update-ref", "HEAD", baseline_commit])
     _git(baseline, ["read-tree", baseline_commit])
     (root / "original.index").write_bytes(second["original_index"])
-    metadata = {"schema": "dispatch_workspace.v1", "run_id": run_id, "project_root": str(project_root),
+    metadata = {"schema": "dispatch_workspace.v2", "run_id": run_id, "project_root": str(project_root),
                 "source_root_identity": identity, "original_head": second["original_head"],
                 "original_index_sha256": hashlib.sha256(second["original_index"]).hexdigest(),
                 "baseline_commit": baseline_commit, "files": _file_manifest(second), "jobs": {},
@@ -514,11 +564,11 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
     for job_id in job_ids:
         metadata["jobs"][job_id] = {}
         job_root = workspace.workspace(job_id)
-        _clone(baseline, job_root)
-        _git(job_root, ["update-ref", "refs/goodteam/dispatch-baseline", baseline_commit])
+        _worktree(baseline, job_root, baseline_commit, repository=project_root)
+        _git(job_root, ["update-ref", "refs/worktree/goodteam-baseline", baseline_commit])
         _git(job_root, ["update-ref", "HEAD", second["original_head"]])
         _overlay(job_root, second)
-        shutil.copyfile(root / "original.index", job_root / ".git/index")
+        shutil.copyfile(root / "original.index", _git_path(job_root, "index"))
         metadata["jobs"][job_id] = {"root_identity": _expected_root_identity(job_root, None),
                                      "git_identity": _git_identity(job_root)}
     _write_json(manifest, metadata)
@@ -541,7 +591,8 @@ def verify_dispatch_result(project_root: Path, result: dict) -> dict:
     second = _capture(root, workspace.limits, extra_paths=workspace.metadata["files"])
     if _capture_identity(first) != _capture_identity(second) or _file_manifest(second) != retained.get("files"):
         raise DispatchWorkspaceError("Retained Worker result changed after publication.")
-    if (_read_git(root, ["rev-parse", "refs/goodteam/dispatch-result^{commit}"]).strip().decode("ascii")
+    result_ref = "refs/goodteam/dispatch-result" if workspace.metadata["schema"] == "dispatch_workspace.v1" else "refs/worktree/goodteam-result"
+    if (_read_git(root, ["rev-parse", result_ref + "^{commit}"]).strip().decode("ascii")
             != retained["result_commit"]):
         raise DispatchWorkspaceError("Retained Worker result commit changed after publication.")
     return {key: retained[key] for key in ("job_id", "workspace_path", "baseline_commit", "result_commit", "changed_files")}
@@ -608,3 +659,4 @@ def read_dispatch_recovery(project_root: Path, source: dict) -> dict:
         elif job.get("outcome") == "ok":
             verify_dispatch_result(project_root, job)
     return report
+

@@ -2,7 +2,7 @@
 
 The existing Codex process owns its complete managed configuration and login.
 We do not guess/override its provider or pretend a user-file hash seals it. Only
-an operator-authorized method-free task may reuse that native authority. Normal
+an operator-authorized task may reuse that native authority and its locked methods. Normal
 construction remains closed; no HTTP/task/Skill flag can supply this policy.
 """
 from __future__ import annotations
@@ -64,7 +64,8 @@ def saved_workflow_review_context(workers, *, workspace, state):
 def runtime_boundaries(reference):
     captured = _decode(reference.encode())
     if (set(captured) != {"mode", "contexts", "seconds"} or captured["mode"] != "trusted_self_use"
-            or type(captured["contexts"]) is not int or not 1 <= captured["contexts"] <= 4
+            or (captured["contexts"] is not None
+                and (type(captured["contexts"]) is not int or captured["contexts"] < 1))
             or type(captured["seconds"]) is not int or not 1 <= captured["seconds"] <= MAX_REVIEW_SECONDS):
         raise SkillError("trusted_codex_boundary_invalid", "Saved native exposure bounds are invalid.")
     return {"schema_version": "goodteam.codex-trusted-boundaries.v1", "mode": captured["mode"],
@@ -92,13 +93,16 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
         self.policy_bytes = _private_file(self.path, maximum=32768)
         p = self.policy = _decode(self.policy_bytes)
         keys = {"schema_version", "authorization_id", "worker_root", "task", "codex", "codex_home", "model",
-                "max_contexts", "deadline_seconds", "expires_at", "trusted_task_inputs",
+                "deadline_seconds", "trusted_task_inputs",
                 "accept_native_managed_configuration", "accept_unknown_cost", "provider_request_limit", "usd_limit"}
-        if (set(p) != keys or p["schema_version"] != POLICY_SCHEMA
+        optional = {"max_contexts", "expires_at"}
+        if (not keys.issubset(p) or set(p) - keys - optional or p["schema_version"] != POLICY_SCHEMA
                 or not isinstance(p["authorization_id"], str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", p["authorization_id"]) is None
-                or type(p["max_contexts"]) is not int or not 1 <= p["max_contexts"] <= 4
+                or (p.get("max_contexts") is not None
+                    and (type(p["max_contexts"]) is not int or p["max_contexts"] < 1))
                 or type(p["deadline_seconds"]) is not int or not 1 <= p["deadline_seconds"] <= MAX_REVIEW_SECONDS
-                or type(p["expires_at"]) is not int or not time.time() < p["expires_at"] <= time.time() + 86400
+                or (p.get("expires_at") is not None
+                    and (type(p["expires_at"]) is not int or p["expires_at"] <= time.time()))
                 or any(p[key] is not True for key in ("trusted_task_inputs", "accept_native_managed_configuration", "accept_unknown_cost"))
                 or not isinstance(p["model"], str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", p["model"]) is None):
             raise SkillError("trusted_codex_policy_invalid", "A private explicit trusted-task/native-configuration exposure authorization is required.")
@@ -150,6 +154,10 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
             raise SkillError("trusted_codex_task_mismatch", "Native self-use permission belongs to another Worker root.")
         return TrustedCodexReviewRuntime(workers, self)
 
+    def _expired(self):
+        expires_at = self.policy.get("expires_at")
+        return expires_at is not None and time.time() >= expires_at
+
     def capture_workflow_review(self, workers, *, workspace, state):
         """Called by the guarded page Run action, never by Worker metadata."""
         from dataclasses import asdict
@@ -158,7 +166,7 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
         task = TaskSkillIdentity("direct_task", state.project_key, state.run_id)
         if Path(workers.project_root).absolute() != self.root or asdict(task) != self.policy["task"]:
             raise SkillError("trusted_codex_task_mismatch", "Native permission must name this exact current-task review and Worker root.")
-        if time.time() >= self.policy["expires_at"] or _private_file(self.path, maximum=32768) != self.policy_bytes:
+        if self._expired() or _private_file(self.path, maximum=32768) != self.policy_bytes:
             raise SkillError("trusted_codex_authorization_revoked", "The private task authorization expired or changed.")
         reject_missing_task_context(TaskSkillIdentity("workflow_run", state.project_key, state.run_id))
         return capture_task_start(workspace=workspace, project_key=state.project_key, worker_root=workers.project_root,
@@ -172,7 +180,7 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
         task = TaskSkillIdentity("direct_task", state.project_key, state.run_id)
         try:
             return (not state.task_skill_context and Path(workers.project_root).absolute() == self.root
-                    and asdict(task) == self.policy["task"] and time.time() < self.policy["expires_at"]
+                    and asdict(task) == self.policy["task"] and not self._expired()
                     and _private_file(self.path, maximum=32768) == self.policy_bytes)
         except (SkillError, OSError):
             # Revocation closes new starts; an availability hint is not authority
@@ -180,7 +188,7 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
             return False
 
     def _current(self, snapshot):
-        if time.time() >= self.policy["expires_at"] or _private_file(self.path, maximum=32768) != self.policy_bytes:
+        if self._expired() or _private_file(self.path, maximum=32768) != self.policy_bytes:
             raise SkillError("trusted_codex_authorization_revoked", "The private task authorization expired or changed.")
         if _binary_stamp(self.codex) != self.binary_stamp:
             raise SkillError("trusted_codex_binary_changed", "The authorized executable changed.")
@@ -191,8 +199,6 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
                 or request["execution_policy"] != "read_only" or request.get("session_policy", "new") != "new"
                 or request.get("worker_session_ref")):
             raise SkillError("trusted_codex_task_mismatch", "Self-use permission requires the exact fresh read-only Reviewer task/model.")
-        if snapshot["methods"]["items"] or snapshot["required_skill_ids"]:
-            raise SkillError("trusted_codex_skills_unsupported", "Trusted self-use cannot admit third-party GoodTeam methods or scripts.")
 
     def acquire(self, snapshot, *, context_id):
         self._current(snapshot)
@@ -222,14 +228,14 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
                 _publish_immutable(fd, "authorization.json", _bytes({"policy": self.policy, "digest": self.digest}),
                                    code="trusted_codex_authorization_conflict")
                 contexts = [n for n in os.listdir(fd) if re.fullmatch(r"review-[0-9a-f]{32}\.json", n)]
-                if len(contexts) >= self.policy["max_contexts"]:
+                if self.policy.get("max_contexts") is not None and len(contexts) >= self.policy["max_contexts"]:
                     raise SkillError("trusted_codex_budget_exhausted", "The authorized native context budget is exhausted.")
                 write_new(fd, context_id + ".json", _bytes(binding))
                 os.fsync(fd)
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
                 os.close(lock)
-        boundaries = {"mode": "trusted_self_use", "contexts": self.policy["max_contexts"],
+        boundaries = {"mode": "trusted_self_use", "contexts": self.policy.get("max_contexts"),
                       "seconds": self.policy["deadline_seconds"]}
         session = ContentSession("codex", ADAPTER, self.binary_version, self.binary_digest, self.policy["model"], self.digest,
                     "trusted:" + context_id, json.dumps(boundaries, sort_keys=True), self.verification_kind)
@@ -250,9 +256,12 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
 
 
 class TrustedCodexReviewRuntime(LocalCodexReviewRuntime):
+    supports_locked_methods = True
+
     def process_spec(self, root, lease):
         return ReviewProcess(self.admission.command(), root / "cwd",
             {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "en_US.UTF-8",
              "HOME": pwd.getpwuid(os.getuid()).pw_dir, "CODEX_HOME": str(self.admission.home)},
             self.admission.policy["deadline_seconds"], MAX_INPUT, forbid_tools=False,
             deadline_ceiling_seconds=MAX_REVIEW_SECONDS)
+

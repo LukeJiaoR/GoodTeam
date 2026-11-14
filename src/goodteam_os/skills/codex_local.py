@@ -366,6 +366,8 @@ class LocalCodexReviewAdmission(CodexReviewAdmission):
 
 
 class LocalCodexReviewRuntime:
+    supports_locked_methods = False
+
     def __init__(self, workers, admission):
         self.workers, self.admission = workers, admission
         self.leases = {}
@@ -409,8 +411,9 @@ class LocalCodexReviewRuntime:
             raise SkillError("codex_context_conflict", "A local context can launch only once.")
         self.entered.add(context_id)
         lease = self.leases[context_id]
-        if record["runtime_session"] != vars(lease.session) or record["methods"]:
-            raise SkillError("codex_context_conflict", "Local execution requires its method-free captured session.")
+        if (record["runtime_session"] != vars(lease.session)
+                or record["methods"] and not self.supports_locked_methods):
+            raise SkillError("codex_context_conflict", "Local execution differs from its captured session or supported method contract.")
         operator = requests._services(self.workers)[1]
         parent = operator / "codex-local-inputs" / provider.job_id
         with directory(parent, create=True) as fd:
@@ -436,3 +439,4 @@ class LocalCodexReviewRuntime:
             raise
         finally:
             self.admission.finish(lease, context_id=context_id, termination_confirmed=confirmed)
+
