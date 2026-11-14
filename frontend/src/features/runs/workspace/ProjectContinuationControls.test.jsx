@@ -23,7 +23,9 @@ it('binds explicit scoped continuation and reviewed landed delivery to visible e
   fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
   fireEvent.click(screen.getByRole('button', { name: 'Authorize and start continuation' }));
   expect(action.mock.calls[1][0].idempotency_key).not.toBe(initial.idempotency_key);
-  expect(screen.getByRole('link', { name: /Inspect execution/ })).toHaveAttribute('href', `/api/projects/APP/iteration-batches/${batch.run_id}`);
+  expect(screen.queryByText('b'.repeat(40))).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Review and confirm this delivery' }));
+  expect(screen.queryByRole('link', { name: /Inspect execution/ })).not.toBeInTheDocument();
   expect(screen.getByText('b'.repeat(40))).toBeInTheDocument();
   const accept = screen.getByRole('button', { name: 'Verify version and accept delivery' });
   expect(accept).toBeDisabled();
@@ -94,20 +96,22 @@ it('opts into bounded outcome discovery with exact consent and shows the observe
   expect(screen.getByText('New tasks created: 1 / 2')).toBeInTheDocument();
   expect(screen.getByText('Initial tasks: APP-1')).toBeInTheDocument();
   expect(screen.getByText('Discovered tasks: APP-2')).toBeInTheDocument();
-  expect(screen.getByText('delivery-receipt-1')).toBeInTheDocument();
+  expect(screen.queryByText(/delivery-receipt-1/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'View source evidence' })).not.toBeInTheDocument();
   expect(screen.getByText(/The delivered import path exposes/)).toBeInTheDocument();
   view.rerender(<ProjectContinuationControls {...props} snapshot={{ version: 'sha256:after', candidates: [] }}
     session={{ project_continuation: { ...value, status: 'completed', reason: 'discovery_no_followup',
       discovery_last: { outcome_receipt_id: 'delivery-receipt-2', task_id: '', status: 'no_followup',
         rationale: 'No additional task is justified by this outcome within the approved paths.' } } }} />);
   expect(screen.getByRole('status')).toHaveTextContent('No follow-up task was proposed within the approved scope.');
-  expect(screen.getByText('delivery-receipt-2')).toBeInTheDocument();
+  expect(screen.queryByText(/delivery-receipt-2/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Approved tasks delivered/)).not.toBeInTheDocument();
 });
 
 it('keeps quality failures visible and delivers only the checked and reviewed correction candidate', () => {
   const action = vi.fn();
   const batch = { run_id: `task-batch-${'a'.repeat(64)}`, status: 'blocked', task_ids: ['APP-1', 'APP-2'],
+    report_path: '/isolated/retained/report.json',
     integration: { candidate_commit: 'b'.repeat(40), candidate_path: '/isolated/original-candidate' } };
   const quality = { required: true, input_digest: 'sha256:original-input', execution_id: 'quality-run-1',
     status: 'awaiting_worker', check_status: 'failed', review_status: 'machine_recorded', acceptance_status: 'unknown',
@@ -116,12 +120,14 @@ it('keeps quality failures visible and delivers only the checked and reviewed co
   const props = { snapshot: { candidates: [] }, projectKey: 'APP', onAction: action };
   const session = (current, status = 'review') => ({ project_task_batches: { [batch.run_id]: { ...batch, status, quality: current } } });
   const view = render(<ProjectContinuationControls {...props} session={session(quality, 'blocked')} />);
-  expect(screen.getByText('correction-job-1')).toBeInTheDocument();
-  expect(screen.getByText('quality-run-1')).toBeInTheDocument();
-  expect(screen.getByText(quality.reason)).toBeInTheDocument();
-  expect(screen.getByText(/Continue the prepared correction/)).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Inspect check, review and fix evidence' }))
-    .toHaveAttribute('href', `/api/projects/APP/iteration-batches/${batch.run_id}`);
+  expect(screen.queryByText(/correction-job-1|quality-run-1|Continue the prepared correction/)).not.toBeInTheDocument();
+  expect(screen.getByText(/Candidate check:/)).toHaveTextContent('Failed');
+  expect(screen.queryByText(quality.reason)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'View checks and review results' }));
+  expect(screen.getByRole('dialog')).not.toHaveTextContent(quality.reason);
+  expect(screen.getByRole('dialog')).not.toHaveTextContent(quality.correction_job_id);
+  expect(screen.queryByRole('link', { name: 'Open complete execution record' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Close evidence' }));
   expect(screen.queryByRole('button', { name: 'Verify version and accept delivery' })).not.toBeInTheDocument();
   const advance = screen.getByRole('button', { name: 'Continue checks and review' });
   expect(advance).toBeDisabled();
@@ -141,7 +147,9 @@ it('keeps quality failures visible and delivers only the checked and reviewed co
   view.rerender(<ProjectContinuationControls {...props} session={session(accepted)} />);
   expect(screen.queryByRole('button', { name: 'Continue checks and review' })).not.toBeInTheDocument();
   expect(screen.queryByText('/isolated/original-candidate')).not.toBeInTheDocument();
-  expect(screen.getAllByText('/isolated/corrected-candidate')).toHaveLength(2);
+  expect(screen.queryByText('/isolated/corrected-candidate')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Review and confirm this delivery' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('/isolated/corrected-candidate');
   fireEvent.change(screen.getByLabelText(/Full landed Git commit/), { target: { value: 'e'.repeat(40) } });
   fireEvent.click(screen.getByLabelText(/I independently reviewed/));
   fireEvent.click(screen.getByRole('button', { name: 'Verify version and accept delivery' }));
@@ -150,6 +158,8 @@ it('keeps quality failures visible and delivers only the checked and reviewed co
 
   view.rerender(<ProjectContinuationControls {...props}
     session={session({ ...accepted, candidate_commit: 'f'.repeat(40) })} />);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Review and confirm this delivery' }));
   expect(screen.getByLabelText(/Full landed Git commit/)).toHaveValue('');
   expect(screen.getByLabelText(/I independently reviewed/)).not.toBeChecked();
   expect(screen.getByRole('button', { name: 'Verify version and accept delivery' })).toBeDisabled();
@@ -213,8 +223,8 @@ it('binds recovery to failed task evidence, preserves stop, and makes abandonmen
     idempotency_key: `batch-abandon:${batch.run_id}:${settled.version}` });
   view.rerender(<ProjectContinuationControls {...props} session={session(settled, continuation, 'abandoned')} />);
   expect(screen.getByText(/Batch abandoned; evidence retained/)).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Inspect retained execution evidence' }))
-    .toHaveAttribute('href', `/api/projects/APP/iteration-batches/${batch.run_id}`);
+  fireEvent.click(screen.getByRole('button', { name: 'View execution report' }));
+  expect(screen.queryByRole('link', { name: 'Open complete execution record' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Retry confirmed|Abandon this batch|Continue checks|Verify version/ })).not.toBeInTheDocument();
 });
 
