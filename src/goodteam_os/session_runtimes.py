@@ -410,6 +410,21 @@ class PiSessionRuntime:
                 **({"startup_policy": self.tool_policy} if self.tool_policy else {}))
             environment = {**(environment or provider_environment()), **self.method_resources.start()}
             command.extend(["--extension", str(Path(__file__).with_name("pi_skill_resources.mjs"))])
+        from goodteam_os.project_environment import runtime_environment, prepare_environment_source
+        runtime_binding = ((getattr(self.method_input, "workspace_context", None) or {})
+                           if self.method_input is not None else self.job.get("sandbox_context") or {})
+        project_environment = runtime_binding.get("project_environment")
+        if project_environment and project_environment.get("preparation_task") and runtime_binding.get("worker_setup"):
+            from shutil import which
+            from goodteam_os.worker_setup import with_setup
+
+            prepare_environment_source(self.runtime_cwd, project_environment)
+            command = with_setup(command, setup=runtime_binding["worker_setup"], job_root=self.job_root,
+                                 cwd=Path(project_environment["environment_root"]), binary=which("codex") or "codex",
+                                 reuse_completed=True)
+
+        environment = runtime_environment(
+            project_environment, environment or provider_environment())
         self.rpc = PiRpcProcess(command, cwd=self.runtime_cwd, stderr_path=self.stderr_path,
                                 on_record=self._on_record, **({"env": environment} if environment else {}),
                                 **({"request_guard": self._restricted_rpc_guard} if self.tool_policy else {}),
@@ -862,4 +877,5 @@ def _now() -> str:
 
 def capabilities_dict() -> dict[str, bool]:
     return asdict(PI_RUNTIME_SPEC.capabilities)
+
 

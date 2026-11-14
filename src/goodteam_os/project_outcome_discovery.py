@@ -251,6 +251,17 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
     from goodteam_os.project_iteration_planner import _project_evidence
     from goodteam_os.team_control_plane import MANAGER_ROLE, team_view_for_config
 
+    from goodteam_os.project_environment import environment_for_task
+    from goodteam_os.worker_setup import load_worker_setup
+
+    environment = environment_for_task(root, load_worker_setup(project_config) if project_config else None)
+    environment.pop("setup", None)  # The model plans a task, not installation argv or credentials.
+    environment["preparation_tasks"] = [
+        {"id": task["id"], "status": task["status"],
+         "delivery_verified": task.get("delivery_verified", False),
+         "description": task.get("description", ""), "artifact_refs": task.get("artifact_refs", [])}
+        for task in LocalTaskStore(root, project_key).list_tasks()
+        if task["id"] in value["task_ids"] and task.get("write_domains") == [".goodteam/environment"]]
     snapshot = rank_project_backlog(LocalTaskStore(root, project_key).list_tasks(), project_key, limit=None)
     undelivered = None if outcome is not None or backlog_source is not None else _undelivered_source(
         workspace=workspace, project_key=project_key, root=root, value=value)
@@ -260,6 +271,7 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
     packet = {"schema_version": "project_outcome_discovery_packet.v1", "project_key": project_key,
         "authorization_digest": value["authorization_digest"], "discovery": value["discovery"],
         "multiple_followups_supported": True,
+        "project_environment": environment,
         "remaining_budget": {key: None if limit is None else limit - used for key, limit, used in (
             ("manager_calls", value["max_manager_calls"], value["manager_calls"]),
             ("batches", value["max_batches"], value["batches_started"]),
@@ -489,10 +501,18 @@ def _validate_discovered_single(packet, response):
     criteria = task["acceptance_criteria"]
     domains = [] if investigation or planning else normalize_write_domains(task["write_domains"])
     allowed = packet["discovery"]["allowed_write_domains"]
+    preparation = (domains == [".goodteam/environment"] and not investigation and not planning
+                   and (packet.get("project_environment") or {}).get("setup_configured") is True)
+    environment = packet.get("project_environment") or {}
+    if (environment.get("setup_configured") is True and not investigation and not planning and not preparation
+            and not any(task["status"] == "done" and task.get("delivery_verified") is True
+                        for task in environment.get("preparation_tasks", []))):
+        raise ValueError("Planner must arrange the project's preparation task before dependent development.")
     if (not isinstance(criteria, list) or not 1 <= len(criteria) <= 12
             or any(not isinstance(item, str) or not 5 <= len(item.strip()) <= 500 for item in criteria)
-            or domains is None or any(not any(path == parent or path.startswith(parent + "/") for parent in allowed) for path in domains)
-            or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/"))):
+            or domains is None or (not preparation and (
+                any(not any(path == parent or path.startswith(parent + "/") for parent in allowed) for path in domains)
+                or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/"))))):
         raise ValueError("The follow-up's acceptance criteria and write paths must fit the approved discovery scope.")
     dependencies, sources = task["dependencies"], task["source_refs"]
     done = set(packet["authorized_done_task_ids"])
@@ -921,3 +941,4 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
             reason="outcome_followup_queued")
         return session
     return store._mutate(queued_batch)["project_continuation"]
+

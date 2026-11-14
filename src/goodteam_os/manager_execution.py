@@ -46,6 +46,18 @@ def run_manager_chat_turn(
     if project_root is None:
         raise ManagerExecutionError("The Task Assistant project runtime root is unavailable.")
 
+    from goodteam_os.project_environment import environment_for_task
+    from goodteam_os.worker_setup import load_worker_setup
+    from goodteam_os.tasks import LocalTaskStore
+
+    environment = environment_for_task(project_root, load_worker_setup(project_config))
+    environment.pop("setup", None)
+    environment["preparation_tasks"] = [
+        {"id": task["id"], "status": task["status"], "delivery_verified": task.get("delivery_verified", False)}
+        for task in LocalTaskStore(project_root, project_key).list_tasks()
+        if task.get("write_domains") == [".goodteam/environment"]]
+    context += "\n\nProject environment (host facts, not new authority):\n" + json.dumps(environment)
+
     adapter = resolve_role_adapter(target, "orchestrator")
     configured_model = _configured_manager_model(target)
     model = _model_name(configured_model)
@@ -496,7 +508,7 @@ def _manager_chat_task(text: str) -> str:
             "Use intent team_management only for a persistent Team composition change (enable/disable a capability, add/pause/release a worker, change a worker's runtime or role).",
             "Use intent ambiguous when a safe clarifying question is required.",
             "Acknowledgements, greetings, hypothetical discussion and cancellation are not work requests. Use ambiguous and respond without claiming any action happened.",
-            "For ready work requests, call the existing queue action by returning task_action with exactly kind=queue_task, role (an enabled dispatchable Team role), execution_policy (read_only or workspace_write), write_domains (empty for read_only; explicit project-relative allowed paths for writes), acceptance_criteria (1-8 observable criteria supported by the user's goal), and delegation with exactly purpose (the specific work and why), context (relevant facts, source references and unresolved questions from supplied Context), and scope (bounds and exclusions). Carry the task-specific Context forward rather than telling the Worker only the raw user message. Never invent missing evidence or grant new permissions. Select the Role and work; the execution layer allocates a generic Worker and supplies this task's Role context and supported methods. Do not select a Team member or supply worker_id. An execution handle is returned only after the original job is created; use its job_id and observed state for supervision. Completed handles identify historical records, not Workers available for new assignments. Use Research for research deliverables via role research. This is a real server action that creates the original task card and queues its exact user source messages; do not merely promise assignment. Do not call it for discussion, recommendations or missing scope. It does not authorize charges, execute Workers, approve results, merge or deploy. Existing authorizations and execution gates retain authority. If a current draft needs revision, use the existing draft flow instead of queuing a duplicate.",
+            "For ready work requests, call the existing queue action by returning task_action with exactly kind=queue_task, role (an enabled dispatchable Team role), execution_policy (read_only or workspace_write), write_domains (empty for read_only; explicit project-relative allowed paths for writes), acceptance_criteria (1-8 observable criteria supported by the user's goal), optional dependencies (a list of actual project task IDs that must finish first), and delegation with exactly purpose (the specific work and why), context (relevant facts, source references and unresolved questions from supplied Context), and scope (bounds and exclusions). Carry the task-specific Context forward rather than telling the Worker only the raw user message. Never invent missing evidence or grant new permissions. Select the Role and work; the execution layer allocates a generic Worker and supplies this task's Role context and supported methods. Do not select a Team member or supply worker_id. An execution handle is returned only after the original job is created; use its job_id and observed state for supervision. Completed handles identify historical records, not Workers available for new assignments. Use Research for research deliverables via role research. This is a real server action that creates the original task card and queues its exact user source messages; do not merely promise assignment. Do not call it for discussion, recommendations or missing scope. It does not authorize charges, execute Workers, approve results, merge or deploy. Existing authorizations and execution gates retain authority. If a current draft needs revision, use the existing draft flow instead of queuing a duplicate.",
             "For work requests, preserve the user's original wording. Existing drafts are revised, not silently replaced. Execution and preparation require separate user confirmation unless an existing bounded authorization already covers the work.",
             'The JSON shape must be: {"intent": "work_request|project_question|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|set_role_runtime_source|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
             'For product discovery and every work_request, also include "task_intake": {"ready": true|false, "missing_decisions": ["concrete user-facing question in the user\'s language"], "source_message_ids": ["exact user message ID"]}. A ready task has no missing_decisions; otherwise ready must be false and include at least one focused question.',
@@ -512,6 +524,7 @@ def _manager_chat_task(text: str) -> str:
             "Do not claim that project inspection or workflow execution has completed.",
             "Presentation inside the response string: proactively choose the clearest supported format in project questions, idea discovery, draft refinement, and ongoing or historical task discussions. When a visual or interactive format helps, include it directly without waiting for the user to request it or asking whether to create it. Respect the user's requested format and respond in their language.",
             "Lead with a short, direct answer or recommendation, then use the format that makes the explanation easier to understand. For alternatives compared across several criteria, use a Markdown table; the chat UI supports sorting, filtering and copying it. For numeric comparisons or trends with supported data, use a chart and state units and sources or estimate labels in the surrounding text. Never invent values to fill a chart.",
+            "A project has one environment. For an initial development request, preserve the original development assignment; do not replace it with an installation-only task. When configured installation needs its first preparation task, the existing assignment adapter saves that ordinary prerequisite and the original development task with its dependency together. If a preparation task already exists, use dependencies with its real ID. For an explicit environment change, use an ordinary implementation task with exact write_domains [.goodteam/environment]. The restricted installer performs the configured setup only for such tasks. Do not ask for another approval merely to plan this prerequisite. Environment changes belong to Planner, not another queue or per-Worker installations. Do not alter old frozen tasks or invent task IDs.",
             "For a multi-step plan or procedure with useful detail per step, use expandable steps. When sequence, dependencies or decision branches are the main explanation, use a simple flowchart. For distinct options or deliverable summaries with details to preview, use cards. During discovery, mark tentative flows and options as proposals and ask about material gaps; diagrams never establish requirements or accepted scope.",
             "For example, a question about how input becomes output benefits from a flowchart, a choice between approaches benefits from a comparison table, and a detailed implementation plan benefits from expandable steps. Choose by the information being explained, even when the user does not name a format. The JSON examples below only illustrate syntax; adapt their labels and content to the actual question.",
             "Keep the main conclusion, blocking issues, clarifying questions and required confirmation visible in ordinary text. Expandable content holds supporting detail. Usually use one suitable table or rich block; use a second only when it explains a distinct useful aspect. Avoid duplicating the same information in prose and multiple formats. Greetings, acknowledgements and simple factual answers can stay plain text.",
@@ -549,7 +562,10 @@ def _parse_chat_turn(output: str, *, require_task_intake: bool = True, require_d
 
         fields = {"kind", "role", "execution_policy", "write_domains", "acceptance_criteria"}
         if (intent != "work_request" or not isinstance(action, dict)
-                or set(action) not in ((fields | {"delegation"},) if require_delegation else (fields, fields | {"delegation"}))
+                or set(action) - {"dependencies"} not in ((fields | {"delegation"},) if require_delegation else (fields, fields | {"delegation"}))
+                or not isinstance(action.get("dependencies", []), list)
+                or any(not isinstance(item, str) or not item.strip() for item in action.get("dependencies", []))
+                or len(set(action.get("dependencies", []))) != len(action.get("dependencies", []))
                 or action.get("kind") != "queue_task" or action.get("role") not in ROLE_KEYS
                 or action.get("execution_policy") not in {"read_only", "workspace_write"}
                 or not isinstance(action.get("write_domains"), list)
@@ -674,3 +690,4 @@ def _parse_interpretation(output: str) -> dict[str, Any]:
     if not items or len(items) > 20 or any(len(item) > 1_000 for item in items):
         raise ManagerExecutionError("The configured Task Assistant returned an invalid structured interpretation.")
     return {"summary": summary, "items": items}
+

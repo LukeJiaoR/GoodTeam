@@ -107,6 +107,10 @@ class PiMethodInput:
         expected = {"available": True, "mode": "dispatch_isolated",
                     "workspace_path": context.get("workspace_path"),
                     "execution_id": self.request["run_id"], "sandbox_id": self.job_id}
+        if context.get("worker_setup"):
+            expected["worker_setup"] = context["worker_setup"]
+        if context.get("project_environment"):
+            expected["project_environment"] = context["project_environment"]
         if context != expected:
             raise SkillError("ordinary_method_workspace_mismatch", "Workspace is not the original dispatch invocation.")
         # Existing retained-baseline and Git identity checks own this decision.
@@ -210,3 +214,4 @@ def ordinary_execution_slot(workers, job_id):
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
+

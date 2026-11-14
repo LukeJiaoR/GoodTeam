@@ -34,10 +34,15 @@ def load_worker_setup(config_path):
     return value
 
 
-def with_setup(command, *, setup, job_root, cwd, binary):
+def with_setup(command, *, setup, job_root, cwd, binary, reuse_completed=False):
     """Keep setup and the agent in one process group, so existing Stop applies."""
     path = job_root / "setup-input.json"
-    path.write_text(json.dumps({"setup": setup, "cwd": str(cwd), "binary": binary}), encoding="utf-8")
+    value = {"setup": setup, "cwd": str(cwd), "binary": binary}
+    if reuse_completed and path.exists() and (job_root / "setup-result.json").exists():
+        if (json.loads(path.read_text(encoding="utf-8")) == value
+                and json.loads((job_root / "setup-result.json").read_text(encoding="utf-8")).get("exit_code") == 0):
+            return command
+    path.write_text(json.dumps(value), encoding="utf-8")
     return [sys.executable, str(Path(__file__).resolve()), str(path), *command]
 
 
@@ -127,4 +132,5 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 

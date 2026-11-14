@@ -244,6 +244,24 @@ def _discovery_prompt(context):
     team_roles = discovery.get("allow_team_roles") is True
     base = (_MANAGER_TEAM_DISCOVERY_TASK if team_roles else _MANAGER_INVESTIGATION_DISCOVERY_TASK
             if discovery.get("allow_investigation") is True else _MANAGER_DISCOVERY_TASK)
+    if (context.get("project_environment") or {}).get("setup_configured") is True:
+        from goodteam_os.project_environment import PROJECT_ENVIRONMENT_PLANNING
+
+        base += "\n" + PROJECT_ENVIRONMENT_PLANNING + """
+The host has an existing project installation configuration. You select the
+preparation task, never installation argv or credentials.
+When it needs preparation, propose one ordinary implementation task whose exact
+write_domains are [".goodteam/environment"]. This specific setup task is supported
+by the host; other .goodteam paths remain forbidden. The existing restricted
+installer executes the configured command for that task, not for every Worker.
+Do not invent installation commands, permissions or another execution route.
+Use preparation_tasks to avoid repeating active or already sufficient work.
+Preparation and dependent development are TWO existing discovery iterations:
+first prepare; after its delivered receipt, propose development with the real
+completed preparation task ID in dependencies. Do not put a preparation task and
+its dependents in a parallel new_tasks response. Do not claim that the directory
+reference proves preparation succeeded. Existing tasks keep their frozen intents.
+"""
     if context.get("undelivered_source"):
         base += """
 Undelivered feedback exception: verified_outcome is null, so there is NO accepted
@@ -363,6 +381,8 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
     from goodteam_os.projects import load_project_target
     from goodteam_os.workers import WorkerJobStore
 
+    from goodteam_os.project_environment import PROJECT_ENVIRONMENT_PLANNING
+
     target = load_project_target(project_config)
     root = resolve_project_runtime_root(dict(target.get("repos", {})))
     if root is None:
@@ -388,7 +408,7 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
             project_key=project_key, logical_id=identity,
             spec=dict(
                 run_id=f"project-iteration:{project_key}", role="orchestrator",
-                adapter=adapter, model=model, task=_discovery_prompt(context) if discovery else (_MANAGER_CHOICE_TASK + (
+                adapter=adapter, model=model, task=_discovery_prompt(context) if discovery else (_MANAGER_CHOICE_TASK + ("\n" + PROJECT_ENVIRONMENT_PLANNING if "project_environment" in context else "") + (
                     "\nFor this captured allow_wait turn, selecting no task is also valid: return selected_task_ids:[], "
                     "compared_task_ids with actual supplied IDs and a 20-1600 character rationale explaining "
                     "the dependency, missing evidence or decision needed. Do not select blocked work or claim "
@@ -520,7 +540,7 @@ def _require_planning_idle(workspace: Path, project_key: str, *, continuation_id
             raise ValueError("Finish or stop the active Goal before selecting an unrelated iteration.")
 
 
-def _planning_context(workspace, project_key, root, session, snapshot, source_snapshot, allowed, *, include_question_context=False):
+def _planning_context(workspace, project_key, root, session, snapshot, source_snapshot, allowed, *, include_question_context=False, project_config=None):
     from goodteam_os.project_outcome_discovery import _head, verified_outcome
 
     try:
@@ -539,10 +559,14 @@ def _planning_context(workspace, project_key, root, session, snapshot, source_sn
                     and event.get("event") == "project_iteration_choice_recorded" else event
                     for event in session.get("timeline", [])]}
     from goodteam_os.project_human_feedback import question_board
+    from goodteam_os.project_environment import environment_for_task
+    from goodteam_os.worker_setup import load_worker_setup
+    setup = load_worker_setup(project_config) if project_config is not None else None
     return {
         **({"question_board": question_board(session)} if include_question_context else {}),
         "schema_version": "project_iteration_choice_packet.v1",
         "project_key": project_key,
+        "project_environment": {k: v for k, v in environment_for_task(root, setup).items() if k != "setup"},
         "project_head": head,
         "previous_delivery": outcome,
         "backlog": snapshot,
@@ -601,7 +625,7 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                 if item["eligible_to_plan"] and item["task_id"] not in executable else item
                 for item in snapshot["candidates"]]}
         session = store.read()
-        context = _planning_context(workspace, project_key, root, session, snapshot, source_snapshot, allowed, include_question_context=include_question_context)
+        context = _planning_context(workspace, project_key, root, session, snapshot, source_snapshot, allowed, include_question_context=include_question_context, project_config=project_config)
         input_digest = sha256(json.dumps(context, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         previous = latest_iteration_choice(session, snapshot)
         if (previous and previous["status"] in {"recommended", "waiting"} and previous.get("planning_scope", "") == scope
@@ -640,7 +664,7 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
         stale_reason = ""
         if project_iteration_backlog(root, project_key)["version"] != snapshot["version"]:
             stale_reason = "The project backlog changed during planning; refresh."
-        elif context != _planning_context(workspace, project_key, root, store.read(), snapshot, source_snapshot, allowed, include_question_context=include_question_context):
+        elif context != _planning_context(workspace, project_key, root, store.read(), snapshot, source_snapshot, allowed, include_question_context=include_question_context, project_config=project_config):
             stale_reason = "The project evidence changed during planning; refresh."
         if stale_reason:
             if on_stale_result is None:
@@ -670,3 +694,4 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             },
         )
         return {"iteration_choice": choice, "workflow_started": False, "reused": False}
+
