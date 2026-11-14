@@ -3778,6 +3778,7 @@ def start_workflow(
     run_id: str = "",
     expected_team_revision: int | None = None,
     task_skill_context: dict[str, object] | None = None,
+    task_write_domains: list[str] | None = None,
 ) -> dict[str, object]:
     if not idea.strip():
         raise ValueError("Workflow goal is required.")
@@ -3848,7 +3849,8 @@ def start_workflow(
             from goodteam_os.worker_setup import load_worker_setup
 
             state.repository_baseline = prepare_workflow_workspace(runtime_root, project_key=key, run_id=state.run_id,
-                                                                    worker_setup=load_worker_setup(project_config))
+                                                                    worker_setup=load_worker_setup(project_config),
+                                                                    write_domains=task_write_domains)
     if not dry_run:
         from goodteam_os.skills.task_context import workflow_skill_context
         from goodteam_os.skills.task_locks import TaskSkillIdentity
@@ -6778,7 +6780,7 @@ def handle_project_api_post(
         from goodteam_os.assistant_queue import require_no_active_project_goal, require_queued_project_task
 
         try:
-            require_queued_project_task(root, key, proposal)
+            project_task = require_queued_project_task(root, key, proposal)
             if proposal.get("project_task_id"):
                 # Claim the original ledger identity BEFORE any Worker effect.
                 require_no_active_project_goal(workspace, key)
@@ -6807,6 +6809,7 @@ def handle_project_api_post(
                 load_profile="greenfield",
                 run_id=start_run_id,
                 task_skill_context=proposal.get("task_skill_context", {}),
+                task_write_domains=project_task.get("write_domains", []) if project_task else [],
             )
         except Exception as exc:
             store.mark_workflow_start_indeterminate(proposal_id, claim_id=claim_id, reason=str(exc))

@@ -1228,7 +1228,7 @@ class WorkerJobStore:
 
             job["workflow_workspace"] = workflow_workspace
             job["sandbox_context"] = context_for_job(
-                self.project_root, workflow_workspace, project_key=project_key, run_id=run_id, job_id=job_id,
+                self.project_root, workflow_workspace, project_key=project_key, run_id=run_id, job_id=job_id, role=role,
             )
         for key, value in {
             "pi_path": pi_path,
@@ -1833,7 +1833,16 @@ class WorkerJobStore:
         prompt = None
         transport_ref = None
         try:
-            state = runtime.start_or_resume()
+            startup_heartbeat = 0.0
+            def startup_tick():
+                nonlocal startup_heartbeat
+                if time.monotonic() - startup_heartbeat >= 1.0:
+                    self._write_status(job_root, job, "running", "Preparing project environment before Pi starts.",
+                        extra={**base_extra, "started_at": started_at,
+                               "pid": runtime.rpc.pid if runtime.rpc else None, "heartbeat_at": self._now()})
+                    startup_heartbeat = time.monotonic()
+                self._process_pi_controls(job_root, job, runtime)
+            state = runtime.start_or_resume(tick=startup_tick)
             session_extra = {
                 **base_extra,
                 "started_at": started_at,
@@ -2587,7 +2596,7 @@ class WorkerJobStore:
         from goodteam_os.project_environment import runtime_environment
 
         worker_env = runtime_environment((job.get("sandbox_context") or {}).get("project_environment"),
-                                         worker_env or provider_environment())
+                                         worker_env or provider_environment(), workspace=runtime_context.runtime_cwd)
         pythonpath_workspace_src = (runtime_context.runtime_cwd / "src").is_dir()
         preflight = _cli_preflight(spec, binary, model)
         if connection:
@@ -2860,7 +2869,7 @@ class WorkerJobStore:
             prepare_environment_source(runtime_context.runtime_cwd, environment)
             process_command = with_setup(process_command, setup=job["sandbox_context"]["worker_setup"], job_root=job_root,
                 cwd=Path(environment["environment_root"]), binary=which("codex") or DEFAULT_CODEX_PATH,
-                reuse_completed=True)
+                reuse_completed=True, project_environment=environment, workspace=runtime_context.runtime_cwd)
         process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
         provider_key = (worker_env or {}).get(PROVIDER_KEY_ENV, "")

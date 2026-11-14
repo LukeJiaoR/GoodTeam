@@ -64,13 +64,24 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
         if not service.project_config or not load_worker_setup(service.project_config):
             raise ValueError("The project has no configured installation; Planner must determine its actual environment requirements first.")
     prerequisites = []
+    session = store.read()
+    proposals = [*session.get("queued_task_proposals", [])]
+    current = session.get("proposed_task")
+    if current:
+        proposals.append(current)
+    def discarded_preparation(task):
+        if task.get("status") == "done":
+            return False
+        linked = [item for item in proposals if item.get("project_task_id") == task["id"]]
+        return bool(linked) and all(item.get("status") in {"cancelled", "canceled"} for item in linked)
     if not matches and action["execution_policy"] == "workspace_write" and action["write_domains"] != [".goodteam/environment"]:
         from goodteam_os.worker_setup import load_worker_setup
 
         setup = load_worker_setup(service.project_config) if service.project_config else None
         if setup and not any(known[item].get("write_domains") == [".goodteam/environment"] for item in dependencies):
             existing = [task for task in known.values() if task.get("write_domains") == [".goodteam/environment"]
-                        and task["status"] not in {"canceled", "cancelled", "abandoned"}]
+                        and task["status"] not in {"canceled", "cancelled", "abandoned"}
+                        and not discarded_preparation(task)]
             if existing:
                 preparation = existing[-1]
             else:

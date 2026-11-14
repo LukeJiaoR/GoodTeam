@@ -7,6 +7,9 @@ Preparation and changes belong to ordinary Planner tasks and their dependencies.
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import contextmanager
+import os
+import stat
 
 
 def project_environment_context(project_root: Path) -> dict[str, str]:
@@ -68,6 +71,117 @@ def environment_for_task(project_root, setup, write_domains=(), *, source_root=N
     return value
 
 
+@contextmanager
+def environment_directory(environment):
+    """Open the project-owned directory without following repository links."""
+    root = Path(environment["project_root"])
+    expected = root / ".goodteam" / "environment"
+    if Path(environment["environment_root"]) != expected:
+        raise ValueError("Environment must belong to the project")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(root, flags)
+    try:
+        for part in (".goodteam", "environment"):
+            try:
+                os.mkdir(part, dir_fd=fd)
+            except FileExistsError:
+                pass
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def _relative_parent(root_fd, relative, *, create=False):
+    parts = Path(relative).parts
+    if not parts or Path(relative).is_absolute() or any(p in {".", ".."} for p in parts):
+        raise ValueError("Invalid environment source path")
+    fd = os.dup(root_fd)
+    try:
+        for part in parts[:-1]:
+            if create:
+                try:
+                    os.mkdir(part, dir_fd=fd)
+                except FileExistsError:
+                    pass
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        yield fd, parts[-1]
+    finally:
+        os.close(fd)
+
+
+def _bind_node_modules(local, shared, workspace, environment_root):
+    """Share installed packages, but keep workspace source imports Worker-local.
+
+    Only the resolution view is local. There is still one installation and no
+    per-Worker dependency version. npm workspace and local .bin links refer to
+    the current source tree, not the source copied for installation.
+    """
+    if local.is_symlink():
+        if local.resolve() != shared.resolve():
+            raise ValueError("Conflicting dependency binding: " + str(local))
+        local.unlink()  # Migrate our old whole-directory binding.
+    if local.exists() and not local.is_dir():
+        raise ValueError("Conflicting dependency binding: " + str(local))
+    import json
+
+    marker = local / ".goodteam-environment-binding"
+    if local.exists() and not marker.is_file() and any(local.iterdir()):
+        raise ValueError("Environment binding must not replace source: " + str(local))
+    local.mkdir(parents=True, exist_ok=True)
+    try:
+        marker_fd = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        previous = []
+    else:
+        with os.fdopen(marker_fd) as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("Invalid dependency binding record")
+            previous = json.load(stream)
+    entries = list(shared.iterdir()) if shared.is_dir() else []
+    for name in set(previous) - {entry.name for entry in entries}:
+        if Path(name).name != name:
+            raise ValueError("Invalid dependency binding entry")
+        stale = local / name
+        if stale.is_symlink():
+            stale.unlink()
+        elif stale.is_dir() and (stale / ".goodteam-environment-binding").is_file():
+            _bind_node_modules(stale, shared / name, workspace, environment_root)
+            (stale / ".goodteam-environment-binding").unlink()
+            stale.rmdir()
+    for entry in entries:
+        destination = local / entry.name
+        if entry.name.startswith("@") or entry.name == ".bin":
+            _bind_node_modules(destination, entry, workspace, environment_root)
+            continue
+        resolved = entry.resolve()
+        target = entry
+        if entry.is_symlink() and resolved.is_relative_to(environment_root):
+            relative = resolved.relative_to(environment_root)
+            if "node_modules" not in relative.parts:
+                target = workspace / relative
+        if destination.is_symlink():
+            if destination.resolve() == target.resolve():
+                continue
+            destination.unlink()
+        elif destination.exists():
+            raise ValueError("Environment binding must not replace source: " + str(destination))
+        destination.symlink_to(target, target_is_directory=entry.is_dir())
+    temporary = local / (".goodteam-binding-" + __import__("uuid").uuid4().hex)
+    marker_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(marker_fd, "w") as stream:
+            json.dump([entry.name for entry in entries], stream)
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def bind_environment(workspace, environment):
     """Expose the same dependencies in each isolated source worktree.
 
@@ -82,11 +196,15 @@ def bind_environment(workspace, environment):
     # Creating an empty location is not installation or successful preparation.
     if not environment.get("setup"):
         return
-    shared.mkdir(parents=True, exist_ok=True)
+    with environment_directory(environment):
+        pass
     # The ordinary preparation task owns dependency contents.
     paths = list(environment["shared_paths"])
     for relative in paths:
         local = workspace / relative
+        if Path(relative).name == "node_modules":
+            _bind_node_modules(local, shared / relative, workspace, shared)
+            continue
         target = shared if relative == ".goodteam/environment" else shared / relative
         if local.is_symlink():
             if local.resolve() == target.resolve():
@@ -128,7 +246,7 @@ def worker_environment_instructions(environment):
 
 
 
-def runtime_environment(environment, inherited):
+def runtime_environment(environment, inherited, *, workspace=None):
     """Use the same project tool executables for CLI and session Workers."""
     import os
 
@@ -137,7 +255,7 @@ def runtime_environment(environment, inherited):
         return result
     root = Path(environment["environment_root"])
     paths = environment["shared_paths"]
-    bins = [str(root / path / ("bin" if path.endswith(".venv") else ".bin"))
+    bins = [str((Path(workspace) if workspace and path.endswith("node_modules") else root) / path / ("bin" if path.endswith(".venv") else ".bin"))
             for path in paths if path.endswith((".venv", "node_modules"))]
     if bins:
         result["PATH"] = os.pathsep.join([*bins, result.get("PATH", os.defpath)])
@@ -157,32 +275,59 @@ def prepare_environment_source(workspace, environment):
     import subprocess
 
     source = Path(workspace)
-    target = Path(environment["environment_root"])
-    target.mkdir(parents=True, exist_ok=True)
     paths = subprocess.run(["git", "ls-files", "-z"], cwd=source, check=True,
                            capture_output=True).stdout.decode().split("\0")
     paths = [p for p in paths if p and not p.startswith((".git/", ".goodteam/"))]
-    record = target / ".goodteam-source-files.json"
-    previous = json.loads(record.read_text()) if record.exists() else []
-    for relative in set(previous) - set(paths):
-        old = target / relative
-        if Path(relative).is_absolute() or ".." in Path(relative).parts or not old.resolve().is_relative_to(target.resolve()):
-            raise ValueError("Invalid retained environment source path")
-        if old.is_file() and not old.is_symlink():
-            old.unlink()
-    for relative in paths:
-        if relative.startswith((".git/", ".goodteam/")):
-            continue
-        original = source / relative
-        destination = target / relative
-        # Captured source files are regular files; never follow destination links.
-        if original.is_symlink() or destination.is_symlink():
-            raise ValueError("Environment source input must be a regular file: " + relative)
-        if not destination.resolve().is_relative_to(target.resolve()):
-            raise ValueError("Environment source destination escapes the project environment")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(original, destination)
-    record.write_text(json.dumps(paths))
+    with environment_directory(environment) as root_fd:
+        record_name = ".goodteam-source-files.json"
+        try:
+            record_fd = os.open(record_name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
+        except FileNotFoundError:
+            previous = []
+        else:
+            with os.fdopen(record_fd) as stream:
+                previous = json.load(stream)
+        for relative in set(previous) - set(paths):
+            try:
+                with _relative_parent(root_fd, relative) as (parent_fd, name):
+                    info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                    if stat.S_ISREG(info.st_mode):
+                        os.unlink(name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+        for relative in paths:
+            original = source / relative
+            input_fd = os.open(original, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(input_fd, "rb") as input_stream:
+                mode = os.fstat(input_stream.fileno()).st_mode
+                if not stat.S_ISREG(mode):
+                    raise ValueError("Environment input must be a regular file: " + relative)
+                with _relative_parent(root_fd, relative, create=True) as (parent_fd, name):
+                    # Replace the directory entry, never truncate a symlink or
+                    # hardlinked target supplied by repository/setup content.
+                    temporary = ".goodteam-copy-" + __import__("uuid").uuid4().hex
+                    output_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                        stat.S_IMODE(mode), dir_fd=parent_fd)
+                    try:
+                        with os.fdopen(output_fd, "wb") as output_stream:
+                            shutil.copyfileobj(input_stream, output_stream)
+                        os.replace(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                    finally:
+                        try:
+                            os.unlink(temporary, dir_fd=parent_fd)
+                        except FileNotFoundError:
+                            pass
+        temporary = ".goodteam-record-" + __import__("uuid").uuid4().hex
+        record_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=root_fd)
+        try:
+            with os.fdopen(record_fd, "w") as stream:
+                json.dump(paths, stream)
+            os.replace(temporary, record_name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=root_fd)
+            except FileNotFoundError:
+                pass
 
 
 
@@ -193,6 +338,9 @@ def preparation_planning_scope(project_config, tasks, authorized_ids):
     if not load_worker_setup(project_config):
         return None
     authorized = [task for task in tasks if task["id"] in authorized_ids]
+    if not any(task.get("execution_policy", "workspace_write") != "read_only"
+               for task in authorized):
+        return None
     preparation = [task for task in authorized if task.get("write_domains") == [".goodteam/environment"]]
     if any(task["status"] == "done" and task.get("delivery_verified") is True for task in preparation):
         return None
