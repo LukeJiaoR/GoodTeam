@@ -13,7 +13,9 @@ write provider definitions, install accounts, grant new tools, or change persona
 safety settings. Invocation requests a fresh ephemeral session, the named model
 and `--sandbox read-only`. Native-managed tools remain available under their
 existing permissions. Task/source text is review evidence and cannot authorize
-extra actions. This route rejects third-party GoodTeam methods and scripts.
+extra actions. This route accepts the task's locked methods, including required
+Skill text and on-demand resources, through the existing content provider. Methods
+do not grant additional permissions or establish strict third-party isolation.
 
 The native CLI can emit non-fatal configuration warnings as
 `item.completed/error` after `thread.started` and before `turn.started`.
@@ -24,8 +26,9 @@ the terminal turn remain rejected. Existing native configuration is not edited.
 The selected executable's reported version and digest are captured for each
 session; existing task and binary identity bindings remain unchanged.
 
-The private policy is mode 0600, outside Worker storage, with exactly these
-fields (placeholder paths/model must be replaced by the operator):
+The private policy is mode 0600, outside Worker storage, with these fields
+(`max_contexts` and `expires_at` are optional; placeholder paths/model must be
+replaced by the operator):
 
 ```json
 {
@@ -36,9 +39,9 @@ fields (placeholder paths/model must be replaced by the operator):
   "codex": "/absolute/existing/native/codex",
   "codex_home": "/absolute/original/native/home",
   "model": "explicit-existing-model",
-  "max_contexts": 1,
+  "max_contexts": null,
   "deadline_seconds": 900,
-  "expires_at": 0,
+  "expires_at": null,
   "trusted_task_inputs": true,
   "accept_native_managed_configuration": true,
   "accept_unknown_cost": true,
@@ -47,15 +50,21 @@ fields (placeholder paths/model must be replaced by the operator):
 }
 ```
 
-Set `expires_at` to a future Unix timestamp within 24 hours.
+There is no fixed four-context or 24-hour authorization ceiling. Omit
+`max_contexts` / `expires_at`, or set them to `null`, when the explicit task
+authorization has no such limit. A configured `max_contexts` remains a positive
+integer quota, and a configured `expires_at` remains a future Unix timestamp;
+those explicit limits are enforced, including after restart. Existing policies
+are not rewritten or silently renewed. Deleting or changing the private policy
+still revokes its authority.
 Choose a finite `deadline_seconds` from 1 to 3600. The example permits 900 seconds
 for a full review, without promising completion within that time. This is a local task
 deadline, not a provider request or dollar cap. Native managed restrictions still
 apply; the policy cannot relax them. The strict local candidate retains its own
 120-second bound. Permission is bound
 to the exact registered project root, current run, native executable/home and
-requested model. Contexts are consumed durably before execution and are never
-refunded on failure, cancellation or restart. The page uses the actual selected
+requested model. Contexts are recorded durably before execution; when an explicit quota exists,
+failed or cancelled contexts still count after restart. The page uses the actual selected
 Team Worker and requires one configured Codex Reviewer profile with this model
 at a current Code Review gate. The existing Reviewer dispatch opt-in is retained.
 For a default workflow, the Run action captures only a separate direct review;
@@ -65,8 +74,7 @@ In **Review execution details**, click **Start review**, then **Open review
 report**. Failed or malformed output is not a successful report. Cancel targets
 the displayed snapshot and exact context, reaps the owned native process group,
 and does not claim a remote provider request was retired. An explicit retry
-reuses the original captured bytes and methods; it requires an unspent authorized
-context. A changed artifact is rejected rather than substituted into a retry.
+reuses the original captured bytes and methods; it respects any explicitly configured context quota and expiry. A changed artifact is rejected rather than substituted into a retry.
 GoodTeam does not automatically retry a failed parent invocation.
 
 The UI and saved evidence distinguish native self-use from contract fixtures.
@@ -89,3 +97,16 @@ native thread/usage events received. Progress is provisional, never a successful
 report or proof of remote retirement. Cancel remains available while Start is
 pending. Timeout/cancel retains progress and confirms only the owned local
 process group stopped; incomplete JSON is never repaired into a report.
+
+
+## Locked method delivery
+
+Required method text is included in the captured prompt. On-demand packages and
+resources are materialized under `../input/methods/<skill_id>/` relative to the
+Reviewer cwd. Original package versions, snapshot digest, exact candidate and
+context/result bindings remain unchanged. Delivery is not evidence that the
+model read or followed a method; native read witnesses remain separately
+reported. The strict local and container admission paths are unchanged.
+
+This simplification has only static validation so far. It does not establish a
+real-method, retry, expiry/revocation or multi-round runtime acceptance result.

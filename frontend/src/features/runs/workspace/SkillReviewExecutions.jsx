@@ -18,6 +18,7 @@ const words = {
     fixture: 'Contract fixture · not live Runtime acceptance', runtime: 'Runtime verification',
     native: 'Existing Codex · trusted self-use review',
     nativePermissions: 'Uses existing Codex permissions. This review grants no additional tools or actions.',
+    nativeBudgetUnlimited: 'No configured session-count limit. Maximum per session: {seconds}s. No verified cost ceiling.',
     nativeBudget: 'Authorized sessions: {count}. Maximum per session: {seconds}s. No verified cost ceiling.',
     start: 'Start review', starting: 'Reviewing…', startFailed: 'The review did not complete. Refresh to inspect the saved result.',
     received: 'Report received', prepared: 'Prepared', running: 'Running', stopping: 'Stopping · termination unconfirmed',
@@ -48,6 +49,7 @@ const words = {
     fixture: '合同测试夹具 · 不是真实 Runtime 验收', runtime: 'Runtime 验证状态',
     native: '现有 Codex · 自用审查',
     nativePermissions: '沿用本机 Codex 权限。本次审查不授予额外工具或操作权限。',
+    nativeBudgetUnlimited: '未配置会话次数上限，每次最多 {seconds} 秒；费用上限未确认。',
     nativeBudget: '已授权会话 {count} 次，每次最多 {seconds} 秒；费用上限未确认。',
     start: '开始审查', starting: '正在审查…', startFailed: '审查未完成，请刷新查看已保存的结果。',
     received: '报告已接收', prepared: '已准备', running: '执行中', stopping: '正在停止 · 尚未确认终止',
@@ -336,7 +338,7 @@ function ReviewPanel({ projectKey, runId, language, mode }) {
         </dl>
         {item.runtime_boundaries?.mode === 'trusted_self_use' ? <div>
           <p>{w.nativePermissions}</p>
-          <p>{w.nativeBudget.replace('{count}', item.runtime_boundaries.context_limit).replace('{seconds}', item.runtime_boundaries.deadline_seconds)}</p>
+          <p>{(item.runtime_boundaries.context_limit === null ? w.nativeBudgetUnlimited : w.nativeBudget.replace('{count}', item.runtime_boundaries.context_limit)).replace('{seconds}', item.runtime_boundaries.deadline_seconds)}</p>
         </div> : null}
         {item.target?.kind === 'git_change' ? <details><summary>{w.files}</summary>
           <dl><dt>{w.base}</dt><dd><code>{item.target.base_sha}</code></dd>
@@ -377,3 +379,4 @@ export default function SkillReviewExecutions({ projectKey, runId, language, mod
   if (!projectKey || !runId) return null;
   return <ReviewPanel key={`${projectKey}:${runId}:${mode || 'execution'}`} projectKey={projectKey} runId={runId} language={language} mode={mode} />;
 }
+
