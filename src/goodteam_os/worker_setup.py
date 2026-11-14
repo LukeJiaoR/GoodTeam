@@ -45,8 +45,15 @@ def run_configured_setup(path):
 
     context = json.loads(Path(path).read_text(encoding="utf-8"))
     setup = context["setup"]
+    from goodteam_os.providers import PROVIDER_KEY_ENV
+
+    # This value is injected by GoodTeam for model authentication, not part of
+    # the project installation environment. Keep all actual host/project values.
+    environment = dict(os.environ)
+    environment.pop(PROVIDER_KEY_ENV, None)
+    environment.update(setup.get("env", {}))
     return subprocess.run(setup["command"], cwd=context["cwd"],
-                          env={**os.environ, **setup.get("env", {})}, check=False).returncode
+                          env=environment, check=False).returncode
 
 
 if __name__ == "__main__":

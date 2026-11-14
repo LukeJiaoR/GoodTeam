@@ -200,12 +200,26 @@ def handle_goal_action(workspace, project_key, root, request):
                 config = _project_config_for_key(workspace, project_key)
                 if goal.get("authority_snapshot") != authority_snapshot(workspace, project_key, config, root):
                     raise ValueError("Goal configuration or model catalog changed; retry is blocked.")
-                current = StateStore(workspace).read_project_current(project_key)
-                if (not current or current.run_id != work["run_id"] or current.idea != work["task"]
-                        or current.current_node != "complete"
-                        or current.pending_transition.get("status") in {"recording", "executing", "interrupted"}):
-                    raise ValueError("The same completed workflow cannot be proven; retry is blocked.")
-                evidence = run_evidence(workspace, current, project_root=root)
+                execution = work.get("execution")
+                if execution is not None:
+                    from goodteam_os.goal_assessment import batch_run_evidence
+                    from goodteam_os.project_iteration_quality import _batch
+
+                    batch = _batch(workspace, project_key, root, execution["run_id"])
+                    if (batch.get("status") != "delivered"
+                            or batch.get("proposal_ids") != execution["proposal_ids"]
+                            or batch.get("expected_revisions") != execution["expected_revisions"]
+                            or batch.get("goal_source") != {"goal_id": goal["id"], "work_id": work["id"]}):
+                        raise ValueError("The original delivered Goal batch cannot be proven; retry is blocked.")
+                    evidence = batch_run_evidence(workspace, project_root=root, project_key=project_key,
+                        run_id=execution["run_id"], task_id=execution["project_task_id"])
+                else:
+                    current = StateStore(workspace).read_project_current(project_key)
+                    if (not current or current.run_id != work["run_id"] or current.idea != work["task"]
+                            or current.current_node != "complete"
+                            or current.pending_transition.get("status") in {"recording", "executing", "interrupted"}):
+                        raise ValueError("The same completed workflow cannot be proven; retry is blocked.")
+                    evidence = run_evidence(workspace, current, project_root=root)
                 if evidence_digest(evidence) != failure["evidence_digest"]:
                     raise ValueError("The original assessment evidence changed; retry is blocked.")
                 verify_completed_assessment(root, goal, work, failure["attempt"], failure["job_id"], evidence)

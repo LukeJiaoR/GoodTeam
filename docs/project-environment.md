@@ -27,7 +27,12 @@ installation subprocess receives `worker_setup.env`; the agent's HOME,
 CODEX_HOME and provider variables are not changed by installation settings.
 Values are not copied into model context. The tool inherits the invoking
 Worker's actual permissions and process lifetime. It grants no extra filesystem,
-network, or credential access and reports command failure normally.
+network access and reports command failure normally. GoodTeam’s injected
+provider-connection key is excluded from the installer environment. Existing
+system provider variables (such as OPENAI_API_KEY) and files reachable through
+HOME remain accessible under the invoking process permissions: this is reuse of
+the host environment, not credential isolation. The old clean-HOME/allowlist
+isolation is not claimed or silently restored.
 
 Worker source changes remain in Git worktrees. Dependency bindings do not copy
 source or install packages. Node workspace-package links resolve to the current

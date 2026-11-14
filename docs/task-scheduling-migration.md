@@ -95,3 +95,20 @@ No tests, model runs or dependency installation were executed. Validate:
 
 Record results in [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419). This
 local document does not claim that issue was updated or acceptance passed.
+
+## PR #737 static review follow-up
+
+The Goal assessment now includes the original batch execution artifacts even
+when optional batch quality is not configured; absent checks remain unverified.
+Assessment retries resolve the original persisted batch binding instead of
+requiring a legacy Workflow. Telegram bug submissions identify the actual
+Planner task and batch, not a nonexistent FIX_PLAN approval.
+
+The configured installer no longer inherits GoodTeam's injected provider key.
+It still reuses host/project environment and HOME access, so ambient system API
+keys and readable credential files are not isolated. Restoring a fixed environment
+allowlist or synthetic HOME would change the requested host-environment behavior;
+this patch does not silently reintroduce either, nor claim the P1 is fully closed.
+
+These changes have static checks only. Real assessment retries, quality-disabled
+batch delivery, Telegram submission and installation remain unexecuted acceptance.

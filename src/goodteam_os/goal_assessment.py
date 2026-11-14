@@ -40,7 +40,7 @@ def _assessment_prompt(work):
     if (work.get("execution") or {}).get("kind") == "batch":
         return ASSESSMENT_PROMPT.replace(
             "Evidence contains only the last 32000 characters of each artifact; absence is not proof.",
-            "Batch evidence contains validation receipts and complete independent review reports when available. "
+            "Batch evidence contains original dispatch, Worker reports, candidate and delivery records, plus validation receipts and complete independent review reports when available. "
             "Missing checks/review remain unverified; Worker completion is not Goal acceptance.")
     return ASSESSMENT_PROMPT
 
@@ -164,7 +164,7 @@ def batch_run_evidence(workspace, *, project_root, project_key, run_id, task_id=
     Worker nor a published candidate is substituted for validation or review.
     """
     from goodteam_os.project_iteration_quality import _batch, project_batch_quality_evidence
-    from goodteam_os.goal_review_evidence import batch_reviewer_evidence
+    from goodteam_os.goal_review_evidence import batch_execution_evidence, batch_reviewer_evidence
     from goodteam_os.skills.models import canonical_json
 
     batch = _batch(workspace, project_key, project_root, run_id)
@@ -176,6 +176,8 @@ def batch_run_evidence(workspace, *, project_root, project_key, run_id, task_id=
                                             root=project_root, run_id=run_id)
     checked = quality.get("validation") or {}
     evidence = {}
+    for label, text in batch_execution_evidence(workspace, project_key, project_root, batch):
+        evidence[f"run:{run_id}:{label}:sha256:{hashlib.sha256(text.encode()).hexdigest()}"] = text
     summary = {key: quality.get(key) for key in (
         "status", "reason", "check_status", "review_status", "acceptance_status", "criterion_map")}
     summary.update(batch_run_id=run_id, project_key=project_key,
