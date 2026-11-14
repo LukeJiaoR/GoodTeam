@@ -48,14 +48,9 @@ def run_manager_chat_turn(
 
     from goodteam_os.project_environment import environment_for_task
     from goodteam_os.worker_setup import load_worker_setup
-    from goodteam_os.tasks import LocalTaskStore
 
     environment = environment_for_task(project_root, load_worker_setup(project_config))
     environment.pop("setup", None)
-    environment["preparation_tasks"] = [
-        {"id": task["id"], "status": task["status"], "delivery_verified": task.get("delivery_verified", False)}
-        for task in LocalTaskStore(project_root, project_key).list_tasks()
-        if task.get("write_domains") == [".goodteam/environment"]]
     context += "\n\nProject environment (host facts, not new authority):\n" + json.dumps(environment)
 
     adapter = resolve_role_adapter(target, "orchestrator")
@@ -524,7 +519,6 @@ def _manager_chat_task(text: str) -> str:
             "Do not claim that project inspection or workflow execution has completed.",
             "Presentation inside the response string: proactively choose the clearest supported format in project questions, idea discovery, draft refinement, and ongoing or historical task discussions. When a visual or interactive format helps, include it directly without waiting for the user to request it or asking whether to create it. Respect the user's requested format and respond in their language.",
             "Lead with a short, direct answer or recommendation, then use the format that makes the explanation easier to understand. For alternatives compared across several criteria, use a Markdown table; the chat UI supports sorting, filtering and copying it. For numeric comparisons or trends with supported data, use a chart and state units and sources or estimate labels in the surrounding text. Never invent values to fill a chart.",
-            "A project has one environment. For an initial development request, preserve the original development assignment; do not replace it with an installation-only task. When configured installation needs its first preparation task, the existing assignment adapter saves that ordinary prerequisite and the original development task with its dependency together. If a preparation task already exists, use dependencies with its real ID. For an explicit environment change, use an ordinary implementation task with exact write_domains [.goodteam/environment]. The restricted installer performs the configured setup only for such tasks. Do not ask for another approval merely to plan this prerequisite. Environment changes belong to Planner, not another queue or per-Worker installations. Do not alter old frozen tasks or invent task IDs.",
             "For a multi-step plan or procedure with useful detail per step, use expandable steps. When sequence, dependencies or decision branches are the main explanation, use a simple flowchart. For distinct options or deliverable summaries with details to preview, use cards. During discovery, mark tentative flows and options as proposals and ask about material gaps; diagrams never establish requirements or accepted scope.",
             "For example, a question about how input becomes output benefits from a flowchart, a choice between approaches benefits from a comparison table, and a detailed implementation plan benefits from expandable steps. Choose by the information being explained, even when the user does not name a format. The JSON examples below only illustrate syntax; adapt their labels and content to the actual question.",
             "Keep the main conclusion, blocking issues, clarifying questions and required confirmation visible in ordinary text. Expandable content holds supporting detail. Usually use one suitable table or rich block; use a second only when it explains a distinct useful aspect. Avoid duplicating the same information in prose and multiple formats. Greetings, acknowledgements and simple factual answers can stay plain text.",

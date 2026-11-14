@@ -171,7 +171,16 @@ class PiMethodInput:
                     raise SkillError("ordinary_method_session_mismatch", "Cannot resume another method session.")
 
     def prompt(self):
-        return self.provider.worker_input(self.ref).decode("utf-8")
+        prompt = self.provider.worker_input(self.ref).decode("utf-8")
+        context = getattr(self, "workspace_context", None)
+        if context and context.get("project_environment"):
+            from goodteam_os.project_environment import worker_environment_instructions
+            from goodteam_os.worker_setup import configured_setup_tool
+
+            prompt += "\n\n" + worker_environment_instructions(
+                context["project_environment"],
+                setup_tool=configured_setup_tool(self.workers.root / self.job_id, context))
+        return prompt
 
     def search_authorized(self, job_root, job):
         """Existing search allowance stays in the immutable task, not the method.

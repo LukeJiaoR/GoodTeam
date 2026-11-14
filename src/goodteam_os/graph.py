@@ -2132,7 +2132,10 @@ def run_worker_job_with_retry(
         job = store.create_job(**{**job_spec, **fields})
         job_id = str(job["id"])
         attempt_job_ids.append(job_id)
-        result = store.run_job(job_id)
+        from goodteam_os.dispatch_capacity import run_with_project_capacity
+
+        result = (store.run_job(job_id) if job.get("role") == "code_review" else
+                  run_with_project_capacity(store.project_root, job, lambda: store.run_job(job_id)))
         # Builtin adapters also write this host-owned file, but older receipts
         # omit its path. Validate their actual verdict rather than process exit.
         result.setdefault("result_path", str(store.root / job_id / "result.md"))
@@ -3312,7 +3315,12 @@ def generate_artifact_via_worker(
             expected_artifacts=[_artifact_filename(artifact_key)],
             **job_fields,
         )
-        status = store.run_job(str(job["id"]))
+        from goodteam_os.dispatch_capacity import run_with_project_capacity
+
+        # Protected review keeps its existing process-envelope ownership; its
+        # advisory result is not an ordinary Worker exit receipt.
+        status = (store.run_job(str(job["id"])) if job.get("role") == "code_review" else
+                  run_with_project_capacity(store.project_root, job, lambda: store.run_job(str(job["id"]))))
         if status.get("skill_error_code"):
             from goodteam_os.skills.models import SkillError
 

@@ -101,3 +101,26 @@ def reviewer_evidence(workspace, state, project_root):
             yield _reference(state, job_id, target, detail["report_digest"]), text
         except (SkillError, OSError, ValueError):
             continue
+
+
+def batch_reviewer_evidence(project_root, quality):
+    """Read the full protected report identified by a validated batch receipt."""
+    from goodteam_os.skills.models import canonical_json, content_digest
+    from goodteam_os.skills.review_results import ReviewResultStore
+
+    checked = quality.get("validation") or {}
+    review = checked.get("review")
+    if not review or review.get("schema_version") != "candidate_machine_review.v1":
+        return
+    provenance = review["provenance"]
+    detail = ReviewResultStore(WorkerJobStore(Path(project_root)), provenance["job_id"]).detail(
+        expected_task_context=provenance["task_skill_context"], include_report=True)
+    if (detail["status"] != "received" or not detail["report_available"]
+            or detail.get("cancel_requested") or detail.get("error_code")
+            or any(detail.get(key) != value for key, value in provenance.items())
+            or detail["target"].get("head_sha") != checked["receipt"]["candidate"]["head_sha"]):
+        raise ValueError("The batch Reviewer report differs from its original quality receipt.")
+    text = canonical_json(detail["report"])
+    if content_digest(text.encode("utf-8")) != provenance["report_digest"]:
+        raise ValueError("The batch Reviewer report digest changed.")
+    yield f"review:{review['receipt_id']}:report:{provenance['report_digest']}", text

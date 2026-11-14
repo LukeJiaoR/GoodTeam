@@ -12,17 +12,15 @@ def validate_delegation(value, *, with_sources=False):
         fields.add("source_messages")
     if (not isinstance(value, dict) or set(value) != fields
             or any(not isinstance(value.get(key), str) or not value[key].strip()
-                   or len(value[key]) > limit
-                   for key, limit in (("purpose", 4000), ("context", 8000), ("scope", 2000)))):
-        raise ValueError("A bounded delegation purpose, relevant context and scope are required.")
+                   for key in ("purpose", "context", "scope"))):
+        raise ValueError("A delegation purpose, relevant context and scope are required.")
     if with_sources:
         sources = value["source_messages"]
         if (not isinstance(sources, list) or not sources
                 or any(not isinstance(item, dict) or set(item) != {"message_id", "content"}
                        or any(not isinstance(item[key], str) or not item[key].strip() for key in item)
                        for item in sources)
-                or len({item["message_id"] for item in sources}) != len(sources)
-                or sum(len(item["content"]) for item in sources) > 8000):
+                or len({item["message_id"] for item in sources}) != len(sources)):
             raise ValueError("Delegation must retain its exact original source messages.")
     return deepcopy(value)
 

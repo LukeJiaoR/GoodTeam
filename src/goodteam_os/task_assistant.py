@@ -531,9 +531,7 @@ class TaskAssistantService:
         if readiness.get("project_mode") == "unconfirmed" and proposal and proposal.get("status") != "cancelled":
             return {**session, "attention_request": {"id": "project-mode", "kind": "project_mode"}}
         execution = readiness.get("execution")
-        if proposal.get("confirmed") and not proposal.get("run_id") and (
-            readiness.get("lifecycle") == "ready" or not isinstance(execution, dict)
-        ):
+        if proposal.get("confirmed") and not proposal.get("run_id"):
             return {**session, "attention_request": {"id": "task-start-resume", "kind": "task_start_resume"}}
         if not isinstance(execution, dict) or execution.get("status") != "needs_input":
             return session

@@ -13,7 +13,6 @@ import json
 from pathlib import Path
 import threading
 
-from goodteam_os.assistant_queue import active_project_run, require_no_active_project_goal
 from goodteam_os.assistant_requests import conversation_lock
 from goodteam_os.dispatch import dispatch_tracks
 from goodteam_os.dispatch_workspace import dispatch_artifact_root, prepare_dispatch_workspace
@@ -56,19 +55,10 @@ class ProjectBatchResourceBusy(ValueError):
 
 
 def _require_execution_slot(workspace, project_key, run_id, *, continuation_id=None, recovery=None, task_ids=None):
-    require_no_active_project_goal(workspace, project_key)
-    from goodteam_os.workflow_recovery import linked_parent
-    parent = linked_parent(workspace, project_key, continuation_id=continuation_id, admitted=recovery)
-    if active_project_run(workspace, project_key) and parent is None:
-        raise ValueError("Finish or reconcile the active Workflow before starting another batch.")
     others = [b for b in active_project_batches(workspace, project_key) if b["run_id"] != run_id]
     if not others:
         return
-    if (not continuation_id or recovery or not task_ids
-            or any(b.get("expected_continuation_id") != continuation_id
-                   or b.get("workflow_recovery") or b.get("current_recovery_attempt")
-                   or b.get("status") not in {"claimed", "running"} for b in others)):
-        raise ValueError("Finish or reconcile the active project execution before starting another batch.")
+    task_ids = task_ids or []
     # Other batches reserve their immutable task identities even before jobs
     # start. Shared capacity determines when a Worker actually receives a slot.
     root = Path(others[0]["project_root"])
@@ -112,6 +102,17 @@ def _require_authority(workspace, project_key, root, project_config, expected):
         raise ValueError("Project configuration, Team or model settings changed after automatic execution was authorized.")
 
 
+def _require_goal_source(workspace, project_key, source, run_id):
+    if not source:
+        return
+    from goodteam_os.goals import GoalStore
+    goal = GoalStore(workspace, project_key).get_goal(source["goal_id"])
+    work = next((item for item in goal["work_units"] if item["id"] == source["work_id"]), None)
+    if (goal["status"] != "active" or work is None
+            or (work.get("execution") or {}).get("run_id") != run_id):
+        raise ValueError("Goal continuation stopped or its task binding changed before dispatch.")
+
+
 def _require_continuation(session, expected_id):
     if expected_id is None:
         return
@@ -148,42 +149,38 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
     from goodteam_os.projects import load_project_target
     from goodteam_os.state import create_initial_state
     from goodteam_os.web import resolve_project_model_profile, resolve_runtime_model_config
-    from goodteam_os.project_import import read_bound_project_readiness
 
     target = load_project_target(Path(project_config))
     configured = resolve_project_runtime_root(dict(target.get("repos", {})))
     if configured is None or Path(configured).resolve() != Path(root).resolve():
         raise ValueError("Batch source differs from the configured project repository.")
-    from goodteam_os.project_readiness import build_capabilities
-
-    # Legacy projects may have no readiness record, like start_workflow.
-    # A present record remains authoritative and cannot be bypassed.
-    try:
-        readiness = read_bound_project_readiness(Path(workspace), project_key, root)
-    except ValueError as exc:
-        if not str(exc).startswith("No readiness found for project:"):
-            raise
-    else:
-        if not build_capabilities(readiness)["start_workflow"]:
-            raise ValueError("Project readiness must be complete before starting a task batch.")
     state = create_initial_state(run_id="batch-runtime-preview", project_key=project_key, idea="Queued task batch")
-    _profile, state.role_models = resolve_project_model_profile(
-        resolve_runtime_model_config(Path("models.yaml")), target,
-        explicit_profile=str(target.get("model_profile") or "balanced"), role_overrides=[],
-    )
     from goodteam_os.task_delegation import render_project_task
+
+    def runtime_fields(task, proposal):
+        requested = proposal.get("runtime_request") or {}
+        from copy import copy
+        runtime_state = copy(state)
+        _profile, runtime_state.role_models = resolve_project_model_profile(
+            resolve_runtime_model_config(Path(requested.get("model_config") or "models.yaml")), target,
+            explicit_profile=str(requested.get("model_profile") or target.get("model_profile") or "balanced"),
+            role_overrides=requested.get("role_model_overrides") or [],
+        )
+        return _worker_job_fields(target, str(task["role"]), runtime_state,
+                                 **({"worker_id": task["worker_id"]} if "worker_id" in task else {}))
 
     tracks = [{
         "track_id": task["id"], "project_task_id": task["id"], "role": task["role"],
-        **_worker_job_fields(target, str(task["role"]), state,
-                             **({"worker_id": task["worker_id"]} if "worker_id" in task else {})),
+        **runtime_fields(task, proposal),
         "task": render_project_task(task), "task_source": "task_assistant_queue",
         **({"web_search": task["web_search"]} if "web_search" in task else {}),
         "context": "Execute only this confirmed project task in the assigned isolated repository. "
-                   "Do not merge, deploy or change shared project state. Results require independent review.",
+                   "Do not merge, deploy or change shared project state. Results require independent review. "
+                   + json.dumps(proposal.get("request_metadata", {}), ensure_ascii=False),
         "execution_policy": dispatch_policy(task),
         **({"write_domains": task["write_domains"]} if task.get("write_domains") else {}),
-        "constraints": ["Do not write outside the declared task paths: " + ", ".join(task.get("write_domains") or [])],
+        "constraints": (["Declared task paths: " + ", ".join(task["write_domains"])]
+                        if task.get("write_domains") else []),
     } for task, proposal in zip(tasks, proposals)]
     from goodteam_os.graph import SESSION_BACKENDS
     from goodteam_os.web_search import search_policy
@@ -259,6 +256,7 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                 # A blocked attempt may have released its slot before a report
                 # existed. Resuming is execution, so re-admit against current
                 # Workflow/Goal/batch authority, then reserve the same slot.
+                _require_goal_source(workspace, project_key, batch.get("goal_source"), run_id)
                 _require_execution_slot(workspace, project_key, run_id,
                     continuation_id=batch.get("expected_continuation_id"), recovery=batch.get("workflow_recovery"),
                     task_ids=batch.get("task_ids"))
@@ -293,11 +291,6 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                     or not proposal.get("project_task_id")):
                 raise ValueError("The selected project task draft changed before confirmation.")
             selected_draft = proposal
-        if proposal and proposal.get("status") != "cancelled" and selected_draft is None:
-            from goodteam_os.workflow_recovery import linked_parent
-
-            if linked_parent(workspace, project_key, continuation_id=expected_continuation_id) is None:
-                raise ValueError("Resolve the current task draft before starting a batch.")
         queue = {item["id"]: item for item in session.get("queued_task_proposals", [])}
         proposals = [queue.get(identifier) for identifier in proposal_ids]
         if any(item is None or item.get("status") != ("selected" if selected_draft else "queued") or item.get("confirmed")
@@ -307,6 +300,11 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
         if selected_draft and any(selected_draft.get(key) != proposals[0].get(key)
                                   for key in ("project_task_id", "project_task_digest", "exact_request")):
             raise ValueError("The selected draft differs from its queued project task.")
+        sources = [item.get("goal_source") for item in proposals if item.get("goal_source")]
+        goal_source = sources[0] if sources else None
+        if sources and (len(sources) != len(proposals) or any(item != goal_source for item in sources)):
+            raise ValueError("A Goal batch must preserve its original work binding.")
+        _require_goal_source(workspace, project_key, goal_source, run_id)
         ledger = LocalTaskStore(root, project_key)
         tasks = [ledger.get_task(item["project_task_id"]) for item in proposals]
         if len({task["id"] for task in tasks}) != len(tasks):
@@ -337,6 +335,7 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                               for task, item in zip(tasks, proposals)],
             "project_root": str(Path(root).resolve()), "project_config": str(Path(project_config).resolve()),
             "expected_authority": expected_authority,
+            "goal_source": goal_source,
             "expected_continuation_id": expected_continuation_id,
             **({"workflow_recovery": session["project_continuation"]["workflow_recovery"]}
                if expected_continuation_id and session["project_continuation"].get("workflow_recovery") else {}),
@@ -350,6 +349,7 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
             # Stop and admission share this short session mutation lock. A
             # stopped authorization cannot launch work after a slow preview.
             _require_continuation(current, expected_continuation_id)
+            _require_goal_source(workspace, project_key, goal_source, run_id)
             if selected_draft is not None:
                 if current.get("proposed_task") != selected_draft:
                     raise ValueError("Selected draft changed during execution admission.")
@@ -522,11 +522,13 @@ def _execute_batch(*, workspace, project_key, root, batch):
                         task_ids=batch.get("task_ids"))
                     _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
                     _require_continuation(TaskAssistantSessionStore(workspace, project_key).read(), batch.get("expected_continuation_id"))
+                    _require_goal_source(workspace, project_key, batch.get("goal_source"), batch["run_id"])
                     _claim_tasks(root, project_key, batch)
             except WorkflowBusyError:
                 # Only the short, not-yet-executed admission was busy.
                 return {"run_id": batch["run_id"], "status": batch["status"], "execution_started": False}
             def check_start(*_):
+                _require_goal_source(workspace, project_key, batch.get("goal_source"), batch["run_id"])
                 _require_continuation(TaskAssistantSessionStore(workspace, project_key).read(), batch.get("expected_continuation_id"))
                 _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
                 known = {t["id"]: t for t in LocalTaskStore(root, project_key).list_tasks()}

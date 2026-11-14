@@ -54,7 +54,7 @@ function QuestionCard({ item, onAnswer, t }) {
     {canAnswer ? <form className="project-question-card__form" onSubmit={submit}>
       <label htmlFor={inputId}>{t('work.questions.yourAnswer')}</label>
       <textarea id={inputId} value={text} onChange={event => setText(event.target.value)}
-        placeholder={t('work.questions.answerPlaceholder')} maxLength={8000} rows={2} disabled={pending} />
+        placeholder={t('work.questions.answerPlaceholder')} rows={2} disabled={pending} />
       {error ? <p className="project-question-card__error" role="alert">{error}</p> : null}
       <button type="submit" disabled={pending || !text.trim()}>
         {t(pending ? 'work.questions.sending' : error ? 'work.questions.retry' : 'work.questions.submit')}
