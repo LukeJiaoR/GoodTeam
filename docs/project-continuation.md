@@ -1,11 +1,13 @@
 # Continue a project across delivered batches
 
 The Work page now has **Automatic project iteration** beside the Manager's
-iteration suggestion. Select the displayed existing task scope, set a maximum
-number of batches, and confirm the configured provider charges. The same limit
-also bounds Manager planning calls in the default fixed-task mode. An optional
-[outcome discovery grant](project-outcome-discovery.md) has its own explicit total
-Manager-call limit and can add bounded follow-ups. One batch uses the existing isolated pool,
+iteration suggestion. Select the displayed existing task scope and confirm the
+configured provider charges. Batch and Manager-call limits are optional: leave
+them blank for no count limit. Usage is still recorded and Stop remains available.
+A configured batch limit also bounds Manager calls in fixed-task mode. An optional
+[outcome discovery grant](project-outcome-discovery.md) can select follow-ups
+within the approved objective and paths, with optional task and Manager-call limits.
+One batch uses the existing isolated pool,
 with up to ten concurrent Workers; each authorized task can be claimed once.
 
 The authorization is retained in the existing Task Assistant session. The
@@ -66,7 +68,8 @@ recovery never resets the continuation's original budgets or revives Stop.
 
 Use `POST /api/projects/{key}/task-assistant/actions` with:
 
-- `start_project_continuation`: `task_ids`, `max_batches` (1–50), stable
+- `start_project_continuation`: `task_ids`, optional `max_batches` (positive integer,
+  omitted or `null` for no limit), stable
   `idempotency_key`, the displayed `expected_backlog_version`, `confirmed: true`,
   `billing_acknowledged: true`.
   The optional `discovery` object is documented in [outcome discovery](project-outcome-discovery.md);
@@ -80,6 +83,14 @@ Read an existing batch report at
 `GET /api/projects/{key}/iteration-batches/{task-batch-id}`. The ordinary Work
 response contains `task_assistant_session.project_continuation` and
 `project_task_batches` for status and review presentation.
+
+New outcome-discovery grants may include `allow_team_roles: true`. This lets
+Manager select an enabled, available project Team Role for each follow-up;
+the existing queue allocates the Worker. Empty write domains produce a read-only
+task, while writes remain within the grant's original paths. Team/runtime checks,
+Stop, evidence binding and delivery approval remain unchanged. Older grants without
+this field keep their original Role permissions and frozen planning inputs.
+The Work page includes this authority when the owner enables follow-up discovery.
 
 ## Recover a batch after a local host interruption
 
@@ -132,8 +143,8 @@ to unlock the queue.
    normal authorized Git workflow, land that candidate in the original
    registered repository. Its ancestry and complete tree must match the reviewed
    candidate, and the checkout must be clean.
-4. Authorize a finite `start_project_continuation` with the existing task IDs,
-   limits and confirmations, adding `workflow_recovery: {run_id, version}` from
+4. Authorize `start_project_continuation` with the existing task IDs,
+   optional limits and confirmations, adding `workflow_recovery: {run_id, version}` from
    step 1. This mode uses a fixed task inventory, without outcome discovery.
    GoodTeam binds the completed report versions itself; the HTTP request cannot
    supply paths, commands or Reviewer evidence.

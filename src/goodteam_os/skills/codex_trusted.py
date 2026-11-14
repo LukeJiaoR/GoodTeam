@@ -14,12 +14,12 @@ from pathlib import Path
 import pwd
 import re
 import stat
-import subprocess
 import time
 
-from .codex_local import (EXEC_OPTIONS, MAX_INPUT, VERSION, LocalCodexReviewRuntime, LocalLease,
+from .codex_local import (EXEC_OPTIONS, MAX_INPUT, LocalCodexReviewRuntime, LocalLease,
                           _binary_digest, _binary_stamp, _private_file)
 from .codex_runtime import CodexReviewAdmission
+from .codex_version import probe_codex_version
 from .content import ContentSession, _bytes, _decode, _publish_immutable
 from .filesystem import directory, open_lock_file, write_new
 from .models import SkillError, content_digest
@@ -118,15 +118,14 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
             with self.codex.open("rb") as executable:
                 if executable.read(2) == b"#!":
                     raise SkillError("trusted_codex_binary_unavailable", "Select the existing native executable, not a script wrapper.")
-        self.binary_digest = _binary_digest(self.codex)
         self.binary_stamp = _binary_stamp(self.codex)
+        self.binary_digest = _binary_digest(self.codex)
         try:
-            result = subprocess.run((str(self.codex), "--version"), env={"PATH": "/usr/bin:/bin"},
-                                    capture_output=True, timeout=10, check=False)
-            if result.returncode or result.stdout.strip() != ("codex-cli " + VERSION).encode():
-                raise ValueError("Unsupported version")
-        except Exception:
+            self.binary_version = probe_codex_version(self.codex)
+        except ValueError:
             raise SkillError("trusted_codex_binary_unavailable", "The selected existing native version is unavailable.") from None
+        if _binary_stamp(self.codex) != self.binary_stamp:
+            raise SkillError("trusted_codex_binary_changed", "The authorized executable changed during inspection.")
         self.digest = content_digest(_bytes({"policy": p, "binary_digest": self.binary_digest,
                         "command": self.command(), "authority": "native_managed"}))
         self.leases, self.retired = {}, set()
@@ -232,7 +231,7 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
                 os.close(lock)
         boundaries = {"mode": "trusted_self_use", "contexts": self.policy["max_contexts"],
                       "seconds": self.policy["deadline_seconds"]}
-        session = ContentSession("codex", ADAPTER, VERSION, self.binary_digest, self.policy["model"], self.digest,
+        session = ContentSession("codex", ADAPTER, self.binary_version, self.binary_digest, self.policy["model"], self.digest,
                     "trusted:" + context_id, json.dumps(boundaries, sort_keys=True), self.verification_kind)
         lease = LocalLease(session, binding["snapshot_digest"])
         self.leases[context_id] = lease

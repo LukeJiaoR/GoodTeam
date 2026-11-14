@@ -25,18 +25,18 @@ from urllib.parse import urlsplit
 
 from .codex_contract import _toml
 from .codex_runtime import CodexReviewAdmission
+from .codex_version import probe_codex_version
 from .content import ContentSession, _bytes, _decode, _publish_immutable
 from .filesystem import directory, open_lock_file, regular_file, write_new
 from .models import SkillError, content_digest
 from .review_process import ReviewProcess
 
-VERSION = "0.160.0"
 ADAPTER = "goodteam.codex-local-review.v1"
 POLICY_SCHEMA = "goodteam.codex-local-policy.v1"
 BOUNDARY_SCHEMA = "goodteam.codex-local-boundaries.v1"
 MAX_INPUT = 1024 * 1024
 EXEC_OPTIONS = ("exec", "--ephemeral", "--json", "--skip-git-repo-check", "--color", "never")
-# Exact 0.160.0 options; source/schema are linked in the operator guide.
+# These gates are inspected against the selected CLI before any local admission.
 # Native normalization keeps the unified-exec backend enabled regardless of
 # user opt-out; ShellTool is the effective gate. Do not confuse a removed or
 # legacy spelling with a proven disabled feature.
@@ -182,19 +182,16 @@ def inspect_local_codex(codex, home, model):
     before = _binary_stamp(codex)
     binary_digest = _binary_digest(codex)
     try:
-        result = subprocess.run([str(codex), "--version"], env={"PATH": "/usr/bin:/bin"},
-                                capture_output=True, timeout=10, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        binary_version = probe_codex_version(codex)
+    except ValueError as exc:
         raise SkillError("local_codex_binary_unavailable", "Codex version inspection failed.") from exc
-    if result.returncode or result.stdout.strip() != ("codex-cli " + VERSION).encode():
-        raise SkillError("local_codex_version_unsupported", "This adapter supports exactly Codex 0.160.0.")
     if _binary_stamp(codex) != before:
         raise SkillError("local_codex_selection_changed", "The selected executable changed during inspection.")
     identity = _selection(codex, home, model, binary_digest=binary_digest)
     gates = _inspect_features(identity)
     if _binary_stamp(codex) != before:
         raise SkillError("local_codex_selection_changed", "The selected executable changed during inspection.")
-    return {"adapter": ADAPTER, "binary_version": VERSION, "binary_digest": identity["binary_digest"],
+    return {"adapter": ADAPTER, "binary_version": binary_version, "binary_digest": identity["binary_digest"],
             "selection_digest": content_digest(_bytes(identity)), "model": model, "existing_login_present": True,
             "model_turns_started": 0, "provider_request_count": None,
             "strict_skill_binding": False, "provider_request_limit": None,
@@ -220,7 +217,7 @@ class LocalCodexReviewAdmission(CodexReviewAdmission):
     verification_kind = "local_cli"
 
     def _require_effective_configuration(self):
-        # Native 0.160.0 merges package/MDM/system/cloud/user/profile/project/
+        # Native Codex merges package/MDM/system/cloud/user/profile/project/
         # runtime layers, then applies required provider definitions. An empty
         # mcp_servers table also preserves inherited entries. `features list`
         # neither attests provider/MCP inventory nor seals another exec
@@ -263,6 +260,7 @@ class LocalCodexReviewAdmission(CodexReviewAdmission):
         inspected = inspect_local_codex(self.codex, self.home, p["model"])
         if inspected["selection_digest"] != p["selection_digest"]:
             raise SkillError("local_codex_selection_changed", "The selected binary, provider, model or invocation policy changed.")
+        self.binary_version = inspected["binary_version"]
         before = _binary_stamp(self.codex)
         self.selection = _selection(self.codex, self.home, p["model"])
         if _binary_stamp(self.codex) != before or content_digest(_bytes(self.selection)) != p["selection_digest"]:
@@ -347,7 +345,7 @@ class LocalCodexReviewAdmission(CodexReviewAdmission):
                       "deadline_seconds": self.policy["deadline_seconds"], "provider_request_limit": None,
                       "usd_limit": None, "unknown_cost_accepted": True, "strict_skill_binding": False,
                       "provider_retirement_supported": False}
-        session = ContentSession("codex", ADAPTER, VERSION, self.selection["binary_digest"], self.policy["model"],
+        session = ContentSession("codex", ADAPTER, self.binary_version, self.selection["binary_digest"], self.policy["model"],
                                  self.digest, "local:" + context_id, json.dumps(boundaries, sort_keys=True), self.verification_kind)
         lease = LocalLease(session, binding["snapshot_digest"])
         self.leases[context_id] = lease

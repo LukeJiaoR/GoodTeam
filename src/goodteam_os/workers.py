@@ -221,6 +221,8 @@ def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
         safe.update({key: str(context.get(key, "")) for key in (
             "workflow_run_id", "project_key", "job_id", "source_root", "baseline_commit",
         )})
+    if context.get("worker_setup"):
+        safe["worker_setup"] = context["worker_setup"]
     return safe
 
 
@@ -368,7 +370,8 @@ def _codex_build_command(binary: str, model: str, project_root: Path, result_pat
         "--skip-git-repo-check",
         "--cd",
         str(project_root),
-        "--dangerously-bypass-approvals-and-sandbox",
+        "--sandbox", "workspace-write",
+        "-c", 'approval_policy="never"',
         "--output-last-message",
         str(result_path),
         "-",
@@ -581,6 +584,9 @@ def _command_with_execution_policy(
         if value not in {"--dangerously-bypass-approvals-and-sandbox", "--dangerously-skip-permissions"}
     ]
     if normalized_adapter == "codex":
+        if "--sandbox" in updated:
+            index = updated.index("--sandbox")
+            del updated[index:index + 2]
         arguments = ["--sandbox", "read-only", "--ignore-user-config", "--ignore-rules", "--ephemeral"]
         if "-" in updated:
             prompt_index = updated.index("-")
@@ -2609,6 +2615,9 @@ class WorkerJobStore:
                 raise ValueError("GOODTEAM_CODEX_SANDBOX_MODE must be workspace-write or read-only.")
             if str(job.get("execution_policy", "standard")) != "read_only":
                 command = [value for value in command if value != "--dangerously-bypass-approvals-and-sandbox"]
+                if "--sandbox" in command:
+                    index = command.index("--sandbox")
+                    del command[index:index + 2]
                 prompt_index = command.index("-")
                 command[prompt_index:prompt_index] = ["--sandbox", sandbox_mode, "-c", 'approval_policy="never"']
         runtime_evidence = {
@@ -2706,7 +2715,8 @@ class WorkerJobStore:
             workspace = prepare_dispatch_workspace(self.project_root, str(context.get("execution_id", "")),
                                                    None)
             if (str(context.get("sandbox_id", "")) != str(job["id"])
-                    or workspace.workspace(str(job["id"])) != workspace_path):
+                    or workspace.workspace(str(job["id"])) != workspace_path
+                    or context.get("worker_setup") != workspace.metadata.get("worker_setup")):
                 raise ValueError("dispatch_workspace_mismatch")
         if _is_repo_workspace(workspace_path):
             return WorkerRuntimeContext(
@@ -2833,6 +2843,12 @@ class WorkerJobStore:
         }
         prompt = self._worker_prompt(job_root, job, model=model)
         process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
+        setup = (job.get("sandbox_context") or {}).get("worker_setup")
+        if setup:
+            from goodteam_os.worker_setup import with_setup
+
+            process_command = with_setup(process_command, setup=setup, job_root=job_root,
+                cwd=runtime_context.runtime_cwd, binary=which("codex") or DEFAULT_CODEX_PATH)
         process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
         provider_key = (worker_env or {}).get(PROVIDER_KEY_ENV, "")
@@ -2984,6 +3000,8 @@ class WorkerJobStore:
                         if stream is not None:
                             stream.close()
         stdout, stderr = safe_output(stdout), safe_output(stderr)
+        if setup and (job_root / "setup-result.json").is_file():
+            base_extra["worker_setup"] = json.loads((job_root / "setup-result.json").read_text(encoding="utf-8"))
         stdout_path.write_text(stdout, encoding="utf-8")
         stderr_path.write_text(stderr, encoding="utf-8")
         if provider_key and result_path.is_file():

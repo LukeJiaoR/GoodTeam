@@ -60,7 +60,7 @@ def judge_running_observation(*, store, root, value, runner=None, authority_chec
         records = current.setdefault("running_judgments", {})
         key = receipt["digest"]
         if (key in records or any(r["status"] in {"reserved", "unconfirmed"} for r in records.values())
-                or current["manager_calls"] >= current["max_manager_calls"]
+                or current["max_manager_calls"] is not None and current["manager_calls"] >= current["max_manager_calls"]
                 or current.get("discovery_pending") or current.get("planning_backlog_version")):
             return session
         reserved = {"observation_digest": key, "binding": deepcopy(binding),

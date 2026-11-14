@@ -3845,7 +3845,10 @@ def start_workflow(
         if _workflow_requires_repository(target, source_type=source_type, project_config=project_config):
             if runtime_root is None:
                 raise ValueError("A real workflow requires its configured Git repository baseline.")
-            state.repository_baseline = prepare_workflow_workspace(runtime_root, project_key=key, run_id=state.run_id)
+            from goodteam_os.worker_setup import load_worker_setup
+
+            state.repository_baseline = prepare_workflow_workspace(runtime_root, project_key=key, run_id=state.run_id,
+                                                                    worker_setup=load_worker_setup(project_config))
     if not dry_run:
         from goodteam_os.skills.task_context import workflow_skill_context
         from goodteam_os.skills.task_locks import TaskSkillIdentity
@@ -6424,6 +6427,8 @@ def handle_project_api_post(
                 attachments=request.get("attachments", []),
             )
         except ManagerExecutionError as exc:
+            if exc.code == "manager_resource_busy":
+                raise ProjectApiError("manager_resource_busy", str(exc), 409, recovery=["retry_request"]) from exc
             raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
         except ValueError as exc:
             raise ProjectApiError("invalid_request", str(exc), 409) from exc
@@ -6619,6 +6624,8 @@ def handle_project_api_post(
                     expected_attempt=request.get("expected_attempt"),
                 )
             except ManagerExecutionError as exc:
+                if exc.code == "manager_resource_busy":
+                    raise ProjectApiError("manager_resource_busy", str(exc), 409, recovery=["retry_request"]) from exc
                 raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
             except ValueError as exc:
                 raise ProjectApiError("invalid_request", str(exc), 409) from exc

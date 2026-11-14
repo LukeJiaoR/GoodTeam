@@ -41,6 +41,10 @@ export function currentWorkContext({ workspace, projectKey, title, freshness = '
       : translated(t, `work.manager.attentionReasons.${attention.reason}`, t('work.current.inputNeeded'));
     return result('needs_input', reason, 'attention');
   }
+  if (mission?.source === 'project_batch' && (workspace.execution_actors || []).some(
+    actor => ['working', 'reviewing', 'fixing'].includes(actor.state))) {
+    return result(mission.status, statusText(mission.status, t), 'execution');
+  }
   const draft = workspace.proposed_task;
   if (draft && !draft.run_id && draft.status !== 'cancelled') {
     if (draft.needs_clarification) return result('needs_input', t('assistant.needsClarification'), 'composer');
@@ -50,6 +54,12 @@ export function currentWorkContext({ workspace, projectKey, title, freshness = '
     return result('needs_input', t('work.current.requestRecovery'), 'recovery');
   }
   if (!mission || mission.source === 'task_assistant') return result('idle', t('work.current.start'), 'composer');
+  if (mission.source === 'project_batch' && mission.status === 'stopped') {
+    return result('stopped', t('work.current.stopped'), 'execution');
+  }
+  if (mission.source === 'project_batch' && mission.status === 'reviewing') {
+    return result('awaiting_review', t('work.current.ended'), 'outcomes');
+  }
   if (['completed', 'complete', 'done', 'stopped', 'failed', 'cancelled'].includes(mission.status)) {
     return result('ended', t('work.current.ended'), 'outcomes');
   }

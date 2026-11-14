@@ -47,7 +47,7 @@ from pathlib import Path
 from uuid import uuid4
 
 if '--version' in sys.argv:
-    print('codex-cli 0.160.0')
+    print('codex-cli ' + '.'.join(map(str, sys.version_info[:3])))
     raise SystemExit(0)
 prompt = sys.stdin.read()
 assert prompt

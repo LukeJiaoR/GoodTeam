@@ -133,6 +133,16 @@ def _identity(proposal_ids, expected_revisions):
     return run_id, "dispatch-" + sha256(run_id.encode()).hexdigest()
 
 
+def dispatch_policy(task):
+    """Translate a task's stored policy to the existing dispatch vocabulary."""
+    policy = task.get("execution_policy", "workspace_write")
+    if policy == "read_only":
+        return "read_only"
+    if policy == "workspace_write":
+        return "standard"
+    raise ValueError("Unrecognized project task execution policy.")
+
+
 def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals):
     from goodteam_os.graph import _worker_job_fields, resolve_project_runtime_root
     from goodteam_os.projects import load_project_target
@@ -171,7 +181,7 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
         **({"web_search": task["web_search"]} if "web_search" in task else {}),
         "context": "Execute only this confirmed project task in the assigned isolated repository. "
                    "Do not merge, deploy or change shared project state. Results require independent review.",
-        "execution_policy": "read_only" if task.get("execution_policy") == "read_only" else "standard",
+        "execution_policy": dispatch_policy(task),
         **({"write_domains": task["write_domains"]} if task.get("write_domains") else {}),
         "constraints": ["Do not write outside the declared task paths: " + ", ".join(task.get("write_domains") or [])],
     } for task, proposal in zip(tasks, proposals)]
@@ -311,6 +321,13 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
                                 task_ids=[task["id"] for task in tasks])
         if len(tasks) > 1:
             _validate_parallel_group([candidates[task["id"]] for task in tasks])
+        from goodteam_os.project_candidate_handoff import candidate_for_tasks
+
+        candidate_source = candidate_for_tasks(workspace=workspace, project_key=project_key, root=root,
+            session=session, tasks=tasks, continuation_id=expected_continuation_id)
+        from goodteam_os.worker_setup import load_worker_setup
+
+        worker_setup = load_worker_setup(project_config)
         tracks = _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals)
         _require_authority(workspace, project_key, root, project_config, expected_authority)
         batch = {"run_id": run_id, "dispatch_run_id": dispatch_id, "proposal_ids": list(proposal_ids),
@@ -324,6 +341,8 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
             **({"workflow_recovery": session["project_continuation"]["workflow_recovery"]}
                if expected_continuation_id and session["project_continuation"].get("workflow_recovery") else {}),
             "selected_proposal_id": selected_proposal_id, "expected_team_revision": expected_team_revision,
+            **({"candidate_source": candidate_source} if candidate_source is not None else {}),
+            **({"worker_setup": worker_setup} if worker_setup else {}),
             "tracks": tracks, "status": "claimed", "confirmed": True,
             "created_at": datetime.now(UTC).isoformat()}
 
@@ -515,9 +534,18 @@ def _execute_batch(*, workspace, project_key, root, batch):
                        or project_task_intent(known[binding["task_id"]]) != binding["task_intent"]
                        for binding in batch["task_bindings"]):
                     raise ValueError("The original task scope changed before Worker launch.")
+                from goodteam_os.project_candidate_handoff import verify_candidate_for_batch
+
+                verify_candidate_for_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)
+            from goodteam_os.project_candidate_handoff import verify_candidate_for_batch
+
+            candidate_source = verify_candidate_for_batch(workspace=workspace, project_key=project_key,
+                                                          root=root, batch=batch)
             report = dispatch_tracks(project_root=Path(root).resolve(), tracks=batch["tracks"],
                 projects_dir=Path(workspace) / "projects", logical_task_id=batch["run_id"], require_isolation=True,
-                capacity_check_start=check_start)
+                capacity_check_start=check_start,
+                **({"worker_setup": batch["worker_setup"]} if batch.get("worker_setup") else {}),
+                **({"candidate_source": candidate_source} if candidate_source is not None else {}))
         except Exception as exc:
             _settle_batch(workspace, project_key, root, batch, error=str(exc))
             raise

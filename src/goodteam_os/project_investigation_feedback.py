@@ -26,6 +26,10 @@ def _valid_receipt(value, receipt):
 
 
 def _authorized_read_only_role(value, role):
+    if (value.get("discovery") or {}).get("allow_team_roles") is True:
+        from goodteam_os.team_control_plane import MANAGER_ROLE, ROLE_KEYS
+
+        return isinstance(role, str) and role in ROLE_KEYS and role != MANAGER_ROLE
     flag = {"research": "allow_investigation", "planner": "allow_planning"}.get(role)
     return bool(flag and (value.get("discovery") or {}).get(flag) is True)
 
@@ -43,7 +47,7 @@ def is_observed_investigation(value, task):
             and receipt.get("task_id") == task["id"]
             and receipt.get("task_intent_digest") == value["task_intents"].get(task["id"])
             and receipt.get("batch_run_id") == task.get("run_id")
-            and task.get("role") in {"research", "planner"} and task.get("execution_policy") == "read_only"
+            and task.get("execution_policy") == "read_only"
             and task.get("write_domains") == []
             and receipt.get("task_status", "review") in {"review", "blocked"}
             and task.get("status") == receipt.get("task_status", "review")
@@ -151,8 +155,8 @@ def _read_observation(*, workspace, project_key, root, value, task_id, run_id):
         receipt.update(task_status=task_status, worker_status="failed" if failed else "completed",
                        worker_outcome=job["outcome"], report_status=report_status,
                        execution_summary=str(job.get("summary") or "")[:2000])
-    if task.get("role") == "planner":
-        receipt["role"] = "planner"
+    if task.get("role") != "research":
+        receipt["role"] = task["role"]
     receipt["receipt_id"] = _digest(receipt)
     return receipt
 

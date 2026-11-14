@@ -23,6 +23,7 @@ def _read_observation(*, workspace, project_key, root, value, run_id):
     from goodteam_os.dispatch_workspace import dispatch_artifact_root, prepare_dispatch_workspace, verify_dispatch_result
     from goodteam_os.memory_storage import read_bytes
     from goodteam_os.project_iteration_continuation import _intent
+    from goodteam_os.project_iteration_execution import dispatch_policy
     from goodteam_os.project_iteration_recovery import effective_dispatch_id, project_batch_recovery_evidence
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
     from goodteam_os.tasks import LocalTaskStore, project_task_intent
@@ -61,6 +62,9 @@ def _read_observation(*, workspace, project_key, root, value, run_id):
         track = next(t for t in tracks if t["project_task_id"] == identifier)
         job_id, job_dispatch = job.get("job_id", ""), job.get("dispatch_run_id", dispatch_id)
         success = identifier in successful
+        # Use the same conversion as dispatch while retaining the original
+        # task intent and execution identity checks.
+        track_policy = dispatch_policy(task)
         if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", job_id)
                 or task.get("run_id") != run_id or task.get("execution_origin") != "task_assistant_batch"
                 or task.get("status") != ("review" if success else "blocked") or task.get("delivery_verified") is True
@@ -68,7 +72,7 @@ def _read_observation(*, workspace, project_key, root, value, run_id):
                 or _intent(task) != value["task_intents"].get(identifier)
                 or project_task_intent(task) != binding["task_intent"]
                 or task.get("role") != job.get("role") or task.get("role") != track.get("role")
-                or task.get("execution_policy") != track.get("execution_policy")
+                or track_policy != track.get("execution_policy")
                 or (job.get("outcome") == "ok") != success
                 or "worker_id" in task and (job.get("worker_id") != task["worker_id"]
                     or track.get("worker_id") != task["worker_id"])):

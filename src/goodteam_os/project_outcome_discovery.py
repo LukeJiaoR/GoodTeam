@@ -32,10 +32,15 @@ def _digest(value):
 def normalize_discovery(value):
     if value is None:
         return None
-    required = {"objective", "allowed_write_domains", "max_new_tasks", "max_planning_calls"}
+    required = {"objective", "allowed_write_domains"}
+    limits = {"max_new_tasks", "max_planning_calls"}
     if (not isinstance(value, dict) or not required.issubset(value)
-            or set(value) - required - {"allow_investigation", "allow_planning", "allow_undelivered_feedback", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question"}):
-        raise ValueError("Confirm an explicit discovery objective, paths and finite task/planning budgets.")
+            or set(value) - required - limits - {"allow_investigation", "allow_planning", "allow_team_roles", "allow_undelivered_feedback", "allow_candidate_handoff", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question"}):
+        raise ValueError("Confirm an explicit discovery objective and paths.")
+    if any(value.get(key) is not None and (type(value[key]) is not int or value[key] < 1) for key in limits):
+        raise ValueError("Optional task and planning limits must be positive integers.")
+    if "allow_team_roles" in value and type(value["allow_team_roles"]) is not bool:
+        raise ValueError("Team Role delegation permission must be an explicit boolean.")
     if "allow_running_human_question" in value and (
             type(value["allow_running_human_question"]) is not bool
             or value["allow_running_human_question"] and value.get("allow_running_observation") is not True):
@@ -48,6 +53,9 @@ def normalize_discovery(value):
         raise ValueError("Planning permission must be an explicit boolean.")
     if "allow_undelivered_feedback" in value and type(value["allow_undelivered_feedback"]) is not bool:
         raise ValueError("Undelivered feedback permission must be an explicit boolean.")
+    if "allow_candidate_handoff" in value and (type(value["allow_candidate_handoff"]) is not bool
+            or value["allow_candidate_handoff"] and value.get("allow_undelivered_feedback") is not True):
+        raise ValueError("Candidate handoff requires explicit undelivered feedback permission.")
     if "allow_running_observation" in value and type(value["allow_running_observation"]) is not bool:
         raise ValueError("Running observation permission must be an explicit boolean.")
     if "allow_initial_readonly_feedback" in value and type(value["allow_initial_readonly_feedback"]) is not bool:
@@ -63,11 +71,10 @@ def normalize_discovery(value):
     objective = value["objective"]
     domains = normalize_write_domains(value["allowed_write_domains"])
     if (not isinstance(objective, str) or not 20 <= len(objective.strip()) <= 2000
-            or domains is None or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/"))
-            or type(value["max_new_tasks"]) is not int or not 1 <= value["max_new_tasks"] <= 50
-            or type(value["max_planning_calls"]) is not int or not 1 <= value["max_planning_calls"] <= 100):
-        raise ValueError("Discovery needs a 20–2000 character objective, explicit project paths, 1–50 new tasks and 1–100 planning calls.")
-    return {**value, "objective": objective.strip(), "allowed_write_domains": domains}
+            or domains is None or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/"))):
+        raise ValueError("Discovery needs a 20–2000 character objective and explicit project paths.")
+    return {**value, **{key: value.get(key) for key in limits},
+            "objective": objective.strip(), "allowed_write_domains": domains}
 
 
 def authorization_digest(value):
@@ -242,7 +249,7 @@ def _authorized_task_context(root, project_key, value, *, exclude_ref=None):
 def _packet(workspace, project_key, root, value, outcome, *, project_config=None, backlog_source=None):
     from goodteam_os.memory import runtime_role_memory_store
     from goodteam_os.project_iteration_planner import _project_evidence
-    from goodteam_os.team_control_plane import team_view_for_config
+    from goodteam_os.team_control_plane import MANAGER_ROLE, team_view_for_config
 
     snapshot = rank_project_backlog(LocalTaskStore(root, project_key).list_tasks(), project_key, limit=None)
     undelivered = None if outcome is not None or backlog_source is not None else _undelivered_source(
@@ -253,9 +260,10 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
     packet = {"schema_version": "project_outcome_discovery_packet.v1", "project_key": project_key,
         "authorization_digest": value["authorization_digest"], "discovery": value["discovery"],
         "multiple_followups_supported": True,
-        "remaining_budget": {"manager_calls": value["max_manager_calls"] - value["manager_calls"],
-                             "batches": value["max_batches"] - value["batches_started"],
-                             "new_tasks": value["discovery"]["max_new_tasks"] - value["new_tasks_created"]},
+        "remaining_budget": {key: None if limit is None else limit - used for key, limit, used in (
+            ("manager_calls", value["max_manager_calls"], value["manager_calls"]),
+            ("batches", value["max_batches"], value["batches_started"]),
+            ("new_tasks", value["discovery"]["max_new_tasks"], value["new_tasks_created"]))},
         "authorized_task_ids": list(value["task_ids"]),
         "authorized_task_context": _authorized_task_context(root, project_key, value),
         "authorized_done_task_ids": [task["id"] for task in LocalTaskStore(root, project_key).list_tasks()
@@ -281,14 +289,17 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
             if task["id"] in value["task_ids"] and not (task["status"] == "done" and task.get("delivery_verified") is True)
             and not is_observed_investigation(value, task)]
     team = team_view_for_config(Path(workspace), project_key, project_config) or {}
+    all_team_roles = value["discovery"].get("allow_team_roles") is True
     allowed_roles = {"implementation", "research"} if value["discovery"].get("allow_investigation") is True else {"implementation"}
     if value["discovery"].get("allow_planning") is True:
         allowed_roles.add("planner")
     packet["role_capabilities"] = [
         {"role": role["role"], "state": role.get("state"), "capability": role.get("capability", ""),
+         **({"label": role.get("label", role["role"])} if all_team_roles else {}),
          "dispatchable": role.get("state") == "enabled"
              and role.get("capability") == "ready"}
-        for role in team.get("roles", []) if role.get("role") in allowed_roles
+        for role in team.get("roles", []) if role.get("role") != MANAGER_ROLE
+        and (all_team_roles or role.get("role") in allowed_roles)
     ]
     if value["discovery"].get("allow_investigation") is True:
         role = next((item for item in packet["role_capabilities"] if item["role"] == "research"), {})
@@ -369,7 +380,8 @@ def validate_discovered_task(packet, response):
     if packet.get("multiple_followups_supported") is not True or "new_task" in response:
         raise ValueError("Multiple follow-ups require a current packet and one unambiguous task field.")
     proposed = response["new_tasks"]
-    if not isinstance(proposed, list) or not 1 <= len(proposed) <= packet["discovery"]["max_new_tasks"]:
+    maximum = packet["discovery"]["max_new_tasks"]
+    if not isinstance(proposed, list) or not proposed or maximum is not None and len(proposed) > maximum:
         raise ValueError("The whole follow-up set must fit the authorized task limit.")
     common = {key: value for key, value in response.items() if key != "new_tasks"}
     validated = [_validate_discovered_single(packet, {**common, "new_task": task}) for task in proposed]
@@ -431,9 +443,10 @@ def _validate_discovered_single(packet, response):
     if task is None:
         return {"new_task": None, "rationale": reason.strip(), **actions}
     fields = {"title", "description", "acceptance_criteria", "write_domains", "dependencies", "source_refs"}
+    team_roles = packet["discovery"].get("allow_team_roles") is True
     investigation_allowed = packet["discovery"].get("allow_investigation") is True
     planning_allowed = packet["discovery"].get("allow_planning") is True
-    optional = {"task_type"} if investigation_allowed or planning_allowed else set()
+    optional = {"role"} if team_roles else {"task_type"} if investigation_allowed or planning_allowed else set()
     # Only frozen packets from the former member-selection contract accept
     # that field. Newly captured Role capabilities never select an instance.
     if "worker_capabilities" in packet and "role_capabilities" not in packet:
@@ -442,19 +455,30 @@ def _validate_discovered_single(packet, response):
             or not isinstance(task["title"], str) or not 5 <= len(task["title"].strip()) <= 240
             or not isinstance(task["description"], str) or not 20 <= len(task["description"].strip()) <= 4000):
         raise ValueError("A follow-up needs an explicit bounded task, not runtime commands or new permissions.")
-    task_type = task.get("task_type", "implementation")
-    if task_type not in ("implementation", "investigation", "planning"):
-        raise ValueError("Discovery task type must be implementation, investigation or planning.")
-    investigation = task_type == "investigation"
-    planning = task_type == "planning"
-    if investigation and (not investigation_allowed
-            or (packet.get("investigation_capability") or {}).get("dispatchable") is not True):
-        raise ValueError("Investigation requires explicit authority and an available Researcher.")
-    if planning and (not planning_allowed
-            or (packet.get("planning_capability") or {}).get("dispatchable") is not True):
-        raise ValueError("Planning requires explicit authority and an available Planner.")
-    if (investigation or planning) and task["write_domains"] != []:
-        raise ValueError("A research or planning task must be read-only and declare no write domains.")
+    if team_roles:
+        from goodteam_os.team_control_plane import MANAGER_ROLE
+
+        role = task.get("role")
+        if (not isinstance(role, str) or role == MANAGER_ROLE
+                or not any(item.get("role") == role and item.get("dispatchable") is True
+                           for item in packet.get("role_capabilities", []))):
+            raise ValueError("Choose an enabled and available project Team Role.")
+        investigation = task["write_domains"] == []
+        planning = False
+    else:
+        task_type = task.get("task_type", "implementation")
+        if task_type not in ("implementation", "investigation", "planning"):
+            raise ValueError("Discovery task type must be implementation, investigation or planning.")
+        investigation = task_type == "investigation"
+        planning = task_type == "planning"
+        if investigation and (not investigation_allowed
+                or (packet.get("investigation_capability") or {}).get("dispatchable") is not True):
+            raise ValueError("Investigation requires explicit authority and an available Researcher.")
+        if planning and (not planning_allowed
+                or (packet.get("planning_capability") or {}).get("dispatchable") is not True):
+            raise ValueError("Planning requires explicit authority and an available Planner.")
+        if (investigation or planning) and task["write_domains"] != []:
+            raise ValueError("A research or planning task must be read-only and declare no write domains.")
     if "worker_id" in task:
         worker_id = task["worker_id"]
         role = "planner" if planning else "research" if investigation else "implementation"
@@ -495,12 +519,14 @@ def _discovered_task_intent(packet, selection, creation_ref):
     task = validate_discovered_task(packet, selection)["new_task"]
     if task is None:
         raise ValueError("No follow-up task was proposed.")
-    investigation = task.get("task_type") == "investigation"
-    planning = task.get("task_type") == "planning"
+    team_roles = packet["discovery"].get("allow_team_roles") is True
+    investigation = task["write_domains"] == [] if team_roles else task.get("task_type") == "investigation"
+    planning = not team_roles and task.get("task_type") == "planning"
     intent = {key: task[key] for key in ("title", "description", "acceptance_criteria", "write_domains", "dependencies")}
     if "worker_id" in task:
         intent["worker_id"] = task["worker_id"]
-    intent.update(role="planner" if planning else "research" if investigation else "implementation", priority="medium",
+    role = task["role"] if team_roles else "planner" if planning else "research" if investigation else "implementation"
+    intent.update(role=role, priority="medium",
                   execution_policy="read_only" if investigation or planning else "workspace_write",
                   external_refs=[creation_ref, *task["source_refs"]], artifact_refs=list(task["source_refs"]))
     return intent
@@ -645,10 +671,36 @@ def _retain_changed_discovery(store, root, project_key, config, value, pending, 
         return current
 
 
+def _discovery_packet(*, workspace, project_key, root, project_config, value):
+    """Read the current feedback before reserving the shared Manager runtime."""
+    backlog_source = None
+    try:
+        outcome = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value)
+    except NoVerifiedDelivery:
+        if (value["discovery"].get("allow_backlog_judgment") is True
+                and not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor")):
+            backlog_source = _backlog_source(root, project_key, value)
+        elif value["discovery"].get("allow_undelivered_feedback") is not True:
+            if not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor"):
+                raise
+            _undelivered_source(workspace=workspace, project_key=project_key, root=root, value=value)
+        outcome = None
+    return outcome, _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config),
+                            backlog_source=backlog_source)
+
+
 def discover_next_iteration(*, workspace, project_key, root, project_config, value, manager_runner=None):
     from goodteam_os.manager_execution import manager_resource_slot
 
     try:
+        if value.get("discovery_pending") is None:
+            _, packet = _discovery_packet(workspace=workspace, project_key=project_key, root=root,
+                                          project_config=project_config, value=value)
+            if all(item in value.get("discovery_consumed", []) for item in _input_receipts(packet)):
+                _current(TaskAssistantSessionStore(workspace, project_key).read(), value)
+                return value
+        # The slot protects a new/reserved Manager decision, not an idle scan.
+        # Rebuild and revalidate inside the slot before reserving or invoking.
         with manager_resource_slot(Path(root)) as resource_slot:
             return _discover_next_iteration(workspace=workspace, project_key=project_key, root=root,
                 project_config=project_config, value=value, manager_runner=manager_runner, resource_slot=resource_slot)
@@ -695,29 +747,15 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
 
     pending = value.get("discovery_pending")
     if pending is None:
-        backlog_source = None
-        try:
-            outcome = verified_outcome(workspace=workspace, project_key=project_key, root=root, value=value)
-        except NoVerifiedDelivery:
-            if (value["discovery"].get("allow_backlog_judgment") is True
-                    and not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor")):
-                backlog_source = _backlog_source(root, project_key, value)
-            elif value["discovery"].get("allow_undelivered_feedback") is not True:
-                if not value.get("batch_feedback_pending") and not value.get("undelivered_feedback_anchor"):
-                    raise
-                # Revalidate the original batch before using the existing
-                # investigation permission; a marker alone is not evidence.
-                _undelivered_source(workspace=workspace, project_key=project_key, root=root, value=value)
-            outcome = None
-        packet = _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config),
-                         backlog_source=backlog_source)
+        outcome, packet = _discovery_packet(workspace=workspace, project_key=project_key, root=root,
+                                            project_config=project_config, value=value)
         inputs = _input_receipts(packet)
         if all(item in value.get("discovery_consumed", []) for item in inputs):
             _current(store.read(), value)
             return value  # No new feedback, including when a question is still open.
         if outcome is not None:
             _remember(root, outcome)
-        if value["manager_calls"] >= value["max_manager_calls"]:
+        if value["max_manager_calls"] is not None and value["manager_calls"] >= value["max_manager_calls"]:
             return _budget_exhausted(store, value, "approved_iteration_budget_used")
         trigger_ref = _digest(inputs)
         pending = {"packet": packet, "packet_digest": packet["packet_digest"],
@@ -810,11 +848,12 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
 
     # Task capacity constrains task publication, not a budgeted Manager judgment
     # about new feedback. Replaying an already-created task spends no new slot.
-    if value["batches_started"] >= value["max_batches"]:
+    if value["max_batches"] is not None and value["batches_started"] >= value["max_batches"]:
         return _budget_exhausted(store, value, "approved_iteration_budget_used")
     proposed = _selection_tasks(selection)
     recorded_ids = pending.get("task_ids", [pending["task_id"]] if pending.get("task_id") else [])
-    if value["new_tasks_created"] + len(proposed) - len(recorded_ids) > value["discovery"]["max_new_tasks"]:
+    maximum = value["discovery"]["max_new_tasks"]
+    if maximum is not None and value["new_tasks_created"] + len(proposed) - len(recorded_ids) > maximum:
         return _budget_exhausted(store, value, "discovery_task_budget_used")
     refs = _creation_refs(value, pending)
     intents = [_discovered_task_intent(pending["packet"], {"new_task": task, "rationale": selection["rationale"]}, ref)
@@ -831,8 +870,14 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         current = _current(session, value)
         _revalidate(workspace, project_key, root, project_config, current, pending)
         ledger = LocalTaskStore(root, project_key)
-        created_tasks = ([ledger.create_task_once(creation_ref=refs[0], intent=intents[0])] if len(intents) == 1
-                         else ledger.create_tasks_once(items=list(zip(refs, intents))))
+        # Only the original frozen Team-capability packet can extend the
+        # legacy fixed-role publication path; public task input cannot do so.
+        authorized_roles = (frozenset(role["role"] for role in pending["packet"]["role_capabilities"]
+                                      if role.get("dispatchable") is True)
+                            if current["discovery"].get("allow_team_roles") is True else None)
+        created_tasks = ([ledger.create_task_once(creation_ref=refs[0], intent=intents[0],
+                                                  authorized_roles=authorized_roles)] if len(intents) == 1
+                         else ledger.create_tasks_once(items=list(zip(refs, intents)), authorized_roles=authorized_roles))
         identifiers = []
         for created in created_tasks:
             identifiers.append(created["id"])

@@ -156,10 +156,11 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
                                                message_id=message_id, attempt_id=attempt_id)
         except Exception as exc:
             retryable = _record_failure(store, message_id, exc)
-            if snapshot is not None:
+            if snapshot is not None and getattr(exc, "code", None) != "manager_resource_busy":
                 evidence = {**snapshot, "error": safe_failure(exc)} if retryable else snapshot
                 record_runtime(store, evidence, "failed" if retryable else _verification_status(snapshot))
-            raise ManagerExecutionError(safe_failure(exc)["message"]) from exc
+            failure = safe_failure(exc)
+            raise ManagerExecutionError(failure["message"], code=failure["code"]) from exc
         update_request(store, message_id, status="succeeded", intent=result["intent"])
         if not result.get("model_call_skipped"):
             record_runtime(store, snapshot, _verification_status(snapshot))

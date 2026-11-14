@@ -76,7 +76,7 @@ def _input(provider, context_ref, record):
     from .codex_contract import ADAPTER_VERSION
     if record["runtime_session"]["adapter_version"] == ADAPTER_VERSION:
         text += ("\n# Optional read witness format\n"
-                 "For a traceable resource read, use one non-login command: "
+                 "When the native event protocol supports read witnesses, use one non-login command: "
                  "cat -- /review/methods/<skill_id>/<relative-path>. "
                  "This describes a read channel, not a requirement to load every optional method. "
                  "A command mention or a self-reported read is not a read witness.\n")

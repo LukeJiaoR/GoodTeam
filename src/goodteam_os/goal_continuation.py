@@ -31,20 +31,31 @@ _LOCKS = {}
 _LOCKS_GUARD = threading.Lock()
 
 
+class GoalBusyError(RuntimeError):
+    """The project Goal guard is already held by another operation."""
+
+
 @contextmanager
-def goal_guard(workspace, project_key):
+def goal_guard(workspace, project_key, *, blocking=True):
     key = normalize_project_key(project_key)
     path = Path(workspace).resolve() / "state" / "goal-locks" / f"{key}.lock"
     with _LOCKS_GUARD:
         lock = _LOCKS.setdefault(str(path), threading.Lock())
-    with lock:
+    if not lock.acquire(blocking=blocking):
+        raise GoalBusyError("The project's Goal is busy.")
+    try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+            except BlockingIOError as exc:
+                raise GoalBusyError("The project's Goal is busy.") from exc
             try:
                 yield
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock.release()
 
 
 def authority_snapshot(workspace, project_key, config, root):
@@ -109,12 +120,30 @@ def stop_goal_action(workspace, project_key, request):
     command = request.get("idempotency_key")
     if not isinstance(command, str) or not command.strip() or len(command) > 256:
         raise ValueError("A stable Goal command identity is required.")
-    with goal_guard(workspace, project_key):
-        goal = GoalStore(workspace, project_key).stop_goal(
+    def stop(store):
+        return store.stop_goal(
             request.get("goal_id"), expected_revision=request.get("expected_revision"),
             idempotency_key=command, status=request.get("status", "stopped"),
             reason="User stopped automatic continuation; an already started run keeps its existing controls.")
-        return {"goal": goal}
+
+    try:
+        with goal_guard(workspace, project_key, blocking=False):
+            return {"goal": stop(GoalStore(workspace, project_key))}
+    except GoalBusyError:
+        # A synchronously starting workflow can hold the Goal guard while its
+        # Worker runs. Revocation may proceed through the original transactional
+        # ledger only after the exact claimed workflow has a durable checkpoint.
+        # Before that checkpoint, retain the serialized claim/start boundary.
+        store = GoalStore(workspace, project_key)
+        goal = store.get_goal(request.get("goal_id"))
+        work = goal.get("active_work") or {}
+        current = StateStore(workspace).read_project_current(project_key)
+        if (goal["status"] == "active" and work.get("status") == "dispatching"
+                and current is not None and current.run_id == work.get("run_id")
+                and current.idea == work.get("task")):
+            return {"goal": stop(store)}
+        with goal_guard(workspace, project_key):
+            return {"goal": stop(GoalStore(workspace, project_key))}
 
 
 def handle_goal_action(workspace, project_key, root, request):
@@ -382,8 +411,8 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
         if not work or work["status"] != "dispatching":
             store.sync_tasks(goal_id, tasks)
             return goal
-        # The project Goal lock spans claim and dispatch. Stop/Gate actions use
-        # the same lock, so authority cannot be silently revoked between them.
+        # The Goal lock spans claim and dispatch. A Stop may bypass it only
+        # after the exact claimed workflow has a durable checkpoint.
         store.sync_tasks(goal_id, tasks)
         try:
             (starter or start_workflow)(workspace=workspace, idea=work["task"], project_key=key,
@@ -399,8 +428,9 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
             # A lost response with a matching run is reconciled on the next
             # tick. An unknown outcome never re-enters start_workflow.
             current = StateStore(workspace).read_project_current(key)
-            if current is None or current.run_id != work["run_id"]:
-                goal = _block(store, store.get_goal(goal_id), f"Goal dispatch stopped without a provable run: {exc}")
+            goal = store.get_goal(goal_id)
+            if goal["status"] == "active" and (current is None or current.run_id != work["run_id"]):
+                goal = _block(store, goal, f"Goal dispatch stopped without a provable run: {exc}")
         store.sync_tasks(goal_id, tasks)
         return goal
 

@@ -33,6 +33,8 @@ own evidence; a Worker completion does not mark the project task delivered.
 
 **GoodTeam owns the control plane; coding agents and external tools are adapters.** A Worker can produce a patch, a test result, or a recommendation. It cannot turn its own output into approval.
 
+Isolated CLI Workers can run a project's existing [setup command](docs/worker-setup.md) and reuse its package cache.
+
 **Open repo → Describe task → Confirm plan → Follow execution → Review result**
 
 The desktop Web experience stays centered on one project conversation:
@@ -55,7 +57,7 @@ The desktop Web experience stays centered on one project conversation:
 | **Configurable engineering team** | **Role → TeamRole → Worker** separates capabilities, project membership, and runtime identity. Codex, Claude/Anthropic, Pi, `fake`, `human`, and `noop` adapters serve different execution needs. |
 | **Persistent Pi runtime** | Pi RPC sessions support explicit resume, steering, follow-up, abort, and incremental event replay. Session metadata and JSONL protocol/event records remain tied to the originating job. |
 | **Traceable delivery** | Tasks, attempts, Workers, worktrees, PRs, commit SHAs, CI, artifacts, and reviewer evidence connect through execution identity and a durable ledger. |
-| **Bounded project iteration** | Continue across approved batches, with optional outcome-based discovery inside an explicit objective, path scope and finite task/planning budgets. Existing batch execution supports up to 10 concurrent Workers. |
+| **Project iteration** | Continue across approved batches, with optional outcome-based discovery inside an explicit objective and path scope. Task, batch and planning-call limits are optional; usage remains recorded and Stop remains available. Existing batch execution supports up to 10 concurrent Workers. |
 | **Candidate quality and recovery** | Explicit batch checks and independent review can request one authorized correction. Retry only proven failed tasks while retaining successful siblings, or explicitly abandon stopped, undelivered work. |
 | **Explicit human decisions** | Workflow starts, task changes, and approvals are bound to server-owned state. Model interpretation and Worker output provide advice and evidence, not authority. |
 | **Local-first records** | Conversations, workflow state, checkpoints, task ledgers, artifacts, and memory persist in local workspace/project storage, with optional external integrations. |

@@ -316,7 +316,9 @@ def build_team_workspace(
                 events=events,
             ), task_assistant_session)
     if not read_only and task_assistant_session:
-        return _build_task_assistant_workspace(task_assistant_session)
+        return _build_task_assistant_workspace(
+            task_assistant_session, project_root=project_root, project_key=project_key, worker_jobs=worker_jobs,
+        )
     if state is not None:
         return _build_workflow_workspace(
             state=state,
@@ -333,14 +335,18 @@ def build_team_workspace(
     return empty_team_workspace()
 
 
-def _build_task_assistant_workspace(session: Mapping[str, object]) -> dict[str, Any]:
+def _build_task_assistant_workspace(
+    session: Mapping[str, object], *, project_root: Path | None = None,
+    project_key: str = "", worker_jobs: Sequence[Mapping[str, object]] = (),
+) -> dict[str, Any]:
     timeline = _task_assistant_timeline(session)
+    mission, actors = _task_assistant_execution(session, project_root, project_key, worker_jobs)
     return {
         "schema_version": TEAM_WORKSPACE_SCHEMA_VERSION,
-        "mission": None,
+        "mission": mission,
         "manager_timeline": timeline,
         "attention_request": session.get("attention_request"),
-        "execution_actors": [],
+        "execution_actors": actors,
         "outcome_tasks": [],
         "capabilities": [],
         "suggestions": list(session.get("suggestions", []) or []),
@@ -349,6 +355,64 @@ def _build_task_assistant_workspace(session: Mapping[str, object]) -> dict[str, 
         "runtime": session.get("runtime"),
         "pending_team_decision": session.get("pending_team_decision"),
     }
+
+
+def _task_assistant_execution(session, project_root, project_key, worker_jobs):
+    """Read confirmed batch identities and existing Jobs; never advance execution."""
+    if project_root is None or not project_key:
+        return None, []
+    root = str(project_root.resolve())
+    batches = [batch for batch in _mapping(session.get("project_task_batches")).values()
+               if batch.get("confirmed") is True and batch.get("project_root") == root]
+    batches.sort(key=lambda batch: _text(batch.get("created_at")))
+    continuation = _mapping(session.get("project_continuation"))
+    if _mapping(continuation.get("authority")).get("project_root") != root:
+        continuation = {}
+    actors = []
+    for batch in batches:
+        dispatch_ids = {batch.get(key) for key in ("dispatch_run_id", "current_dispatch_run_id") if batch.get(key)}
+        dispatch_ids.update(command["dispatch_run_id"]
+                            for command in _mapping(batch.get("recovery_commands")).values()
+                            if command.get("dispatch_run_id"))
+        jobs_by_task = {}
+        for job in worker_jobs:
+            task_id = _text(job.get("project_task_id"))
+            if (job.get("project_key") == project_key and job.get("run_id") in dispatch_ids
+                    and task_id in batch.get("task_ids", []) and not is_assistant_activity(job)):
+                jobs_by_task.setdefault(task_id, []).append(job)
+        outcomes = []
+        for task_id, jobs in jobs_by_task.items():
+            current = _authoritative_worker_attempt(jobs)
+            outcomes.append({"id": task_id, "owner": current.get("role"),
+                             "objective": task_id, "status": _worker_attempt_state(current, fallback="waiting"),
+                             "updated_at": _updated_at(current)})
+        batch_actors = _workflow_actors(outcomes, jobs_by_task, {})
+        # Keep previous in-flight batches visible after Stop or a newer reservation.
+        actors.extend(batch_actors if batch is batches[-1] else
+                      [actor for actor in batch_actors if actor["state"] in {"working", "reviewing", "fixing"}])
+    if not batches and not continuation:
+        return None, []
+    latest = batches[-1] if batches else {}
+    live_states = {actor["state"] for actor in actors} & {"working", "reviewing", "fixing"}
+    if live_states:
+        status = next(state for state in ("working", "fixing", "reviewing") if state in live_states)
+    elif continuation.get("status") in {"stopped", "completed", "blocked", "exhausted"}:
+        status = {"exhausted": "waiting"}.get(continuation["status"], continuation["status"])
+    elif latest.get("status") in {"blocked", "review", "delivered", "abandoned"}:
+        status = {"review": "reviewing", "delivered": "completed", "abandoned": "stopped"}.get(
+            latest["status"], latest["status"])
+    else:
+        status = "waiting"  # A grant/reservation alone is not a running Worker.
+    objective = _text(_mapping(continuation.get("discovery")).get("objective"))
+    title = objective or ", ".join(latest.get("task_ids", []))
+    return {
+        "id": continuation.get("id") or latest.get("run_id"),
+        "run_id": latest.get("run_id", ""), "execution_id": latest.get("dispatch_run_id", ""),
+        "project_key": project_key, "source": "project_batch", "title": _mission_title(title),
+        "objective": objective or title, "status": status, "read_only": False,
+        "started_at": continuation.get("created_at") or latest.get("created_at", ""),
+        "updated_at": latest.get("updated_at", ""),
+    }, actors
 
 
 def _merge_task_assistant_session(

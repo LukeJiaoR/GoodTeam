@@ -1,4 +1,4 @@
-"""Exact Codex 0.155.1 command contract for the single Linux ARM64 Reviewer.
+"""Content-addressed command contract for the isolated Linux ARM64 Reviewer.
 
 Configuration is supplied by server composition, NOT a Skill/job JSON flag.
 Building this contract is not conformance or permission to contact a provider.
@@ -11,10 +11,9 @@ import ipaddress
 import re
 from urllib.parse import urlsplit
 
+from .codex_version import valid_codex_version
 from .models import SkillError, canonical_json, content_digest
 
-CODEX_VERSION = "0.155.1"
-CODEX_BINARY_DIGEST = "sha256:298d3d73d0bbc1367e58a370df5b6216fe30ce0a92e8b6b0afb0377a958dc335"
 ADAPTER_VERSION = "goodteam.codex-review-linux.v1"
 PLATFORM = "linux/arm64"
 BINARY = "/runtime/bin/codex"
@@ -91,9 +90,13 @@ class CodexContract:
     provider_ipv4: str
     provider_route_ref: str
     provider_policy_digest: str
+    binary_version: str
+    binary_digest: str
 
     def __post_init__(self):
-        for value in (self.image_id, self.seccomp_digest, self.provider_policy_digest):
+        if not valid_codex_version(self.binary_version):
+            raise SkillError("codex_contract_invalid", "The independently observed binary version is required.")
+        for value in (self.image_id, self.seccomp_digest, self.provider_policy_digest, self.binary_digest):
             if not isinstance(value, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None:
                 raise SkillError("codex_contract_invalid", "Runtime images and policies must be content-addressed.")
         if not isinstance(self.network_id, str) or re.fullmatch(r"[0-9a-f]{64}", self.network_id) is None:
@@ -140,13 +143,14 @@ class CodexContract:
         return (*command, "-")
 
     def execution_command(self):
-        return ("/usr/bin/python3", "-I", "/review/.runtime/guard.py", *self.command())
+        return ("/usr/bin/python3", "-I", "/review/.runtime/guard.py", self.binary_digest, self.binary_version,
+                *self.command())
 
     @property
     def digest(self):
         from .codex_guard import source_bytes
         return content_digest(canonical_json({"adapter": ADAPTER_VERSION, "platform": PLATFORM,
-            "image": self.image_id, "binary": CODEX_BINARY_DIGEST, "seccomp": self.seccomp_digest,
+            "image": self.image_id, "binary": self.binary_digest, "seccomp": self.seccomp_digest,
             "guard_digest": content_digest(source_bytes()), "command": self.execution_command(), "network": self.network_id, "route": self.provider_route_ref,
             "provider_container": self.provider_container_id, "provider_ipv4": self.provider_ipv4,
             "provider_policy": self.provider_policy_digest, "container_policy": "goodteam.codex-container.v1"}).encode())

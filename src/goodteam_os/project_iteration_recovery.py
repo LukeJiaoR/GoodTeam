@@ -458,5 +458,6 @@ def execute_recovery(*, workspace, project_key, root, batch):
         reconcile_recovery_tasks(root, project_key, batch, command)
         report = dispatch_tracks(project_root=Path(root).resolve(), tracks=command["tracks"],
             projects_dir=Path(workspace) / "projects", logical_task_id=command["attempt_id"],
-            require_isolation=True, recovery_source=command["source"])
+            require_isolation=True, recovery_source=command["source"],
+            **({"worker_setup": batch["worker_setup"]} if batch.get("worker_setup") else {}))
     return _settle_batch(workspace, project_key, root, batch, report=report)

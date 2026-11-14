@@ -36,11 +36,11 @@ Start with at least one existing seed task, then explicitly confirm:
 - One to twelve project-relative allowed write domains. The follow-up must stay
   inside these paths; metadata paths, glob patterns and parent traversal are not
   accepted. These are verified task scopes, not a claim of OS-level sandboxing.
-- A total of 1–50 new tasks under this grant.
-- A total of 1–100 Manager planning calls, including initial existing-task
-  selection and outcome discovery. Reserving a call consumes its allowance even
-  if its outcome later becomes uncertain.
-- The existing maximum batch count and configured model charges.
+- Optional positive limits for total new tasks, Manager planning calls and batches.
+  Omit a limit or pass `null` to leave that count uncapped. Planning calls include
+  initial task selection and outcome discovery; reservations remain recorded even
+  if a call's outcome later becomes uncertain. Existing grants keep their original limits.
+- Configured model charges. Stop remains available with or without count limits.
 
 The original seed IDs, seed intent digests, displayed backlog version, objective,
 paths, runtime authority and budgets are frozen separately from the growing

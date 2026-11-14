@@ -15,9 +15,10 @@ import subprocess
 import time
 
 from goodteam_os.skills.codex_local import _binary_digest, _binary_stamp, _private_file
+from goodteam_os.skills.codex_version import parse_codex_version, valid_codex_version
 from goodteam_os.skills.filesystem import directory
 
-from .correction_codex import CLI_VERSION, proposed_command
+from .correction_codex import proposed_command
 from .task_snapshot import TaskInputError, canonical_bytes, digest
 
 POLICY_SCHEMA = "goodteam.trusted-codex-correction-policy.v1"
@@ -50,7 +51,7 @@ class TrustedCodexCorrectionAdmission:
                     "trusted_task_inputs", "accept_native_managed_configuration", "accept_unknown_cost",
                     "provider_request_limit", "usd_limit"}
             if (not isinstance(p, dict) or set(p) != keys or canonical_bytes(p) != self.raw
-                    or p["schema_version"] != POLICY_SCHEMA or p["version"] != CLI_VERSION
+                    or p["schema_version"] != POLICY_SCHEMA or not valid_codex_version(p["version"])
                     or type(p["expires_at"]) is not int or not time.time() < p["expires_at"] <= time.time() + 86400
                     or type(p["max_seconds"]) is not int or not 1 <= p["max_seconds"] <= 600
                     or type(p["max_invocations"]) is not int or p["max_invocations"] != 1
@@ -70,14 +71,16 @@ class TrustedCodexCorrectionAdmission:
             raise TaskInputError("correction_native_policy_unsafe")
         self.command()  # Validate model/path shape without invocation.
         self._check_native()
+        self.stamp = _binary_stamp(self.binary)
         self.binary_digest = _binary_digest(self.binary)
         if self.binary_digest != p["binary_digest"]:
             raise TaskInputError("correction_native_binary_changed")
-        self.stamp = _binary_stamp(self.binary)
         self._probe_version()
+        if _binary_stamp(self.binary) != self.stamp:
+            raise TaskInputError("correction_native_binary_changed")
         self.pid = os.getpid()
         self.binding = {"schema_version": RUNTIME_SCHEMA, "input": p["input"], "policy_digest": digest(self.raw),
-                        "binary_digest": self.binary_digest, "version": CLI_VERSION, "model_requested": p["model"],
+                        "binary_digest": self.binary_digest, "version": p["version"], "model_requested": p["model"],
                         "max_seconds": p["max_seconds"], "max_invocations": 1,
                         "runtime_verification": self.verification_kind,
                         "native_configuration": "native_managed", "sandbox_requested": "workspace-write",
@@ -118,7 +121,11 @@ class TrustedCodexCorrectionAdmission:
             start_new_session=True, close_fds=True)
         try:
             stdout, _stderr = communicate_correction(process, "", seconds=10, check_current=lambda: None)
-            if process.returncode != 0 or stdout.strip() != "codex-cli " + CLI_VERSION:
+            try:
+                version = parse_codex_version(stdout)
+            except (ValueError, UnicodeError) as exc:
+                raise TaskInputError("correction_native_version_unavailable") from exc
+            if process.returncode != 0 or version != self.policy["version"]:
                 raise TaskInputError("correction_native_version_unavailable")
         finally:
             try:

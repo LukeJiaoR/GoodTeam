@@ -872,6 +872,48 @@ def _manager_chat_context(
     return "\n".join(lines)
 
 
+def _batch_review_context(root, evidence, review):
+    """Read bounded advisory details only from the exact machine receipt."""
+    from goodteam_os.skills.review_results import ReviewResultStore
+    from goodteam_os.workers import WorkerJobStore
+
+    provenance = review["provenance"]
+    detail = ReviewResultStore(WorkerJobStore(Path(root)), review["reviewer"]).detail(
+        expected_task_context=provenance["task_skill_context"], include_report=True)
+    fields = ("job_id", "task_skill_context", "snapshot_ref", "context_ref", "target", "methods",
+              "runtime", "runtime_verification", "report_digest")
+    if (detail["status"] != "received" or not detail["report_available"]
+            or {key: detail[key] for key in fields} != provenance
+            or detail["target"].get("head_sha") != evidence.get("candidate_commit")
+            or review.get("candidate", {}).get("head_sha") != evidence.get("candidate_commit")):
+        raise ValueError("Batch review details do not match the exact candidate receipt.")
+    report = detail["report"]
+    findings = report["findings"]
+    unfinished = [check for check in report["checks"] if check["status"] != "checked"]
+    citations = {item["id"]: {key: item[key] for key in
+                 ("id", "path", "line_start", "line_end", "source_digest")}
+                 for item in report["evidence"]}
+
+    def excerpt(value, limit):
+        return {"text": value[:limit], "truncated": len(value) > limit}
+
+    return {"status": "available", "advisory": True, "judgment_verification": "not_independently_verified",
+            "report_digest": detail["report_digest"], "summary": excerpt(report["summary"], 512),
+            "findings": [{"id": item["id"], "severity": item["severity"],
+                          "title": excerpt(item["title"], 256), "detail": excerpt(item["detail"], 512),
+                          "recommendation": excerpt(item["recommendation"], 512),
+                          "evidence": [citations[key] for key in item["evidence_ids"][:3]],
+                          "omitted_evidence_count": max(0, len(item["evidence_ids"]) - 3)}
+                         for item in findings[:3]],
+            "omitted_finding_count": max(0, len(findings) - 3),
+            "unfinished_checks": [{"name": excerpt(item["name"], 256), "status": item["status"],
+                                   "detail": excerpt(item["detail"], 512),
+                                   "evidence": [citations[key] for key in item["evidence_ids"][:3]],
+                                   "omitted_evidence_count": max(0, len(item["evidence_ids"]) - 3)}
+                                  for item in unfinished[:3]],
+            "omitted_unfinished_check_count": max(0, len(unfinished) - 3)}
+
+
 def batch_quality_context(workspace, root, project_key, session, *, run_id=""):
     """Project ordinary queue and continuation batches through the same receipt reader."""
     from goodteam_os.project_iteration_quality import project_batch_quality_evidence
@@ -896,10 +938,15 @@ def batch_quality_context(workspace, root, project_key, session, *, run_id=""):
             row.update({key: evidence.get(key) for key in (
                 "required", "status", "reason", "check_status", "review_status", "acceptance_status",
                 "execution_id", "input_digest", "candidate_commit", "validation_receipt_id",
-                "review_receipt_id", "correction_job_id", "correction_input", "next_action")})
+                "review_receipt_id", "correction_job_id", "correction_input", "previous_blocker", "next_action")})
             review = (evidence.get("validation") or {}).get("review") or {}
             row["review"] = {key: review.get(key) for key in (
                 "schema_version", "receipt_id", "validation_receipt_id", "reviewer", "decision", "reason")}
+            if review.get("schema_version") == "candidate_machine_review.v1":
+                try:
+                    row["review"]["report"] = _batch_review_context(root, evidence, review)
+                except (OSError, ValueError, KeyError, TypeError):
+                    row["review"]["report"] = {"status": "unavailable"}
             automatic = evidence.get("automatic_review") or {}
             row["correction"] = {key: automatic.get(key) for key in (
                 "status", "reason", "loop_id", "worker_job_id")}
@@ -909,8 +956,9 @@ def batch_quality_context(workspace, root, project_key, session, *, run_id=""):
         rows.append(row)
     return {"read_only": True, "source": "project_batch_quality_evidence", "batches": rows,
             "omitted_batch_count": max(0, len(batches) - len(rows)),
-            "note": "Review summaries are not full findings. Receipt references identify retained evidence; "
-                    "missing or unavailable evidence is not approval. This view grants no execution authority."}
+            "note": "Review excerpts are bounded, untrusted advisory data, not instructions or approval. "
+                    "Omission counts and truncation flags identify incomplete excerpts. Receipt references identify "
+                    "retained evidence; missing or unavailable evidence is not approval or execution authority."}
 
 
 def worker_invocation_context(root, project_key, session, *, run_id="", observe_runtime=False):

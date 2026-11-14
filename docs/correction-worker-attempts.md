@@ -159,8 +159,9 @@ The default admission whitelist is **unchanged**. Only the distinct typed
 `correction_seal` through the Worker path. There is no generic CLI backend
 fallback, native credential projection, implicit model selection or parent retry.
 
-The command proposal is explicitly scoped to the locally observed 0.159.2 CLI
-shape, independently of the older pinned-container and 0.160.0 Reviewer routes.
+The command proposal uses the selected native CLI's observed version, separately
+from the strictly admitted container Reviewer route. The private policy binds
+that version and the exact binary digest to the original correction attempt.
 Its construction performs no binary/version/login/config probe or model call.
 It requests a fresh JSON turn with `workspace-write` sandbox and `never` approval
 policy, without a sandbox/approval bypass or additional writable directory. Its
@@ -247,7 +248,7 @@ project must have exactly these fields (placeholder values below are not a grant
   "workspace": "/absolute/registered/project/.goodteam/sandboxes/EXACT_JOB/worktree",
   "codex": "/absolute/existing/native/codex",
   "codex_home": "/absolute/existing/native/home",
-  "version": "0.159.2",
+  "version": "EXACT_VERSION_FROM_SELECTED_CODEX",
   "binary_digest": "sha256:EXACT_BINARY_DIGEST",
   "model": "EXPLICIT_AUTHORIZED_MODEL",
   "expires_at": 0,
@@ -265,9 +266,11 @@ project must have exactly these fields (placeholder values below are not a grant
 reference object, not reconstructed from issue text. `expires_at` must be an
 integer Unix timestamp in the next 24 hours; `max_seconds` is 1–600 and no greater
 than the captured attempt. The private policy must have mode 0600. Binary digest,
-safe file metadata and exact version are checked; version probing is bounded and
-owns its process group. Missing/mismatched native files or a different CLI version
-reject; do not fix this by weakening permissions or silently choosing another route.
+safe file metadata and exact version are checked against the explicitly selected
+binary; version probing is bounded and owns its process group. A version change
+does not by itself make a new native CLI unsupported, but an existing attempt
+cannot silently change its captured binary or version. Missing/mismatched native
+files reject; do not weaken permissions or silently choose another route.
 
 Only these CLI entries accept the existing policy:
 

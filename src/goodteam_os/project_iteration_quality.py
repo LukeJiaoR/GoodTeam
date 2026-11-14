@@ -265,6 +265,10 @@ def _next_action(reason):
     if reason in {"correction_verified_runtime_unavailable", "correction_native_authorization_required",
                   "correction_runtime_authorization_required"}:
         return "Use the displayed correction input and worktree to configure an existing exact-attempt native correction policy; resume this batch with that policy."
+    if reason == "correction_time_budget_exhausted":
+        return ("The original correction deadline has expired. Preserve this batch and review; "
+                "a new explicitly authorized attempt needs a supported recovery path. "
+                "Do not alter saved clocks or repeat an uncertain execution.")
     if reason:
         return "Inspect the retained check and independent review evidence. Resolve this exact input's blocker before continuing; do not rerun an uncertain process."
     return "Explicitly advance the frozen checks and independent review with the configured runtime authorities."
@@ -305,7 +309,14 @@ def project_batch_quality_evidence(*, workspace, project_key, root, run_id):
             result.update(status=automatic["status"], reason=automatic.get("reason", ""),
                           correction_job_id=automatic.get("worker_job_id", ""))
         if last.get("status") == "blocked" and result["acceptance_status"] != "accepted_by_review_policy":
-            result.update(status="blocked", reason=last.get("reason", ""))
+            previous = last.get("reason", "")
+            if (automatic and automatic.get("status") == "needs_human"
+                    and automatic.get("reason") == "correction_time_budget_exhausted"):
+                # The last attempted action is historical. Its error cannot
+                # hide the current, independently enforced deadline stop.
+                result.update(status="blocked", reason=automatic["reason"], previous_blocker=previous)
+            else:
+                result.update(status="blocked", reason=previous)
         if result.get("correction_job_id"):
             from goodteam_os.execution.correction_store import CorrectionAttemptStore
             authority = CorrectionAttemptStore(root, result["correction_job_id"])

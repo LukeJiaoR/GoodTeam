@@ -8,12 +8,12 @@ from goodteam_os.skills.review_capture import MAX_CAPTURE_BYTES, MAX_EVENT_BYTES
 
 
 def test_native_startup_warning_keeps_one_turn_and_command_provenance():
-    # Observed with the existing native 0.160.0: configuration warnings are
+    # Observed with the existing native CLI: configuration warnings are
     # item.completed/error between thread.started and turn.started.
     warning = {"type": "item.completed", "item": {
         "id": "warning-0", "type": "error", "message": "An unrecognized setting is ignored."}}
     command = {"id": "command-0", "type": "command_execution", "command": "read captured source"}
-    # A real 0.160.0 completed command event was 1,165,676 bytes, below
+    # A real completed command event was 1,165,676 bytes, below
     # the whole-channel limit but above the ordinary event limit.
     output = "source bytes\n" * 90000
     events = [

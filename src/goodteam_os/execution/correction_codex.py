@@ -1,6 +1,6 @@
 """Codex edit-only protocol; constructing a command grants no runtime authority.
 
-This 0.159.2 argv proposal requests native sandboxing, not verified confinement.
+This argv proposal requests native sandboxing, not verified confinement.
 Only the separately admitted native correction path uses it for dispatch.
 Native config, login, version and tool permissions are not probed here.
 """
@@ -10,19 +10,19 @@ import os
 import re
 
 from goodteam_os.skills.review_capture import capture_final_turn
+from goodteam_os.skills.codex_version import valid_codex_version
 
 from .correction_feedback import render_correction_input
 from .task_context import MAX_TASK_CONTEXT_BYTES
 from .task_snapshot import TaskInputError, canonical_bytes
 
-CLI_VERSION = "0.159.2"
 OUTPUT_SCHEMA = "goodteam.codex-correction-output.v1"
 
 
 def proposed_command(*, binary, home, workspace, model, version):
     """Pure host-side recipe, not a capability, selected route or executable probe."""
     paths = [Path(path) for path in (binary, home, workspace)]
-    if (version != CLI_VERSION or any(not p.is_absolute() or ".." in p.parts for p in paths)
+    if (not valid_codex_version(version) or any(not p.is_absolute() or ".." in p.parts for p in paths)
             or not isinstance(model, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model) is None):
         raise TaskInputError("correction_codex_contract_invalid")
     binary, home, workspace = paths

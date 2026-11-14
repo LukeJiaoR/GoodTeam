@@ -91,15 +91,16 @@ def _status(snapshot, *, chinese):
     if not grant:
         return "当前没有项目自动推进授权。" if chinese else "No project continuation is currently authorized."
     reason = grant.get("reason", "")
-    usage = f"{grant.get('manager_calls', 0)}/{grant.get('max_manager_calls', 0)}"
+    maximum = grant.get('max_manager_calls')
+    usage = f"{grant.get('manager_calls', 0)}/{maximum if maximum is not None else ('未设上限' if chinese else 'no limit')}"
     if chinese:
         text = f"自动推进状态：{grant.get('status')}；原因：{reason}。Manager 规划额度已用 {usage}。"
         if grant.get("status") in {"stopped", "exhausted", "completed"}:
-            text += "这份授权已经结束；继续执行需要新的有界方案和明确授权。"
+            text += "这份授权已经结束；继续执行需要确认新的任务范围。"
     else:
         text = f"Continuation: {grant.get('status')}; reason: {reason}. Manager planning calls used: {usage}."
         if grant.get("status") in {"stopped", "exhausted", "completed"}:
-            text += " This grant has ended; further execution needs a new bounded authorization."
+            text += " This grant has ended; confirm a new task scope to continue."
     return text
 
 

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from .codex_local import LocalLease
 
 from . import worker_requests as requests
-from .codex_contract import ADAPTER_VERSION, CODEX_BINARY_DIGEST, CODEX_VERSION, CodexContract
+from .codex_contract import ADAPTER_VERSION, CodexContract
 from .codex_container import CodexContainer
 from .codex_guard import source_bytes
 from .content import ContentSession, _bytes, _decode, _publish_immutable
@@ -42,7 +42,8 @@ class CodexLease:
                 or content_digest(self.seccomp_bytes) != self.contract.seccomp_digest
                 or not isinstance(self.session, ContentSession)
                 or self.session.adapter != "codex" or self.session.adapter_version != ADAPTER_VERSION
-                or self.session.binary_version != CODEX_VERSION or self.session.binary_digest != CODEX_BINARY_DIGEST
+                or self.session.binary_version != self.contract.binary_version
+                or self.session.binary_digest != self.contract.binary_digest
                 or self.session.config_digest != self.contract.digest or self.session.model != self.contract.model):
             raise SkillError("codex_admission_invalid", "Codex admission must bind the exact binary, policy, model and session.")
 
@@ -54,8 +55,8 @@ class CodexLease:
 class CodexReviewAdmission(ABC):
     """Internal host/provider authority; not user-installable Runtime config.
 
-    A strict implementation must independently establish the actual pinned binary and
-    image, native discovery inventory, enforced read/write and descendant
+    A strict implementation must independently establish the selected exact binary and
+    image, CLI/config compatibility, native discovery inventory, enforced read/write and descendant
     isolation, provider-only egress and provider request/spend/model ceilings.
     It must bind those to the original snapshot and fresh context, recheck
     revocation and in-flight budget on every operation, and keep authentication
