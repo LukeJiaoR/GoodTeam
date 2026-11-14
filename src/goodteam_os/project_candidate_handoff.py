@@ -37,16 +37,11 @@ def _source(*, workspace, project_key, root, value, key, allow_no_candidate=Fals
     if not batch:
         raise ValueError("The candidate's original batch is unavailable.")
     if allow_no_candidate:
-        from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
         from goodteam_os.project_iteration_execution import iteration_batch_report
 
         report = iteration_batch_report(workspace=workspace, project_key=project_key,
                                         root=Path(root), run_id=batch["run_id"])
-        previous = prepare_dispatch_workspace(Path(root), receipt["dispatch_run_id"], None)
-        frozen = batch.get("candidate_source")
-        if (previous.metadata.get("candidate_source") != frozen
-                or report.get("candidate_source") != frozen):
-            raise ValueError("The batch's starting candidate binding changed.")
+        frozen = _starting_candidate(root=Path(root), batch=batch, report=report)
         if (frozen is None
                 and not any((row.get("captured_result") or {}).get("changed_files")
                             for row in receipt["tasks"])):
@@ -62,6 +57,44 @@ def _source(*, workspace, project_key, root, value, key, allow_no_candidate=Fals
     return {"observation_key": key, "receipt_id": receipt["receipt_id"],
             "dispatch_run_id": receipt["dispatch_run_id"], "selected": selected, "source": source}
 
+
+
+def _starting_candidate(*, root, batch, report):
+    """Follow only recorded, hash-bound recovery baselines to the original batch."""
+    from goodteam_os.dispatch_workspace import prepare_dispatch_workspace, read_dispatch_recovery
+
+    original_id = batch["dispatch_run_id"]
+    commands = batch.get("recovery_commands") or {}
+    seen = set()
+    while report["run_id"] != original_id:
+        run_id = report["run_id"]
+        if run_id in seen or len(seen) >= len(commands):
+            raise ValueError("The candidate recovery chain is cyclic or incomplete.")
+        seen.add(run_id)
+        source = report.get("recovery_source")
+        matching = [command for command in commands.values()
+                    if command.get("dispatch_run_id") == run_id]
+        if (len(matching) != 1 or not isinstance(source, dict)
+                or matching[0].get("source") != source):
+            raise ValueError("The candidate recovery does not match its confirmed command.")
+        current = prepare_dispatch_workspace(root, run_id, None)
+        if (current.metadata.get("baseline_from") != source.get("run_id")
+                or current.metadata.get("candidate_source") is not None
+                or report.get("candidate_source") is not None):
+            raise ValueError("The candidate recovery baseline binding changed.")
+        parent = read_dispatch_recovery(root, source)
+        previous = prepare_dispatch_workspace(root, parent["run_id"], None)
+        if current.metadata["baseline_commit"] != previous.metadata["baseline_commit"]:
+            raise ValueError("The candidate recovery no longer shares its original baseline.")
+        report = parent
+    previous = prepare_dispatch_workspace(root, original_id, None)
+    frozen = batch.get("candidate_source")
+    if (previous.metadata.get("baseline_from") is not None
+            or report.get("recovery_source") is not None
+            or previous.metadata.get("candidate_source") != frozen
+            or report.get("candidate_source") != frozen):
+        raise ValueError("The batch's starting candidate binding changed.")
+    return frozen
 
 def verify_candidate_for_batch(*, workspace, project_key, root, batch):
     """Recheck the frozen source without granting it delivery or new authority."""
