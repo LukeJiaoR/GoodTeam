@@ -31,17 +31,19 @@ ITEM_STATUSES = {
     "completed",
     "failed",
     "rejected",
+    "transferred",
 }
 ACTIVE_STATUSES = {"active", "waiting", "paused"}
-TERMINAL_STATUSES = {"completed", "failed", "rejected"}
+TERMINAL_STATUSES = {"completed", "failed", "rejected", "transferred"}
 LEGAL_STATUS_TRANSITIONS = {
-    "queued": {"active", "failed"},
+    "queued": {"active", "failed", "transferred"},
     "active": {"waiting", "paused", "completed", "failed", "rejected"},
     "waiting": {"active", "paused", "failed", "rejected"},
     "paused": {"active", "failed", "rejected"},
     "completed": set(),
     "failed": set(),
     "rejected": set(),
+    "transferred": set(),
 }
 
 
@@ -168,6 +170,31 @@ class DurableOperatorQueue:
         state = self._read_state_file()
         active = self._active_items(state)
         return dict(active[0]) if active else None
+
+    def transfer_unstarted(self, item_id, capture):
+        """Atomically exclude legacy dispatch while recording a Manager receipt.
+
+        Capture may repeat after interruption; its source receipt must be
+        idempotent. This terminal state means transferred, not task acceptance.
+        """
+        with self._locked():
+            state = self._read_state_unlocked()
+            item = self._find_item(state, item_id)
+            if state["desired_state"] != "running":
+                return dict(item)
+            metadata = item.get("metadata", {})
+            if (item["status"] != "queued" or item["phase"] != "queued"
+                    or item.get("execution_id") or item.get("attempt")
+                    or item.get("operations") or metadata.get("pr_number")
+                    or metadata.get("pr_url") or metadata.get("head_sha")
+                    or metadata.get("decision") or metadata.get("review")):
+                raise QueueError("Operator item has possible execution effects; explicit handoff required.")
+            receipt = capture(dict(item))
+            item.update(status="transferred", phase="manager_handoff", updated_at=self.clock())
+            item["metadata"] = {**metadata, "manager_input": receipt}
+            self._commit_unlocked(state, item=item, event="manager_handoff",
+                                  payload={"manager_input": receipt, "task_accepted": False})
+            return dict(item)
 
     def claim_next(self) -> dict[str, Any] | None:
         with self._locked():
@@ -478,3 +505,4 @@ class DurableOperatorQueue:
             handle.flush()
             os.fsync(handle.fileno())
         temporary.replace(self.state_path)
+
