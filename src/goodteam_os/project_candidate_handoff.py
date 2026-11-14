@@ -21,10 +21,11 @@ def candidate_for_tasks(*, workspace, project_key, root, session, tasks, continu
     if (not previous.metadata.get("candidate_source")
             and not any((row.get("captured_result") or {}).get("changed_files") for row in receipt["tasks"])):
         return None
-    return _source(workspace=workspace, project_key=project_key, root=root, value=value, key=key)
+    return _source(workspace=workspace, project_key=project_key, root=root, value=value, key=key,
+                   allow_no_candidate=True)
 
 
-def _source(*, workspace, project_key, root, value, key):
+def _source(*, workspace, project_key, root, value, key, allow_no_candidate=False):
     from goodteam_os.project_batch_feedback import _read_observation, valid_receipt
     from goodteam_os.project_iteration_quality import _input
     from goodteam_os.project_outcome_discovery import authorization_digest
@@ -40,6 +41,18 @@ def _source(*, workspace, project_key, root, value, key):
     batch = session.get("project_task_batches", {}).get(receipt["batch_run_id"])
     if not batch:
         raise ValueError("The candidate's original batch is unavailable.")
+    if allow_no_candidate:
+        from goodteam_os.project_iteration_execution import iteration_batch_report
+
+        report = iteration_batch_report(workspace=workspace, project_key=project_key,
+                                        root=Path(root), run_id=batch["run_id"])
+        # These dispatcher outcomes explicitly produced no integrated candidate.
+        # Keep the verified feedback, but do not hand off partial Worker changes.
+        # Frozen candidate verification never takes this fallback.
+        if (report.get("all_ok") is False and report.get("integration") in (
+                {"status": "blocked", "reason": "worker_or_evidence_failed"},
+                {"status": "blocked", "reason": "file_collisions"})):
+            return None
     selected, source = _input(workspace, project_key, Path(root), batch)
     return {"observation_key": key, "receipt_id": receipt["receipt_id"],
             "dispatch_run_id": receipt["dispatch_run_id"], "selected": selected, "source": source}

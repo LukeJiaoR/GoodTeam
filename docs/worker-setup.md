@@ -1,5 +1,24 @@
 # Project setup for isolated Workers
 
+> **Temporarily unavailable after the #730 security review.** Automatic setup
+> now fails closed for both online and offline commands. The native
+> `:workspace` sandbox permits host reads: deleting environment credentials or
+> disabling network access does not prevent install hooks from reading
+> credential files and leaving them in outputs for later exfiltration.
+>
+> New configuration and previously captured setup invocations are rejected with
+> `worker_setup_read_isolation_unavailable`; installation is not silently skipped
+> and the agent is not started through this wrapper. Workers without
+> `worker_setup` keep their existing execution path. Restoring automatic setup
+> requires an implemented and verified host-read-isolated runtime, not a boolean
+> opt-in, credential denylist, or permission bypass.
+>
+> The configuration below documents the retained format, not a currently
+> executable setup capability. `network_access` accepts only explicit booleans
+> (including the YAML parser's `true`/`false` strings), never Python truthiness.
+
+## Retained configuration contract
+
 Configure the existing project installation command once in the local project
 configuration. Each ordinary CLI Worker runs it in its own captured workspace
 before starting the agent. The package manager can reuse a project cache while
