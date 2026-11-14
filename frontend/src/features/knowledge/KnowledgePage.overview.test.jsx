@@ -95,10 +95,10 @@ test('a previous-project error is hidden while the current project overview load
   const second = pending();
   knowledgeApi.getKnowledgeHome.mockRejectedValueOnce(new Error('FIRST overview failed')).mockReturnValueOnce(second.promise);
   open();
-  await screen.findByText('FIRST overview failed');
+  await screen.findByRole('alert');
   fireEvent.click(screen.getByRole('link', { name: 'Switch project' }));
   await screen.findByText('SECOND project');
-  expect(screen.queryByText('FIRST overview failed')).not.toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByText('product.states.loading')).toBeVisible();
   await act(async () => second.resolve({ facts: { confirmed_commands: ['SECOND confirmed command'] }, readiness: {} }));
   await screen.findByText('SECOND confirmed command');
@@ -108,9 +108,9 @@ test('retry has a fresh loading state and restores the same project overview', a
   const retry = pending();
   knowledgeApi.getKnowledgeHome.mockRejectedValueOnce(new Error('Temporary overview failure')).mockReturnValueOnce(retry.promise);
   open();
-  await screen.findByText('Temporary overview failure');
+  await screen.findByRole('alert');
   fireEvent.click(screen.getByRole('button', { name: 'product.actions.retry' }));
-  expect(screen.queryByText('Temporary overview failure')).not.toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByText('product.states.loading')).toBeVisible();
   expect(screen.queryByText('knowledge.overview.empty')).not.toBeInTheDocument();
   await act(async () => retry.resolve(firstHome));
@@ -145,7 +145,8 @@ test.each(['success', 'error'])('returning before the intervening project loads 
   else knowledgeApi.getKnowledgeHome.mockRejectedValueOnce(new Error('Earlier FIRST failure'));
   knowledgeApi.getKnowledgeHome.mockReturnValueOnce(second.promise).mockReturnValueOnce(returning.promise);
   open();
-  await screen.findByText(kind === 'success' ? 'FIRST confirmed command' : 'Earlier FIRST failure');
+  if (kind === 'success') await screen.findByText('FIRST confirmed command');
+  else await screen.findByRole('alert');
   const oldSignal = knowledgeApi.getKnowledgeHome.mock.calls[0][1].signal;
   fireEvent.click(screen.getByRole('link', { name: 'Switch project' }));
   await screen.findByText('SECOND project');
@@ -154,7 +155,7 @@ test.each(['success', 'error'])('returning before the intervening project loads 
   await screen.findByText('FIRST project');
   expect(screen.queryByText('FIRST confirmed command')).not.toBeInTheDocument();
   expect(screen.queryByText('FIRST repository constraint')).not.toBeInTheDocument();
-  expect(screen.queryByText('Earlier FIRST failure')).not.toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByText('product.states.loading')).toBeVisible();
   await act(async () => second.resolve({ facts: { confirmed_commands: ['Late SECOND command'] }, readiness: {} }));
   expect(screen.queryByText('Late SECOND command')).not.toBeInTheDocument();

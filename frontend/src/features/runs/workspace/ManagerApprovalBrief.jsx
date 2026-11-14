@@ -1,3 +1,10 @@
+/**
+ * [INPUT]: 依赖审批摘要、展示工具与 SourceEvidence
+ * [OUTPUT]: 提供ManagerApprovalBrief
+ * [POS]: 展示审批范围及后果，完整证据保留在侧栏
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
+import SourceEvidence from '../../../components/ui/SourceEvidence';
 import FileLocation from '../../../components/ui/FileLocation';
 import { fileName, isAbsoluteFilePath } from '../../../lib/presentation/filePresentation';
 import {
@@ -258,9 +265,8 @@ export default function ManagerApprovalBrief({ brief, t, compact = false }) {
     )}</ul> : null}
     <div className="approval-decision-summary__consequence"><strong>{t('work.manager.approvalBrief.afterApproval')}</strong><p>{approvalBriefConsequence(brief, t)}</p></div>
     {recommendation.verdict ? <p className="approval-decision-summary__advice">{translated(t, `work.manager.approvalBrief.recommendations.${recommendation.verdict}`, recommendation.verdict)}{recommendation.confidence ? ` · ${t('work.manager.approvalBrief.confidence', { confidence: briefStatusLabel(recommendation.confidence, t) })}` : ''}</p> : null}
-    <details className="approval-decision-summary__details">
-      <summary>{t('work.approvalCard.details')}</summary>
+    <SourceEvidence t={t} label={t('work.approvalCard.details')} title={t('work.approvalCard.details')}>
       <FullManagerApprovalBrief brief={brief} t={t} />
-    </details>
+    </SourceEvidence>
   </div>;
 }

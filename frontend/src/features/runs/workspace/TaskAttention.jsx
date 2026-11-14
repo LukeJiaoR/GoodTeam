@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖任务阻塞、审批摘要与原操作回调
+ * [OUTPUT]: 提供TaskAttention
+ * [POS]: 展示待决事项和恢复操作，保留审批决策边界
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { blockerSummary, isArtifactRevisionBlocker } from './blockerPresentation';
 import { useState } from 'react';
 import { AlertCircle } from 'lucide-react';
@@ -5,6 +11,7 @@ import { Link } from 'react-router-dom';
 import Button from '../../../components/ui/Button';
 import WorkflowRetryAction from './WorkflowRetryAction';
 import StatusBadge from '../../../components/ui/StatusBadge';
+import ProductError from '../../../components/ui/ProductError';
 import { routes } from '../../../lib/routing/routes';
 import { translated } from './presentationUtils';
 import ManagerApprovalBrief from './ManagerApprovalBrief';
@@ -41,7 +48,6 @@ export function TaskAttention({
         <p>{t('work.blocker.lastHeartbeat')} {new Date(job.heartbeat_at || job.updated_at).toLocaleString()}</p>
       </li>)}</ul>
       <p>{t('work.blocker.heartbeatOnly')}</p>
-      <details><summary>{t('work.blocker.previousFailure')}</summary><pre>{attention.reason}</pre></details>
       <Button disabled>{t('work.blocker.executing')}</Button>
     </section>
   );
@@ -52,8 +58,7 @@ export function TaskAttention({
       <p>{t(artifactRevision ? 'work.blocker.artifactRevisionHelp' : String(attention.reason || '').includes('[rate_limit') ? 'work.blocker.actionHelp' : 'work.blocker.genericHelp')}</p>
       {failureJobs.length ? <p className="task-blocker-record">{t('work.blocker.recorded')} <time dateTime={failureJobs.map(job => job.updated_at).sort().at(-1)}>{new Date(failureJobs.map(job => job.updated_at).sort().at(-1)).toLocaleString()}</time></p> : null}
       {projectKey ? <Link className="product-button product-button--secondary" to={artifactRevision ? routes.projectReviewItem(projectKey, 'rfc') : routes.projectTeam(projectKey)}>{t(artifactRevision ? 'work.blocker.reviseRfc' : 'work.blocker.configure')}</Link> : null}
-      <details><summary>{t('work.blocker.details')}</summary><pre>{attention.reason}</pre></details>
-      {error ? <p role="alert">{t('work.blocker.retryFailed')} {error.message || String(error)}</p> : null}
+      {error ? <ProductError error={error} t={t} /> : null}
       {busy === 'retry' ? <p role="status">{t('work.blocker.retrying')}</p> : null}
       {!artifactRevision && (attention.actions || []).includes('retry') && onRetry ? <WorkflowRetryAction retry={retry} busy={busy === 'retry'} onRetry={onRetry} t={t} /> : null}
     </section>
@@ -82,12 +87,12 @@ export function TaskAttention({
         <span>{t('work.manager.attention')}</span>
       </p>
       <h3 id="team-attention-title">
-        {translated(t, `work.manager.attentionKinds.${attention.kind}`, attention.reason)}
+        {translated(t, `work.manager.attentionKinds.${attention.kind}`, t('work.manager.attention'))}
       </h3>
       {approvalBrief ? (
         <ManagerApprovalBrief brief={approvalBrief} t={t} compact={!requiresInformedWorkApproval(approvalBrief)} />
       ) : (
-        <p>{translated(t, `work.manager.attentionReasons.${attention.reason}`, attention.reason)}</p>
+        <p>{translated(t, `work.manager.attentionReasons.${attention.reason}`, t('work.current.inputNeeded'))}</p>
       )}
       <div className="team-attention__actions">
         {!intent && actions.has('approve') ? (

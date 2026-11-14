@@ -12,6 +12,7 @@ it('offers a current bilingual Manager handoff through existing controls without
   const notice = { id: 'continuation:grant:notice', continuation_id: 'grant', phase: 'no_followup',
     reason: 'discovery_no_followup', kind: 'needs_input', delivered_task_ids: ['APP-1'],
     delivery_receipt_ids: ['sha256:receipt'], rationale: 'More project context is needed.',
+    next_action: 'raw_cli_authorization --input /private/candidate',
     batches_started: 1, max_batches: 2, manager_calls: 2, max_manager_calls: 2 };
   const value = { id: 'grant', status: 'completed', reason: notice.reason,
     batches_started: 1, max_batches: 2, manager_calls: 2, max_manager_calls: 2 };
@@ -29,6 +30,9 @@ it('offers a current bilingual Manager handoff through existing controls without
   expect(screen.getByText(/这不代表项目已经完成/)).toBeInTheDocument();
   expect(screen.getByText(/Manager 判断依据：More project context is needed/)).toBeInTheDocument();
   expect(screen.queryByText(item.content)).not.toBeInTheDocument();
+  expect(view.container).not.toHaveTextContent(notice.delivery_receipt_ids[0]);
+  expect(view.container).not.toHaveTextContent(notice.next_action);
+  expect(screen.queryByRole('button', { name: '查看源证据' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '查看迭代与处理操作' }));
   expect(screen.getByRole('region', { name: '项目自动迭代' })).toHaveFocus();
   expect(onAction).not.toHaveBeenCalled();
@@ -136,6 +140,12 @@ it('offers a current bilingual Manager handoff through existing controls without
     language="en" t={(key, params) => translate('en', key, params)} onAssistantAction={onAction} />);
   expect(screen.getByText(/Automatic project iteration was stopped/)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'View iteration and actions' })).not.toBeInTheDocument();
+  // An unfamiliar machine event cannot start forwarding raw content by default.
+  const raw = 'new_runtime_failure: /private/candidate/receipt.json';
+  view.rerender(<ol><TimelineItem item={{ actor: 'task_assistant', event: 'new_runtime_failure', content: raw }}
+    language="en" t={(key, params) => translate('en', key, params)} /></ol>);
+  expect(view.container).not.toHaveTextContent(raw);
+  expect(screen.queryByRole('button', { name: 'View source evidence' })).not.toBeInTheDocument();
   localStorage.clear();
   vi.unstubAllGlobals();
 });

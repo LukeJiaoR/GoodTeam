@@ -1,3 +1,7 @@
+# [INPUT]: 依赖接续状态与已记录的交付凭据
+# [OUTPUT]: 提供接续通知投影
+# [POS]: 生成可读状态通知，原始证据保留在事件详情
+# [PROTOCOL]: Update this header on change, then check AGENTS.md
 """Presentation of existing continuation state; never an execution authority."""
 from hashlib import sha256
 import json
@@ -90,19 +94,14 @@ def project_continuation_notice(session):
 
 def notice_content(notice):
     phase = notice["phase"]
-    batches = notice['max_batches'] if notice['max_batches'] is not None else "no limit"
-    calls = notice['max_manager_calls'] if notice['max_manager_calls'] is not None else "no limit"
-    lines = [_COPY[phase], "Reason: " + notice["reason"],
-             f"Batch reservations: {notice['batches_started']}/{batches}; "
-             f"Manager reservations: {notice['manager_calls']}/{calls}."]
+    lines = [_COPY[phase]]
     for question in notice.get("human_questions", []):
         lines.extend([question["question"], question["why_human"], "/answer " + question["id"] + " <your answer>"])
     if notice["delivered_task_ids"]:
         lines.append("Recorded deliveries: " + ", ".join(notice["delivered_task_ids"]))
-        lines.append("Delivery receipts: " + ", ".join(notice["delivery_receipt_ids"]))
     if notice["rationale"]:
         lines.append("Manager rationale: " + notice["rationale"])
-    lines.append("Next step: " + (notice["next_action"] or _NEXT[phase]))
+    lines.append("Next step: " + _NEXT[phase])
     return "\n\n".join(lines)
 
 

@@ -39,6 +39,8 @@ def test_terminal_handoff_is_atomic_bound_to_delivery_and_retains_stop(tmp_path,
     assert terminal["discovery_last"]["rationale"] in handoff["content"]
     assert handoff["details"]["delivered_task_ids"] == ["DEMO-1"]
     assert handoff["details"]["delivery_receipt_ids"] == ["sha256:own"]
+    assert "sha256:own" not in handoff["content"]
+    assert "Batch reservations:" not in handoff["content"]
     assert session["attention_request"] == attention  # Do not overwrite another gate.
     _save(store, terminal)
     assert store.read()["timeline"] == session["timeline"]

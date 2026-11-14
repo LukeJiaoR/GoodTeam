@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖时间线事件、文案投影与 SourceEvidence
+ * [OUTPUT]: 提供TeamAvatar、TimelineItem
+ * [POS]: 展示对话及状态，来源报告通过独立侧栏呈现
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import {
   AlertCircle,
   AlertTriangle,
@@ -13,10 +19,12 @@ import {
 import { timelineReadingId } from './conversationReading';
 import MarkdownView from '../../../components/ui/MarkdownView';
 import ProjectUnderstandingReply from './ProjectUnderstandingReply';
-import { timelineCopy } from './timelineCopy';
+import { hasConversationContent, timelineCopy } from './timelineCopy';
 import { deliveryLabel } from './conversationFeedback';
 import { focusWorkContext } from './currentWorkContext';
 import { AttachmentList } from './ConversationAttachments';
+import SourceEvidence from '../../../components/ui/SourceEvidence';
+import { resultEvidenceSections } from '../../../lib/presentation/sourceEvidence';
 
 function TeamAvatar({ label, manager = false }) {
   const initial = String(label || '').trim().slice(0, 1).toUpperCase() || 'G';
@@ -103,7 +111,7 @@ function extractSystemDetails(item, copy) {
   return { entries, extraContent, hasDetails: entries.length > 0 || Boolean(extraContent) };
 }
 
-function SystemTimelineItem({ item, copy, metadata }) {
+function SystemTimelineItem({ item, copy, evidence, metadata }) {
   const meta = getSystemEventMeta(item.event, item.kind);
   const Icon = meta.Icon;
   const { entries, extraContent, hasDetails } = extractSystemDetails(item, copy);
@@ -117,6 +125,7 @@ function SystemTimelineItem({ item, copy, metadata }) {
       {item.details?.pr_number ? (
         <span className="team-system-tag">#{item.details.pr_number}</span>
       ) : null}
+      {evidence}
       {metadata}
       {hasDetails ? (
         <span className="team-system-card__toggle" aria-hidden="true">
@@ -175,20 +184,25 @@ function TimelineItem({ item, language, t, continuationNoticeId }) {
   const actorLabel = item.actor === 'user' ? t('work.manager.you') : t('work.manager.name');
   const copy = timelineCopy(item, t);
   const isContinuationHandoff = item.event === 'project_continuation_handoff' && item.details?.phase;
+  // Read old inspection messages; new requests use the normal task flow.
   const isUnderstanding = ['project_understanding_ready', 'project_understanding_incomplete'].includes(item.event);
   const isSystem = item.actor === 'system' || (item.actor !== 'user' && SYSTEM_TIMELINE_EVENTS.has(item.event));
+  const source = item.details?.source_evidence;
+  const evidence = item.actor !== 'user'
+    ? <SourceEvidence compact t={t} sections={resultEvidenceSections(source?.snapshot || source, t)} /> : null;
   const metadata = formatted ? (
     <div className="conversation-message-metadata">
       <time className="conversation-message-time" dateTime={itemTimestamp} title={`${actorLabel} · ${formatted}`}>{timeOnly || formatted}</time>
     </div>
   ) : null;
-  const hasDoubleContent = Boolean(item.content && copy && !isContinuationHandoff && !isUnderstanding && copy !== item.content);
+  const hasDoubleContent = Boolean(item.content && hasConversationContent(item) && !isContinuationHandoff && !isUnderstanding && copy !== item.content);
 
   if (isSystem) {
     return (
       <SystemTimelineItem
         item={item}
         copy={copy}
+        evidence={evidence}
         metadata={metadata}
       />
     );
@@ -215,6 +229,7 @@ function TimelineItem({ item, language, t, continuationNoticeId }) {
           })}>{t('work.manager.continuation.open')}</button> : null}
         <div className="team-manager-event__meta">
           {item.delivery_status ? <span role="status">{deliveryLabel(language, item.delivery_status)}</span> : null}
+          {evidence}
           {metadata}
         </div>
       </div>

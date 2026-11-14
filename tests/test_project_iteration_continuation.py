@@ -226,7 +226,8 @@ def test_competing_manual_recommendation_cannot_replace_authorized_queue_handoff
     assert result["status"] == "blocked" and "recommendation changed" in result["reason"]
     handoff = TaskAssistantSessionStore(tmp_path, "DEMO").read()["timeline"][-1]
     assert handoff["event"] == "project_continuation_handoff" and handoff["details"]["phase"] == "blocked"
-    assert result["reason"] in handoff["content"] and "Next step:" in handoff["content"]
+    assert handoff["details"]["reason"] == result["reason"]
+    assert result["reason"] not in handoff["content"]
     assert all(task["status"] == "todo" for task in ledger.list_tasks())
     assert TaskAssistantSessionStore(tmp_path, "DEMO").read().get("queued_task_proposals", []) == []
 

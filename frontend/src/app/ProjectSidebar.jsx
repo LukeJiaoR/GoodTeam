@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖路由、项目状态与翻译
+ * [OUTPUT]: 提供ProjectSidebar
+ * [POS]: 项目导航入口，持续保留工作页链接
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { BookOpen, ChevronRight, ClipboardCheck, Folder, FolderKanban, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, Search, Settings2, Sun, Users, Workflow } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { projectApi } from '../features/projects/projectApi';
@@ -45,7 +51,7 @@ export default function ProjectSidebar({ projectKey, workRoute, destinations, se
         </div>
         {projectKey ? <nav className="studio-navigation" aria-label={t('product.navigation.projectLabel')}>
           <p className="studio-project-tools-label">{projectKey} · {t('product.studio.projectTools')}</p>
-          {PAGES.filter(([key]) => key !== 'work' || !workRoute).map(([key, Icon, label]) => <NavLink className={navClass} to={destinations[key]} key={key} aria-label={t(label)}><Icon size={15} aria-hidden="true" /><span>{t(label)}</span></NavLink>)}
+          {PAGES.map(([key, Icon, label]) => <NavLink className={navClass} to={destinations[key]} key={key} aria-label={t(label)}><Icon size={15} aria-hidden="true" /><span>{t(label)}</span></NavLink>)}
         </nav> : null}
         <div className="studio-sidebar__footer">
           <NavLink className={navClass} to={settingsDestination} aria-label={t('product.studio.settings')}><Settings2 size={15} aria-hidden="true" /><span>{t('product.studio.settings')}</span></NavLink>

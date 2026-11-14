@@ -5,11 +5,49 @@ from types import SimpleNamespace
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from goodteam_os import assistant_requests, manager_dialogue
+from goodteam_os import assistant_requests, manager_dialogue, project_iteration_execution
 from goodteam_os.projects import write_project_config
 from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from test_dispatch_isolation import repository
+
+
+def test_manager_interprets_retained_failure_without_forwarding_or_changing_stopped_authority(tmp_path, monkeypatch):
+    root = repository(tmp_path / "source")
+    config = write_project_config(tmp_path / "projects", "DEMO", "Demo", repo_path=str(root), worker_mode="fake")
+    store = TaskAssistantSessionStore(tmp_path, "DEMO")
+    raw = "correction_seal_untracked: /private/candidate/check-output"
+    grant = {"id": "original-grant", "status": "stopped", "reason": raw,
+             "manager_calls": 1, "max_manager_calls": 2, "pending_batch": {"run_id": "task-batch-original"}}
+    store._mutate(lambda session: {**session, "project_continuation": grant,
+        "project_task_batches": {"task-batch-original": {"run_id": "task-batch-original",
+            "status": "blocked", "project_root": str(root.resolve()),
+            "expected_continuation_id": grant["id"], "error": raw}}})
+    monkeypatch.setattr(project_iteration_execution, "iteration_batch_report", lambda **kwargs: {
+        "integration": {}, "jobs": [{"project_task_id": "DEMO-1", "outcome": "failed", "error": raw}]})
+    checkpoint = InMemorySaver()
+    monkeypatch.setattr(manager_dialogue, "database", lambda: SimpleNamespace(manager_checkpointer=lambda: checkpoint))
+    monkeypatch.setattr(assistant_requests, "database_configured", lambda: True)
+    explanation = "检查产物影响了候选核验，尚不能确认交付。后续推进已停止，已有修正结果仍保留；需要先核实候选状态。"
+    calls = []
+
+    def manager(**request):
+        calls.append(request)
+        payload = request["context"].split("Fresh continuation/batch/attention (read-only, never authorization): ", 1)[1].split("\n", 1)[0]
+        snapshot = json.loads(payload)
+        assert snapshot["worker_results"][0]["error"] == raw
+        return {"intent": "project_operation", "response": explanation,
+                "project_operation": {"kind": "explain", "target_id": grant["id"]}}
+
+    service = TaskAssistantService(tmp_path, project_config=config, manager_turn=manager)
+    result = service.send_message(project_key="DEMO", root=root, text="为什么停止，哪些结果还在？", message_id="question")
+    reply = result["session"]["timeline"][-1]
+    assert reply["content"] == explanation and raw not in reply["content"]
+    assert reply["details"]["source_evidence"]["worker_results"][0]["error"] == raw
+    assert reply["details"]["actions_applied"] is False
+    assert store.read()["project_continuation"] == grant
+    service.send_message(project_key="DEMO", root=root, text="为什么停止，哪些结果还在？", message_id="question")
+    assert len(calls) == 1
 
 
 def test_chat_followup_reuses_only_current_active_continuation_outside_conversation_lock(tmp_path, monkeypatch):

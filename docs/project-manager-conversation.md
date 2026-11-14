@@ -202,6 +202,36 @@ import and ordinary research intake. The existing
 → verified delivery → pick a different task contract. These fixture checks do not
 establish real-model research quality or the complete #686 loop.
 
+## Conversation and source evidence
+
+The Manager owns the explanation of observed results, their impact, uncertainty,
+remaining work and necessary decisions. These belong in the conversation before
+the user opens any evidence. Incomplete repository inspection must report its
+partial findings, coverage limits and unfinished follow-up; it is not a completed
+project assessment. Manager recommendations and implementation summaries must
+also remain readable in the conversation. Known failures receive a readable
+summary; an unknown failure must not fall back to its raw message or code.
+
+Source evidence opens only on an explicit user click in the existing right-side
+`WorkspacePanel`, outside the conversation DOM. It displays original reports,
+findings, source excerpts and retained check output, not JSON request objects,
+snapshots or debugging envelopes. Ordinary requests, status notifications and
+API errors do not manufacture an evidence entry. Missing readable output is
+reported honestly rather than replaced by its hash or request parameters.
+Batch report reads reuse existing read-only APIs and bind the displayed review
+to its candidate and check receipt. Viewing or closing never retries a request
+or approves work. Original structured records remain in storage; they are not
+automatically rendered. Delivery's exact candidate and landed-version bindings
+remain visible in delivery confirmations, including chat confirmations.
+Required approval scope, risks and consequences remain visible; source records
+are available separately for deeper inspection.
+
+The existing Manager receives retained Worker and configured quality evidence
+when answering continuation questions. Its explanation remains available after
+an authorization ends, without resuming execution. This does not implement a new
+automatic failure diagnosis/recovery loop or grant new actions or model budget.
+
+
 ## Archiving the displayed task (#417)
 
 `POST /api/terminate` (and `/terminate`) requires `project_key` and a nonempty

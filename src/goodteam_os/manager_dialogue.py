@@ -1,3 +1,7 @@
+# [INPUT]: 依赖LangGraph、接续状态和原批次服务
+# [OUTPUT]: 提供current_context、run_dialogue
+# [POS]: 读取结果供 Manager 解读，原服务继续拥有执行权限
+# [PROTOCOL]: Update this header on change, then check AGENTS.md
 """Bounded Manager conversation runtime; original services retain all authority."""
 from __future__ import annotations
 
@@ -48,12 +52,20 @@ def current_context(store, root):
     batch = session.get("project_task_batches", {}).get(run_id) or {}
     snapshot = {"continuation": grant, "attention": session.get("attention_request"),
                 "batch": {key: batch.get(key) for key in (
-                    "run_id", "status", "task_ids", "quality", "delivery_receipt", "expected_continuation_id")}}
+                    "run_id", "status", "task_ids", "quality", "recovery", "error", "delivery_receipt", "expected_continuation_id")}}
     if run_id and batch.get("project_root") == str(root.resolve()):
         try:
             report = iteration_batch_report(workspace=store.workspace, project_key=store.project_key,
                                              root=root, run_id=run_id)
             snapshot["integration"] = report.get("integration") or {}
+            snapshot["worker_results"] = [{key: job[key] for key in (
+                "project_task_id", "job_id", "outcome", "summary", "reason", "error", "result_commit") if key in job}
+                for job in report.get("jobs", [])]
+            if (batch.get("quality") or {}).get("required"):
+                from goodteam_os.project_iteration_quality import project_batch_quality_evidence
+
+                snapshot["quality_evidence"] = project_batch_quality_evidence(
+                    workspace=store.workspace, project_key=store.project_key, root=root, run_id=run_id)
             snapshot["landed_commit"] = _read_git(root, ["rev-parse", "HEAD"]).decode().strip()
         except (ValueError, OSError) as exc:
             snapshot["evidence_unavailable"] = str(exc)
@@ -75,11 +87,13 @@ def _model_context(snapshot, session):
             "question_board": question_board({**session, "project_continuation": snapshot["continuation"]})}
 
 
-def _reply(store, incoming, content, *, operation=None, receipt=None, execution=None):
+def _reply(store, incoming, content, *, operation=None, receipt=None, execution=None, evidence=None):
     from goodteam_os.assistant_requests import update_request
 
     details = {"actions_applied": receipt is not None, "operation": operation,
                "receipt": receipt, "manager_execution": execution or {}}
+    if evidence is not None:
+        details["source_evidence"] = evidence
     update_request(store, incoming["message_id"], phase="applying", interpretation={
         "intent": "ambiguous", "response": content, **details})
     store.append_event(f"reply:{incoming['message_id']}", "conversation_replied", content=content, details=details)
@@ -90,17 +104,18 @@ def _status(snapshot, *, chinese):
     grant = snapshot["continuation"]
     if not grant:
         return "当前没有项目自动推进授权。" if chinese else "No project continuation is currently authorized."
-    reason = grant.get("reason", "")
-    maximum = grant.get('max_manager_calls')
-    usage = f"{grant.get('manager_calls', 0)}/{maximum if maximum is not None else ('未设上限' if chinese else 'no limit')}"
-    if chinese:
-        text = f"自动推进状态：{grant.get('status')}；原因：{reason}。Manager 规划额度已用 {usage}。"
-        if grant.get("status") in {"stopped", "exhausted", "completed"}:
-            text += "这份授权已经结束；继续执行需要确认新的任务范围。"
-    else:
-        text = f"Continuation: {grant.get('status')}; reason: {reason}. Manager planning calls used: {usage}."
-        if grant.get("status") in {"stopped", "exhausted", "completed"}:
-            text += " This grant has ended; confirm a new task scope to continue."
+    labels = ({"active": "项目仍在原授权内推进。", "blocked": "项目推进遇到阻塞，尚需核实处理结果。",
+               "stopped": "后续自动推进已停止，已有结果和证据已保留。",
+               "exhausted": "本次授权额度已用完，后续自动推进已停止。", "completed": "本次获准的项目推进已结束。"}
+              if chinese else
+              {"active": "The project is proceeding within its existing authorization.",
+               "blocked": "Project progress is blocked; its outcome still needs verification.",
+               "stopped": "Future automatic continuation stopped; existing results and evidence are preserved.",
+               "exhausted": "The approved allowance has been used; future automatic continuation stopped.",
+               "completed": "This authorized project iteration has ended."})
+    text = labels.get(grant.get("status"), "当前推进状态尚待核实。" if chinese else "The current progress still needs verification.")
+    if grant.get("status") in {"stopped", "exhausted", "completed"}:
+        text += (" 继续执行需要新的明确授权。" if chinese else " Further execution needs new explicit authorization.")
     return text
 
 
@@ -254,15 +269,14 @@ def run_dialogue(service, *, store, project_key, root, text, message_id, attempt
                 operation="stop_project_continuation", receipt=receipt, execution=execution)}
         if operation.get("kind") == "confirm_delivery":
             pending, content = _propose_delivery(store, root, snapshot, turn_input, chinese)
-            return {"pending": pending, "result": _reply(store, turn_input, content, execution=execution)}
+            return {"pending": pending, "result": _reply(store, turn_input, content, execution=execution, evidence=snapshot)}
         if operation.get("kind") or snapshot["continuation"] and phrase in _CONFIRM:
-            ended = snapshot["continuation"].get("status") in {"stopped", "exhausted", "completed"}
-            content = _status(snapshot, chinese=chinese) if ended or phrase in _CONFIRM else str(
+            content = _status(snapshot, chinese=chinese) if phrase in _CONFIRM else str(
                 (turn or {}).get("response") or _status(snapshot, chinese=chinese))
             if operation.get("kind") == "stop_continuation":
                 content = ("尚未停止；如需停止当前自动推进，请回复“停止自动推进”。" if chinese else
                            "No stop was applied. Reply 'stop continuation' to stop the current automatic continuation.")
-            return {"pending": pending, "result": _reply(store, turn_input, content, execution=execution)}
+            return {"pending": pending, "result": _reply(store, turn_input, content, execution=execution, evidence=snapshot)}
 
         # Reuse a parsed turn without calling the CLI twice. Existing services
         # still own drafts, Team proposals and exact-target task discussions.
