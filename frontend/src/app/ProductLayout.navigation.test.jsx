@@ -28,6 +28,7 @@ beforeEach(() => {
 test('navigation returns to the selected historical task and exact memory source after visiting another page', async () => {
   const user = userEvent.setup();
   const router = openRoute('/projects/one/work/runs/history-1?view=outcomes');
+  expect(screen.getByRole('link', { name: 'Workbench' })).toHaveAttribute('aria-current', 'page');
   await user.click(screen.getByRole('link', { name: 'Knowledge base' }));
   await act(() => router.navigate('/projects/one/knowledge?view=memory&role=builder&q=source&event=event-1&event_project=two'));
   await user.click(screen.getByRole('link', { name: 'Team' }));

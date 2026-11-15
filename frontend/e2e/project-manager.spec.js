@@ -28,6 +28,86 @@ test('project import waits for the user and research uses ordinary task intake',
   expect(automaticWork).toEqual([`/api/projects/${fixture.key}/task-assistant/messages`]);
 });
 
+test('only real source reports offer a side panel, without request diagnostics or conversation pollution', async ({ page, fixture }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await importProject(page, fixture);
+  const manager = page.getByRole('region', { name: 'Task Assistant', exact: true });
+  const endpoint = `/api/projects/${fixture.key}/task-assistant/messages`;
+  const source = { code: 'unmapped_execution_failure', message: 'Internal check failed at /private/candidate/check.py',
+    request_id: 'original-request', details: { receipt: 'sha256:original-evidence' } };
+  let posts = 0;
+  // An isolated browser response fixture; no model or Worker is started.
+  await page.route(`**${endpoint}`, route => {
+    posts += 1;
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify(source) });
+  });
+  await manager.getByRole('textbox', { name: 'Message', exact: true }).fill('Explain the current project status.');
+  await manager.getByRole('button', { name: 'Send', exact: true }).click();
+  const alert = manager.getByRole('alert');
+  await expect(alert).toBeVisible();
+  await expect(manager).not.toContainText(source.message);
+  await expect(manager).not.toContainText(source.code);
+  await expect(alert.getByRole('button', { name: 'View source evidence', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const reportText = 'Added keyboard navigation to the project list. The focused navigation check passed.';
+  await page.route('**/api/state?*', async route => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (new URL(route.request().url()).searchParams.get('project') === fixture.key) {
+      payload.project_assistant.timeline.push({ id: 'readable-source-fixture', actor: 'task_assistant',
+        event: 'conversation_replied', content: 'The navigation implementation is ready for review.',
+        details: { manager_execution: { request: { prompt: 'internal-request-body' } }, source_evidence: {
+          worker_results: [{ project_task_id: `${fixture.key}-1`, summary: reportText, job_id: 'internal-worker-id' }],
+          request: { prompt: 'internal-request-body' },
+        } } });
+      payload.project_assistant.timeline.push({ id: 'incomplete-inspection-fixture', actor: 'task_assistant',
+        event: 'project_understanding_incomplete',
+        content: '技术栈 / Stack: React, Python\n入口 / Entry points: frontend/src/main.jsx\n命令 / Commands: npm run build\n风险 / Risks: Repository scan reached the bounded entry limit; deeper indexing is recommended.',
+        details: { inventory_scan: { complete: false, files_seen: 500, directories_seen: 30, snapshot_omitted_files: 2 } } });
+    }
+    await route.fulfill({ response, json: payload });
+  });
+  await page.reload();
+  const inspection = manager.locator('.team-manager-event').filter({ hasText: 'This project uses React, Python.' });
+  await expect(inspection).toContainText('Some files were not examined');
+  await expect(inspection).toContainText('Project inspection is not finished');
+  await expect(inspection).not.toContainText('npm run build');
+  await inspection.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('partial-inspection-conversation.png'), animations: 'disabled' });
+  const message = manager.locator('.team-manager-event').filter({ hasText: 'The navigation implementation is ready for review.' });
+  await expect(manager).not.toContainText(reportText);
+  const open = message.getByRole('button', { name: 'View source evidence', exact: true });
+  await open.click();
+  const panel = page.getByRole('dialog', { name: 'Source evidence', exact: true });
+  await expect(panel).toContainText(reportText);
+  await expect(panel).not.toContainText('internal-request-body');
+  await expect(panel).not.toContainText('internal-worker-id');
+  await expect(panel.locator('pre')).toHaveCount(0);
+  await expect(manager).not.toContainText(reportText);
+  expect(await panel.evaluate(node => node.closest('.team-pane--manager') === null)).toBe(true);
+  const box = await panel.boundingBox();
+  expect(box.x).toBeGreaterThan(0);
+  expect(box.x + box.width).toBeCloseTo(1440, 0);
+  const screenshot = testInfo.outputPath('readable-source-evidence.png');
+  await page.screenshot({ path: screenshot, animations: 'disabled' });
+  await testInfo.attach('conversation-source-evidence-side-panel', { path: screenshot, contentType: 'image/png' });
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+  await expect(open).toBeFocused();
+  await inspection.getByRole('button', { name: 'View entry files and discovered commands' }).click();
+  await expect(panel).toContainText('npm run build');
+  await expect(panel).not.toContainText('inventory_scan');
+  await page.keyboard.press('Escape');
+  expect(posts).toBe(1);
+  expect(errors).toEqual([]);
+  // Chromium reports the deliberately injected HTTP failure to its console.
+  expect(fixture.errors).toHaveLength(1);
+  expect(fixture.errors[0]).toContain('503');
+  fixture.errors.splice(0, 1);
+});
+
 test('project Manager keeps chatting across tasks and saves future work without assigning it to itself', async ({ page, fixture }, testInfo) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const evidence = [];

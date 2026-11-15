@@ -187,3 +187,12 @@ This repository uses OpenWiki for recurring code documentation. Start with `open
 The OpenWiki GitHub Actions workflow is manual-only. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting an authorized OpenWiki run regenerate them.
 
 <!-- OPENWIKI:END -->
+
+## Conversation evidence source maps
+
+- `frontend/src/components/ui/AGENTS.md`: 通用组件与来源侧栏。
+- `frontend/src/features/runs/workspace/AGENTS.md`: 对话、接续和交付控件。
+- `frontend/src/lib/presentation/AGENTS.md`: 展示投影与来源内容筛选。
+
+来源侧栏复用 WorkspacePanel。执行和审批仍由原服务授权。
+[PROTOCOL]: Update this header on change, then check AGENTS.md

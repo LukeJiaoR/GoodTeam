@@ -1,4 +1,22 @@
+/**
+ * [INPUT]: 依赖时间线事件与 presentationUtils
+ * [OUTPUT]: 提供timelineCopy、hasConversationContent
+ * [POS]: 区分对话正文和状态文案，保留人工问题的回答入口
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { reviewGateName, statusText, translated } from './presentationUtils';
+
+const CONVERSATION_CONTENT_EVENTS = new Set([
+  'conversation_replied', 'intent_clarification_requested', 'project_question_answered',
+  'project_inspection_started', 'task_proposed', 'task_revised', 'team_decision_proposed',
+  'team_preference_recorded', 'change_intent_summarized', 'change_request_shared',
+  'change_discussion_continued',
+  'project_iteration_choice_recorded', 'implementation_completed',
+]);
+
+export function hasConversationContent(item) {
+  return item.actor === 'user' || item.actor !== 'system' && CONVERSATION_CONTENT_EVENTS.has(item.event);
+}
 
 export function timelineCopy(item, t) {
   if (item.event === 'project_continuation_handoff' && item.details?.phase) {
@@ -6,13 +24,11 @@ export function timelineCopy(item, t) {
     const questions = notice.human_questions || (notice.human_question_id && notice.human_question
       ? [{ ...notice.human_question, id: notice.human_question_id }] : []);
     const answerCommands = questions.map(question => `/answer ${question.id} <your answer>`);
-    const lines = [t(`work.manager.continuation.${notice.phase}`),
-      t('work.manager.continuation.reason', { reason: translated(t, `work.manager.continuation.reason.${notice.reason}`, notice.reason) }),
-      t('work.manager.continuation.budget', { batches: `${notice.batches_started}/${notice.max_batches ?? t('work.manager.continuation.no_limit')}`,
-        calls: `${notice.manager_calls}/${notice.max_manager_calls ?? t('work.manager.continuation.no_limit')}` })];
+    const lines = [translated(t, `work.manager.continuation.${notice.phase}`, t('work.manager.continuation.blocked'))];
+    const reason = translated(t, `work.manager.continuation.reason.${notice.reason}`, '');
+    if (reason) lines.push(reason);
     if (notice.delivered_task_ids?.length) {
       lines.push(t('work.manager.continuation.delivered', { tasks: notice.delivered_task_ids.join(', ') }));
-      lines.push(t('work.manager.continuation.receipts', { receipts: notice.delivery_receipt_ids.join(', ') }));
     }
     if (notice.rationale) lines.push(t('work.manager.continuation.rationale', { rationale: notice.rationale }));
     questions.forEach((question, index) => {
@@ -21,7 +37,6 @@ export function timelineCopy(item, t) {
       lines.push(t('work.manager.continuation.answer_format', { command: `\`${answerCommands[index]}\`` }));
     });
     lines.push(t(`work.manager.continuation.next.${notice.phase}`));
-    if (notice.next_action && !answerCommands.includes(notice.next_action)) lines.push(notice.next_action);
     return lines.join('\n\n');
   }
   if (['project_continuation_authorized', 'project_continuation_batch_started'].includes(item.event)) {
@@ -29,13 +44,13 @@ export function timelineCopy(item, t) {
       batches: item.details?.max_batches ?? t('work.manager.continuation.no_limit'),
       calls: item.details?.max_manager_calls ?? t('work.manager.continuation.no_limit') });
   }
-  if (item.actor === 'user' && item.event === 'mission_requested') return item.content;
+  if (item.actor === 'user') return item.content;
   if (item.content && ['intent_clarification_requested', 'project_question_answered'].includes(item.event)) return item.content;
   const details = item.details || {};
   return translated(
     t,
     `work.manager.events.${item.event}`,
-    item.content || translated(t, 'work.manager.events.progress', 'The team state changed.'),
+    (hasConversationContent(item) && item.content) || translated(t, 'work.manager.events.progress', 'The team state changed.'),
     {
       artifact: details.artifact || t('work.manager.deliverable'),
       decision: details.decision ? statusText(details.decision, t) : '',

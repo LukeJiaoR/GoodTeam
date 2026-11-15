@@ -1,7 +1,14 @@
+/**
+ * [INPUT]: 依赖请求状态、运行时配置与现有操作回调
+ * [OUTPUT]: 提供AssistantControls
+ * [POS]: 展示运行时配置与请求恢复，未知错误使用通用提示
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { useState } from 'react';
 import { Check, Plug, RotateCcw, Settings, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Button from '../../../components/ui/Button';
+import { translated } from './presentationUtils';
 import { routes } from '../../../lib/routing/routes';
 import TeamDecisionPreview from './TeamDecisionPreview';
 import './assistantControls.css';
@@ -15,7 +22,7 @@ function RuntimeControls({ onConfigureRuntime, runtime, busy, onAction, projectK
         <summary>{t('assistant.runtime')} · {t(`assistant.status.${runtime.status}`)}</summary>
         <div className="assistant-runtime-details__body">
           <strong>{runtime.provider} / {runtime.model || 'builtin'} / {runtime.reasoning_depth}</strong>
-          {runtime.error ? <p>{t(`assistant.error.${runtime.error.code}`)}</p> : null}
+          {runtime.error ? <p>{translated(t, `assistant.error.${runtime.error.code}`, t('assistant.error.execution_failed'))}</p> : null}
           <label><input type="checkbox" checked={consent} disabled={Boolean(busy)} onChange={(event) => setConsent(event.target.checked)} />{t('assistant.costConsent')}</label>
           <Button disabled={!consent || Boolean(busy)} onClick={() => {
             setConsent(false);
@@ -33,7 +40,8 @@ function RequestRecovery({ requests = {}, busy, onAction, t }) {
     <section className="assistant-request" key={id} aria-label={t('assistant.request')}>
       <strong role="status">{t(`assistant.status.${request.status}`)}</strong>
       <p>{request.text}</p>
-      {request.error ? <p>{t(`assistant.error.${request.status === 'interrupted' ? 'interrupted' : request.error.code}`)}</p> : null}
+      {request.error ? <p>{translated(t, `assistant.error.${request.status === 'interrupted' ? 'interrupted' : request.error.code}`,
+        t('assistant.error.execution_failed'))}</p> : null}
       {request.status === 'failed' ? <Button disabled={Boolean(busy)} onClick={() => onAction?.({
         action: 'retry_message', message_id: id, expected_attempt: request.attempt,
       })}><RotateCcw size={14} aria-hidden="true" />{t('assistant.retry')}</Button> : null}

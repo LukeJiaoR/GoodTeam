@@ -1,13 +1,22 @@
+/**
+ * [INPUT]: 依赖接续授权、批次状态与原操作回调
+ * [OUTPUT]: 提供ProjectContinuationControls
+ * [POS]: 展示接续与交付控制，确认仍绑定具体候选
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import ContinuationScopeAddition from './ContinuationScopeAddition';
 import { continuationActivity } from './continuationActivity';
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useCallback, useRef, useState } from 'react';
+import SourceEvidence from '../../../components/ui/SourceEvidence';
+import { translate } from '../../../i18n';
+import BatchSourceContent from './BatchSourceContent';
 
 function qualityAccepted(quality) {
   return quality?.status === 'reviewed' && quality.check_status === 'passed'
     && quality.review_status === 'machine_recorded' && quality.acceptance_status === 'accepted_by_review_policy';
 }
 
-function BatchRecoveryControls({ batch, continuation, projectKey, onAction, disabled, zh }) {
+function BatchRecoveryControls({ batch, continuation, projectKey, onAction, disabled, zh, t }) {
   const [retryConfirmed, setRetryConfirmed] = useState(false);
   const [abandonConfirmed, setAbandonConfirmed] = useState(false);
   const [resumeContinuation, setResumeContinuation] = useState(false);
@@ -25,12 +34,12 @@ function BatchRecoveryControls({ batch, continuation, projectKey, onAction, disa
     <summary>{abandoned ? (zh ? '批次已结束，证据保留' : 'Batch abandoned; evidence retained')
       : batch.status === 'blocked' ? (zh ? '处理批次阻塞' : 'Resolve batch failure')
         : (zh ? '处理当前批次' : 'Current batch options')} · {batch.task_ids.join(', ')}</summary>
-    {recovery.reason ? <p role="status">{recovery.reason}</p> : null}
     {preserved.length > 0 ? <p>{zh ? '保留的成功结果' : 'Preserved successful results'}: {preserved.join(', ')}</p> : null}
     {retryable.length > 0 && !abandoned ? <p>{zh ? '已确认失败的任务' : 'Confirmed failed tasks'}: {retryable.join(', ')}</p> : null}
     {unknown.length > 0 ? <p>{zh ? '结果尚未确认，须先核对执行证据' : 'Outcome unconfirmed; inspect execution evidence first'}: {unknown.join(', ')}</p> : null}
-    <a href={`/api/projects/${encodeURIComponent(projectKey)}/iteration-batches/${encodeURIComponent(batch.run_id)}`}
-      target="_blank" rel="noreferrer">{zh ? '查看保留的执行证据' : 'Inspect retained execution evidence'}</a>
+    {batch.report_path || preserved.length || retryable.length ? <SourceEvidence t={t} label={zh ? '查看执行报告' : 'View execution report'}>
+      <BatchSourceContent projectKey={projectKey} runId={batch.run_id} t={t} />
+    </SourceEvidence> : null}
     {canRetry ? <>
       <p>{zh ? '仅重新执行上方已确认失败的任务；保留成功任务的结果。'
         : 'Retry only the confirmed failed tasks above. Successful task results are retained.'}</p>
@@ -62,7 +71,7 @@ function BatchRecoveryControls({ batch, continuation, projectKey, onAction, disa
   </details>;
 }
 
-function BatchQualityControls({ batch, projectKey, onAction, disabled, zh }) {
+function BatchQualityControls({ batch, projectKey, onAction, disabled, zh, t }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const quality = batch.quality;
   const accepted = qualityAccepted(quality);
@@ -75,7 +84,7 @@ function BatchQualityControls({ batch, projectKey, onAction, disabled, zh }) {
       awaiting_recheck: 'Awaiting recheck', reviewed: 'Review completed', blocked: 'Blocked', needs_human: 'Needs attention',
       passed: 'Passed', failed: 'Failed', unknown: 'Not yet verified', missing: 'No record',
       machine_recorded: 'Independent review recorded', operator_recorded: 'Operator review recorded', accepted_by_review_policy: 'Accepted by review policy' };
-  const label = value => labels[value] || value || labels.unknown;
+  const label = value => labels[value] || labels.unknown;
   return <details className="project-iteration-suggestion" open>
     <summary>{zh ? '候选检查与独立审查' : 'Candidate checks and independent review'} · {batch.task_ids.join(', ')}</summary>
     <p>{zh ? '进度' : 'Progress'}: {label(quality.status)}</p>
@@ -84,14 +93,10 @@ function BatchQualityControls({ batch, projectKey, onAction, disabled, zh }) {
       <li>{zh ? '独立审查' : 'Independent review'}: {label(quality.review_status)}</li>
       <li>{zh ? '验收结论' : 'Acceptance'}: {label(quality.acceptance_status)}</li>
     </ul>
-    {quality.reason ? <p role="status">{quality.reason}</p> : null}
-    {quality.next_action ? <p>{zh ? '下一步' : 'Next step'}: {quality.next_action}</p> : null}
-    <a href={`/api/projects/${encodeURIComponent(projectKey)}/iteration-batches/${encodeURIComponent(batch.run_id)}`}
-      target="_blank" rel="noreferrer">{zh ? '查看检查、审查与修复证据' : 'Inspect check, review and fix evidence'}</a>
-    {quality.execution_id ? <p>{zh ? '检查与审查执行记录' : 'Check and review run'}: <code>{quality.execution_id}</code></p> : null}
-    {quality.correction_job_id ? <p>{zh ? '修复任务' : 'Correction job'}: <code>{quality.correction_job_id}</code></p> : null}
-    {quality.candidate_commit ? <p>{zh ? '当前候选提交' : 'Current candidate commit'}: <code>{quality.candidate_commit}</code></p> : null}
-    {quality.candidate_path ? <p>{zh ? '当前候选目录' : 'Current candidate directory'}: <code>{quality.candidate_path}</code></p> : null}
+    {batch.report_path || ['passed', 'failed'].includes(quality.check_status) || ['machine_recorded', 'operator_recorded'].includes(quality.review_status)
+      ? <SourceEvidence t={t} label={zh ? '查看检查与审查结果' : 'View checks and review results'}>
+      <BatchSourceContent projectKey={projectKey} runId={batch.run_id} expectedCandidate={quality.candidate_commit} t={t} />
+    </SourceEvidence> : null}
     {!accepted ? <>
       <p>{zh ? '继续此批次已配置的检查、独立审查及修复。执行器可用时才能推进；交付确认将在检查与审查通过后开放。'
         : 'Continue this batch’s configured checks, independent review and correction. An available configured runtime is required. Delivery confirmation opens after checks and review pass.'}</p>
@@ -107,19 +112,19 @@ function BatchQualityControls({ batch, projectKey, onAction, disabled, zh }) {
   </details>;
 }
 
-function DeliveryConfirmation({ batch, projectKey, onAction, disabled, zh }) {
+function DeliveryConfirmation({ batch, projectKey, onAction, disabled, zh, t }) {
   const [landed, setLanded] = useState('');
   const [reviewed, setReviewed] = useState(false);
   const quality = batch.quality?.required ? batch.quality : null;
   const integration = quality || batch.integration;
   const candidate = integration?.candidate_commit;
   if (!candidate || batch.status !== 'review' || quality && !qualityAccepted(quality)) return null;
-  return <details className="project-iteration-suggestion">
-    <summary>{zh ? '确认已落地的交付' : 'Confirm landed delivery'} · {batch.task_ids.join(', ')}</summary>
+  return <SourceEvidence t={t} label={zh ? '审阅并确认这批交付' : 'Review and confirm this delivery'}
+    title={zh ? '审阅并确认交付' : 'Review and confirm delivery'}>
+    <h3>{zh ? '确认已落地的交付' : 'Confirm landed delivery'} · {batch.task_ids.join(', ')}</h3>
     <p>{zh ? '先审查候选代码和验证证据，并将该候选提交合并到项目。确认后，已授权的自动迭代会继续下一批。'
       : 'Review the candidate and verification evidence, then merge this candidate into the project. Authorized continuation will pick and run the next batch after confirmation.'}</p>
-    <a href={`/api/projects/${encodeURIComponent(projectKey)}/iteration-batches/${encodeURIComponent(batch.run_id)}`}
-      target="_blank" rel="noreferrer">{zh ? '查看任务执行与验证记录' : 'Inspect execution and verification records'}</a>
+    <BatchSourceContent projectKey={projectKey} runId={batch.run_id} expectedCandidate={candidate} t={t} />
     <p>{zh ? '候选提交' : 'Candidate commit'}: <code>{candidate}</code></p>
     <p>{zh ? '本地候选目录' : 'Local candidate directory'}: <code>{integration?.candidate_path}</code></p>
     <label>{zh ? '项目当前已落地的完整 Git commit' : 'Full landed Git commit currently checked out in the project'}
@@ -133,7 +138,7 @@ function DeliveryConfirmation({ batch, projectKey, onAction, disabled, zh }) {
         candidate_commit: candidate, landed_commit: landed, reviewed: true, confirmed: true })}>
       {zh ? '核实版本并确认交付' : 'Verify version and accept delivery'}
     </button>
-  </details>;
+  </SourceEvidence>;
 }
 
 function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, canStart, zh }) {
@@ -252,6 +257,7 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
 
 export default function ProjectContinuationControls({ snapshot, session, projectKey, onAction, disabled, canStart, language = 'en' }) {
   const zh = String(language).startsWith('zh');
+  const t = useCallback((key, params) => translate(zh ? 'zh-CN' : 'en', key, params), [zh]);
   const value = session?.project_continuation;
   const tasks = (snapshot?.candidates || []).filter(item => ['todo', 'blocked'].includes(item.status));
   const batches = Object.values(session?.project_task_batches || {}).filter(item =>
@@ -268,7 +274,7 @@ export default function ProjectContinuationControls({ snapshot, session, project
     : { discovery_no_followup: 'No follow-up task was proposed within the approved scope.', discovery_task_budget_used: 'Approved new-task budget used.',
       approved_iteration_budget_used: 'Approved batch or planning-call limit reached.', owner_stopped: 'Future iterations were stopped by the owner.' };
   const statusLabel = value?.discovery && value.reason === 'discovery_no_followup'
-    ? (zh ? '本次未发现后续任务' : 'No follow-up proposed') : activity?.label || labels[value?.status] || value?.status;
+    ? (zh ? '本次未发现后续任务' : 'No follow-up proposed') : activity?.label || labels[value?.status] || (zh ? '状态待核实' : 'Status unconfirmed');
 
   return <section className="project-continuation-controls" tabIndex={-1}
     data-continuation-id={value?.id} data-notice-id={session?.project_continuation_notice?.id}
@@ -300,7 +306,6 @@ export default function ProjectContinuationControls({ snapshot, session, project
           {value.discovered_task_ids?.length ? <p>{zh ? '已发现的任务' : 'Discovered tasks'}: {value.discovered_task_ids.join(', ')}</p> : null}
           {value.discovery_last ? <>
             {value.discovery_last.task_id ? <p>{zh ? '最近创建的任务' : 'Latest created task'}: {value.discovery_last.task_id}</p> : null}
-            <p>{zh ? '来源结果凭据' : 'Source outcome receipt'}: <code>{value.discovery_last.outcome_receipt_id}</code></p>
             {value.discovery_last.rationale ? <p>{zh ? '发现依据' : 'Discovery rationale'}: {value.discovery_last.rationale}</p> : null}
           </> : null}
         </> : null}
@@ -308,8 +313,8 @@ export default function ProjectContinuationControls({ snapshot, session, project
           <p>{activity.detail}</p>
           {activity.rationale ? <p>{zh ? '上次 Manager 判断依据' : 'Last Manager rationale'}: {activity.rationale}</p> : null}
         </div> : null}
-        {value.status !== 'active' && value.reason ? <p role="status">{reasons[value.reason] || value.reason}</p> : null}
-        {active || canFinish ? <button type="button" onClick={() => onAction({
+        {value.status !== 'active' && value.reason ? <p role="status">{reasons[value.reason] || (zh ? '原因尚待核实' : 'Reason unconfirmed')}</p> : null}
+        {active || canFinish ? <button type="button" disabled={disabled} onClick={() => onAction({
           action: 'stop_project_continuation', continuation_id: value.id,
         })}>{active ? (zh ? '停止后续迭代' : 'Stop future iterations')
           : (zh ? '保留结果并结束' : 'Keep results and finish')}</button> : null}
@@ -322,12 +327,12 @@ export default function ProjectContinuationControls({ snapshot, session, project
     {batches.map(batch => <Fragment key={batch.run_id}>
       {['blocked', 'abandoned'].includes(batch.status) || batch.recovery?.can_abandon === true ? <BatchRecoveryControls
         key={`${batch.recovery?.version || ''}:${batch.status}:${value?.id || ''}:${value?.status || ''}`}
-        batch={batch} continuation={value} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} /> : null}
+        batch={batch} continuation={value} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} t={t} /> : null}
       {batch.quality?.required && batch.status !== 'abandoned' ? <BatchQualityControls
         key={`${batch.quality.input_digest}:${batch.quality.status}:${batch.quality.correction_job_id || ''}:${batch.quality.candidate_commit || ''}`}
-        batch={batch} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} /> : null}
+        batch={batch} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} t={t} /> : null}
       {batch.status !== 'abandoned' ? <DeliveryConfirmation key={`${batch.quality?.input_digest || ''}:${batch.quality?.candidate_commit || batch.integration?.candidate_commit || ''}`}
-        batch={batch} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} /> : null}
+        batch={batch} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} t={t} /> : null}
     </Fragment>)}
   </section>;
 }

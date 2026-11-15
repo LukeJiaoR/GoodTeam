@@ -1,3 +1,7 @@
+# [INPUT]: 依赖会话存储、Manager 运行时与现有任务服务
+# [OUTPUT]: 提供TaskAssistantService
+# [POS]: 协调任务对话和既有队列，向 Manager 注入结果解读职责
+# [PROTOCOL]: Update this header on change, then check AGENTS.md
 from __future__ import annotations
 
 import json
@@ -851,12 +855,14 @@ def _manager_chat_context(
     from goodteam_os.context_continuity import conversation_context
     from goodteam_os.manager_worker_control import control_context
     from goodteam_os.project_running_observation import running_observation_context
+    from goodteam_os.assistant_conversation import MANAGER_REPLY_GUIDANCE
 
     current = next((item for item in session.get("timeline", [])
                     if item.get("message_id") == current_message_id), {})
     history = conversation_context(session, query=current.get("content", ""))
     proposal = dict(session.get("proposed_task") or {})
     lines = [
+        MANAGER_REPLY_GUIDANCE,
         f"Project mode: {readiness.get('project_mode', mode_hint.get('mode', 'unconfirmed'))}",
         f"Readiness lifecycle: {readiness.get('lifecycle', '')}",
         f"Conversation continuity: {json.dumps(history, ensure_ascii=False)}",

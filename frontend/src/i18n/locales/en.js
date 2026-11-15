@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖产品组件使用的翻译键
+ * [OUTPUT]: 提供英文文案字典
+ * [POS]: 为产品界面和来源侧栏提供英文文案
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 export const en = {
   "providers.memoryTitle": "Project memory retrieval",
   "providers.memoryHint": "Choose an embedding model independently of the coding model. Requires pgvector in GoodTeam PostgreSQL and an embeddings endpoint on the selected provider.",
@@ -487,6 +493,10 @@ export const en = {
   'assistant.wait.elapsed': 'Waiting {{seconds}}s',
   'assistant.wait.long': 'Still waiting for a reply from the model. No need to send the message again.',
   'assistant.understanding.stack': 'This project uses {{stack}}.',
+  'assistant.understanding.discovered': 'Identified {{entries}} possible entry files and {{commands}} development commands; their behavior has not yet been checked.',
+  'assistant.understanding.next.incomplete': 'Project inspection is not finished. The remaining work is to cover the omitted files, inspect the key code and verify development commands; none of that follow-up has run yet.',
+  'assistant.understanding.next.complete': 'Directory inspection is complete. Understanding the key code and verifying development commands are still pending.',
+  'assistant.understanding.sources': 'View entry files and discovered commands',
   'assistant.understanding.scope': 'This initial check lists repository structure and candidate commands. It does not establish code semantics or verify that commands or features work.',
   'assistant.understanding.coverage.complete': 'Directory enumeration complete: {{files}} files, {{directories}} directories within the protected snapshot.',
   'assistant.understanding.coverage.incomplete': 'Coverage incomplete: {{files}} files, {{directories}} directories enumerated; {{omitted}} files omitted by snapshot safety limits.',
@@ -677,6 +687,28 @@ export const en = {
   'product.status.required': 'Required',
   'product.status.unavailable': 'Unavailable',
   'product.errors.generic': 'GoodTeam could not complete this request.',
+  'product.evidence.open': 'View source evidence',
+  'product.evidence.title': 'Source evidence',
+  'product.evidence.close': 'Close evidence',
+  'product.evidence.worker': 'Worker report',
+  'product.evidence.check': 'Recorded check result',
+  'product.evidence.output': 'Check output',
+  'product.evidence.outputUnavailable': 'The check result was recorded, but readable output was not retained.',
+  'product.evidence.review': 'Review report',
+  'product.evidence.reviewBoundary': 'This report records the Reviewer’s assessment. It does not independently establish that a test ran or authorize delivery.',
+  'product.evidence.finding': 'Review finding',
+  'product.evidence.excerpt': 'Source excerpt',
+  'product.evidence.observation': 'Reviewer observation',
+  'product.evidence.reviewCheck.checked': 'Inspected by the Reviewer',
+  'product.evidence.reviewCheck.not_run': 'Not performed',
+  'product.evidence.reviewCheck.inconclusive': 'Inconclusive',
+  'product.evidence.loading': 'Loading source material…',
+  'product.evidence.unavailable': 'The source material could not be read. Its contents are not available in this view.',
+  'product.evidence.empty': 'No readable report or check output is available for this batch yet.',
+  'product.evidence.reviewUnavailable': 'The matching review report is currently unavailable.',
+  'product.evidence.changed': 'The candidate changed. Refresh the result before reviewing its evidence or confirming delivery.',
+  'product.errors.invalid_request': 'This request could not be accepted. Review the current inputs and project state before submitting again.',
+  'product.errors.manager_execution_failed': 'The Manager could not complete this reply. Check the current conversation state before retrying.',
   'product.errors.offline': 'The browser cannot reach the GoodTeam service. Check the service, then try again.',
   'product.errors.permissionDenied': 'This GoodTeam origin is not allowed to perform the requested operation.',
   'product.errors.recovery': 'Recovery: {{action}}',

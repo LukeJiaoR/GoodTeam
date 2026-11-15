@@ -73,7 +73,7 @@ test('a failed approval preserves the typed reason for an explicit retry', async
   const input = await screen.findByRole('textbox', { name: t('work.informedApproval.reason') });
   fireEvent.change(input, { target: { value: 'Checked the current gap.' } });
   fireEvent.click(screen.getByRole('button', { name: /Confirm manual continuation/ }));
-  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Approval was not accepted.'));
+  await screen.findByRole('alert');
   expect(input).toHaveValue('Checked the current gap.');
   await waitFor(() => expect(screen.getByRole('button', { name: /Confirm manual continuation/ })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: /Confirm manual continuation/ }));

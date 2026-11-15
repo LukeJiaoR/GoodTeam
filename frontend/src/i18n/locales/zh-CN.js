@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖产品组件使用的翻译键
+ * [OUTPUT]: 提供中文文案字典
+ * [POS]: 为产品界面和来源侧栏提供中文文案
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 export const zhCN = {
   "providers.memoryTitle": "项目记忆检索",
   "providers.memoryHint": "独立选择向量化模型，不影响编码模型。需要 GoodTeam PostgreSQL 启用 pgvector，且所选服务商支持 embeddings 接口。",
@@ -487,6 +493,10 @@ export const zhCN = {
   'assistant.wait.elapsed': '已等待 {{seconds}} 秒',
   'assistant.wait.long': '暂未收到模型回复，仍在等待，无需重复发送。',
   'assistant.understanding.stack': '这个项目使用 {{stack}}。',
+  'assistant.understanding.discovered': '已识别 {{entries}} 个可能的入口文件、{{commands}} 条开发命令，尚未核实它们的实际行为。',
+  'assistant.understanding.next.incomplete': '项目检查尚未完成。后续还需补齐未覆盖的文件、阅读关键代码并验证开发命令；这些后续工作尚未执行。',
+  'assistant.understanding.next.complete': '目录初查已完成，关键代码的理解和开发命令验证仍未完成。',
+  'assistant.understanding.sources': '查看入口文件与发现的命令',
   'assistant.understanding.scope': '这次初步检查枚举了目录结构和候选命令，尚未进行代码语义理解，也未验证命令或功能是否正常。',
   'assistant.understanding.coverage.complete': '目录枚举完成：受保护快照内 {{files}} 个文件、{{directories}} 个目录。',
   'assistant.understanding.coverage.incomplete': '覆盖不完整：已枚举 {{files}} 个文件、{{directories}} 个目录；快照安全限制遗漏 {{omitted}} 个文件。',
@@ -677,6 +687,28 @@ export const zhCN = {
   'product.status.required': '必需',
   'product.status.unavailable': '不可用',
   'product.errors.generic': 'GoodTeam 无法完成此请求。',
+  'product.evidence.open': '查看源证据',
+  'product.evidence.title': '源证据',
+  'product.evidence.close': '关闭证据',
+  'product.evidence.worker': '执行报告',
+  'product.evidence.check': '已记录的检查结果',
+  'product.evidence.output': '检查输出',
+  'product.evidence.outputUnavailable': '已记录检查结论，但未保留可阅读的输出原文。',
+  'product.evidence.review': '审查报告',
+  'product.evidence.reviewBoundary': '此报告记录审查者的判断，不代表已独立证实测试执行，也不授予交付权限。',
+  'product.evidence.finding': '审查发现',
+  'product.evidence.excerpt': '原文摘录',
+  'product.evidence.observation': '审查意见',
+  'product.evidence.reviewCheck.checked': '审查者已查看',
+  'product.evidence.reviewCheck.not_run': '未执行',
+  'product.evidence.reviewCheck.inconclusive': '尚无结论',
+  'product.evidence.loading': '正在读取源内容…',
+  'product.evidence.unavailable': '目前无法读取源内容，暂不能在这里查看。',
+  'product.evidence.empty': '这批任务目前没有可阅读的报告或检查输出。',
+  'product.evidence.reviewUnavailable': '目前无法读取与本次检查对应的审查报告。',
+  'product.evidence.changed': '候选版本已变化，请先刷新结果，再审阅对应证据或确认交付。',
+  'product.errors.invalid_request': '这项请求未被接受，请核对当前输入和项目状态后再提交。',
+  'product.errors.manager_execution_failed': 'Manager 本次未能完成回复，请先核对当前对话状态，再决定是否重试。',
   'product.errors.offline': '浏览器无法连接 GoodTeam 服务。请检查服务状态后重试。',
   'product.errors.permissionDenied': '当前 GoodTeam 来源无权执行此操作。',
   'product.errors.recovery': '恢复方式：{{action}}',

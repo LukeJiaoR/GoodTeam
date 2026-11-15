@@ -1,13 +1,20 @@
+/**
+ * [INPUT]: 依赖providerApi、翻译与 ProductError
+ * [OUTPUT]: 提供ProviderSettings
+ * [POS]: 配置供应商和记忆检索，统一展示失败状态
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { useEffect, useState } from 'react';
 import { Cable, Plus, RefreshCw } from 'lucide-react';
 import { fetchProviderModels, getProviders, getProviderUsage, updateProvider } from './providerApi';
 import './providerSettings.css';
 import './settingsCompact.css';
+import ProductError from '../../components/ui/ProductError';
 
 const emptyDraft = () => ({ id: '', agent: 'codex', protocol: 'responses', name: '', base_url: '', api_key: '', model: '' });
 const number = (value) => value == null ? '—' : new Intl.NumberFormat().format(value);
 
-function MemoryRetrievalSettings({ settings, disabled, label, onSave }) {
+function MemoryRetrievalSettings({ settings, disabled, label, onSave, t }) {
   const [providerId, setProviderId] = useState(settings.embeddings?.provider_id || '');
   const [model, setModel] = useState(settings.embeddings?.model || '');
   const [models, setModels] = useState([]);
@@ -16,7 +23,7 @@ function MemoryRetrievalSettings({ settings, disabled, label, onSave }) {
   const fetchModels = async () => {
     setFetching(true); setError('');
     try { setModels((await fetchProviderModels({ id: providerId })).models); }
-    catch (failure) { setError(failure.message); }
+    catch (failure) { setError(failure); }
     finally { setFetching(false); }
   };
   return <form className="provider-settings__form" aria-label={label('memoryTitle')} onSubmit={(event) => {
@@ -31,7 +38,7 @@ function MemoryRetrievalSettings({ settings, disabled, label, onSave }) {
         <label>{label('embeddingModel')}<input required={Boolean(providerId)} disabled={!providerId} maxLength={200} list="memory-embedding-models" value={model} placeholder={label('modelPlaceholder')} onChange={(event) => setModel(event.target.value)} /><datalist id="memory-embedding-models">{models.map((value) => <option key={value} value={value} />)}</datalist></label>
       </div>
       {providerId ? <p><small>{label('memoryDataHint')}</small></p> : null}
-      {error ? <p className="provider-settings__error" role="alert">{error}</p> : null}
+      {error ? <ProductError error={error} t={t} /> : null}
       <div className="provider-settings__actions">
         <button type="submit" className="product-button">{label('saveMemory')}</button>
         <button type="button" className="product-button product-button--secondary" disabled={!providerId} onClick={fetchModels}>{label(fetching ? 'fetchingModels' : 'fetchModels')}</button>
@@ -57,7 +64,7 @@ export default function ProviderSettings({ t }) {
       const [config, stats] = await Promise.all([getProviders(signal), getProviderUsage(signal)]);
       if (!signal?.aborted) { setSettings(config); setUsage(stats); }
     } catch (failure) {
-      if (!signal?.aborted) setError(failure.message);
+      if (!signal?.aborted) setError(failure);
     } finally {
       if (!signal?.aborted) setPending('');
     }
@@ -66,7 +73,7 @@ export default function ProviderSettings({ t }) {
     const controller = new AbortController();
     Promise.all([getProviders(controller.signal), getProviderUsage(controller.signal)])
       .then(([config, stats]) => { if (!controller.signal.aborted) { setSettings(config); setUsage(stats); } })
-      .catch((failure) => { if (!controller.signal.aborted) setError(failure.message); })
+      .catch((failure) => { if (!controller.signal.aborted) setError(failure); })
       .finally(() => { if (!controller.signal.aborted) setPending(''); });
     return () => controller.abort();
   }, []);
@@ -88,7 +95,7 @@ export default function ProviderSettings({ t }) {
       setSettings(updated); setDeleting('');
       if (action === 'save') { setDraft(null); setClearKey(false); setModels(null); }
       setNotice(label(action === 'configure_embeddings' ? 'memorySaved' : action === 'activate' ? 'activated' : action === 'delete' ? 'deleted' : 'saved'));
-    } catch (failure) { setError(failure.message); }
+    } catch (failure) { setError(failure); }
     finally { setPending(''); }
   };
   const fetchModels = async () => {
@@ -96,7 +103,7 @@ export default function ProviderSettings({ t }) {
     try {
       const result = await fetchProviderModels({ ...formPayload(), name: draft.name || 'Codex' });
       setModels(result.models);
-    } catch (failure) { setError(failure.message); }
+    } catch (failure) { setError(failure); }
     finally { setPending(''); }
   };
   const change = (key, value) => {
@@ -117,7 +124,7 @@ export default function ProviderSettings({ t }) {
     </div>
     {pending === 'load' ? <p role="status">{label('loading')}</p> : null}
     {settings && !settings.configured ? <p role="status">{label('databaseRequired')}</p> : null}
-    {error ? <p className="provider-settings__error" role="alert">{error}</p> : null}
+    {error ? <ProductError error={error} t={t} /> : null}
     {notice ? <p role="status">{notice}</p> : null}
     {settings ? <div className="provider-settings__list">
       {[{ id: '', name: label('local'), base_url: label('localHint') }, ...settings.providers].map((provider) => <article key={provider.id || 'local'} className="provider-settings__connection" aria-label={provider.name}>
@@ -145,7 +152,7 @@ export default function ProviderSettings({ t }) {
         <div className="provider-settings__actions"><button type="submit" className="product-button">{label(pending === 'save' ? 'saving' : 'save')}</button><button type="button" className="product-button product-button--secondary" onClick={() => { setDraft(null); setModels(null); }}>{label('cancel')}</button></div>
       </fieldset>
     </form> : null}
-    {settings ? <MemoryRetrievalSettings key={settings.revision} settings={settings} disabled={disabled} label={label} onSave={(values) => mutate('configure_embeddings', values)} /> : null}
+    {settings ? <MemoryRetrievalSettings key={settings.revision} settings={settings} disabled={disabled} label={label} t={t} onSave={(values) => mutate('configure_embeddings', values)} /> : null}
     {usage ? <div className="provider-settings__usage">
       <h3>{label('usage')}</h3><p>{label('usageHint')}</p>
       <dl className="provider-settings__totals">{['total_tokens', 'input_tokens', 'cached_input_tokens', 'output_tokens'].map((key) => <div key={key}><dt>{label(key)}</dt><dd>{number(usage.totals[key])}</dd></div>)}</dl>
