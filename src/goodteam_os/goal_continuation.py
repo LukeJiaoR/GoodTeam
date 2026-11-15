@@ -31,24 +31,26 @@ _LOCKS_GUARD = threading.Lock()
 
 
 class GoalBusyError(RuntimeError):
-    """The project Goal guard is already held by another operation."""
+    """The selected Goal guard is already held by another operation."""
 
 
 @contextmanager
-def goal_guard(workspace, project_key, *, blocking=True):
+def goal_guard(workspace, project_key, *, goal_id=None, blocking=True):
     key = normalize_project_key(project_key)
-    path = Path(workspace).resolve() / "state" / "goal-locks" / f"{key}.lock"
+    # Creation has no Goal ID yet; existing Goals serialize only their own work.
+    suffix = "" if goal_id is None else "." + hashlib.sha256(str(goal_id).encode()).hexdigest()
+    path = Path(workspace).resolve() / "state" / "goal-locks" / f"{key}{suffix}.lock"
     with _LOCKS_GUARD:
         lock = _LOCKS.setdefault(str(path), threading.Lock())
     if not lock.acquire(blocking=blocking):
-        raise GoalBusyError("The project's Goal is busy.")
+        raise GoalBusyError("This Goal is busy.")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a") as handle:
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
             except BlockingIOError as exc:
-                raise GoalBusyError("The project's Goal is busy.") from exc
+                raise GoalBusyError("This Goal is busy.") from exc
             try:
                 yield
             finally:
@@ -126,7 +128,7 @@ def stop_goal_action(workspace, project_key, request):
             reason="User stopped automatic continuation; an already started run keeps its existing controls.")
 
     try:
-        with goal_guard(workspace, project_key, blocking=False):
+        with goal_guard(workspace, project_key, goal_id=request.get("goal_id"), blocking=False):
             return {"goal": stop(GoalStore(workspace, project_key))}
     except GoalBusyError:
         # A synchronously starting workflow can hold the Goal guard while its
@@ -143,7 +145,7 @@ def stop_goal_action(workspace, project_key, request):
                 and current is not None and current.run_id == work.get("run_id")
                 and current.idea == work.get("task")):
             return {"goal": stop(store)}
-        with goal_guard(workspace, project_key):
+        with goal_guard(workspace, project_key, goal_id=request.get("goal_id")):
             return {"goal": stop(GoalStore(workspace, project_key))}
 
 
@@ -156,9 +158,10 @@ def handle_goal_action(workspace, project_key, root, request):
     command = request.get("idempotency_key")
     if not isinstance(command, str) or not command.strip() or len(command) > 256:
         raise ValueError("A stable Goal command identity is required.")
-    with goal_guard(workspace, project_key):
+    action = request.get("action")
+    goal_id = None if action == "create_goal" else request.get("goal_id")
+    with goal_guard(workspace, project_key, goal_id=goal_id):
         store = GoalStore(workspace, project_key)
-        action = request.get("action")
         if action == "create_goal":
             if request.get("confirmed") is not True or request.get("billing_acknowledged") is not True:
                 raise ValueError("Confirm the exact Goal, automatic continuation and configured provider charges first.")
@@ -429,7 +432,7 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal):
 
     workspace = Path(workspace)
     project_key = normalize_project_key(project_key)
-    with goal_guard(workspace, project_key):
+    with goal_guard(workspace, project_key, goal_id=goal_id):
         store = GoalStore(workspace, project_key)
         goal = store.get_goal(goal_id)
         current = StateStore(workspace).read_project_current(project_key)
@@ -576,5 +579,3 @@ def start_goal_service(workspace):
     stop.thread = threading.Thread(target=run, name="goodteam-goal-continuation", daemon=True)
     stop.thread.start()
     return stop
-
-

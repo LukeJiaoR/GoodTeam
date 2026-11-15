@@ -138,3 +138,18 @@ the recent history page, including blocked Goals that need retry or Stop;
 loaded historical pages omit duplicates already visible in the live panel.
 Python/JSX parsing and static identity/intake checks passed. Runtime multi-Goal
 execution, pagination and Stop/recovery were not run and remain part of #419.
+
+## Goal-scoped coordination
+
+A continuation tick now holds the existing guard for its Goal ID, not every Goal
+in the project. Creating another Goal, stopping it, or accepting its retry does
+not wait for an unrelated Goal's synchronous assessment. Creation keeps the
+existing command serialization; ledger transactions and revisions still own
+idempotency and state writes. Same-Goal claim/start coordination and the existing
+Stop checkpoint path remain unchanged. No additional execution queue is added.
+
+This change does not make the continuation scan parallel: the service still
+visits Goals sequentially, so a synchronous assessment can delay the next scan
+step (including an accepted retry). It also does not remove brief shared ledger
+transactions. Only static source/AST review was performed; real concurrent
+intake, Stop and recovery validation remains in #419.
