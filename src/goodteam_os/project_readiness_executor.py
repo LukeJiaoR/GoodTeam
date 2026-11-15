@@ -63,7 +63,7 @@ STEP_DEFAULTS: dict[str, dict[str, object]] = {
     "repository_understanding": {"unlocks": ["command_verification"]},
     "command_verification": {"unlocks": ["constraints_confirmation"]},
     "constraints_confirmation": {"unlocks": ["worker_preflight"]},
-    "worker_preflight": {"unlocks": ["start_workflow"]},
+    "worker_preflight": {"unlocks": []},
 }
 TERMINAL_EXECUTION_STATUSES = {"complete", "failed", "cancelled"}
 ACTIVE_EXECUTION_STATUSES = {"running", "needs_input"}

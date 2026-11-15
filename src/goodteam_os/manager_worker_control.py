@@ -11,8 +11,8 @@ def _command(text):
     parts = text.strip().split(maxsplit=3)
     if (len(parts) != 4 or parts[0] != "/worker" or parts[2] not in {"steer", "follow_up", "abort"}
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", parts[1])
-            or not parts[3].strip() or len(parts[3]) > 8000):
-        raise ValueError("Use /worker JOB_ID steer|follow_up|abort MESSAGE_OR_REASON (maximum 8000 characters).")
+            or not parts[3].strip()):
+        raise ValueError("Use /worker JOB_ID steer|follow_up|abort MESSAGE_OR_REASON.")
     return {"job_id": parts[1], "action": parts[2],
             "message": parts[3] if parts[2] != "abort" else "", "reason": parts[3] if parts[2] == "abort" else ""}
 

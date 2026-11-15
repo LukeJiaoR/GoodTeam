@@ -31,7 +31,7 @@ def _items(value: object, maximum: int, width: int) -> list[str]:
 
 def _internal(task: dict[str, Any]) -> bool:
     refs = task.get("external_refs", [])
-    return isinstance(refs, list) and any(
+    return task.get("goal_execution") != "batch" and isinstance(refs, list) and any(
         isinstance(ref, str) and ref.startswith(_INTERNAL_REFS) for ref in refs
     )
 

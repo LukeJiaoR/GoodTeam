@@ -244,24 +244,6 @@ def _discovery_prompt(context):
     team_roles = discovery.get("allow_team_roles") is True
     base = (_MANAGER_TEAM_DISCOVERY_TASK if team_roles else _MANAGER_INVESTIGATION_DISCOVERY_TASK
             if discovery.get("allow_investigation") is True else _MANAGER_DISCOVERY_TASK)
-    if (context.get("project_environment") or {}).get("setup_configured") is True:
-        from goodteam_os.project_environment import PROJECT_ENVIRONMENT_PLANNING
-
-        base += "\n" + PROJECT_ENVIRONMENT_PLANNING + """
-The host has an existing project installation configuration. You select the
-preparation task, never installation argv or credentials.
-When it needs preparation, propose one ordinary implementation task whose exact
-write_domains are [".goodteam/environment"]. This specific setup task is supported
-by the host; other .goodteam paths remain forbidden. The existing restricted
-installer executes the configured command for that task, not for every Worker.
-Do not invent installation commands, permissions or another execution route.
-Use preparation_tasks to avoid repeating active or already sufficient work.
-Preparation and dependent development are TWO existing discovery iterations:
-first prepare; after its delivered receipt, propose development with the real
-completed preparation task ID in dependencies. Do not put a preparation task and
-its dependents in a parallel new_tasks response. Do not claim that the directory
-reference proves preparation succeeded. Existing tasks keep their frozen intents.
-"""
     if context.get("undelivered_source"):
         base += """
 Undelivered feedback exception: verified_outcome is null, so there is NO accepted
@@ -381,8 +363,6 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
     from goodteam_os.projects import load_project_target
     from goodteam_os.workers import WorkerJobStore
 
-    from goodteam_os.project_environment import PROJECT_ENVIRONMENT_PLANNING
-
     target = load_project_target(project_config)
     root = resolve_project_runtime_root(dict(target.get("repos", {})))
     if root is None:
@@ -408,7 +388,7 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
             project_key=project_key, logical_id=identity,
             spec=dict(
                 run_id=f"project-iteration:{project_key}", role="orchestrator",
-                adapter=adapter, model=model, task=_discovery_prompt(context) if discovery else (_MANAGER_CHOICE_TASK + ("\n" + PROJECT_ENVIRONMENT_PLANNING if "project_environment" in context else "") + (
+                adapter=adapter, model=model, task=_discovery_prompt(context) if discovery else (_MANAGER_CHOICE_TASK + (
                     "\nFor this captured allow_wait turn, selecting no task is also valid: return selected_task_ids:[], "
                     "compared_task_ids with actual supplied IDs and a 20-1600 character rationale explaining "
                     "the dependency, missing evidence or decision needed. Do not select blocked work or claim "
@@ -510,34 +490,6 @@ def _project_evidence(workspace: Path, project_key: str, root: Path, *, inspect_
         }
     except (OSError, ValueError, KeyError, TypeError):
         return {"status": "unavailable", "reason": "project_inspection_not_verified"}
-
-
-def _require_planning_idle(workspace: Path, project_key: str, *, continuation_id=None) -> None:
-    from goodteam_os.project_iteration_execution import active_project_batches
-
-    occupied = active_project_batches(workspace, project_key)
-    active = next(iter(occupied), None)
-    grant = TaskAssistantSessionStore(workspace, project_key).read().get("project_continuation") or {}
-    permitted_id = continuation_id or grant.get("id")
-    if active and not (permitted_id and grant.get("id") == permitted_id and grant.get("status") == "active"
-                       and all(b.get("expected_continuation_id") == permitted_id for b in occupied)
-                       and not grant.get("workflow_recovery")):
-        raise ValueError("Finish or reconcile the active task batch before selecting another iteration.")
-    current = StateStore(workspace).read_project_current(project_key)
-    if (current is not None and current.current_node not in {"complete", "rejected"}
-            and current.next_node != "rejected"):
-        from goodteam_os.workflow_recovery import linked_parent
-
-        continuation = TaskAssistantSessionStore(workspace, project_key).read().get("project_continuation") or {}
-        if linked_parent(workspace, project_key, continuation_id=continuation.get("id")) is None:
-            raise ValueError("Finish or stop the active workflow before selecting another iteration.")
-    from goodteam_os.goals import goal_store_exists
-
-    if goal_store_exists(workspace):
-        from goodteam_os.goals import GoalStore
-
-        if GoalStore(workspace, project_key).list_goals(active_only=True):
-            raise ValueError("Finish or stop the active Goal before selecting an unrelated iteration.")
 
 
 def _planning_context(workspace, project_key, root, session, snapshot, source_snapshot, allowed, *, include_question_context=False, project_config=None):
@@ -643,7 +595,6 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             continuation = session.get("project_continuation") or {}
             if linked_parent(workspace, project_key, continuation_id=continuation.get("id")) is None:
                 raise ValueError("Resolve the current task proposal before planning another iteration.")
-        _require_planning_idle(workspace, project_key, **({"continuation_id": concurrent_continuation_id} if concurrent_continuation_id else {}))
         if reserve_planning is not None:
             reserve_planning()
         result = manager_runner(project_config=project_config, project_key=project_key,
@@ -677,7 +628,6 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                 "manager_execution": dict(result.get("manager_execution") or {}), "reason": stale_reason})
             return {"iteration_choice": {**choice, "status": "stale"},
                     "workflow_started": False, "context_changed": True, "reused": False}
-        _require_planning_idle(workspace, project_key, **({"continuation_id": concurrent_continuation_id} if concurrent_continuation_id else {}))
         if validate_authority is not None:
             validate_authority()
         store.append_event(

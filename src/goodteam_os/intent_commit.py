@@ -19,7 +19,6 @@ from goodteam_os import state_documents
 INTENT_COMMIT_SCHEMA_VERSION = "intent_commit.v1"
 INTENT_COMMIT_STORE_SCHEMA_VERSION = "intent_commit_store.v1"
 INTENT_INTERPRETATION_SCHEMA_VERSION = "intent_interpretation.v1"
-MAX_CHANGE_REQUEST_LENGTH = 8_000
 
 _ACTIVE_STATUSES = frozenset(
     {"discussing", "ready_to_confirm", "committing", "ambiguous", "stale"}
@@ -509,20 +508,12 @@ def _normalize_change_request(text: str) -> str:
     normalized = "\n".join(line.rstrip() for line in str(text or "").strip().splitlines()).strip()
     if not normalized:
         raise IntentCommitError("Describe the complete change you want the Task Assistant to interpret.")
-    if len(normalized) > MAX_CHANGE_REQUEST_LENGTH:
-        raise IntentCommitError(
-            f"Change requests must be {MAX_CHANGE_REQUEST_LENGTH} characters or fewer."
-        )
     return normalized
 
 
 def _raw_change_request(text: str, *, allow_empty: bool = False) -> str:
     if not isinstance(text, str):
         raise IntentCommitError("Change requests must be text.")
-    if len(text) > MAX_CHANGE_REQUEST_LENGTH:
-        raise IntentCommitError(
-            f"Change requests must be {MAX_CHANGE_REQUEST_LENGTH} characters or fewer."
-        )
     if not text.strip():
         if allow_empty:
             return ""

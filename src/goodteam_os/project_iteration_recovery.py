@@ -430,7 +430,7 @@ def recover_project_batch(*, workspace, project_key, root, request):
 def execute_recovery(*, workspace, project_key, root, batch):
     """Called under the existing batch execution guard/Worker thread registry."""
     from goodteam_os.dispatch import dispatch_tracks
-    from goodteam_os.project_iteration_execution import _settle_batch, _require_authority
+    from goodteam_os.project_iteration_execution import _settle_batch, _require_authority, _require_goal_source
 
     store = TaskAssistantSessionStore(workspace, project_key)
     command_id = batch["current_recovery_attempt"]
@@ -451,6 +451,7 @@ def execute_recovery(*, workspace, project_key, root, batch):
             for job in found:
                 dispatch_job_terminal(Path(root), {**job, "job_id": job["id"], "dispatch_run_id": command["dispatch_run_id"]})
         else:
+            _require_goal_source(workspace, project_key, batch.get("goal_source"), batch["run_id"])
             def started(session):
                 session["project_task_batches"][batch["run_id"]]["recovery_commands"][command_id]["started"] = True
                 return session
@@ -459,5 +460,6 @@ def execute_recovery(*, workspace, project_key, root, batch):
         report = dispatch_tracks(project_root=Path(root).resolve(), tracks=command["tracks"],
             projects_dir=Path(workspace) / "projects", logical_task_id=command["attempt_id"],
             require_isolation=True, recovery_source=command["source"],
+            capacity_check_start=lambda *_: _require_goal_source(workspace, project_key, batch.get("goal_source"), batch["run_id"]),
             **({"worker_setup": batch["worker_setup"]} if batch.get("worker_setup") else {}))
     return _settle_batch(workspace, project_key, root, batch, report=report)

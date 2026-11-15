@@ -31,7 +31,6 @@ PI_CAPABILITIES = (
     "entry_replay",
 )
 PI_STARTUP_TIMEOUT_FLOOR_SECONDS = 1.0
-PI_SETUP_TIMEOUT_SECONDS = 1800.0
 PI_MINIMUM_VERSION = (1, 1, 0)  # agent_settled.aborted is part of our terminal contract.
 MEANINGFUL_EVENTS = {
     "agent_start": "turn_started",
@@ -308,7 +307,6 @@ class PiSessionRuntime:
         self._metadata_lock = threading.RLock()
         self._abort_in_flight = False
         self._closing_abort = False
-        self._setup_pending = False
         self.method_input = method_input
         self.prompt_authorizer = prompt_authorizer
         self.method_resources = None
@@ -420,32 +418,16 @@ class PiSessionRuntime:
                 **({"startup_policy": self.tool_policy} if self.tool_policy else {}))
             environment = {**(environment or provider_environment()), **self.method_resources.start()}
             command.extend(["--extension", str(Path(__file__).with_name("pi_skill_resources.mjs"))])
-        from goodteam_os.project_environment import runtime_environment, prepare_environment_source
+        from goodteam_os.project_environment import runtime_environment
         runtime_binding = ((getattr(self.method_input, "workspace_context", None) or {})
                            if self.method_input is not None else self.job.get("sandbox_context") or {})
         project_environment = runtime_binding.get("project_environment")
-        setup_pending = False
-        if project_environment and project_environment.get("preparation_task") and runtime_binding.get("worker_setup"):
-            from shutil import which
-            from goodteam_os.worker_setup import with_setup, setup_timeout_seconds
-
-            setup_budget = setup_timeout_seconds(runtime_binding["worker_setup"], default=PI_SETUP_TIMEOUT_SECONDS)
-
-            prepare_environment_source(self.runtime_cwd, project_environment)
-            original_command = command
-            command = with_setup(command, setup=runtime_binding["worker_setup"], job_root=self.job_root,
-                                 cwd=Path(project_environment["environment_root"]), binary=which("codex") or "codex",
-                                 reuse_completed=True, timeout_seconds=setup_budget,
-                                 project_environment=project_environment, workspace=self.runtime_cwd)
-            setup_pending = command != original_command
-
         environment = runtime_environment(
             project_environment, environment or provider_environment(), workspace=self.runtime_cwd)
         self.rpc = PiRpcProcess(command, cwd=self.runtime_cwd, stderr_path=self.stderr_path,
                                 on_record=self._on_record, **({"env": environment} if environment else {}),
                                 **({"request_guard": self._restricted_rpc_guard} if self.tool_policy else {}),
                                 **({"prompt_authorizer": self.prompt_authorizer} if self.prompt_authorizer else {}))
-        self._setup_pending = setup_pending
         self.rpc.start()
         startup_timeout = max(self.config.request_timeout, PI_STARTUP_TIMEOUT_FLOOR_SECONDS)
         now = _now()
@@ -488,27 +470,6 @@ class PiSessionRuntime:
                         and source.get("settled_operation_id") == operation["id"]):
                     self.metadata["settled_operation_id"] = source["settled_operation_id"]
         self.store.write_metadata(self.metadata)
-        if setup_pending:
-            # The wrapper starts Pi only after installation. RPC deadlines start
-            # below, never while npm/pip is still preparing the environment.
-            receipt = self.job_root / "setup-result.json"
-            deadline = time.monotonic() + setup_budget + 5.0
-            while not receipt.is_file():
-                if tick is not None:
-                    tick()
-                if self.aborted:
-                    raise PiRpcExited("Project preparation was stopped")
-                if not self.rpc.alive:
-                    raise PiRpcExited("Project setup exited without a completion receipt")
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("Project setup did not settle within its installation budget")
-                time.sleep(0.05)
-            result = json.loads(receipt.read_text(encoding="utf-8"))
-            if result.get("exit_code") != 0:
-                raise PiRpcError("Project setup failed; see setup-result.json and setup.stderr.txt")
-        self._setup_pending = False
-        if self.aborted:
-            raise PiRpcExited("Project preparation was stopped")
         if resume and not self.tool_policy:
             if not source:
                 raise PiSessionMissing("Pi session metadata is missing")
@@ -567,16 +528,6 @@ class PiSessionRuntime:
             if self.metadata.get("queue_clear_unconfirmed"):
                 raise PiRpcError("Pi abort was acknowledged but clearing queued messages was not confirmed")
             return {"type": "response", "command": "abort", "success": True, "idempotent": True}
-        if self._setup_pending:
-            # Pi has not received a prompt; stop the setup wrapper and its owned
-            # installer group instead of sending RPC to a process not yet ready.
-            self.close()
-            self.aborted = True
-            self._setup_pending = False
-            self.metadata.update(status="aborted", queue_clear_unconfirmed=False)
-            self.store.write_metadata(self.metadata)
-            self.store.append_event("abort", {"queue_clear_confirmed": True, "phase": "setup"})
-            return {"type": "response", "command": "abort", "success": True}
         self._abort_in_flight = True
         if self.web_search:
             self.web_search.stop()

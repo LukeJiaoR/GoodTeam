@@ -10,9 +10,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Callable
 
-from goodteam_os.state import StateStore
 from goodteam_os.tasks import LocalTaskStore
-from goodteam_os.web import ProjectApiError, decide_approval, start_workflow
+from goodteam_os.web import ProjectApiError, start_workflow
 
 
 CommandRunner = Callable[[str, Path], dict[str, object]]
@@ -151,7 +150,7 @@ def _execute_project_cycle(
     smoke_task_id = _ensure_smoke_task(project, cycle)
     run["task_id"] = smoke_task_id
     try:
-        start_workflow(
+        result = start_workflow(
             workspace=workspace,
             idea=project.idea,
             project_key=project.project_key,
@@ -160,17 +159,48 @@ def _execute_project_cycle(
             delivery_mode=project.delivery_mode,
             source_type="existing_project",
             project_config=project.project_config,
+            run_id="smoke-" + sha256(f"{project.project_key}:{smoke_task_id}:{cycle}".encode()).hexdigest(),
         )
-        _approve_until_complete(workspace, project.project_key)
-        state = StateStore(workspace).read_project_current(project.project_key)
-        if state is None:
-            raise RuntimeError("GoodTeam workflow did not write project state")
-        if state.blockers or state.next_node:
-            raise RuntimeError("; ".join(state.blockers) or f"workflow stopped at {state.next_node}")
-        run["run_id"] = state.run_id
-        run["artifacts"] = dict(state.artifacts)
-        run["worker_job_ids"] = _worker_job_ids(project.target_root, run_id=state.run_id)
+        if result.get("historical_workflow"):
+            # Replay returned an original Workflow, not the new Planner batch.
+            # Retain its identity but never auto-approve it as smoke execution.
+            run.update(run_id=result["run_id"], status="incomplete", classification="product",
+                       historical_workflow=True,
+                       reason="The request refers to a historical Workflow; no new batch was started.",
+                       next_task="Inspect the original Workflow with its existing controls.")
+            return run
+        from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+        from goodteam_os.project_iteration_execution import iteration_batch_report
+        from goodteam_os.dispatch_workspace import dispatch_artifact_root
+        from goodteam_os.project_iteration_recovery import effective_dispatch_id
+
+        run["run_id"] = result["run_id"]
+        run["execution_task_id"] = result.get("task_id", "")
+        run["phase"] = result.get("phase", "")
+        batch = TaskAssistantSessionStore(workspace, project.project_key).read()["project_task_batches"][result["run_id"]]
+        run["batch_status"] = batch["status"]
+        dispatch_id = effective_dispatch_id(batch)
+        report_path = dispatch_artifact_root(project.target_root, dispatch_id) / "report.json"
+        if report_path.is_file():
+            report = iteration_batch_report(workspace=workspace, project_key=project.project_key,
+                                             root=project.target_root, run_id=result["run_id"])
+            run["evidence"]["batch_report"] = report
+            run["artifacts"]["batch_report"] = str(report_path)
+            run["worker_job_ids"] = sorted({job["job_id"] for job in report.get("jobs", []) if job.get("job_id")})
+        else:
+            run["worker_job_ids"] = _worker_job_ids(project.target_root, run_id=dispatch_id)
         run["evidence"]["worker_result_paths"] = _worker_result_paths(project.target_root, list(run["worker_job_ids"]))
+        if batch["status"] != "delivered" or result.get("phase") == "planning":
+            # The entry point submits planning work, not a completed product.
+            # Do not approve an unrelated historical current.json or run product
+            # verification against a project that has not yet been delivered.
+            run["status"] = "incomplete"
+            run["classification"] = "product"
+            run["next_task"] = "Continue the planned tasks and verify the delivered product."
+            run["reason"] = ("Planning task submitted; product delivery remains unverified."
+                             if result.get("phase") == "planning"
+                             else f"Task batch is {batch['status']}; delivery remains outstanding.")
+            return run
         run["commands"] = [_run_verification(command, command_runner) for command in project.verification_commands]
         failing_command = next((command for command in run["commands"] if int(command.get("exit_code", 0)) != 0), None)
         if failing_command:
@@ -188,20 +218,6 @@ def _execute_project_cycle(
         run["classification"] = classify_smoke_failure(message)
         run["next_task"] = _record_failure_task(project, cycle, message, run["classification"], smoke_task_id=smoke_task_id)
         return run
-
-
-def _approve_until_complete(workspace: Path, project_key: str) -> None:
-    for _ in range(8):
-        state = StateStore(workspace).read_project_current(project_key)
-        if state is None or not state.next_node:
-            return
-        if state.blockers:
-            raise RuntimeError("; ".join(state.blockers))
-        if not state.next_node.startswith("await_") or not state.next_node.endswith("_approval"):
-            raise RuntimeError(f"GoodTeam workflow is not at an actionable approval gate: {state.next_node}")
-        gate = state.next_node.removeprefix("await_").removesuffix("_approval")
-        decide_approval(workspace=workspace, project_key=project_key, approval=gate, decision="approved")
-    raise RuntimeError("GoodTeam workflow exceeded smoke auto-approval limit")
 
 
 def classify_smoke_failure(message: str) -> str:

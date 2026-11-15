@@ -130,10 +130,6 @@ def context_for_job(source_root: Path, binding: object, *, project_key: str, run
         from goodteam_os.project_environment import bind_environment
 
         bind_environment(workspace.workspace(SLOT), environment)
-        # A preparation task runs its installer at implementation, not again for
-        # every planning/review role traversing the same Workflow task.
-        environment = {**environment, "preparation_task":
-                       environment.get("preparation_task", False) and role == "implementation"}
     return {
         "available": True, "schema_version": SCHEMA, "mode": "workflow_isolated",
         "execution_id": workspace.metadata["run_id"], "sandbox_id": SLOT,
@@ -151,7 +147,16 @@ def validate_workflow_job_context(source_root: Path, job: dict) -> Path:
     expected = context_for_job(source_root, job.get("workflow_workspace"),
                                project_key=job.get("project_key", ""), run_id=job.get("run_id", ""),
                                job_id=job.get("id", ""), role=job.get("role", ""))
-    if job.get("sandbox_context") != expected:
+    captured = dict(job.get("sandbox_context") or {})
+    # Retained runs may carry the retired automatic-installation flag. It is not
+    # source identity and no longer changes execution, so compare the remaining
+    # frozen context without mutating either historical record.
+    expected = dict(expected)
+    for context in (captured, expected):
+        if "project_environment" in context:
+            context["project_environment"] = {key: value for key, value in context["project_environment"].items()
+                                              if key != "preparation_task"}
+    if captured != expected:
         raise WorkflowWorkspaceError("Workflow Worker context no longer matches its original task and job.")
     return Path(expected["workspace_path"])
 

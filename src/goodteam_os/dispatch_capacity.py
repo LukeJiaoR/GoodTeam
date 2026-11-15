@@ -43,6 +43,36 @@ def _read(location):
     return value['slots']
 
 
+def _not_started(project_root, row):
+    """A rejected/queued invocation owns no running process or capacity.
+
+    This is occupancy evidence only, never successful delivery or permission to
+    replay a task. Started attempts still require the original terminal proof.
+    """
+    root = Path(project_root) / '.goodteam' / 'workers' / 'jobs' / row['job_id']
+    raw = read_bytes(root / 'job.json')
+    if raw is None:
+        return False
+    job = json.loads(raw)
+    if not isinstance(job, dict) or _identity(job) != row:
+        return False
+    raw_status = read_bytes(root / 'status.json')
+    status = json.loads(raw_status) if raw_status is not None else {}
+    if not isinstance(status, dict):
+        return False
+    if status and (status.get('job_id') != row['job_id']
+                   or status.get('run_id') != row['dispatch_run_id']):
+        return False
+    if (status and status.get('status') != 'queued'
+            and (status.get('invocation_evidence') or {}).get('external_invocation') is not False):
+        return False
+    records = (job, status)
+    return not any(record.get('started_at') or record.get('pid') is not None
+                   or record.get('status') == 'running' or record.get('process_alive') is True
+                   or (record.get('invocation_evidence') or {}).get('external_invocation') is True
+                   for record in records)
+
+
 def _terminal(project_root, row):
     try:
         dispatch_job_terminal(Path(project_root), row)
@@ -56,7 +86,7 @@ def _retained(project_root, slots):
 
 
 def _unmanaged_running(project_root, slots):
-    """An upgrade must not hide pre-existing dispatch processes from capacity."""
+    """Count ordinary dispatch and Workflow jobs covered by this capacity pool."""
     managed = {row['job_id'] for row in slots.values()}
     count = 0
     root = Path(project_root) / '.goodteam' / 'workers' / 'jobs'
@@ -67,8 +97,16 @@ def _unmanaged_running(project_root, slots):
         if raw is None:
             continue
         job = json.loads(raw)
-        if (not isinstance(job, dict) or job.get('id') in managed
-                or not str(job.get('run_id', '')).startswith('dispatch-')):
+        if not isinstance(job, dict) or job.get('id') in managed:
+            continue
+        # Manager and protected Reviewer transports have different completion
+        # receipts and are not admitted by the ordinary Worker capacity pool.
+        # Do not reinterpret their retained history as an unretired Worker.
+        context = job.get('sandbox_context') or {}
+        ordinary_workflow = (job.get('workflow_workspace') is not None
+                             or isinstance(context, dict) and context.get('mode') == 'workflow_isolated')
+        ordinary_dispatch = str(job.get('run_id', '')).startswith('dispatch-')
+        if job.get('role') == 'code_review' or not (ordinary_dispatch or ordinary_workflow):
             continue
         raw_status = read_bytes(directory / 'status.json')
         status = json.loads(raw_status) if raw_status is not None else {}
@@ -130,7 +168,11 @@ def run_with_project_capacity(project_root, job, operation, *, check_start=None,
     finally:
         # A host exception/crash is not proof the Worker and descendants ended.
         # The original terminal/retirement evidence is the recovery authority.
-        if not invoked or _terminal(project_root, identity):
+        try:
+            unstarted = _not_started(project_root, identity)
+        except (OSError, ValueError, KeyError, TypeError):
+            unstarted = False
+        if not invoked or unstarted or _terminal(project_root, identity):
             with role_lock(location):
                 slots = _read(location)
                 if slots.get(available) == identity:

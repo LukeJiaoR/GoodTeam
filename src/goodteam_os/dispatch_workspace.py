@@ -608,11 +608,24 @@ def dispatch_job_terminal(project_root: Path, result: dict) -> tuple[dict, str]:
     if raw is None or job_raw is None:
         raise DispatchWorkspaceError("Original Worker termination is unknown; preserve its attempt.")
     status, job = json.loads(raw), json.loads(job_raw)
+    immutable_request = False
+    if (isinstance(job, dict) and isinstance(status, dict) and job.get("status") == "queued"
+            and job.get("method_loading_mode") and status.get("method_loading_mode") == job["method_loading_mode"]
+            and status.get("task_skill_context") == job.get("task_skill_context")):
+        # Ordinary Pi keeps job.json immutable. Validate that request against
+        # its existing captured input, rather than treating its queued label as
+        # a still-running process. The exit checks below remain unchanged.
+        from goodteam_os.skills.pi_methods import PiMethodInput
+        from goodteam_os.workers import WorkerJobStore
+
+        PiMethodInput(WorkerJobStore(project_root), job_id, prepare=False)
+        immutable_request = True
     if (not isinstance(status, dict) or not isinstance(job, dict)
             or job.get("id") != job_id or job.get("run_id") != source_id
             or status.get("job_id") != job_id or status.get("run_id") != source_id
             or any(status.get(key) != job.get(key) or job.get(key) != result.get(key) for key in ("role", "adapter"))
-            or job.get("status") != status.get("status") or status.get("process_alive") is True):
+            or (not immutable_request and job.get("status") != status.get("status"))
+            or status.get("process_alive") is True):
         raise DispatchWorkspaceError("Original Worker termination is unknown or still live.")
     proof = hashlib.sha256(raw + b"\0" + job_raw).hexdigest()
     retired = (read_bytes(dispatch_artifact_root(project_root, source_id) / ("retired-worker-" + job_id + ".json"))

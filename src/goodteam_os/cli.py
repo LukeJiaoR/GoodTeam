@@ -65,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--source-type", choices=["new_project", "existing_project"], default="new_project")
     start.add_argument("--project-config", type=Path)
     start.add_argument("--dry-run", action="store_true")
+    start.add_argument("--request-id", default="", help="Reuse this ID when retrying the same project request")
 
     serve_command = subparsers.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
@@ -427,6 +428,8 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             project_config=args.project_config,
             role_model_overrides=args.role_model,
             dry_run=args.dry_run,
+            run_id=args.request_id,
+            background=False,
         )
         print(json.dumps(payload, indent=2))
         return 0
@@ -604,7 +607,7 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             worker_mode=args.worker_mode,
         )
         print(json.dumps(payload, indent=2))
-        return 1 if payload.get("status") in {"failed", "blocked"} else 0
+        return 0 if payload.get("status") in {"passed", "planned"} else 1
     if args.command == "dispatch":
         tracks = [
             parse_dispatch_track_spec(track, base_dir=Path.cwd())
@@ -848,4 +851,5 @@ def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=N
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

@@ -1,8 +1,7 @@
-"""Bounded Goal continuation over the existing workflow control plane.
+"""Goal intent over the existing task queue and batch execution.
 
-Goal records own intent and continuation decisions. StateStore remains the only
-workflow execution truth; this module never approves a workflow Gate. A durable
-claim without a provable matching run is blocked, never automatically replayed.
+Already-started Workflow history retains its original evidence and controls.
+New work binds ordinary tasks; Goal projection never owns their execution state.
 """
 from __future__ import annotations
 
@@ -13,12 +12,14 @@ import json
 import logging
 import os
 import threading
-from contextlib import contextmanager, nullcontext
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from goodteam_os.goal_assessment import (
     CompletedAssessmentProtocolError, assess_goal, evidence_digest, run_evidence, verify_completed_assessment,
 )
+from goodteam_os.manager_execution import ManagerResourceBusy
 from goodteam_os.goals import GoalStore
 from goodteam_os.state import StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
@@ -32,24 +33,27 @@ _LOCKS_GUARD = threading.Lock()
 
 
 class GoalBusyError(RuntimeError):
-    """The project Goal guard is already held by another operation."""
+    """The selected Goal guard is already held by another operation."""
 
 
 @contextmanager
-def goal_guard(workspace, project_key, *, blocking=True):
+def goal_guard(workspace, project_key, *, goal_id=None, blocking=True):
     key = normalize_project_key(project_key)
-    path = Path(workspace).resolve() / "state" / "goal-locks" / f"{key}.lock"
+    # The default scope retains existing project-continuation coordination.
+    # Goal callers supply their own identity rather than taking that broad lock.
+    suffix = "" if goal_id is None else "." + hashlib.sha256(str(goal_id).encode()).hexdigest()
+    path = Path(workspace).resolve() / "state" / "goal-locks" / f"{key}{suffix}.lock"
     with _LOCKS_GUARD:
         lock = _LOCKS.setdefault(str(path), threading.Lock())
     if not lock.acquire(blocking=blocking):
-        raise GoalBusyError("The project's Goal is busy.")
+        raise GoalBusyError("This Goal is busy.")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a") as handle:
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
             except BlockingIOError as exc:
-                raise GoalBusyError("The project's Goal is busy.") from exc
+                raise GoalBusyError("This Goal is busy.") from exc
             try:
                 yield
             finally:
@@ -127,7 +131,7 @@ def stop_goal_action(workspace, project_key, request):
             reason="User stopped automatic continuation; an already started run keeps its existing controls.")
 
     try:
-        with goal_guard(workspace, project_key, blocking=False):
+        with goal_guard(workspace, project_key, goal_id=request.get("goal_id"), blocking=False):
             return {"goal": stop(GoalStore(workspace, project_key))}
     except GoalBusyError:
         # A synchronously starting workflow can hold the Goal guard while its
@@ -137,19 +141,19 @@ def stop_goal_action(workspace, project_key, request):
         store = GoalStore(workspace, project_key)
         goal = store.get_goal(request.get("goal_id"))
         work = goal.get("active_work") or {}
+        if work.get("execution"):
+            return {"goal": stop(store)}
         current = StateStore(workspace).read_project_current(project_key)
         if (goal["status"] == "active" and work.get("status") == "dispatching"
                 and current is not None and current.run_id == work.get("run_id")
                 and current.idea == work.get("task")):
             return {"goal": stop(store)}
-        with goal_guard(workspace, project_key):
+        with goal_guard(workspace, project_key, goal_id=request.get("goal_id")):
             return {"goal": stop(GoalStore(workspace, project_key))}
 
 
 def handle_goal_action(workspace, project_key, root, request):
     from goodteam_os.web import _project_config_for_key
-    from goodteam_os.project_readiness import build_capabilities
-    from goodteam_os.project_readiness_executor import ProjectReadinessExecutor
     from goodteam_os.team_control_plane import ensure_team_state
 
     workspace, root = Path(workspace), Path(root)
@@ -157,18 +161,11 @@ def handle_goal_action(workspace, project_key, root, request):
     command = request.get("idempotency_key")
     if not isinstance(command, str) or not command.strip() or len(command) > 256:
         raise ValueError("A stable Goal command identity is required.")
-    from goodteam_os.workflow_mutations import workflow_guard
-
-    with goal_guard(workspace, project_key), (
-        workflow_guard(workspace, project_key) if request.get("action") == "create_goal" else nullcontext()
-    ):
+    action = request.get("action")
+    goal_id = "create-goal" if action == "create_goal" else request.get("goal_id")
+    with goal_guard(workspace, project_key, goal_id=goal_id):
         store = GoalStore(workspace, project_key)
-        action = request.get("action")
         if action == "create_goal":
-            from goodteam_os.project_iteration_execution import active_project_batch
-
-            if active_project_batch(workspace, project_key):
-                raise ValueError("Finish or reconcile the active project batch before creating a Goal.")
             if request.get("confirmed") is not True or request.get("billing_acknowledged") is not True:
                 raise ValueError("Confirm the exact Goal, automatic continuation and configured provider charges first.")
             replay = store.replay_goal_creation(idempotency_key=command, objective=request.get("objective"),
@@ -178,12 +175,6 @@ def handle_goal_action(workspace, project_key, root, request):
             if replay is not None:
                 store.sync_tasks(replay["id"], LocalTaskStore(root, project_key))
                 return {"goal": replay}
-            current = StateStore(workspace).read_project_current(project_key)
-            if current and current.current_node not in {"complete", "rejected"} and current.next_node != "rejected":
-                raise ValueError("Finish the existing workflow before confirming a new Goal.")
-            ready = ProjectReadinessExecutor(workspace).status(project_key, root)
-            if not build_capabilities(ready)["start_workflow"]:
-                raise ValueError("Complete project preparation before confirming a Goal.")
             config = _project_config_for_key(workspace, project_key)
             ensure_team_state(workspace, project_key, config)
             goal = store.create_goal(
@@ -204,12 +195,26 @@ def handle_goal_action(workspace, project_key, root, request):
                 config = _project_config_for_key(workspace, project_key)
                 if goal.get("authority_snapshot") != authority_snapshot(workspace, project_key, config, root):
                     raise ValueError("Goal configuration or model catalog changed; retry is blocked.")
-                current = StateStore(workspace).read_project_current(project_key)
-                if (not current or current.run_id != work["run_id"] or current.idea != work["task"]
-                        or current.current_node != "complete"
-                        or current.pending_transition.get("status") in {"recording", "executing", "interrupted"}):
-                    raise ValueError("The same completed workflow cannot be proven; retry is blocked.")
-                evidence = run_evidence(workspace, current, project_root=root)
+                execution = work.get("execution")
+                if execution is not None:
+                    from goodteam_os.goal_assessment import batch_run_evidence
+                    from goodteam_os.project_iteration_quality import _batch
+
+                    batch = _batch(workspace, project_key, root, execution["run_id"])
+                    if (batch.get("status") != "delivered"
+                            or batch.get("proposal_ids") != execution["proposal_ids"]
+                            or batch.get("expected_revisions") != execution["expected_revisions"]
+                            or batch.get("goal_source") != {"goal_id": goal["id"], "work_id": work["id"]}):
+                        raise ValueError("The original delivered Goal batch cannot be proven; retry is blocked.")
+                    evidence = batch_run_evidence(workspace, project_root=root, project_key=project_key,
+                        run_id=execution["run_id"], task_id=execution["project_task_id"])
+                else:
+                    current = StateStore(workspace).read_project_current(project_key)
+                    if (not current or current.run_id != work["run_id"] or current.idea != work["task"]
+                            or current.current_node != "complete"
+                            or current.pending_transition.get("status") in {"recording", "executing", "interrupted"}):
+                        raise ValueError("The same completed workflow cannot be proven; retry is blocked.")
+                    evidence = run_evidence(workspace, current, project_root=root)
                 if evidence_digest(evidence) != failure["evidence_digest"]:
                     raise ValueError("The original assessment evidence changed; retry is blocked.")
                 verify_completed_assessment(root, goal, work, failure["attempt"], failure["job_id"], evidence)
@@ -240,10 +245,10 @@ def goal_views(workspace, goals):
     """
     states = StateStore(Path(workspace))
     current_by_project, archived_by_project = {}, {}
-    return [_goal_view(goal, states, current_by_project, archived_by_project) for goal in goals]
+    return [_goal_view(goal, states, current_by_project, archived_by_project, workspace=workspace) for goal in goals]
 
 
-def _goal_view(goal, states, current_by_project, archived_by_project):
+def _goal_view(goal, states, current_by_project, archived_by_project, *, workspace):
     from goodteam_os.web import current_approval_gate
 
     result = deepcopy(goal)
@@ -251,7 +256,18 @@ def _goal_view(goal, states, current_by_project, archived_by_project):
     if project_key not in current_by_project:
         current_by_project[project_key] = states.read_project_current(project_key)
     current = current_by_project[project_key]
+    from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+    batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
     for work in result["work_units"]:
+        if work.get("execution"):
+            batch = batches.get(work["execution"]["run_id"], {})
+            work["observed_execution_status"] = {
+                "claimed": "in_progress", "running": "in_progress", "review": "awaiting_approval",
+                "blocked": "blocked", "abandoned": "canceled", "delivered": "done",
+            }.get(batch.get("status"), "queued" if work["status"] == "pending" else "unknown")
+            work["observed_batch_run_id"] = work["execution"]["run_id"]
+            work["observed_approval"] = "batch_review" if batch.get("status") == "review" else ""
+            continue
         state = current if current and current.run_id == work["run_id"] else None
         if state is None and work["status"] in {"dispatching", "running"}:
             if project_key not in archived_by_project:
@@ -295,6 +311,8 @@ def _sync_execution_projection(workspace, goal, tasks):
     view = goal_view(workspace, goal)
     cards = tasks.list_tasks()
     for work in view["work_units"]:
+        if work.get("execution"):
+            continue
         actual = work.get("observed_execution_status")
         if actual not in {"done", "canceled", "blocked", "in_progress", "awaiting_approval"} or work["status"] not in {"dispatching", "running"}:
             continue
@@ -312,13 +330,112 @@ def _block(store, goal, reason):
                             idempotency_key=f"block:{goal['id']}:{goal['revision']}", reason=reason)
 
 
-def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=None):
+def _tick_task_goal(workspace, key, root, config, store, goal, tasks, assessor):
+    """Adapt Goal context to the existing task queue; it owns no execution state."""
+    from datetime import UTC, datetime
+    from goodteam_os.assistant_requests import conversation_lock
+    from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+    from goodteam_os.tasks import task_evidence_digest, project_task_intent
+    from goodteam_os.project_iteration_execution import _identity, run_queued_iteration_batch
+    from goodteam_os.goal_assessment import batch_run_evidence
+
+    work = goal.get("active_work")
+    if work is None:
+        pending = [item for item in goal["work_units"] if item["status"] == "pending"]
+        if not pending:
+            return goal
+        work = pending[0]
+        if not work.get("execution"):
+            task = next(item for item in tasks.list_tasks()
+                        if f"goal:{goal['id']}:work:{work['id']}" in item.get("external_refs", []))
+            task = tasks.update_task(task["id"], goal_execution="batch")
+            proposal_id = hashlib.sha256(f"goal:{goal['id']}:{work['id']}".encode()).hexdigest()
+            revisions = {proposal_id: 1}
+            run_id, _ = _identity([proposal_id], revisions)
+            goal = store.bind_execution(goal["id"], work_id=work["id"],
+                execution={"kind": "batch", "run_id": run_id, "project_task_id": task["id"],
+                           "proposal_ids": [proposal_id], "expected_revisions": revisions},
+                expected_revision=goal["revision"], idempotency_key=f"bind:{goal['id']}:{work['id']}")
+        goal = store.next_work(goal["id"], expected_revision=goal["revision"],
+                               idempotency_key=f"claim:{goal['id']}:{goal['revision']}")
+        work = goal["active_work"]
+    execution = work["execution"]
+    session_store = TaskAssistantSessionStore(workspace, key)
+    batch = session_store.read().get("project_task_batches", {}).get(execution["run_id"])
+    if batch is None:
+        store.sync_tasks(goal["id"], tasks)
+        task = tasks.get_task(execution["project_task_id"])
+        proposal_id = execution["proposal_ids"][0]
+        proposal = {"id": proposal_id, "revision": 1, "exact_request": task["description"],
+            "source_message_ids": [], "source": "goal", "goal_source": {"goal_id": goal["id"], "work_id": work["id"]},
+            "status": "queued", "confirmed": False, "run_id": "", "created_at": datetime.now(UTC).isoformat(),
+            "project_task_id": task["id"], "project_task_digest": task_evidence_digest(task),
+            "goal_task_intent": project_task_intent(task)}
+        with conversation_lock(session_store):
+            def enqueue(session):
+                queue = session.setdefault("queued_task_proposals", [])
+                old = next((item for item in queue if item["id"] == proposal_id), None)
+                if old is None:
+                    queue.append(proposal)
+                elif old.get("goal_task_intent") != proposal["goal_task_intent"] or old.get("goal_source") != proposal["goal_source"]:
+                    raise ValueError("Goal task changed after its queue binding.")
+                elif not old.get("confirmed"):
+                    old["project_task_digest"] = proposal["project_task_digest"]
+                return session
+            session_store._mutate(enqueue)
+        run_queued_iteration_batch(workspace=workspace, project_key=key, root=root, project_config=config,
+            proposal_ids=execution["proposal_ids"], expected_revisions=execution["expected_revisions"],
+            confirmed=True, background=True, expected_authority=goal.get("authority_snapshot"))
+        batch = session_store.read()["project_task_batches"][execution["run_id"]]
+    elif batch.get("status") in {"claimed", "running"}:
+        # Reuse the existing batch identity and its dispatch recovery; the batch
+        # service observes an active thread instead of launching a duplicate.
+        run_queued_iteration_batch(workspace=workspace, project_key=key, root=root, project_config=config,
+            proposal_ids=execution["proposal_ids"], expected_revisions=execution["expected_revisions"],
+            confirmed=True, background=True, expected_authority=goal.get("authority_snapshot"))
+        batch = session_store.read()["project_task_batches"][execution["run_id"]]
+    if work["status"] == "dispatching":
+        goal = store.mark_running(goal["id"], expected_revision=goal["revision"],
+            idempotency_key=f"running:{goal['id']}:{work['id']}", work_id=work["id"], run_id=work["run_id"])
+        work = goal["active_work"]
+    # Review and delivery remain facts owned by the existing batch services.
+    # Worker completion alone neither accepts a Goal nor frees its dependencies.
+    if batch.get("status") != "delivered":
+        return goal
+    evidence = batch_run_evidence(workspace, project_root=root, project_key=key,
+                                  run_id=execution["run_id"], task_id=execution["project_task_id"])
+    failures = work.get("assessment_failures", [])
+    digest = evidence_digest(evidence)
+    if failures and failures[0]["evidence_digest"] != digest:
+        return _block(store, goal, "The original batch assessment evidence changed.")
+    attempt = len(failures) + 1
+    if attempt > work.get("assessment_retry_limit", goal.get("max_assessment_attempts", 1)):
+        return _block(store, goal, "Assessment retry allowance exhausted.")
+    try:
+        assessment = assessor(workspace=workspace, project_config=config, project_root=root,
+            goal=goal, work=work, execution_ref={"project_key": key, "run_id": execution["run_id"]},
+            evidence=evidence, attempt=attempt)
+        current_goal = store.get_goal(goal["id"])
+        if current_goal["status"] != "active":
+            return current_goal
+        if not assessment.get("evidence_refs") or not set(assessment["evidence_refs"]).issubset(evidence):
+            raise ValueError("Goal assessment cites evidence outside its original batch.")
+        return store.complete_work(goal["id"], expected_revision=goal["revision"],
+            idempotency_key=f"complete:{goal['id']}:{work['id']}", work_id=work["id"], **assessment)
+    except CompletedAssessmentProtocolError as exc:
+        verify_completed_assessment(root, goal, work, attempt, exc.job_id, evidence)
+        return store.record_assessment_failure(goal["id"], work_id=work["id"], job_id=exc.job_id,
+            code=exc.code, evidence_digest=digest, expected_revision=goal["revision"],
+            idempotency_key=f"assessment-failure:{goal['id']}:{work['id']}:{attempt}")
+
+
+def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking=True):
     """One serialized decision/execution step; no polling reads call this."""
-    from goodteam_os.web import _project_target_and_root, _project_config_for_key, start_workflow
+    from goodteam_os.web import _project_target_and_root, _project_config_for_key
 
     workspace = Path(workspace)
     project_key = normalize_project_key(project_key)
-    with goal_guard(workspace, project_key):
+    with goal_guard(workspace, project_key, goal_id=goal_id, blocking=blocking):
         store = GoalStore(workspace, project_key)
         goal = store.get_goal(goal_id)
         current = StateStore(workspace).read_project_current(project_key)
@@ -349,6 +466,24 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
             goal = _block(store, goal, "Project, Team or runtime configuration changed since Goal confirmation. Reconfirm a new Goal.")
             store.sync_tasks(goal_id, tasks)
             return goal
+        if (work and work.get("execution")) or work is None:
+            from goodteam_os.project_iteration_execution import ProjectBatchResourceBusy
+            from goodteam_os.workflow_mutations import WorkflowBusyError
+            from goodteam_os.state_documents import DocumentLockBusy
+
+            try:
+                goal = _tick_task_goal(workspace, key, root, config, store, goal, tasks, assessor)
+            except (ManagerResourceBusy, ProjectBatchResourceBusy, WorkflowBusyError, DocumentLockBusy):
+                # No new execution was admitted; retain the exact work for the
+                # next scan rather than turning capacity contention into failure.
+                goal = store.get_goal(goal_id)
+            except Exception as exc:
+                goal = store.get_goal(goal_id)
+                if goal["status"] == "active":
+                    goal = _block(store, goal, f"Goal task continuation stopped: {exc}")
+            store.sync_tasks(goal_id, tasks)
+            return goal_view(workspace, goal)
+        # Existing unbound active work remains attached to its original Workflow.
         # A workflow can publish its final node before its approval transaction
         # finishes. Wait for that existing authority boundary; do not assess or
         # claim a successor in the middle of an in-flight decision.
@@ -388,6 +523,8 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
                             raise ValueError("Goal assessment returned evidence outside the bound completed run.")
                         goal = store.complete_work(goal_id, expected_revision=goal["revision"],
                             idempotency_key=f"complete:{goal_id}:{work['id']}", work_id=work["id"], **assessment)
+                    except ManagerResourceBusy:
+                        goal = store.get_goal(goal_id)
                     except CompletedAssessmentProtocolError as exc:
                         try:
                             verify_completed_assessment(root, goal, work, attempt, exc.job_id, evidence)
@@ -400,54 +537,36 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, starter=
                         goal = _block(store, store.get_goal(goal_id), f"Goal assessment stopped: {exc}")
             store.sync_tasks(goal_id, tasks)
             return _sync_execution_projection(workspace, goal, tasks)
-        # Pending continuation may only claim when the prior workflow is terminal.
-        if current and current.current_node not in {"complete", "rejected"} and current.next_node != "rejected":
-            goal = _block(store, goal, "Another active workflow owns this project; Goal continuation did not interrupt it.")
-            store.sync_tasks(goal_id, tasks)
-            return goal
-        goal = store.next_work(goal_id, expected_revision=goal["revision"],
-                               idempotency_key=f"claim:{goal_id}:{goal['revision']}")
-        work = goal.get("active_work")
-        if not work or work["status"] != "dispatching":
-            store.sync_tasks(goal_id, tasks)
-            return goal
-        # The Goal lock spans claim and dispatch. A Stop may bypass it only
-        # after the exact claimed workflow has a durable checkpoint.
-        store.sync_tasks(goal_id, tasks)
-        try:
-            (starter or start_workflow)(workspace=workspace, idea=work["task"], project_key=key,
-                model_config=Path("models.yaml"), model_profile=str(target.get("model_profile") or "balanced"),
-                delivery_mode=str(target.get("delivery_mode") or "init_project"), source_type="existing_project",
-                project_config=config, run_id=work["run_id"])
-            current = StateStore(workspace).read_project_current(key)
-            if current is None or current.run_id != work["run_id"] or current.idea != work["task"]:
-                raise ValueError("Workflow dispatch did not persist the exact claimed run and input.")
-            goal = store.mark_running(goal_id, expected_revision=goal["revision"],
-                                      idempotency_key=f"running:{goal_id}:{work['id']}", work_id=work["id"], run_id=work["run_id"])
-        except Exception as exc:
-            # A lost response with a matching run is reconciled on the next
-            # tick. An unknown outcome never re-enters start_workflow.
-            current = StateStore(workspace).read_project_current(key)
-            goal = store.get_goal(goal_id)
-            if goal["status"] == "active" and (current is None or current.run_id != work["run_id"]):
-                goal = _block(store, goal, f"Goal dispatch stopped without a provable run: {exc}")
-        store.sync_tasks(goal_id, tasks)
         return goal
 
 
 class GoalServiceStop(threading.Event):
-    """Stop scanning, then explicitly drain the current bounded tick."""
+    """Stop scanning, then drain already admitted coordination ticks."""
 
     thread: threading.Thread
 
+    def __init__(self):
+        super().__init__()
+        # Owned by the scanner; join reads it only after the scanner has exited.
+        self.ticks = {}
+
     def join(self, timeout=GOAL_DRAIN_TIMEOUT_SECONDS):
-        self.thread.join(timeout)
+        deadline = None if timeout is None else time.monotonic() + timeout
+
+        def remaining():
+            return None if deadline is None else max(0, deadline - time.monotonic())
+
+        self.thread.join(remaining())
         if self.thread.is_alive():
-            raise TimeoutError("Goal continuation did not reach a shutdown checkpoint within 30 seconds; inspect the persisted run before restarting.")
+            raise TimeoutError("Goal continuation scan has not stopped; inspect it before restarting.")
+        for thread in self.ticks.values():
+            thread.join(remaining())
+        if any(thread.is_alive() for thread in self.ticks.values()):
+            raise TimeoutError("Goal continuation has not drained its active ticks; inspect persisted work before restarting.")
 
 
 def start_goal_service(workspace):
-    """Resume only explicitly authorized Goals; one bounded tick per scan."""
+    """Observe each authorized Goal without waiting on another Goal assessment."""
     workspace = Path(workspace)
     stop = GoalServiceStop()
 
@@ -463,13 +582,32 @@ def start_goal_service(workspace):
                 else:
                     validated_idle.clear()
                     goals = []
+                stop.ticks = {key: thread for key, thread in stop.ticks.items() if thread.is_alive()}
                 for goal in goals:
                     if stop.is_set():
                         break
-                    try:
-                        tick_goal(workspace, goal["project_key"], goal["id"])
-                    except Exception:
-                        _LOG.exception("Goal continuation stopped before dispatch")
+                    identity = (goal["project_key"], goal["id"])
+                    if identity in stop.ticks:
+                        continue
+
+                    def advance(project_key, goal_id):
+                        if stop.is_set():
+                            return
+                        try:
+                            # A second service observes the same Goal lock, not
+                            # another queued tick behind a running assessment.
+                            tick_goal(workspace, project_key, goal_id, blocking=False)
+                        except GoalBusyError:
+                            pass
+                        except Exception:
+                            _LOG.exception("Goal continuation stopped before dispatch")
+
+                    # Coordination only: actual work still enters the original
+                    # batch runner and its shared process-capacity mechanism.
+                    thread = threading.Thread(target=advance, args=identity,
+                                              name=f"goodteam-goal-{goal['id']}", daemon=True)
+                    thread.start()
+                    stop.ticks[identity] = thread
                 if not stop.is_set():
                     from goodteam_os.project_iteration_continuation import tick_authorized_project_continuations
 
@@ -487,5 +625,3 @@ def start_goal_service(workspace):
     stop.thread = threading.Thread(target=run, name="goodteam-goal-continuation", daemon=True)
     stop.thread.start()
     return stop
-
-
