@@ -65,6 +65,7 @@ def _require_execution_slot(workspace, project_key, run_id, *, continuation_id=N
     ledger = LocalTaskStore(root, project_key)
     all_tasks = {t["id"]: t for t in ledger.list_tasks()}
     occupied = []
+    occupied_groups = []
     for batch in others:
         if Path(batch["project_root"]).resolve() != root.resolve():
             raise ValueError("Concurrent batch sources differ.")
@@ -76,6 +77,7 @@ def _require_execution_slot(workspace, project_key, run_id, *, continuation_id=N
             if task is None or project_task_intent(task) != binding["task_intent"]:
                 raise ValueError("An occupied task's original intent changed.")
             occupied.append(task["id"])
+        occupied_groups.append(list(batch["task_ids"]))
         if set(occupied) & set(task_ids):
             raise ValueError("A task is already reserved by another batch.")
     snapshot = rank_project_backlog(list(all_tasks.values()), project_key, limit=None)
@@ -85,8 +87,9 @@ def _require_execution_slot(workspace, project_key, run_id, *, continuation_id=N
         raise ValueError("Concurrent task scope is unavailable.")
     # Invalid or internally conflicting batches are not a temporary resource
     # wait. Only collision between two individually valid scopes may defer.
-    _validate_parallel_group([candidates[i] for i in occupied])
-    _validate_parallel_group([candidates[i] for i in task_ids])
+    for group in [*occupied_groups, task_ids]:
+        if len(group) > 1:
+            _validate_parallel_group([candidates[i] for i in group])
     try:
         _validate_parallel_group([candidates[i] for i in ids])
     except ValueError as exc:
@@ -606,3 +609,4 @@ def run_queued_iteration_batch(*, workspace, project_key, root, project_config, 
         expected_authority=expected_authority, expected_continuation_id=expected_continuation_id,
                     selected_proposal_id=selected_proposal_id, expected_team_revision=expected_team_revision)
     return _execute_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)
+

@@ -248,6 +248,8 @@ def start_selected_project_task(service, *, project_key, root, request):
             for name in ("write_domains", "worker_id", "delegation", "web_search"):
                 if name in assignment:
                     fields[name] = assignment[name]
+            if fields.get("execution_policy") == "read_only" and fields.get("write_domains") == []:
+                fields.pop("write_domains")
             if fields.get("write_domains") is not None:
                 from goodteam_os.project_iteration import normalize_write_domains
                 domains = normalize_write_domains(fields["write_domains"])
@@ -334,3 +336,4 @@ def start_selected_project_task(service, *, project_key, root, request):
     return run_queued_iteration_batch(workspace=service.workspace, project_key=project_key, root=root,
         project_config=service.project_config, proposal_ids=[proposal_id], expected_revisions={proposal_id: revision},
         confirmed=True, background=True, selected_proposal_id=proposal_id, expected_team_revision=expected_team_revision)
+

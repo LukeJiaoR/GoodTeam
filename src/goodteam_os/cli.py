@@ -429,6 +429,7 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             role_model_overrides=args.role_model,
             dry_run=args.dry_run,
             run_id=args.request_id,
+            background=False,
         )
         print(json.dumps(payload, indent=2))
         return 0
@@ -850,4 +851,5 @@ def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=N
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

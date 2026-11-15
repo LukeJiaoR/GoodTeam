@@ -3768,6 +3768,7 @@ def start_workflow(
     dry_run: bool = False, run_id: str = "", expected_team_revision: int | None = None,
     task_skill_context: dict[str, object] | None = None,
     task_write_domains: list[str] | None = None,
+    background: bool = True,
 ) -> dict[str, object]:
     """Compatibility API name; new requests use ordinary task/batch execution.
 
@@ -3809,7 +3810,7 @@ def start_workflow(
         runtime_request=runtime, metadata=metadata)
     result = run_queued_iteration_batch(workspace=workspace, project_key=key, root=root,
         project_config=config, proposal_ids=[proposal["id"]], expected_revisions={proposal["id"]: proposal["revision"]},
-        confirmed=True, background=True, expected_team_revision=expected_team_revision)
+        confirmed=True, background=background, expected_team_revision=expected_team_revision)
     return {**result, "project_key": key, "request_id": request_id,
             "task_id": proposal["project_task_id"], "phase": "planning", "dry_run": False}
 
@@ -8669,3 +8670,4 @@ def serve(
         finally:
             for signum, previous in previous_signals.items():
                 signal.signal(signum, previous)
+
