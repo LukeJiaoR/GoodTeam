@@ -12,12 +12,14 @@ import json
 import logging
 import os
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from goodteam_os.goal_assessment import (
     CompletedAssessmentProtocolError, assess_goal, evidence_digest, run_evidence, verify_completed_assessment,
 )
+from goodteam_os.manager_execution import ManagerResourceBusy
 from goodteam_os.goals import GoalStore
 from goodteam_os.state import StateStore, normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
@@ -37,7 +39,8 @@ class GoalBusyError(RuntimeError):
 @contextmanager
 def goal_guard(workspace, project_key, *, goal_id=None, blocking=True):
     key = normalize_project_key(project_key)
-    # Creation has no Goal ID yet; existing Goals serialize only their own work.
+    # The default scope retains existing project-continuation coordination.
+    # Goal callers supply their own identity rather than taking that broad lock.
     suffix = "" if goal_id is None else "." + hashlib.sha256(str(goal_id).encode()).hexdigest()
     path = Path(workspace).resolve() / "state" / "goal-locks" / f"{key}{suffix}.lock"
     with _LOCKS_GUARD:
@@ -159,7 +162,7 @@ def handle_goal_action(workspace, project_key, root, request):
     if not isinstance(command, str) or not command.strip() or len(command) > 256:
         raise ValueError("A stable Goal command identity is required.")
     action = request.get("action")
-    goal_id = None if action == "create_goal" else request.get("goal_id")
+    goal_id = "create-goal" if action == "create_goal" else request.get("goal_id")
     with goal_guard(workspace, project_key, goal_id=goal_id):
         store = GoalStore(workspace, project_key)
         if action == "create_goal":
@@ -426,13 +429,13 @@ def _tick_task_goal(workspace, key, root, config, store, goal, tasks, assessor):
             idempotency_key=f"assessment-failure:{goal['id']}:{work['id']}:{attempt}")
 
 
-def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal):
+def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking=True):
     """One serialized decision/execution step; no polling reads call this."""
     from goodteam_os.web import _project_target_and_root, _project_config_for_key
 
     workspace = Path(workspace)
     project_key = normalize_project_key(project_key)
-    with goal_guard(workspace, project_key, goal_id=goal_id):
+    with goal_guard(workspace, project_key, goal_id=goal_id, blocking=blocking):
         store = GoalStore(workspace, project_key)
         goal = store.get_goal(goal_id)
         current = StateStore(workspace).read_project_current(project_key)
@@ -464,8 +467,15 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal):
             store.sync_tasks(goal_id, tasks)
             return goal
         if (work and work.get("execution")) or work is None:
+            from goodteam_os.project_iteration_execution import ProjectBatchResourceBusy
+            from goodteam_os.workflow_mutations import WorkflowBusyError
+
             try:
                 goal = _tick_task_goal(workspace, key, root, config, store, goal, tasks, assessor)
+            except (ManagerResourceBusy, ProjectBatchResourceBusy, WorkflowBusyError):
+                # No new execution was admitted; retain the exact work for the
+                # next scan rather than turning capacity contention into failure.
+                goal = store.get_goal(goal_id)
             except Exception as exc:
                 goal = store.get_goal(goal_id)
                 if goal["status"] == "active":
@@ -512,6 +522,8 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal):
                             raise ValueError("Goal assessment returned evidence outside the bound completed run.")
                         goal = store.complete_work(goal_id, expected_revision=goal["revision"],
                             idempotency_key=f"complete:{goal_id}:{work['id']}", work_id=work["id"], **assessment)
+                    except ManagerResourceBusy:
+                        goal = store.get_goal(goal_id)
                     except CompletedAssessmentProtocolError as exc:
                         try:
                             verify_completed_assessment(root, goal, work, attempt, exc.job_id, evidence)
@@ -528,18 +540,32 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal):
 
 
 class GoalServiceStop(threading.Event):
-    """Stop scanning, then explicitly drain the current bounded tick."""
+    """Stop scanning, then drain already admitted coordination ticks."""
 
     thread: threading.Thread
 
+    def __init__(self):
+        super().__init__()
+        # Owned by the scanner; join reads it only after the scanner has exited.
+        self.ticks = {}
+
     def join(self, timeout=GOAL_DRAIN_TIMEOUT_SECONDS):
-        self.thread.join(timeout)
+        deadline = None if timeout is None else time.monotonic() + timeout
+
+        def remaining():
+            return None if deadline is None else max(0, deadline - time.monotonic())
+
+        self.thread.join(remaining())
         if self.thread.is_alive():
-            raise TimeoutError("Goal continuation did not reach a shutdown checkpoint within 30 seconds; inspect the persisted run before restarting.")
+            raise TimeoutError("Goal continuation scan has not stopped; inspect it before restarting.")
+        for thread in self.ticks.values():
+            thread.join(remaining())
+        if any(thread.is_alive() for thread in self.ticks.values()):
+            raise TimeoutError("Goal continuation has not drained its active ticks; inspect persisted work before restarting.")
 
 
 def start_goal_service(workspace):
-    """Resume only explicitly authorized Goals; one bounded tick per scan."""
+    """Observe each authorized Goal without waiting on another Goal assessment."""
     workspace = Path(workspace)
     stop = GoalServiceStop()
 
@@ -555,13 +581,32 @@ def start_goal_service(workspace):
                 else:
                     validated_idle.clear()
                     goals = []
+                stop.ticks = {key: thread for key, thread in stop.ticks.items() if thread.is_alive()}
                 for goal in goals:
                     if stop.is_set():
                         break
-                    try:
-                        tick_goal(workspace, goal["project_key"], goal["id"])
-                    except Exception:
-                        _LOG.exception("Goal continuation stopped before dispatch")
+                    identity = (goal["project_key"], goal["id"])
+                    if identity in stop.ticks:
+                        continue
+
+                    def advance(project_key, goal_id):
+                        if stop.is_set():
+                            return
+                        try:
+                            # A second service observes the same Goal lock, not
+                            # another queued tick behind a running assessment.
+                            tick_goal(workspace, project_key, goal_id, blocking=False)
+                        except GoalBusyError:
+                            pass
+                        except Exception:
+                            _LOG.exception("Goal continuation stopped before dispatch")
+
+                    # Coordination only: actual work still enters the original
+                    # batch runner and its shared process-capacity mechanism.
+                    thread = threading.Thread(target=advance, args=identity,
+                                              name=f"goodteam-goal-{goal['id']}", daemon=True)
+                    thread.start()
+                    stop.ticks[identity] = thread
                 if not stop.is_set():
                     from goodteam_os.project_iteration_continuation import tick_authorized_project_continuations
 

@@ -148,8 +148,22 @@ existing command serialization; ledger transactions and revisions still own
 idempotency and state writes. Same-Goal claim/start coordination and the existing
 Stop checkpoint path remain unchanged. No additional execution queue is added.
 
-This change does not make the continuation scan parallel: the service still
-visits Goals sequentially, so a synchronous assessment can delay the next scan
-step (including an accepted retry). It also does not remove brief shared ledger
-transactions. Only static source/AST review was performed; real concurrent
-intake, Stop and recovery validation remains in #419.
+The service now coordinates independent Goal ticks in background threads, retaining
+at most one live tick per Goal in that service. A nonblocking Goal guard also
+prevents another service from queuing a duplicate tick. Each tick still enters
+the existing batch runner and Worker capacity management; this is not another
+execution queue or Worker pool. Shutdown stops scanning and drains admitted ticks
+under the original timeout.
+
+Manager-slot and batch-admission contention leave the original Goal active for
+the next scan. Workflow-lock contention at admission is treated the same way.
+The batch runner likewise leaves an unstarted batch intact when its admission
+write domain is temporarily occupied, instead of recording execution failure.
+Actual execution errors retain their existing failure handling.
+
+Goal creation now uses its own guard identity, not the default project-
+continuation guard. Existing project-continuation planning and Operator intake
+are still synchronous within the scanner; this patch does not claim those
+paths cannot delay a later scan. Brief shared ledger transactions also remain.
+Only static source/AST review was performed; real concurrent intake, Stop,
+shutdown and recovery validation remains in #419.

@@ -524,7 +524,7 @@ def _execute_batch(*, workspace, project_key, root, batch):
                     _require_continuation(TaskAssistantSessionStore(workspace, project_key).read(), batch.get("expected_continuation_id"))
                     _require_goal_source(workspace, project_key, batch.get("goal_source"), batch["run_id"])
                     _claim_tasks(root, project_key, batch)
-            except WorkflowBusyError:
+            except (WorkflowBusyError, ProjectBatchResourceBusy):
                 # Only the short, not-yet-executed admission was busy.
                 return {"run_id": batch["run_id"], "status": batch["status"], "execution_started": False}
             def check_start(*_):
