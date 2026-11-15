@@ -114,3 +114,13 @@ These changes have static checks only. Real assessment retries, quality-disabled
 batch delivery, Telegram submission and installation remain unexecuted acceptance.
 
 The configured installer now binds cwd to the actual CLI/Pi Worker runtime worktree, not environment_root. Dependency reuse is unchanged; lockfile/generated source changes are captured with the Worker candidate. Static inspection only, no installer run.
+
+## Goal intake follow-up
+
+Creating a confirmed Goal no longer acquires the historical Workflow lock or
+rejects an unrelated active batch/Workflow. The existing Goal lock and operation
+receipt still serialize/replay the same command before configuration resolution;
+actual execution continues through the existing task scheduler. Existing Goal
+ledger rules, confirmation, scope and charge acknowledgements are unchanged.
+This corrects intake, not runtime acceptance: concurrent execution, lost-response
+replay and Stop/recovery still require the real checks tracked in #419.

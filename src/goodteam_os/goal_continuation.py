@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import threading
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from pathlib import Path
 
 from goodteam_os.goal_assessment import (
@@ -156,18 +156,10 @@ def handle_goal_action(workspace, project_key, root, request):
     command = request.get("idempotency_key")
     if not isinstance(command, str) or not command.strip() or len(command) > 256:
         raise ValueError("A stable Goal command identity is required.")
-    from goodteam_os.workflow_mutations import workflow_guard
-
-    with goal_guard(workspace, project_key), (
-        workflow_guard(workspace, project_key) if request.get("action") == "create_goal" else nullcontext()
-    ):
+    with goal_guard(workspace, project_key):
         store = GoalStore(workspace, project_key)
         action = request.get("action")
         if action == "create_goal":
-            from goodteam_os.project_iteration_execution import active_project_batch
-
-            if active_project_batch(workspace, project_key):
-                raise ValueError("Finish or reconcile the active project batch before creating a Goal.")
             if request.get("confirmed") is not True or request.get("billing_acknowledged") is not True:
                 raise ValueError("Confirm the exact Goal, automatic continuation and configured provider charges first.")
             replay = store.replay_goal_creation(idempotency_key=command, objective=request.get("objective"),
@@ -177,9 +169,6 @@ def handle_goal_action(workspace, project_key, root, request):
             if replay is not None:
                 store.sync_tasks(replay["id"], LocalTaskStore(root, project_key))
                 return {"goal": replay}
-            current = StateStore(workspace).read_project_current(project_key)
-            if current and current.current_node not in {"complete", "rejected"} and current.next_node != "rejected":
-                raise ValueError("Finish the existing workflow before confirming a new Goal.")
             config = _project_config_for_key(workspace, project_key)
             ensure_team_state(workspace, project_key, config)
             goal = store.create_goal(
