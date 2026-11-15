@@ -174,4 +174,7 @@ def batch_execution_evidence(workspace, project_key, project_root, batch):
 
         outcome = verified_outcome(workspace=workspace, project_key=project_key,
                                    root=root, run_id=run_id)
-        yield "delivery", canonical_json(outcome)
+        # Verify current ancestry/content above, but keep retry evidence bound
+        # to the original delivery rather than unrelated subsequent commits.
+        yield "delivery", canonical_json({**outcome,
+            "project_head": outcome["delivery"]["landed_commit"]})

@@ -469,10 +469,11 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking
         if (work and work.get("execution")) or work is None:
             from goodteam_os.project_iteration_execution import ProjectBatchResourceBusy
             from goodteam_os.workflow_mutations import WorkflowBusyError
+            from goodteam_os.state_documents import DocumentLockBusy
 
             try:
                 goal = _tick_task_goal(workspace, key, root, config, store, goal, tasks, assessor)
-            except (ManagerResourceBusy, ProjectBatchResourceBusy, WorkflowBusyError):
+            except (ManagerResourceBusy, ProjectBatchResourceBusy, WorkflowBusyError, DocumentLockBusy):
                 # No new execution was admitted; retain the exact work for the
                 # next scan rather than turning capacity contention into failure.
                 goal = store.get_goal(goal_id)
