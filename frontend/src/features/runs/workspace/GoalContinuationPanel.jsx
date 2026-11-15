@@ -182,7 +182,7 @@ function GoalSnapshot({ goal, busy, readOnly, historical = false, currentRunId, 
   </article>;
 }
 
-function GoalHistory({ projectKey, cursor, t }) {
+function GoalHistory({ projectKey, cursor, visibleIds, t }) {
   const [pages, setPages] = useState([]);
   const [next, setNext] = useState(cursor);
   const [busy, setBusy] = useState(false);
@@ -211,7 +211,7 @@ function GoalHistory({ projectKey, cursor, t }) {
     }
   };
   return <section aria-label={t('work.goal.history')}>
-    {pages.flat().map(goal => <details key={goal.id}>
+    {pages.flat().filter(goal => !visibleIds.has(goal.id)).map(goal => <details key={goal.id}>
       <summary>{goal.objective} · {label(goal.status, t)}</summary>
       <GoalSnapshot goal={goal} readOnly historical busy={false} currentRunId="" approvalReviews={[]} t={t} />
       <details><summary>{t('work.goal.fullRecord')}</summary><pre className="goal-history-record">{JSON.stringify(goal, null, 2)}</pre></details>
@@ -221,19 +221,18 @@ function GoalHistory({ projectKey, cursor, t }) {
   </section>;
 }
 
-export default function GoalContinuationPanel({ goals = [], projectKey = '', historyCursor = '', busy, readOnly = false, activeRun = false, currentRunId = '', approvalReviews = [], onOpenReview, error, onAction, t }) {
+export default function GoalContinuationPanel({ goals = [], projectKey = '', historyCursor = '', busy, readOnly = false, currentRunId = '', approvalReviews = [], onOpenReview, error, onAction, t }) {
   const [creating, setCreating] = useState(false);
   const latest = goals.at(-1);
   const canonicalProjectKey = latest?.project_key || projectKey;
-  const activeGoal = goals.some(goal => !TERMINAL.has(goal.status));
+  const visibleIds = new Set(goals.map(goal => goal.id));
   return <section className="goal-continuation" aria-label={t('work.goal.title')}>
     <header className="goal-continuation-heading"><h2>{t('work.goal.title')}</h2>
-      {!readOnly && !creating && !activeGoal ? <Button variant="secondary" disabled={Boolean(busy || activeRun || !onAction)} onClick={() => setCreating(true)}>{t('work.goal.new')}</Button> : null}
+      {!readOnly && !creating ? <Button variant="secondary" disabled={Boolean(busy || !onAction)} onClick={() => setCreating(true)}>{t('work.goal.new')}</Button> : null}
     </header>
-    {activeRun && !activeGoal && !readOnly ? <p>{t('work.goal.waitForRun')}</p> : null}
-    {latest ? <GoalSnapshot key={latest.id} goal={latest} busy={busy} readOnly={readOnly} currentRunId={currentRunId} approvalReviews={approvalReviews} onOpenReview={onOpenReview} onAction={onAction} t={t} /> : <p>{t('work.goal.optional')}</p>}
-    {canonicalProjectKey && historyCursor ? <GoalHistory key={`${canonicalProjectKey}:${latest?.id || ''}`} projectKey={canonicalProjectKey} cursor={historyCursor} t={t} /> : null}
-    {creating && !readOnly && !activeGoal ? <GoalForm busy={busy || activeRun} onAction={onAction} onClose={() => setCreating(false)} t={t} /> : null}
+    {goals.length ? [...goals].reverse().map(goal => <GoalSnapshot key={goal.id} goal={goal} busy={busy} readOnly={readOnly} currentRunId={currentRunId} approvalReviews={approvalReviews} onOpenReview={onOpenReview} onAction={onAction} t={t} />) : <p>{t('work.goal.optional')}</p>}
+    {canonicalProjectKey && historyCursor ? <GoalHistory key={`${canonicalProjectKey}:${latest?.id || ''}`} projectKey={canonicalProjectKey} cursor={historyCursor} visibleIds={visibleIds} t={t} /> : null}
+    {creating && !readOnly ? <GoalForm busy={busy} onAction={onAction} onClose={() => setCreating(false)} t={t} /> : null}
     {error ? <ProductError error={error} t={t} /> : null}
   </section>;
 }

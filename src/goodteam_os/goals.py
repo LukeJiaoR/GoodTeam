@@ -176,10 +176,6 @@ class GoalStore:
             replay, fingerprint = self._replay(db, idempotency_key, "create", payload)
             if replay is not None:
                 return replay
-            for row in db.execute("SELECT id FROM goals WHERE project_key=?", (self.project_key,)):
-                existing = self._snapshot(db, row["id"])
-                if existing["status"] in {"active", "awaiting_approval", "blocked"}:
-                    raise GoalConflict("This project already has an unfinished goal.")
             now = _now()
             goal = dict(id=uuid4().hex, project_key=self.project_key, revision=1, status="active",
                         objective=objective, acceptance_criteria=criteria, allowed_scope=scope,
@@ -236,6 +232,14 @@ class GoalStore:
                               (self.project_key, self.project_key)).fetchall()
             goals = [self._snapshot(db, row["id"]) for row in rows]
             return [goal for goal in goals if not active_only or goal["status"] not in TERMINAL_STATUSES]
+
+    def list_unfinished_goals(self) -> list[dict[str, Any]]:
+        """Keep actionable Goals visible independently of history pagination."""
+        with self._transaction() as db:
+            rows = db.execute("SELECT id,data FROM goals WHERE project_key=? ORDER BY rowid",
+                              (self.project_key,)).fetchall()
+            return [self._snapshot(db, row["id"]) for row in rows
+                    if self._decode(row["data"])["status"] not in {"complete", "stopped", "canceled"}]
 
     def list_continuation_goals(self, *, validated_idle: dict) -> list[dict[str, Any]]:
         """Scan atomically, reusing only byte-identical validated idle records.

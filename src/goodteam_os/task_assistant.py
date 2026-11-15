@@ -107,7 +107,9 @@ class TaskAssistantService:
                 goals = goal_views(self.workspace, goal_store.list_goals())
             else:
                 page = goal_store.page_goals(limit=goal_limit)
-                goals = goal_views(self.workspace, page["goals"])
+                page_ids = {goal["id"] for goal in page["goals"]}
+                unfinished = [goal for goal in goal_store.list_unfinished_goals() if goal["id"] not in page_ids]
+                goals = goal_views(self.workspace, [*unfinished, *page["goals"]])
                 goal_page = {"next_before": page["next_before"]}
         if goal_limit is not None:
             session["goal_page"] = goal_page or {"next_before": ""}
@@ -1046,4 +1048,3 @@ def _compact_team_view(team_view: dict[str, object]) -> dict[str, object]:
         "roles": roles,
         "manager": {"role": manager.get("role", ""), "runtime": dict(manager.get("runtime") or {})},
     }
-

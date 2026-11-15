@@ -124,3 +124,17 @@ actual execution continues through the existing task scheduler. Existing Goal
 ledger rules, confirmation, scope and charge acknowledgements are unchanged.
 This corrects intake, not runtime acceptance: concurrent execution, lost-response
 replay and Stop/recovery still require the real checks tracked in #419.
+
+## Multiple confirmed Goals
+
+The ledger no longer rejects a new Goal because another Goal is unfinished.
+Goal/work identities, command receipts, result evidence and Stop remain scoped to
+the original Goal; the existing continuation scan already visits each Goal and
+uses the shared task scheduler. No new execution queue is added.
+
+The Goal panel now keeps each supplied Goal actionable and allows a new Goal
+while other work exists. Session pagination includes unfinished Goals outside
+the recent history page, including blocked Goals that need retry or Stop;
+loaded historical pages omit duplicates already visible in the live panel.
+Python/JSX parsing and static identity/intake checks passed. Runtime multi-Goal
+execution, pagination and Stop/recovery were not run and remain part of #419.
