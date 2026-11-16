@@ -1,4 +1,9 @@
-"""Bounded follow-up discovery from verified delivery, using existing stores.
+"""[INPUT]: 已授权迭代、已验证交付、任务账和角色记忆。
+[OUTPUT]: 冻结的发现输入与幂等后续任务。
+[POS]: 在既有 continuation、Manager 与队列之间衔接交付发现。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Bounded follow-up discovery from verified delivery, using existing stores.
 
 The continuation session retains one planning/publication outbox. LocalTaskStore
 owns every task; the existing Manager, queue, dispatch and delivery own execution.
@@ -678,7 +683,7 @@ def _retain_changed_discovery(store, root, project_key, config, value, pending, 
         return current
 
 
-def _discovery_packet(*, workspace, project_key, root, project_config, value):
+def _discovery_packet(*, workspace, project_key, root, project_config, value, remember_outcome=False):
     """Read the current feedback before reserving the shared Manager runtime."""
     backlog_source = None
     try:
@@ -692,6 +697,8 @@ def _discovery_packet(*, workspace, project_key, root, project_config, value):
                 raise
             _undelivered_source(workspace=workspace, project_key=project_key, root=root, value=value)
         outcome = None
+    if remember_outcome and outcome is not None:
+        _remember(root, outcome)
     return outcome, _packet(workspace, project_key, root, value, outcome, project_config=Path(project_config),
                             backlog_source=backlog_source)
 
@@ -754,14 +761,12 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
 
     pending = value.get("discovery_pending")
     if pending is None:
-        outcome, packet = _discovery_packet(workspace=workspace, project_key=project_key, root=root,
-                                            project_config=project_config, value=value)
+        _, packet = _discovery_packet(workspace=workspace, project_key=project_key, root=root,
+                                      project_config=project_config, value=value, remember_outcome=True)
         inputs = _input_receipts(packet)
         if all(item in value.get("discovery_consumed", []) for item in inputs):
             _current(store.read(), value)
             return value  # No new feedback, including when a question is still open.
-        if outcome is not None:
-            _remember(root, outcome)
         if value["max_manager_calls"] is not None and value["manager_calls"] >= value["max_manager_calls"]:
             return _budget_exhausted(store, value, "approved_iteration_budget_used")
         trigger_ref = _digest(inputs)

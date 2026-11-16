@@ -1,4 +1,9 @@
-"""Bidirectional stdio client for Codex app-server's JSONL protocol.
+"""[INPUT]: Codex app-server 子进程、事件回调与工具回调。
+[OUTPUT]: 原生线程、执行轮次和 JSONL 连接状态。
+[POS]: Manager 原生会话的双向传输层，不拥有业务状态。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Bidirectional stdio client for Codex app-server's JSONL protocol.
 
 Only transport and native thread/turn identities live here. GoodTeam's task
 services own tool authorization, dispatch, and recovery. A lost acknowledgement

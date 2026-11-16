@@ -1,4 +1,9 @@
-"""Read-only Manager planning over existing tasks or a frozen outcome grant.
+"""[INPUT]: 项目任务、授权范围、对话与 Manager 运行时。
+[OUTPUT]: 只读迭代建议和已绑定输入的规划调用。
+[POS]: 连接项目任务账与 Manager；规划结果不授予执行权限。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Read-only Manager planning over existing tasks or a frozen outcome grant.
 
 The result is an append-only event in the existing Task Assistant session.
 The bounded discovery adapter can validate new-task advice, but only existing
@@ -573,10 +578,17 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
     # Native planning can run alongside foreground dialogue. Only snapshot
     # capture and publication own the conversation lock; unchanged version and
     # authority checks below reject an obsolete result before it is published.
-    result = manager_runner(project_config=project_config, project_key=project_key,
-        **({"resource_slot": resource_slot} if resource_slot is not None and manager_runner is run_manager_iteration_choice else {}),
-                            backlog=snapshot, context=context,
-                            **({"planning_attempt_id": planning_attempt_id} if planning_attempt_id else {}))
+    from goodteam_os.manager_execution import ManagerExecutionError
+
+    try:
+        result = manager_runner(project_config=project_config, project_key=project_key,
+            **({"resource_slot": resource_slot} if resource_slot is not None and manager_runner is run_manager_iteration_choice else {}),
+                                backlog=snapshot, context=context,
+                                **({"planning_attempt_id": planning_attempt_id} if planning_attempt_id else {}))
+    except ManagerExecutionError as exc:
+        if manager_runner is run_manager_iteration_choice and planning_attempt_id and exc.code == "operation_conflict":
+            raise ValueError("The reserved planning input changed; inspect the original attempt before planning again.") from exc
+        raise
     with conversation_lock(store, blocking=True):
         choice = validate_iteration_choice(snapshot, result.get("selection"))
         event_id = f"iteration-choice:{input_digest}" + (":" + planning_attempt_id if planning_attempt_id else "")

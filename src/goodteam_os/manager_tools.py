@@ -1,4 +1,9 @@
-"""App-server tools over GoodTeam's existing project services.
+"""[INPUT]: Manager 请求、项目状态、既有队列与授权服务。
+[OUTPUT]: 供原生 Manager 调用的工具描述与业务回执。
+[POS]: 将原生工具调用接入既有服务，不创建新的授权。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+App-server tools over GoodTeam's existing project services.
 
 The model chooses operations and sees their actual results. It cannot manufacture
 task confirmations, continuation grants, delivery receipts or reviewer authority.

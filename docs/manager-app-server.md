@@ -25,7 +25,7 @@ New delegation returns the existing task ID and proposal ID. It preserves the
 original user messages, purpose, scope and acceptance criteria. Queued work uses
 the existing confirmation/authorization and `run_queued_iteration_batch` path.
 An active project continuation can advance already authorized work without a
-new per-task decision. A tool cannot create that authorization, accept its own
+new per-task decision. A GoodTeam tool cannot create that authorization, accept its own
 result or grant review, merge or deployment permissions.
 
 ## Runtime and configuration
@@ -41,9 +41,12 @@ The initial connection sends `initialize` with `experimentalApi: true`, then
 `initialized`. Manager tools are registered as `thread/start.dynamicTools` and
 serviced through `item/tool/call`. Subsequent turns use `thread/resume`,
 `turn/start`, `turn/steer` and `turn/interrupt`. Manager built-in execution uses a
-read-only sandbox and `approvalPolicy: never`; business mutations happen only
-through the scoped host tools. Dynamic tool schema shape is verified against the
-installed Codex schema in the isolated transport checks.
+read-only sandbox and `approvalPolicy: never`. Those settings do not confine
+configured external MCP servers. The native process still inherits Codex
+configuration, so the complete external tool and provider configuration is not
+bound to the scoped host tools. This is an unresolved merge blocker. Dynamic tool
+schema shape is verified against the installed Codex schema in the isolated
+transport checks.
 
 `GOODTEAM_MANAGER_TURN_TIMEOUT_SECONDS` bounds a turn (default 600 seconds).
 Process exits, tool errors, unknown outcomes and unsupported Worker capabilities
@@ -60,13 +63,22 @@ read through `goodteam_skill_resource` from the captured package and are checked
 again before use. This loader does not create a Worker job, borrow a Pi session
 or claim strict container isolation.
 
+Each Manager request captures the existing orchestrator Role memory outside the
+conversation lock. Its frozen pickup is validated before use; corrections can
+remove facts from a retry but cannot add newer facts. Outcome discovery reuses
+its own frozen pickup. When the memory source changes, a new native thread
+prevents the old thread history from restoring superseded facts. If a thread is
+still active, the next input waits for it to settle before using a new thread.
+The bounded conversation context remains available after the change. Memory is
+project evidence and does not grant instructions, costs or permissions.
+
 ## Execution identity and recovery
 
 The existing Task Assistant session stores a `manager_app_server` projection:
 
 - `threads` associates conversation/background work with the native thread.
-- `requests` binds logical input, phase, original context, native thread/turn,
-  runtime configuration and terminal result.
+- `requests` binds logical input, phase, original context and Role memory,
+  native thread/turn, runtime configuration and terminal result.
 - `tool_receipts` records stable operation identity and the actual returned
   business IDs. Tasks and runs continue to live in their original stores.
 
@@ -114,7 +126,12 @@ The implementation was checked against the installed Codex
 `0.167.0-alpha.4` protocol schemas. In the implementation workspace, an actual
 app-server initialization failed with `Read-only file system (os error 30)` even
 with supported disposable SQLite and log directories. No provider-backed model
-turn ran there. The assignment integration test also injects its test Git
+turn ran there. A later macOS check with Codex `0.169.0` started a real app-server
+and drove the browser through a local simulated model. A disposable configured
+MCP server started when a read-only Manager thread was created; an empty
+`mcp_servers` override did not remove the inherited server. The existing local
+Reviewer research explains why reading and overriding configuration alone does
+not establish a bound native tool inventory. The assignment integration test also injects its test Git
 executable at the admission seam because this host maps system executable
 ownership to UID 65534; production executable trust checks remain intact.
 
