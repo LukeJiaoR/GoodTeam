@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 接收请求状态、停止回调和翻译函数；依赖 React 的状态与计时器。
+ * [OUTPUT]: 导出 AssistantPendingReply，展示回复进度、文本和停止操作。
+ * [POS]: 项目会话中的待回复项；ProjectConversation 控制其生命周期。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { useEffect, useRef, useState } from 'react';
 
 export default function AssistantPendingReply({ request, onStop, t }) {
@@ -20,8 +26,7 @@ export default function AssistantPendingReply({ request, onStop, t }) {
       setStopping(false);
     }
   };
-  const activity = typeof request.activity === 'string' ? request.activity
-    : request.activity ? `${request.activity.kind}: ${request.activity.status}` : '';
+  const activity = typeof request.activity === 'string' ? request.activity : '';
   return (
     <li className="team-manager-event assistant-pending-reply" data-actor="assistant">
       <div className="team-manager-event__bubble">

@@ -6,15 +6,18 @@ import { zhCN } from '../../../i18n/locales/zh-CN';
 
 const t = key => en[key] || key;
 
-test('native activity renders without crashing and Stop remains usable', async () => {
+test('native activity uses the localized reply status and Stop remains usable', async () => {
   const stop = vi.fn().mockResolvedValue();
   const { rerender } = render(<AssistantPendingReply t={t} onStop={stop}
-    request={{ activity: { kind: 'reasoning', status: 'started' } }} />);
-  expect(screen.getByText('reasoning: started')).toBeVisible();
+    request={{ activity: { kind: 'userMessage', status: 'completed' } }} />);
+  expect(screen.getByText('Responding')).toBeVisible();
+  expect(screen.queryByText('userMessage: completed')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: t('assistant.project.stopResponse') }));
   await waitFor(() => expect(stop).toHaveBeenCalledOnce());
-  rerender(<AssistantPendingReply t={t} request={{ activity: { kind: 'reasoning', status: 'completed' } }} />);
-  expect(screen.getByText('reasoning: completed')).toBeVisible();
+  rerender(<AssistantPendingReply t={key => zhCN[key] || key}
+    request={{ activity: { kind: 'reasoning', status: 'started' } }} />);
+  expect(screen.getByText('正在回复')).toBeVisible();
+  expect(screen.queryByText('reasoning: started')).not.toBeInTheDocument();
   rerender(<AssistantPendingReply t={t} request={{ activity: 'Inspecting the task' }} />);
   expect(screen.getByText('Inspecting the task')).toBeVisible();
 });
