@@ -1,5 +1,10 @@
 # First-party Role methods: bounded ordinary Pi slice
 
+> Historical scope of the original Pi package integration. #738 adds a pinned
+> native Manager loader for these packages; current Manager behavior is described
+> in [Manager on Codex app-server](manager-app-server.md). Ordinary Pi Workers
+> continue to use the integration below.
+
 Sources: GoodTeam #445 (per-invocation Role methods), #686 (discussion, delegation and continuation), #696 (Planner professional handoff), #701 (authorized search and evidence). These newly authored method assets are not copies of stable_role_prompt. The old prompt-based default experiment was withdrawn and is not part of this candidate.
 
 Four standard packages include SKILL.md and reference checklists: bounded-work (shared), manager-coordination, evidence-research, planning-handoff. Version role-methods.v1 and the exact package digest identify each source; original SkillStore installation/version IDs and task snapshots retain exact bytes. Role-to-package mapping is explicit and independent of Team Runtime configuration. Shared bounded-work is reused across orchestrator, research and planner. These are methodology packages, not new permissions, a scheduler, or a permanent worker identity.

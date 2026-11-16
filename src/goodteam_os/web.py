@@ -6260,17 +6260,15 @@ def handle_project_api_post(
         key, _target, root = _project_target_and_root(workspace, key)
         project_config = _project_config_for_key(workspace, key)
         try:
-            return 200, TaskAssistantService(
-                workspace,
-                project_config=project_config,
-            ).send_message(
-                project_key=key,
-                root=root,
-                message_id=str(request.get("message_id", "")),
-                text=str(request.get("text", "")),
-                context_run_id=request.get("context_run_id", ""),
-                attachments=request.get("attachments", []),
-            )
+            service = TaskAssistantService(workspace, project_config=project_config)
+            inputs = dict(project_key=key, root=root,
+                          message_id=str(request.get("message_id", "")), text=str(request.get("text", "")),
+                          context_run_id=request.get("context_run_id", ""), attachments=request.get("attachments", []))
+            if request.get("background") is True:
+                from goodteam_os.assistant_requests import execute_message
+
+                return 202, execute_message(service, **inputs, background=True)
+            return 200, service.send_message(**inputs)
         except ManagerExecutionError as exc:
             if exc.code == "manager_resource_busy":
                 raise ProjectApiError("manager_resource_busy", str(exc), 409, recovery=["retry_request"]) from exc
@@ -6457,6 +6455,17 @@ def handle_project_api_post(
                 return 200, handle_draft_action(service, project_key=key, root=root, request=request)
             except ValueError as exc:
                 raise ProjectApiError("task_draft_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
+        if action == "stop_manager_request":
+            from goodteam_os.assistant_requests import stop_message
+
+            service = TaskAssistantService(workspace, project_config=_project_config_for_key(workspace, key))
+            try:
+                return 200, stop_message(service, project_key=key, root=root,
+                    message_id=str(request.get("message_id", "")), expected_attempt=request.get("expected_attempt"))
+            except ManagerExecutionError as exc:
+                raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
+            except ValueError as exc:
+                raise ProjectApiError("invalid_request", str(exc), 409) from exc
         if action in {"retry_message", "check_runtime"}:
             service = TaskAssistantService(workspace, project_config=_project_config_for_key(workspace, key))
             try:
@@ -6464,6 +6473,12 @@ def handle_project_api_post(
                     if request.get("confirmed") is not True:
                         raise ValueError("Confirm the potentially billable runtime check first.")
                     return 200, service.check_runtime(project_key=key, root=root, message_id=str(request.get("message_id", "")))
+                if request.get("background") is True:
+                    from goodteam_os.assistant_requests import retry_message
+
+                    return 202, retry_message(service, project_key=key, root=root,
+                        message_id=str(request.get("message_id", "")), expected_attempt=request.get("expected_attempt"),
+                        background=True)
                 return 200, service.retry_message(
                     project_key=key, root=root, message_id=str(request.get("message_id", "")),
                     expected_attempt=request.get("expected_attempt"),
@@ -7463,7 +7478,7 @@ def normalize_worker_type_settings(value: object, *, strict: bool = True) -> dic
             continue
         reasoning_depth = str(raw_settings.get("reasoning_depth", "default") or "default").strip().lower()
         additional_prompt = str(raw_settings.get("additional_prompt", "") or "").strip()
-        desired_raw = raw_settings.get("desired_instances", 1)
+        desired_raw = raw_settings.get("desired_instances", 1) if role != "orchestrator" else 1
         try:
             if isinstance(desired_raw, bool):
                 raise ValueError
@@ -7471,10 +7486,6 @@ def normalize_worker_type_settings(value: object, *, strict: bool = True) -> dic
         except (TypeError, ValueError):
             if strict:
                 raise ValueError(f"worker_type_settings.{role}.desired_instances must be an integer") from None
-            desired_instances = 1
-        if role == "orchestrator" and desired_instances != 1:
-            if strict:
-                raise ValueError("Task Assistant desired_instances must be 1")
             desired_instances = 1
         if reasoning_depth not in WORKER_REASONING_DEPTHS:
             if strict:
@@ -7498,7 +7509,7 @@ def normalize_worker_type_settings(value: object, *, strict: bool = True) -> dic
             normalized[role] = {
                 "reasoning_depth": reasoning_depth,
                 "additional_prompt": additional_prompt,
-                "desired_instances": desired_instances,
+                **({"desired_instances": desired_instances} if role != "orchestrator" else {}),
             }
     return normalized
 

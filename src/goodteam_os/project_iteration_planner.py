@@ -17,7 +17,6 @@ from goodteam_os.context_continuity import conversation_context
 from goodteam_os.project_iteration import (
     latest_iteration_choice, project_iteration_backlog, validate_iteration_choice,
 )
-from goodteam_os.state import StateStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
@@ -353,23 +352,17 @@ A single task remains valid and no minimum task count is required.
 def run_manager_iteration_choice(*, project_config: Path, project_key: str,
                                  backlog: dict[str, Any], context: dict[str, Any],
                                  planning_attempt_id: str = "", resource_slot=None) -> dict[str, Any]:
-    """Call the existing read-only Manager worker with an idempotent input."""
-    from goodteam_os.graph import resolve_project_runtime_root, resolve_role_adapter
+    """Use a native, read-only Manager turn bound to the reserved planning input."""
+    from goodteam_os.graph import resolve_project_runtime_root
     from goodteam_os.manager_execution import (
-        ManagerExecutionError, _configured_manager_model, _create_manager_job,
-        _manager_execution_evidence, _manager_settings, _manager_turn_lock, _manager_result_or_run,
-        _model_name,
+        ManagerExecutionError, _manager_turn_lock, run_manager_analysis,
     )
     from goodteam_os.projects import load_project_target
-    from goodteam_os.workers import WorkerJobStore
 
     target = load_project_target(project_config)
     root = resolve_project_runtime_root(dict(target.get("repos", {})))
     if root is None:
         raise ManagerExecutionError("Manager project root is unavailable.")
-    adapter = resolve_role_adapter(target, "orchestrator")
-    model = _model_name(_configured_manager_model(target))
-    settings = _manager_settings(target)
     packet = json.dumps(context, ensure_ascii=False, sort_keys=True)
     identity = "project-iteration:" + sha256(packet.encode()).hexdigest()
     if planning_attempt_id:
@@ -381,55 +374,35 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
         # Outcome/HEAD/memory were captured together. A coincidentally unchanged
         # backlog cannot reuse advice from another delivered result or grant.
         identity = "project-outcome:" + sha256(json.dumps(context, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    prompt = _discovery_prompt(context) if discovery else (_MANAGER_CHOICE_TASK + (
+        "\nFor this captured allow_wait turn, selecting no task is also valid: return selected_task_ids:[], "
+        "compared_task_ids with actual supplied IDs and a 20-1600 character rationale explaining "
+        "the dependency, missing evidence or decision needed. Do not select blocked work or claim "
+        "a question was recorded, investigation delegated, or any action taken. This is advice only."
+        if backlog.get("allow_wait") is True else "") + (
+        "\nThe captured question_board retains owner questions and answers. Decide whether each candidate depends "
+        "on an unresolved decision. An open question is not a global stop for independent authorized work. "
+        "Do not answer for the owner or infer new authority; you may select no task when the ready work really depends on it."
+        if "question_board" in context else ""))
     with _manager_turn_lock(root, identity, resource_slot=resource_slot):
-        store = WorkerJobStore(root)
-        job, created = _create_manager_job(
-            store, project_config=project_config, project_root=root,
+        result = run_manager_analysis(
+            project_config=project_config,
             project_key=project_key, logical_id=identity,
-            spec=dict(
-                run_id=f"project-iteration:{project_key}", role="orchestrator",
-                adapter=adapter, model=model, task=_discovery_prompt(context) if discovery else (_MANAGER_CHOICE_TASK + (
-                    "\nFor this captured allow_wait turn, selecting no task is also valid: return selected_task_ids:[], "
-                    "compared_task_ids with actual supplied IDs and a 20-1600 character rationale explaining "
-                    "the dependency, missing evidence or decision needed. Do not select blocked work or claim "
-                    "a question was recorded, investigation delegated, or any action taken. This is advice only."
-                    if backlog.get("allow_wait") is True else "") + (
-                    "\nThe captured question_board retains owner questions and answers. Decide whether each candidate depends "
-                    "on an unresolved decision. An open question is not a global stop for independent authorized work. "
-                    "Do not answer for the owner or infer new authority; you may select no task when the ready work really depends on it."
-                    if "question_board" in context else "")),
-                context=packet, constraints=[
-                    "Read-only project prioritization. No tool or filesystem mutations.",
-                    ("Return a bounded task and/or Human question, an explicit wait, or no follow-up."
-                     if context.get("human_feedback_supported") is True
-                     else "Return exactly one bounded follow-up with verified source references.") if discovery
-                    else "Return exactly one JSON object referring only to supplied task IDs.",
-                ],
-                expected_artifacts=[], project_key=project_key,
-                phase="project_outcome_discovery" if discovery else "project_iteration_choice", execution_policy="read_only",
-                idempotency_key=f"{'project-outcome' if discovery else 'project-iteration'}-choice:{project_key}:{identity}",
-                **settings,
-            ),
+            run_id=f"project-iteration:{project_key}", task=prompt, context=packet,
+            phase="project_outcome_discovery" if discovery else "project_iteration_choice",
         )
-        if not created and (store.root / str(job["id"]) / "context.md").read_text(encoding="utf-8") != packet:
-            raise ValueError("The reserved planning input changed; inspect the original attempt before planning again.")
-        if not created and job.get("status") not in {"queued", "completed"}:
-            raise ManagerExecutionError("Prior planning outcome is uncertain; do not replay automatically.")
-        result = _manager_result_or_run(store, job, created=created)
-    if result.get("status") != "completed" or result.get("skill_error_code"):
+    if result.get("manager_execution", {}).get("status") != "completed":
         raise ManagerExecutionError("The read-only Manager planning attempt did not finish.")
-    path = Path(str(result.get("result_path") or store.root / str(job["id"]) / "result.md"))
+    text = result.get("text")
+    if not isinstance(text, str) or len(text.encode("utf-8")) > 16_000:
+        raise ManagerExecutionError("Manager iteration choice exceeds the response limit.")
     try:
-        if path.stat().st_size > 16_000:
-            raise ManagerExecutionError("Manager iteration choice exceeds the response limit.")
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        parsed = json.loads(text)
+    except ValueError as exc:
         raise ManagerExecutionError("Manager did not return a valid iteration choice.") from exc
     return {
         "selection": parsed,
-        "manager_execution": _manager_execution_evidence(
-            str(job["id"]), adapter, model, settings, result,
-        ),
+        "manager_execution": result["manager_execution"],
     }
 
 
@@ -597,10 +570,14 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                 raise ValueError("Resolve the current task proposal before planning another iteration.")
         if reserve_planning is not None:
             reserve_planning()
-        result = manager_runner(project_config=project_config, project_key=project_key,
-            **({"resource_slot": resource_slot} if resource_slot is not None and manager_runner is run_manager_iteration_choice else {}),
-                                backlog=snapshot, context=context,
-                                **({"planning_attempt_id": planning_attempt_id} if planning_attempt_id else {}))
+    # Native planning can run alongside foreground dialogue. Only snapshot
+    # capture and publication own the conversation lock; unchanged version and
+    # authority checks below reject an obsolete result before it is published.
+    result = manager_runner(project_config=project_config, project_key=project_key,
+        **({"resource_slot": resource_slot} if resource_slot is not None and manager_runner is run_manager_iteration_choice else {}),
+                            backlog=snapshot, context=context,
+                            **({"planning_attempt_id": planning_attempt_id} if planning_attempt_id else {}))
+    with conversation_lock(store, blocking=True):
         choice = validate_iteration_choice(snapshot, result.get("selection"))
         event_id = f"iteration-choice:{input_digest}" + (":" + planning_attempt_id if planning_attempt_id else "")
         # The input identifies a reusable Worker result, not its latest activation.

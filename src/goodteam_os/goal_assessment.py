@@ -11,11 +11,8 @@ import json
 from pathlib import Path
 
 from goodteam_os.manager_execution import (
-    ManagerExecutionError, _configured_manager_model, _create_manager_job, _manager_result_or_run,
-    _manager_settings, _manager_turn_lock, _model_name,
+    ManagerExecutionError, run_manager_analysis,
 )
-from goodteam_os.graph import resolve_role_adapter
-from goodteam_os.projects import load_project_target
 from goodteam_os.workers import WorkerJobStore
 
 
@@ -46,7 +43,7 @@ def _assessment_prompt(work):
 
 
 class CompletedAssessmentProtocolError(ManagerExecutionError):
-    """Allowlisted parse failure after a durably completed read-only job."""
+    """Allowlisted parse failure after a durably completed read-only turn."""
     def __init__(self, job_id, code):
         super().__init__("The completed Manager response was not a JSON object.", code=code)
         self.job_id = job_id
@@ -103,11 +100,43 @@ def bound_assessment_job(project_root, goal, work, attempt, evidence):
 
 
 def verify_completed_assessment(project_root, goal, work, attempt, job_id, evidence):
+    if job_id.startswith("codex:"):
+        _verify_native_assessment(project_root, goal, work, attempt, job_id, evidence)
+        return
+    # Historical completed WorkerJobs stay readable; new assessments never
+    # create or restart one, including when a prior provider result was lost.
     job = bound_assessment_job(project_root, goal, work, attempt, evidence)
     expected = dict(id=job_id, run_id=work_execution_run_id(work), project_key=goal["project_key"], role="orchestrator",
                     phase="goal_assessment", execution_policy="read_only", status="completed")
     if any(job.get(key) != value for key, value in expected.items()) or job.get("skill_error_code"):
         raise ValueError("Assessment completion and read-only identity cannot be proven; retry is blocked.")
+
+
+def _verify_native_assessment(project_root, goal, work, attempt, execution_id, evidence):
+    from goodteam_os.manager_app_server import workspace_for_config
+    from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+
+    authority = goal.get("authority_snapshot") or {}
+    config = authority.get("project_config")
+    if not config or authority.get("project_root") != str(Path(project_root).resolve()):
+        raise ValueError("Native assessment project authority cannot be proven; retry is blocked.")
+    identity = assessment_identity(goal, work, attempt)
+    session = TaskAssistantSessionStore(workspace_for_config(config), goal["project_key"]).read()
+    record = session.get("manager_app_server", {}).get("requests", {}).get(identity) or {}
+    native = (record.get("result") or {}).get("manager_execution") or {}
+    expected_context = assessment_packet(goal, work, work_execution_run_id(work), evidence)
+    try:
+        context = json.loads(record.get("context", "null"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Native assessment evidence binding is invalid.") from exc
+    if (record.get("status") != "completed" or record.get("phase") != "goal_assessment"
+            or record.get("run_id") != work_execution_run_id(work)
+            or record.get("text") != _assessment_prompt(work) or context != expected_context
+            or native.get("adapter") != "codex-app-server" or native.get("status") != "completed"
+            or native.get("logical_id") != identity or not record.get("thread_id") or not record.get("turn_id")
+            or native.get("thread_id") != record["thread_id"] or native.get("turn_id") != record["turn_id"]
+            or execution_id != f"codex:{record['thread_id']}:{record['turn_id']}"):
+        raise ValueError("Native assessment completion and evidence cannot be proven; retry is blocked.")
 
 
 def run_evidence(workspace, state, *, project_root=None):
@@ -228,8 +257,6 @@ def validate_assessment(result, goal, evidence):
 
 
 def assess_goal(*, workspace, project_config, project_root, goal, work, evidence, state=None, execution_ref=None, attempt=1):
-    target = load_project_target(project_config)
-    settings = _manager_settings(target)
     if type(attempt) is not int or not 1 <= attempt <= 3:
         raise ValueError("Assessment attempt is outside its hard bound.")
     identity = assessment_identity(goal, work, attempt)
@@ -246,30 +273,20 @@ def assess_goal(*, workspace, project_config, project_root, goal, work, evidence
         raise ValueError("Assessment requires the original Goal work execution reference.")
     prompt = _assessment_prompt(work)
     context = json.dumps(assessment_packet(goal, work, run_id, evidence), ensure_ascii=False)
-    with _manager_turn_lock(project_root, identity):
-        store = WorkerJobStore(project_root)
-        job, created = _create_manager_job(
-            store, project_config=Path(project_config), project_root=project_root,
-            project_key=goal["project_key"], logical_id=identity,
-            spec=dict(run_id=run_id, role="orchestrator", adapter=resolve_role_adapter(target, "orchestrator"),
-                      model=_model_name(_configured_manager_model(target)), task=prompt, context=context,
-                      constraints=["Read-only evidence assessment. No file, workflow, approval or external mutations."],
-                      expected_artifacts=[], project_key=goal["project_key"], phase="goal_assessment",
-                      execution_policy="read_only", idempotency_key=identity, **settings),
-        )
-        if not created and job.get("status") not in {"queued", "completed"}:
-            raise ManagerExecutionError("Goal assessment execution is interrupted; automatic replay is blocked.")
-        result = _manager_result_or_run(store, job, created=created)
-    if result.get("status") != "completed" or result.get("skill_error_code"):
+    result = run_manager_analysis(project_config=Path(project_config), project_key=goal["project_key"],
+        logical_id=identity, run_id=run_id, task=prompt, context=context, phase="goal_assessment")
+    native = result.get("manager_execution") or {}
+    if native.get("status") != "completed" or not native.get("thread_id") or not native.get("turn_id"):
         raise ManagerExecutionError("Goal assessment did not complete; inspect the Manager execution.")
-    result_path = Path(result.get("result_path") or store.root / str(job["id"]) / "result.md")
-    if result_path.stat().st_size > 64_000:
+    text = result.get("text")
+    if not isinstance(text, str) or len(text.encode("utf-8")) > 64_000:
         raise ManagerExecutionError("Goal assessment response exceeded its bounded contract.")
+    execution_id = f"codex:{native['thread_id']}:{native['turn_id']}"
     try:
-        parsed = json.loads(result_path.read_text(encoding="utf-8"))
+        parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise CompletedAssessmentProtocolError(str(job["id"]), "invalid_json") from exc
+        raise CompletedAssessmentProtocolError(execution_id, "invalid_json") from exc
     if not isinstance(parsed, dict):
-        raise CompletedAssessmentProtocolError(str(job["id"]), "non_object")
+        raise CompletedAssessmentProtocolError(execution_id, "non_object")
     # Semantic scope/ref/quote validation errors intentionally remain non-retryable.
     return validate_assessment(parsed, goal, evidence)

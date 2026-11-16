@@ -6,332 +6,57 @@ import json
 import os
 import re
 import threading
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from goodteam_os.graph import SESSION_BACKENDS, resolve_project_runtime_root, resolve_role_adapter, worker_type_settings_for_role
+from goodteam_os.graph import worker_type_settings_for_role
 from goodteam_os.models import resolve_project_model_profile
-from goodteam_os.projects import load_project_target
-from goodteam_os.workers import WorkerJobStore
-
-
-_TASK_INTAKE_CONTRACT = "Task intake contract: v1"
-_DELEGATION_CONTRACT = "Task delegation contract: v1"
 
 
 class ManagerExecutionError(RuntimeError):
-    """Raised when a configured Task Assistant cannot produce a safe interpretation."""
-
     def __init__(self, message: str, *, code: str = "execution_failed"):
         super().__init__(message)
         self.code = code
 
 
 class ManagerResourceBusy(ManagerExecutionError):
-    """The nonblocking project slot was not acquired; no call was launched."""
+    """An original logical operation already owns its execution."""
 
 
-def run_manager_chat_turn(
-    *,
-    project_config: Path,
-    project_key: str,
-    message_id: str,
-    text: str,
-    context: str,
-    logical_message_id: str = "",
-) -> dict[str, object]:
-    target = load_project_target(project_config)
-    project_root = resolve_project_runtime_root(dict(target.get("repos", {})))
-    if project_root is None:
-        raise ManagerExecutionError("The Task Assistant project runtime root is unavailable.")
+def run_manager_chat_turn(*, project_config: Path, project_key: str, message_id: str,
+                          text: str, context: str, logical_message_id: str = "") -> dict[str, object]:
+    from goodteam_os.manager_app_server import runtime_for
 
-    from goodteam_os.project_environment import environment_for_task
-    from goodteam_os.worker_setup import load_worker_setup
-
-    environment = environment_for_task(project_root, load_worker_setup(project_config))
-    environment.pop("setup", None)
-    context += "\n\nProject environment (host facts, not new authority):\n" + json.dumps(environment)
-
-    adapter = resolve_role_adapter(target, "orchestrator")
-    configured_model = _configured_manager_model(target)
-    model = _model_name(configured_model)
-    settings = _manager_settings(target)
-    with _manager_turn_lock(project_root, "message:" + (logical_message_id or message_id)):
-        store = WorkerJobStore(project_root)
-        job, created = _create_manager_job(
-            store, project_config=project_config, project_root=project_root, project_key=project_key,
-            logical_id="message:" + (logical_message_id or message_id),
-            preserve_captured_context=bool(logical_message_id), spec=dict(
-                run_id=f"task-assistant:{project_key}",
-                role="orchestrator",
-                adapter=adapter,
-                model=model,
-                task=_manager_chat_task(text),
-                context=context,
-                constraints=[
-                    "Classify the user's current message without performing consequential actions.",
-                    "Do not modify project files, workflow state, artifacts, approvals, or external systems.",
-                    "Return exactly one JSON object and no prose or markdown outside it.",
-                ],
-                expected_artifacts=[],
-                project_key=project_key,
-                phase="task_assistant_chat",
-                execution_policy="read_only",
-                idempotency_key=f"task-assistant-turn:{message_id}",
-                **settings,
-            ),
-        )
-        job_id = str(job["id"])
-        result = _manager_result_or_run(store, job, created=created, skill_retry=True)
-    if result.get("skill_error_code"):
-        raise ManagerExecutionError("The configured Manager methods are blocked before Runtime execution.",
-                                    code=str(result["skill_error_code"]))
-    if str(result.get("status", "")) != "completed":
-        from goodteam_os.assistant_runtime import safe_failure
-
-        summary = str(result.get("summary", "") or "Task Assistant worker failed.").strip()
-        try:
-            with (store.root / job_id / "stderr.txt").open(encoding="utf-8", errors="replace") as stderr:
-                summary += "\n" + stderr.read(65536)
-        except OSError:
-            pass
-        failure = safe_failure(summary)
-        raise ManagerExecutionError(failure["message"], code=failure["code"])
-    result_path = Path(str(result.get("result_path") or store.root / job_id / "result.md"))
-    try:
-        output = result_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ManagerExecutionError("The configured Task Assistant did not return a readable result.") from exc
-    require_task_intake = True
-    require_delegation = True
-    if not created:
-        try:
-            captured_task = (store.root / job_id / "task.md").read_text(encoding="utf-8")
-        except OSError:
-            pass  # Missing prompt evidence cannot relax the current contract.
-        else:
-            require_task_intake = _TASK_INTAKE_CONTRACT in captured_task
-            require_delegation = _DELEGATION_CONTRACT in captured_task
-    parsed = _parse_chat_turn(output, require_task_intake=require_task_intake, require_delegation=require_delegation)
-    return {
-        "schema_version": "task_assistant_turn.v1",
-        **parsed,
-        "manager_execution": _manager_execution_evidence(
-            job_id, str(job.get("adapter", adapter)), str(job.get("model", model)),
-            {**settings, **{k: job[k] for k in ("reasoning_depth", "additional_prompt") if k in job}}, result),
-    }
+    result = runtime_for(project_config, project_key).run(
+        logical_id=logical_message_id or message_id, text=text, context=context, attempt_id=message_id)
+    return {"schema_version": "manager_conversation.v1", "intent": "project_question",
+            "response": result["text"], "native_manager": True,
+            "reply_suppressed": result.get("reply_suppressed", False),
+            "manager_execution": result["manager_execution"]}
 
 
-def run_manager_interpretation(
-    *,
-    project_config: Path,
-    run_id: str,
-    project_key: str,
-    intent_id: str,
-    change_request: str,
-    context: str,
-    logical_intent_id: str = "",
-) -> dict[str, object]:
-    target = load_project_target(project_config)
-    project_root = resolve_project_runtime_root(dict(target.get("repos", {})))
-    if project_root is None:
-        raise ManagerExecutionError("The Task Assistant project runtime root is unavailable.")
+def run_manager_analysis(*, project_config: Path, project_key: str, logical_id: str,
+                         task: str, context: str, phase: str, run_id: str = "", authority_check=None):
+    """Bounded background judgment on its own native thread, sharing business services."""
+    from goodteam_os.manager_app_server import runtime_for
 
-    adapter = resolve_role_adapter(target, "orchestrator")
-    configured_model = _configured_manager_model(target)
-    model = _model_name(configured_model)
-    settings = _manager_settings(target)
-
-    with _manager_turn_lock(project_root, "intent:" + (logical_intent_id or intent_id)):
-        store = WorkerJobStore(project_root)
-        job, created = _create_manager_job(
-            store, project_config=project_config, project_root=project_root, project_key=project_key,
-            logical_id="intent:" + (logical_intent_id or intent_id), spec=dict(
-                run_id=run_id,
-                role="orchestrator",
-                adapter=adapter,
-                model=model,
-                task=_manager_interpretation_task(change_request),
-                context=context,
-                constraints=[
-                    "Interpret only the user's explicit request; do not add requirements.",
-                    "Do not modify project files, workflow state, artifacts, approvals, or external systems.",
-                    "Return exactly one JSON object and no prose or markdown outside it.",
-                ],
-                expected_artifacts=[],
-                project_key=project_key,
-                phase="manager_intent",
-                execution_policy="read_only",
-                idempotency_key=f"manager-intent:{logical_intent_id or intent_id}",
-                **settings,
-            ),
-        )
-        job_id = str(job["id"])
-        result = _manager_result_or_run(store, job, created=created, skill_retry=True)
-    if result.get("skill_error_code"):
-        raise ManagerExecutionError("The configured Manager methods are blocked before Runtime execution.",
-                                    code=str(result["skill_error_code"]))
-    if str(result.get("status", "")) != "completed":
-        summary = str(result.get("summary", "") or "Task Assistant worker failed.").strip()
-        raise ManagerExecutionError(f"The configured Task Assistant could not complete: {summary}")
-
-    result_path = Path(str(result.get("result_path") or store.root / job_id / "result.md"))
-    try:
-        output = result_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ManagerExecutionError("The configured Task Assistant did not return a readable result.") from exc
-    parsed = _parse_interpretation(output)
-    return {
-        "schema_version": "intent_interpretation.v1",
-        "source": "manager_worker",
-        "summary": parsed["summary"],
-        "items": [
-            {"kind": "explicit_request", "text": item}
-            for item in parsed["items"]
-        ],
-        "request": change_request,
-        "manager_execution": _manager_execution_evidence(
-            job_id, str(job.get("adapter", adapter)), str(job.get("model", model)),
-            {**settings, **{k: job[k] for k in ("reasoning_depth", "additional_prompt") if k in job}}, result),
-    }
+    return runtime_for(project_config, project_key).run(
+        logical_id=logical_id, text=task, context=context, phase=phase, run_id=run_id,
+        background=True, authority_check=authority_check)
 
 
-def _manager_result_or_run(store, job, *, created, skill_retry=False):
-    from goodteam_os.manager_completion import completed_manager_result
+def run_manager_interpretation(*, project_config: Path, run_id: str, project_key: str,
+                               intent_id: str, change_request: str, context: str,
+                               logical_intent_id: str = "") -> dict[str, object]:
+    result = run_manager_analysis(project_config=project_config, project_key=project_key,
+        logical_id="intent:" + (logical_intent_id or intent_id), task=_manager_interpretation_task(change_request),
+        context=context, phase="manager_intent", run_id=run_id)
+    parsed = _parse_interpretation(result["text"])
+    return {"schema_version": "intent_interpretation.v1", "source": "manager_app_server",
+            "summary": parsed["summary"], "items": [{"kind": "explicit_request", "text": item} for item in parsed["items"]],
+            "request": change_request, "manager_execution": result["manager_execution"]}
 
-    if not created:
-        from goodteam_os.skills.models import SkillError
-
-        try:
-            completed = completed_manager_result(store, job)
-        except (SkillError, OSError, ValueError, TypeError, KeyError) as exc:
-            raise ManagerExecutionError(
-                "Original Manager completion is unconfirmed; inspect its evidence without replaying.",
-                code=exc.code if isinstance(exc, SkillError) else "manager_completion_unconfirmed",
-            ) from exc
-        if completed is not None:
-            return completed
-    return (store.run_job(str(job["id"]))
-            if created or job.get("status") == "queued" or skill_retry and job.get("task_skill_context") else job)
-
-
-def _create_manager_job(store, *, project_config: Path, project_root: Path, project_key: str,
-                        logical_id: str, spec: dict[str, Any], preserve_captured_context: bool = False) -> tuple[dict[str, Any], bool]:
-    """Bind the actual logical message/intent, not the shared conversation run."""
-    from goodteam_os.skills.models import SkillConflict, SkillError
-    from goodteam_os.skills.task_locks import TaskSkillIdentity
-    from goodteam_os.skills.task_start import capture_task_start
-    from goodteam_os.skills.worker_requests import (
-        WORKER_METADATA_LOADER, has_skill_fields, is_skill_job_id, original_worker_request,
-    )
-
-    config = Path(project_config).expanduser().resolve()
-    if config.parent.name == "projects":
-        # A completed legacy message remains legacy when project configuration
-        # changes later. It is not a fresh authorization to invoke new methods.
-        existing = store.find_job_by_idempotency_key(spec["idempotency_key"])
-        if existing is None and preserve_captured_context and logical_id.startswith("message:"):
-            from goodteam_os.assistant_requests import worker_attempt_id
-
-            first_key = "task-assistant-turn:" + worker_attempt_id(project_key, logical_id[len("message:"):], 1)
-            first = store.find_job_by_idempotency_key(first_key)
-            if first is not None and not is_skill_job_id(first.get("id")) and not has_skill_fields(first):
-                return _replay_legacy_manager_request(store, first, spec)
-        if existing is not None and not is_skill_job_id(existing.get("id")) and not has_skill_fields(existing):
-            job_root = store.root / str(existing["id"])
-            if (existing.get("project_key") != project_key or existing.get("phase") != spec["phase"]
-                    or existing.get("run_id") != spec["run_id"]
-                    or (job_root / "task.md").read_text(encoding="utf-8") != spec["task"]
-                    or (not preserve_captured_context
-                        and (job_root / "context.md").read_text(encoding="utf-8") != spec["context"])):
-                raise SkillConflict("operation_conflict", "Manager message key already owns different original inputs.")
-            return existing, False
-        task = TaskSkillIdentity("manager_message", project_key, logical_id)
-        start_key = "manager-start:" + project_key + ":" + logical_id
-        confirmed = {key: spec[key] for key in ("run_id", "phase", "task", "context", "constraints", "expected_artifacts")}
-        # Select only at the first capture. An existing markerless task lock
-        # remains strict even when no job was published before interruption.
-        from goodteam_os.service import service_state_dir
-        from goodteam_os.skills.task_service import ProjectTaskSkillService
-        from goodteam_os.skills.role_packages import ROLE_METHODS_VERSION
-
-        manager_mode = (spec.get("adapter") in {"pi", "pi-rpc"}
-                        and spec.get("role") == "orchestrator"
-                        and spec.get("execution_policy") == "read_only")
-        if (Path(service_state_dir()) / "skills" / "task-locks").exists():
-            method_service = ProjectTaskSkillService(config.parent.parent, project_key, worker_roots=(project_root,))
-            captured = method_service.locks.find_task(task=task, command_key=start_key)
-            if captured is not None:
-                start = captured["lock"].get("start_input")
-                if not isinstance(start, dict) or start.get("schema_version") != "task_skill_start_input.v1":
-                    raise SkillError("task_start_input_missing", "The original Manager confirmation is unavailable.")
-                saved_mode = start["request"]["confirmed_input"].get("method_loading_mode")
-                if saved_mode not in {None, "manager_pi_methods.v1"}:
-                    raise SkillError("manager_method_mode_unsupported", "The original Manager method mode is unavailable.")
-                if saved_mode and not manager_mode:
-                    raise SkillConflict("operation_conflict", "The original Manager Runtime contract changed.")
-                manager_mode = saved_mode == "manager_pi_methods.v1"
-        if manager_mode:
-            confirmed.update(method_loading_mode="manager_pi_methods.v1", default_role_methods=ROLE_METHODS_VERSION)
-            spec = {**spec, "method_loading_mode": "manager_pi_methods.v1"}
-        if preserve_captured_context:
-            from goodteam_os.service import service_state_dir
-            from goodteam_os.skills.task_service import ProjectTaskSkillService
-
-            if (Path(service_state_dir()) / "skills" / "task-locks").exists():
-                service = ProjectTaskSkillService(config.parent.parent, project_key, worker_roots=(project_root,))
-                previous = service.locks.find_task(task=task, command_key=start_key)
-                if previous is not None:
-                    start = previous["lock"].get("start_input")
-                    if not isinstance(start, dict) or start.get("schema_version") != "task_skill_start_input.v1":
-                        raise SkillError("task_start_input_missing", "The original Manager confirmation is unavailable.")
-                    original = start["request"]["confirmed_input"]
-                    if any(original.get(key) != confirmed[key] for key in ("run_id", "phase", "task", "constraints", "expected_artifacts")):
-                        raise SkillConflict("operation_conflict", "Logical Manager message already owns another request.")
-                    # TaskAssistant's context is server-derived and changes as the
-                    # timeline/Team updates. Its explicit logical retry must use
-                    # the first captured context, not the newly rendered one.
-                    confirmed = {key: value for key, value in original.items() if key != "producer_binding"}
-                    spec = {**spec, "context": original["context"]}
-        context = capture_task_start(
-            workspace=config.parent.parent, project_key=project_key, worker_root=project_root,
-            task=task, command_key=start_key, confirmed_input=confirmed,
-            subjects=("manager:orchestrator",), default_role_methods=manager_mode,
-        )
-        if context:
-            spec = {**spec, "idempotency_key": "manager-job:" + project_key + ":" + logical_id}
-            original = original_worker_request(store, command_key=spec["idempotency_key"], context=context)
-            spec = original if original is not None else {
-                **spec, "task_skill_context": context, "skill_subject": "manager:orchestrator",
-                "skill_loader_version": WORKER_METADATA_LOADER,
-            }
-    return store.create_or_reuse_job(**spec)
-
-
-
-def _replay_legacy_manager_request(store, first: dict[str, Any], spec: dict[str, Any]):
-    """Retry an already in-flight legacy message without adopting a new binding.
-
-    Legacy files remain legacy evidence, not a tamper-proof Skill contract. Reuse
-    the captured input/runtime/policy, retaining distinct physical attempt jobs.
-    """
-    from goodteam_os.reviewer_retry_inputs import JOB_REQUEST_FIELDS, _load_request
-    from goodteam_os.skills.models import SkillConflict
-    from goodteam_os.workers import _role_prompt_for_job
-
-    saved, files, research = _load_request(store, first)
-    if (any(saved.get(key) != spec.get(key) for key in ("run_id", "project_key", "role", "phase", "expected_artifacts"))
-            or files["task.md"] != spec["task"]
-            or files["role_prompt.md"] != _role_prompt_for_job(saved["role"])[1]):
-        raise SkillConflict("operation_conflict", "Legacy Manager retry no longer matches its original task/Role contract.")
-    request = {key: saved[key] for key in JOB_REQUEST_FIELDS if key in saved}
-    constraints = files["constraints.md"]
-    request.update(task=files["task.md"], context=files["context.md"],
-                   constraints=[constraints[2:]] if constraints else [], idempotency_key=spec["idempotency_key"])
-    if research is not None:
-        request["research_report_source"] = str(store.root / saved["id"] / "research-report.md")
-    return store.create_or_reuse_job(**request)
 
 def _model_name(configured_model: str) -> str:
     if ":" not in configured_model:
@@ -365,54 +90,16 @@ def _manager_settings(target: dict[object, object]) -> dict[str, object]:
 
     state = attached_team_state(target)
     if state is not None:
-        manager = dict(state.get("manager", {}) or {})
-        runtime = dict(manager.get("runtime", {}) or {})
-        reasoning_depth = str(runtime.get("reasoning_depth", "default") or "default")
-        settings = {
-            "reasoning_depth": reasoning_depth,
-            "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
-            # Task Assistant is one logical owner. Parallel authority is
-            # intentionally unsupported.
-            "desired_instances": 1,
-            "pi_thinking_level": reasoning_depth
-            if resolve_role_adapter(target, "orchestrator") in SESSION_BACKENDS and reasoning_depth != "default"
-            else "",
-        }
+        runtime = dict(dict(state.get("manager", {}) or {}).get("runtime", {}) or {})
+        settings = {"reasoning_depth": runtime.get("reasoning_depth", "default"),
+                    "additional_prompt": str(runtime.get("additional_prompt", "") or "")}
     else:
         settings = worker_type_settings_for_role(target, "orchestrator")
-        # Task Assistant is one logical owner. Parallel authority is intentionally unsupported.
-        settings["desired_instances"] = 1
-    # "default" means GoodTeam's portable default, not an unbounded user-global CLI value.
-    # Passing an explicit supported level keeps model compatibility deterministic.
-    if settings.get("reasoning_depth") == "default":
+    if settings.get("reasoning_depth", "default") == "default":
         settings["reasoning_depth"] = "high"
+    settings.pop("desired_instances", None)
+    settings.pop("pi_thinking_level", None)
     return settings
-
-
-def _manager_execution_evidence(
-    job_id: str,
-    adapter: str,
-    model: str,
-    settings: dict[str, object],
-    result: dict[str, object],
-) -> dict[str, object]:
-    runtime_policy_warning = bool(result.get("runtime_policy_warning", True))
-    return {
-        "job_id": job_id,
-        "role": "orchestrator",
-        "adapter": adapter,
-        "model": str(result.get("runtime_model") or model),
-        "reasoning_depth": str(settings.get("reasoning_depth") or "default"),
-        "execution_policy": "read_only",
-        "runtime_sandbox_mode": str(result.get("runtime_sandbox_mode") or "unknown"),
-        "runtime_approval_policy": str(result.get("runtime_approval_policy") or "unknown"),
-        "runtime_unsafe_mode": bool(result.get("runtime_unsafe_mode", True)),
-        "runtime_policy_warning": runtime_policy_warning,
-        "runtime_policy_warning_reason": str(
-            result.get("runtime_policy_warning_reason")
-            or ("Runtime policy evidence was unavailable." if runtime_policy_warning else "")
-        ),
-    }
 
 
 class _ManagerResourceLease:
@@ -428,25 +115,16 @@ class _ManagerResourceLease:
 
 @contextmanager
 def manager_resource_slot(project_root: Path):
-    """One Manager Runtime per project; never wait behind a billable turn.
+    """Compatibility scope lease; native threads no longer share a project slot.
 
-    The separate session mutation lock remains available to Stop and UI updates.
+    Existing continuation/Goal services still own their business locks. Each
+    distinct native analysis keeps its own logical identity and original budget.
     """
-    lock_root = project_root / ".goodteam" / "workers" / "task-assistant-locks"
-    lock_root.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(lock_root / "manager-resource.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+    lease = _ManagerResourceLease(project_root)
     try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ManagerResourceBusy("The project's Manager Runtime is busy.", code="manager_resource_busy") from exc
-        lease = _ManagerResourceLease(project_root)
-        try:
-            yield lease
-        finally:
-            lease.active = False
+        yield lease
     finally:
-        os.close(descriptor)
+        lease.active = False
 
 
 @contextmanager
@@ -460,8 +138,7 @@ def _manager_turn_lock(project_root: Path, message_id: str, *, resource_slot=Non
         if resource_slot is not None and (not isinstance(resource_slot, _ManagerResourceLease)
                 or not resource_slot.valid_for(project_root)):
             raise ManagerExecutionError("Manager resource reservation is no longer valid.")
-        with nullcontext() if resource_slot is not None else manager_resource_slot(project_root):
-            yield
+        yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
@@ -476,60 +153,6 @@ def _manager_interpretation_task(change_request: str) -> str:
             "",
             "## Exact user request",
             change_request,
-        ]
-    )
-
-
-def _manager_chat_task(text: str) -> str:
-    return "\n".join(
-        [
-            "Respond as the project's Task Assistant and classify the user's current message.",
-            _TASK_INTAKE_CONTRACT,
-            _DELEGATION_CONTRACT,
-            "Use intent work_request only when the requested product, change or deliverable is concrete enough to draft a task from the current message and conversation context.",
-            "A new-project introduction or request to brainstorm/shape an unspecified idea is discovery, even if it says start building. Use ambiguous and ask one concrete question about the product or intended users. Do not propose a task or invent scope until the user supplies a concrete outcome.",
-            "A product category plus an audience and an aspirational quality claim is still discovery. Naming a Web app, its users, or a technology does not establish an executable first version. Do not equate a clear direction with a ready task.",
-            "For a new product or broad feature, establish the primary user/scenario, the core input-to-output flow, the first-version scope, and observable acceptance criteria. Use facts already supplied in the conversation or project; ask only about missing decisions that materially change the result. Technical implementation choices can be left to the team.",
-            "Use intent ambiguous while such decisions remain. Briefly state what is understood, identify the most consequential gap, and ask one or two focused questions with concrete examples/options and, when useful, a recommendation. Suggested defaults remain proposals until the user accepts them or explicitly delegates the choice. Never silently turn them into requirements.",
-            "For example, 'a product-image Web app for online merchants with photo-realistic promotional images' still leaves the initial product category/use case, uploaded input, output, and product-fidelity standard open. Ask which product/use case to serve first and whether the flow is upload a real product photo and change its scene while preserving its appearance, or generate from text. In later turns clarify the smallest useful workflow and what quality would count as success; do not ask everything at once.",
-            "A narrow existing-project fix or clearly scoped deliverable can be ready immediately. Do not force a product questionnaire on 'change this button label' or on a request explicitly limited to writing an MVP proposal. Distinguish a planning deliverable from permission to build the product.",
-            "When the user says the idea/draft is not specific enough, continue discovery with concrete missing decisions. Do not defend the previous readiness judgment or repeat the same draft. Resolve short follow-up answers using the preceding question and retain the earlier goal and constraints.",
-            "Project research, repository analysis and project summaries are deliverables: use work_request when the requested outcome is clear enough to draft. Plan this work for the team's Researcher through the existing task flow; do not do the research in this classification turn or replace it with a directory inventory. Research methods belong to the task's loaded Skills.",
-            "Use intent project_question only when supplied project evidence or a retained Worker result already answers the question. Explain that evidence directly without launching work. A question's grammatical form does not make it conversation-only: when answering requires reading repository documents or code, discovering its purpose, architecture, framework, files or commands, that is a concrete research deliverable. Use work_request and call task_action queue_task for role research with execution_policy read_only and no write_domains. For example, '这个项目是干嘛的' or 'what does this project do?' with no supplied research result is a ready research task; preserve that exact user question as its source, without asking the user to restate it as an assignment or inventing development scope.",
-            "Only when the server context explicitly supplies fresh continuation operations, continuation questions and proposals may use intent project_operation with project_operation containing exactly kind (explain, confirm_delivery, stop_continuation or advance_continuation) and target_id (the exact continuation id). Follow the server context's operation contract. These interpretations are proposals, never proof that an action was applied. Without that context, use the normal intents.",
-            "Resolve short references such as 'it', 'this', '它' or '他' to the current project when conversation context supports that reading. For example '他有git吗' asks whether this project uses Git, not whether a Worker can operate Git.",
-            "You coordinate business research; the Researcher reads repository documents and source code. Do not inspect README, AGENTS, manifests or source files in this classification turn to answer a research question yourself, and do not infer purpose from a project name or directory inventory. Use the supplied evidence or queue the research task. A single bounded Git-presence fact may use git rev-parse --is-inside-work-tree; do not initialize, fetch, commit or modify the repository. Unavailable evidence remains unknown; never replace an unavailable Researcher with your own broad inspection.",
-            "Ask a clarifying question only when a materially different interpretation remains after using the project and recent conversation context. Do not append execution-confirmation boilerplate to factual answers.",
-            "Use intent team_management only for a persistent Team composition change (enable/disable a capability, add/pause/release a worker, change a worker's runtime or role).",
-            "Use intent ambiguous when a safe clarifying question is required.",
-            "Acknowledgements, greetings, hypothetical discussion and cancellation are not work requests. Use ambiguous and respond without claiming any action happened.",
-            "For ready work requests, call the existing queue action by returning task_action with exactly kind=queue_task, role (an enabled dispatchable Team role), execution_policy (read_only or workspace_write), write_domains (empty for read_only; explicit project-relative allowed paths for writes), acceptance_criteria (1-8 observable criteria supported by the user's goal), optional dependencies (a list of actual project task IDs that must finish first), and delegation with exactly purpose (the specific work and why), context (relevant facts, source references and unresolved questions from supplied Context), and scope (bounds and exclusions). Carry the task-specific Context forward rather than telling the Worker only the raw user message. Never invent missing evidence or grant new permissions. Select the Role and work; the execution layer allocates a generic Worker and supplies this task's Role context and supported methods. Do not select a Team member or supply worker_id. An execution handle is returned only after the original job is created; use its job_id and observed state for supervision. Completed handles identify historical records, not Workers available for new assignments. Use Research for research deliverables via role research. This is a real server action that creates the original task card and queues its exact user source messages; do not merely promise assignment. Do not call it for discussion, recommendations or missing scope. It does not authorize charges, execute Workers, approve results, merge or deploy. Existing authorizations and execution gates retain authority. If a current draft needs revision, use the existing draft flow instead of queuing a duplicate.",
-            "For work requests, preserve the user's original wording. Existing drafts are revised, not silently replaced. Execution and preparation require separate user confirmation unless an existing bounded authorization already covers the work.",
-            'The JSON shape must be: {"intent": "work_request|project_question|team_management|ambiguous", "response": "concise user-facing reply", "team_commands": [{"kind": "enable_role|disable_role|set_role_runtime_source|initialize_worker|activate_worker|inactivate_worker|release_worker|delete_worker|change_worker_runtime|change_worker_role|rename_worker|change_manager_runtime", "role": "optional role key", "worker_id": "optional worker id"}], "team_authorization": "user_authorized|manager_proposed"}.',
-            'For product discovery and every work_request, also include "task_intake": {"ready": true|false, "missing_decisions": ["concrete user-facing question in the user\'s language"], "source_message_ids": ["exact user message ID"]}. A ready task has no missing_decisions; otherwise ready must be false and include at least one focused question.',
-            "For a ready task, select all relevant exact user message IDs from Task intake source messages, including the current message, earlier goal and clarifications. Do not select assistant suggestions, unrelated questions or earlier tasks. When refining an existing draft, select all relevant follow-up messages including the current one; the existing draft is already preserved by revision controls. Never invent IDs or replace source text with a model summary.",
-            "For a ready task, the response must summarize the agreed goal, first-version scope, constraints and observable acceptance criteria in a short readable outline. Only include supported or explicitly delegated decisions. The visible draft will retain the selected user messages verbatim; do not merely say the direction is specific enough.",
-            "team_commands and team_authorization are required only for intent team_management; omit them otherwise.",
-            "set_role_runtime_source explicitly selects an active member worker_id as configuration only for a Role; it does not copy member prompts or methods. An explicit empty worker_id clears the selection. Never infer this choice from a work request.",
-            "Every team command is a proposal requiring a separate user confirmation. The team_authorization field is descriptive and never grants execution authority.",
-            "Use exact Worker IDs from the Team summary. When names match multiple Workers, list their roles, names and IDs and ask the user to select; never choose the first match.",
-            "Never claim a Team change has already happened. Do not propose changes when the user asks for an explanation or explicitly says not to change the Team.",
-            "A preference scoped to the current task or run (for example 'this time skip research') is never a team command.",
-            "Never claim a capability the provided Team capability summary does not have; explain missing capability boundaries when they affect the request.",
-            "Do not claim that project inspection or workflow execution has completed.",
-            "Presentation inside the response string: proactively choose the clearest supported format in project questions, idea discovery, draft refinement, and ongoing or historical task discussions. When a visual or interactive format helps, include it directly without waiting for the user to request it or asking whether to create it. Respect the user's requested format and respond in their language.",
-            "Lead with a short, direct answer or recommendation, then use the format that makes the explanation easier to understand. For alternatives compared across several criteria, use a Markdown table; the chat UI supports sorting, filtering and copying it. For numeric comparisons or trends with supported data, use a chart and state units and sources or estimate labels in the surrounding text. Never invent values to fill a chart.",
-            "For a multi-step plan or procedure with useful detail per step, use expandable steps. When sequence, dependencies or decision branches are the main explanation, use a simple flowchart. For distinct options or deliverable summaries with details to preview, use cards. During discovery, mark tentative flows and options as proposals and ask about material gaps; diagrams never establish requirements or accepted scope.",
-            "For example, a question about how input becomes output benefits from a flowchart, a choice between approaches benefits from a comparison table, and a detailed implementation plan benefits from expandable steps. Choose by the information being explained, even when the user does not name a format. The JSON examples below only illustrate syntax; adapt their labels and content to the actual question.",
-            "Keep the main conclusion, blocking issues, clarifying questions and required confirmation visible in ordinary text. Expandable content holds supporting detail. Usually use one suitable table or rich block; use a second only when it explains a distinct useful aspect. Avoid duplicating the same information in prose and multiple formats. Greetings, acknowledgements and simple factual answers can stay plain text.",
-            "Keep the complete response within 4000 characters, including Markdown and rich-block JSON. Prefer a compact useful view with a brief explanation. All presentation remains inside the response string and does not change intent classification or action authority.",
-            'For a numeric chart, embed a fenced goodteam-ui JSON block inside response: {"type":"chart","title":"Task counts","columns":["Stage","Planned","Actual"],"rows":[["Design",5,3],["Build",8,4]]}. The first column contains text labels and every remaining cell is a finite JSON number. These are format examples, not project evidence; use only supported data and identify estimates explicitly. Limit charts to 100 rows and 8 columns.',
-            'For expandable steps use a fenced goodteam-ui block: {"type":"steps","title":"Implementation plan","items":[{"title":"Inspect the existing flow","body":"Read the relevant files and identify the narrow change."}]}. For result previews use {"type":"cards","title":"Options","items":[{"title":"Option A","summary":"A short overview","body":"Details to preview."}]}. Limit either to 20 items. These are display-only content, never approval, dispatch, verified completion, executable HTML or JavaScript.',
-            'For a simple flowchart, use a fenced goodteam-ui block: {"type":"flowchart","title":"Example flow","nodes":[{"id":"check","label":"Check input","kind":"decision"},{"id":"done","label":"Continue","kind":"terminal"},{"id":"fix","label":"Ask for details","kind":"step"}],"edges":[{"from":"check","to":"done","label":"Yes"},{"from":"check","to":"fix","label":"No"}]}. Use up to 12 uniquely identified nodes and 20 edges between existing IDs; kind is step, decision or terminal. Keep labels concise (node labels at most 80 characters, edge labels at most 40). Support sequential steps, branches and merges without cycles. This is an explanatory diagram, not workflow status or execution authority.',
-            "Keep all Markdown and goodteam-ui fences inside the JSON response string, properly escaped. Preserve the outer chat JSON shape and all separate task intake, Team proposal and confirmation requirements. Do not return raw HTML, scripts or event handlers as UI.",
-            "",
-            "## Current user message",
-            text,
         ]
     )
 

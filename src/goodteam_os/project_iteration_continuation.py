@@ -175,6 +175,10 @@ def stop_project_continuation(*, workspace, project_key, continuation_id):
         return {**session, _FIELD: {**value, "status": "stopped", "reason": "owner_stopped"}}
     value = store._mutate(stop)[_FIELD]
     _event(store, f"project-continuation-stop:{continuation_id}", "project_continuation_stopped", {})
+    from goodteam_os.manager_app_server import stop_background_work
+    # Revocation is durable before native interruption; never hold the session
+    # lock while waiting for a provider acknowledgement.
+    stop_background_work(workspace, project_key)
     return value
 
 

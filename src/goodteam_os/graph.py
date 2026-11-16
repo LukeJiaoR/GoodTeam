@@ -1869,7 +1869,6 @@ def worker_type_settings_for_role(target: dict[object, object], role: str) -> di
             return {
                 "reasoning_depth": reasoning_depth,
                 "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
-                "desired_instances": 1,
                 "pi_thinking_level": _pi_thinking_level(resolve_role_adapter(target, role), reasoning_depth),
             }
         active = sorted(active_workers_for_role(state, role), key=lambda w: (str(w["created_at"]), str(w["id"])))
@@ -1894,7 +1893,7 @@ def worker_type_settings_for_role(target: dict[object, object], role: str) -> di
         reasoning_depth = "default"
     additional_prompt = str(raw_settings.get("additional_prompt", "") or "").strip()
     try:
-        desired_instances = int(raw_settings.get("desired_instances", 1) or 1)
+        desired_instances = int(raw_settings.get("desired_instances", 1) or 1) if role != MANAGER_ROLE else 1
     except (TypeError, ValueError):
         desired_instances = 1
     desired_instances = min(max(desired_instances, 1), 8)
@@ -1902,7 +1901,7 @@ def worker_type_settings_for_role(target: dict[object, object], role: str) -> di
     return {
         "reasoning_depth": reasoning_depth,
         "additional_prompt": additional_prompt,
-        "desired_instances": desired_instances,
+        **({"desired_instances": desired_instances} if role != MANAGER_ROLE else {}),
         "pi_thinking_level": _pi_thinking_level(adapter, reasoning_depth),
     }
 
@@ -2047,7 +2046,7 @@ def _worker_job_fields(
         "reasoning_depth": resolution["reasoning_depth"],
         "additional_prompt": resolution["additional_prompt"],
         "pi_thinking_level": resolution["pi_thinking_level"],
-        "desired_instances": resolution["desired_instances"],
+        **({"desired_instances": resolution["desired_instances"]} if "desired_instances" in resolution else {}),
     }
 
 

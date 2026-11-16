@@ -94,6 +94,8 @@ export function buildTeamModel(data) {
     })),
   }));
   const managerRuntime = team.manager?.runtime || {};
+  const managerProvider = ['builtin', 'fake', 'noop', 'human'].includes(managerRuntime.provider)
+    ? managerRuntime.provider : 'codex';
   return {
     schemaVersion: team.schema_version || '',
     revision: team.revision || 0,
@@ -101,11 +103,11 @@ export function buildTeamModel(data) {
     manager: {
       role: team.manager?.role || 'orchestrator',
       label: team.manager?.label || 'Task Assistant',
-      provider: managerRuntime.provider || '',
+      provider: managerProvider,
       model: managerRuntime.model || '',
       reasoningDepth: managerRuntime.reasoning_depth || 'default',
       additionalPrompt: managerRuntime.additional_prompt || '',
-      runtimeLabel: runtimeLabel(managerRuntime),
+      runtimeLabel: runtimeLabel({ ...managerRuntime, provider: managerProvider === 'codex' ? 'Codex app-server' : managerProvider }),
       skillBinding: {
         schemaVersion: team.manager?.skill_binding?.schema_version || 'role_skill_bindings.v1',
         projectKey: team.manager?.skill_binding?.project_key || team.project_key || '',

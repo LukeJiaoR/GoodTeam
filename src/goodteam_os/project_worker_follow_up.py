@@ -57,8 +57,10 @@ def consume_worker_follow_up(*, store, root, project_key, value, authority_check
             selected = (key, deepcopy(record["worker_control"]), False)
             return session
         controls = [r["worker_control"] for r in current.get("running_judgments", {}).values() if r.get("worker_control")]
-        used = len(controls)
-        if (used >= limit or any(c["job_id"] == command["job_id"] for c in controls) or _binding(session, root) != record["binding"]
+        native_controls = [item for item in current.get("manager_native_controls", {}).values()
+                           if item.get("action") == "follow_up"]
+        used = len(controls) + len(native_controls)
+        if (used >= limit or any(c["job_id"] == command["job_id"] for c in [*controls, *native_controls]) or _binding(session, root) != record["binding"]
                 or not judgment_human_current(current, record) or not authority_check()):
             return session
         control = {"control_id": "control-manager-" + sha256((value["id"] + key).encode()).hexdigest(),

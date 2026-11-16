@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
+import os
 from pathlib import Path
+import sys
 from typing import Any
 
 from goodteam_os.execution.api import ExecutionAPI
@@ -110,12 +113,11 @@ def test_worker_sandbox_context_has_no_host_secret_values(tmp_path, monkeypatch)
 
 
 def test_worktree_execution_uses_worktree_cwd_preserves_shared_venv_and_pythonpath(tmp_path, monkeypatch):
-    calls: list[dict[str, Any]] = []
     shared_venv = tmp_path / ".venv"
     shared_venv.mkdir()
     (shared_venv / "marker").write_text("shared", encoding="utf-8")
     adapter = FakeSandboxGitAdapter()
-    _install_fake_cli(monkeypatch, calls=calls)
+    calls_path = _install_offline_cli(tmp_path, monkeypatch)
     orchestrator = _orchestrator(
         tmp_path,
         sandbox_mode="worktree",
@@ -125,10 +127,12 @@ def test_worktree_execution_uses_worktree_cwd_preserves_shared_venv_and_pythonpa
 
     completed = orchestrator.run_execution(queued.execution_id)
 
+    calls = [json.loads(line) for line in calls_path.read_text().splitlines()]
     worktree_path = Path(adapter.created[0]["worktree_path"])
     status = WorkerJobStore(tmp_path).list_jobs()[0]
     assert completed.status is ExecutionRunStatus.SUCCEEDED
-    assert calls[0]["cwd"] == worktree_path
+    assert len(calls) == 1 and calls[0]["input_received"]
+    assert calls[0]["cwd"] == str(worktree_path)
     assert status["runtime_cwd"] == str(worktree_path)
     assert status["pythonpath_workspace_src"] is True
     assert calls[0]["env"]["PYTHONPATH"].split(":")[0] == str(worktree_path / "src")
@@ -179,42 +183,29 @@ def _sandbox_context(workspace: Path) -> dict[str, Any]:
     }
 
 
-class _FakePopen:
-    pid = 4343
-
-    def __init__(self, command: list[str], *, cwd: Path, env: dict[str, str] | None, calls: list[dict[str, Any]]):
-        self.command = command
-        self.cwd = cwd
-        self.env = env or {}
-        self.calls = calls
-        self.returncode = 0
-
-    def communicate(self, input=None, timeout=None):
-        self.calls.append(
-            {
-                "command": self.command,
-                "cwd": self.cwd,
-                "env": self.env,
-                "input": input,
-                "timeout": timeout,
-            }
-        )
-        if "--output-last-message" in self.command:
-            result_path = Path(self.command[self.command.index("--output-last-message") + 1])
-            result_path.write_text("# Worker Result\n\nCompleted.\n", encoding="utf-8")
-        return ("worker stdout", "worker stderr")
-
-    def kill(self) -> None:
-        self.returncode = -9
-
-
-def _install_fake_cli(monkeypatch, *, calls: list[dict[str, Any]]) -> None:
-    def fake_popen(command, *, cwd, env, stdin, stdout, stderr, text, start_new_session):
-        assert start_new_session is True
-        return _FakePopen(list(command), cwd=Path(cwd), env=env, calls=calls)
-
-    monkeypatch.setattr("goodteam_os.workers.which", lambda name: f"/fake/bin/{name}")
-    monkeypatch.setattr("goodteam_os.workers.subprocess.Popen", fake_popen)
+def _install_offline_cli(tmp_path, monkeypatch) -> Path:
+    """Use real subprocess pipes to observe the inherited sandbox environment."""
+    binary = tmp_path / "fixture-bin" / "codex"
+    binary.parent.mkdir()
+    binary.write_text(f"#!{sys.executable}\n" + r'''import json, os, sys
+from pathlib import Path
+if '--version' in sys.argv:
+    print('offline sandbox CLI fixture')
+    raise SystemExit()
+prompt = sys.stdin.read()
+with Path(os.environ['GOODTEAM_SANDBOX_FIXTURE_CALLS']).open('a') as handle:
+    handle.write(json.dumps({'cwd': str(Path.cwd()), 'input_received': bool(prompt),
+        'env': {'PYTHONPATH': os.environ.get('PYTHONPATH', '')}}) + '\n')
+Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('# Worker Result\n\nCompleted.\n')
+print(json.dumps({'type': 'item.completed', 'item': {'id': 'report', 'type': 'agent_message',
+    'text': 'Completed the offline sandbox fixture.'}}), flush=True)
+''')
+    binary.chmod(0o755)
+    calls_path = tmp_path / "sandbox-cli-calls.jsonl"
+    monkeypatch.setenv("PATH", str(binary.parent) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("GOODTEAM_SANDBOX_FIXTURE_CALLS", str(calls_path))
+    monkeypatch.setattr("goodteam_os.workers.default_embedder", lambda: None)
+    return calls_path
 
 
 class FakePullRequestGitHubClient:

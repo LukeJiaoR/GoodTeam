@@ -58,7 +58,7 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
                 'task_action': action}
     service = TaskAssistantService(tmp_path, project_config=config, manager_turn=manager)
     monkeypatch.setattr(service, '_readiness_state', lambda *_: {'project_mode': 'existing_project', 'lifecycle': 'ready'})
-    monkeypatch.setattr(service, 'session', lambda *_: TaskAssistantSessionStore(tmp_path, 'DEMO').read())
+    monkeypatch.setattr(service, 'session', lambda *_, **kwargs: TaskAssistantSessionStore(tmp_path, 'DEMO').read())
     request = dict(project_key='DEMO', root=root, message_id='plan-one', text='Plan the next bounded increment.')
     queued_result = service.send_message(**request)
     queued = queued_result['session']['queued_task_proposals']

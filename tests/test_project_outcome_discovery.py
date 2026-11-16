@@ -1,6 +1,6 @@
 """One bounded project loop learns from delivery and creates its next task.
 
-Only CLI responses are offline protocol fixtures, not real model judgments or
+Native Manager and CLI responses are offline protocol fixtures, not real model judgments or
 proof of native confinement. Manager planning, Worker jobs, checks, protected
 review, Git delivery, memory provenance and create-once recovery are production
 paths. No provider or orchestration function is replaced.
@@ -49,13 +49,73 @@ from uuid import uuid4
 if '--version' in sys.argv:
     print('codex-cli ' + '.'.join(map(str, sys.version_info[:3])))
     raise SystemExit(0)
-prompt = sys.stdin.read()
-assert prompt
-
 def event(kind, **details):
     with Path(CALLS).open('a') as stream:
         stream.write(json.dumps({'kind': kind, 'cwd': str(Path.cwd()), **details}) + '\n')
 
+def manager_response(packet):
+    if packet['schema_version'] == 'project_iteration_choice_packet.v1':
+        assert packet['repository_understanding']['reason'] == 'no_completed_project_inspection'
+        eligible = [item['task_id'] for item in packet['backlog']['candidates'] if item['eligible_to_plan']]
+        assert len(eligible) == 1
+        response = {'selected_task_ids': eligible, 'selected_task_id': eligible[0],
+                    'compared_task_ids': eligible,
+                    'rationale': 'Start the only authorized seed task before observing its reviewed delivery.'}
+        kind = 'manager_choice'
+    else:
+        assert packet['schema_version'] == 'project_outcome_discovery_packet.v1'
+        inspected = packet['repository_understanding']
+        assert inspected['status'] == 'complete', inspected
+        assert inspected['source'] == 'repository_inventory'
+        assert inspected['snapshot_id'] and inspected['inventory_digest']
+        assert inspected['semantic_understanding'] == 'not_performed'
+        outcome = packet['verified_outcome']
+        assert outcome['quality']['check_status'] == 'passed'
+        assert outcome['quality']['acceptance_status'] == 'accepted_by_review_policy'
+        assert all(task['status'] == 'done' and task['delivery_verified'] for task in outcome['tasks'])
+        candidate = outcome['delivery']['candidate_commit']
+        name = 'docs/followup-' + candidate[:8] + '.txt'
+        response = {'new_task': {
+            'title': 'TASK_FILE=' + name,
+            'description': 'Document a follow-up from the verified seed delivery. EVIDENCE_CANDIDATE=' + candidate,
+            'acceptance_criteria': [name + ' records the exact delivered candidate ' + candidate + '.'],
+            'write_domains': [name], 'dependencies': [task['id'] for task in outcome['tasks']],
+            'source_refs': packet['allowed_source_refs']},
+            'rationale': 'The delivered seed now permits a distinct follow-up recording its verified candidate identity.'}
+        kind = 'manager_discovery'
+    event(kind, packet=packet, response=response)
+    return response
+
+if 'app-server' in sys.argv:
+    def send(value):
+        print(json.dumps(value), flush=True)
+    for line in sys.stdin:
+        request = json.loads(line)
+        method, params = request.get('method'), request.get('params', {})
+        if method == 'initialized':
+            continue
+        if method == 'initialize':
+            result = {}
+        elif method in {'thread/start', 'thread/resume'}:
+            assert params['sandbox'] == 'read-only' and params['approvalPolicy'] == 'never'
+            result = {'thread': {'id': params.get('threadId', 'offline-thread-' + uuid4().hex)}}
+        elif method == 'turn/start':
+            packet = json.loads(params['input'][0]['text'].split('Current project context (data):\n', 1)[1])
+            text = json.dumps(manager_response(packet))
+            thread, turn = params['threadId'], 'offline-turn-' + uuid4().hex
+            send({'id': request['id'], 'result': {'turn': {'id': turn, 'status': 'inProgress'}}})
+            item = {'id': 'answer', 'type': 'agentMessage', 'phase': 'final_answer', 'text': text}
+            send({'method': 'item/completed', 'params': {'threadId': thread, 'turnId': turn, 'item': item}})
+            send({'method': 'turn/completed', 'params': {'threadId': thread,
+                  'turn': {'id': turn, 'status': 'completed', 'items': [item]}}})
+            continue
+        else:
+            raise AssertionError(method)
+        send({'id': request['id'], 'result': result})
+    raise SystemExit(0)
+
+prompt = sys.stdin.read()
+assert prompt
 if '# Exact review target\n' in prompt:
     target = json.loads(prompt.split('# Exact review target\n', 1)[1].split('\n# Captured sources', 1)[0])
     manifest = json.loads(prompt.split('# Captured sources (file manifest; read these exact files as needed)\n', 1)[1]
@@ -84,53 +144,19 @@ if '# Exact review target\n' in prompt:
 else:
     assert Path(sys.argv[sys.argv.index('--cd') + 1]) == Path.cwd()
     output = Path(sys.argv[sys.argv.index('--output-last-message') + 1])
-    if 'Role: orchestrator\n' in prompt:
-        packet = json.loads(prompt.split('## Context\n\n', 1)[1].split('\n\n## Sandbox Context', 1)[0])
-        if packet['schema_version'] == 'project_iteration_choice_packet.v1':
-            assert packet['repository_understanding']['reason'] == 'no_completed_project_inspection'
-            eligible = [item['task_id'] for item in packet['backlog']['candidates'] if item['eligible_to_plan']]
-            assert len(eligible) == 1
-            response = {'selected_task_ids': eligible, 'selected_task_id': eligible[0],
-                        'compared_task_ids': eligible,
-                        'rationale': 'Start the only authorized seed task before observing its reviewed delivery.'}
-            kind = 'manager_choice'
-        else:
-            assert packet['schema_version'] == 'project_outcome_discovery_packet.v1'
-            inspected = packet['repository_understanding']
-            assert inspected['status'] == 'complete', inspected
-            assert inspected['source'] == 'repository_inventory'
-            assert inspected['snapshot_id'] and inspected['inventory_digest']
-            assert inspected['semantic_understanding'] == 'not_performed'
-            outcome = packet['verified_outcome']
-            assert outcome['quality']['check_status'] == 'passed'
-            assert outcome['quality']['acceptance_status'] == 'accepted_by_review_policy'
-            assert all(task['status'] == 'done' and task['delivery_verified'] for task in outcome['tasks'])
-            candidate = outcome['delivery']['candidate_commit']
-            name = 'docs/followup-' + candidate[:8] + '.txt'
-            response = {'new_task': {
-                'title': 'TASK_FILE=' + name,
-                'description': 'Document a follow-up from the verified seed delivery. EVIDENCE_CANDIDATE=' + candidate,
-                'acceptance_criteria': [name + ' records the exact delivered candidate ' + candidate + '.'],
-                'write_domains': [name], 'dependencies': [task['id'] for task in outcome['tasks']],
-                'source_refs': packet['allowed_source_refs']},
-                'rationale': 'The delivered seed now permits a distinct follow-up recording its verified candidate identity.'}
-            kind = 'manager_discovery'
-        event(kind, packet=packet, response=response)
-        output.write_text(json.dumps(response))
+    assert 'Role: implementation\n' in prompt
+    name = re.search(r'TASK_FILE=(docs/[a-z0-9-]+\.txt)', prompt).group(1)
+    if name == 'docs/seed.txt':
+        content = 'ready for a project follow-up\n'
     else:
-        assert 'Role: implementation\n' in prompt
-        name = re.search(r'TASK_FILE=(docs/[a-z0-9-]+\.txt)', prompt).group(1)
-        if name == 'docs/seed.txt':
-            content = 'ready for a project follow-up\n'
-        else:
-            candidate = re.search(r'EVIDENCE_CANDIDATE=([0-9a-f]{40})', prompt).group(1)
-            assert name == 'docs/followup-' + candidate[:8] + '.txt'
-            assert Path('docs/seed.txt').read_text() == 'ready for a project follow-up\n'
-            content = 'follow-up uses delivered candidate: ' + candidate + '\n'
-        Path(name).parent.mkdir(exist_ok=True)
-        Path(name).write_text(content)
-        output.write_text('Offline Worker produced a candidate; independent review and delivery remain required.\n')
-        event('worker', task=name)
+        candidate = re.search(r'EVIDENCE_CANDIDATE=([0-9a-f]{40})', prompt).group(1)
+        assert name == 'docs/followup-' + candidate[:8] + '.txt'
+        assert Path('docs/seed.txt').read_text() == 'ready for a project follow-up\n'
+        content = 'follow-up uses delivered candidate: ' + candidate + '\n'
+    Path(name).parent.mkdir(exist_ok=True)
+    Path(name).write_text(content)
+    output.write_text('Offline Worker produced a candidate; independent review and delivery remain required.\n')
+    event('worker', task=name)
 ''')
     launcher = tmp_path / "offline_codex.c"
     launcher.write_text(
@@ -155,8 +181,22 @@ else:
     return binary, native_home, calls
 
 
-def test_verified_outcome_creates_once_then_delivers_next_iteration_within_frozen_authority(tmp_path, monkeypatch):
+@pytest.fixture
+def native_analysis(tmp_path, monkeypatch):
+    from goodteam_os.manager_app_server import ManagerAppServer, close_runtimes
+
     binary, native_home, calls = _offline_cli(tmp_path, monkeypatch)
+    monkeypatch.setattr(ManagerAppServer, "_runtime_config", lambda self: (
+        [str(binary), "app-server"], dict(os.environ),
+        {"model": "offline-fixture", "reasoning_depth": "high", "additional_prompt": "", "provider_connection": None},
+        "offline-discovery-fixture"))
+    close_runtimes()
+    yield binary, native_home, calls
+    close_runtimes()
+
+
+def test_verified_outcome_creates_once_then_delivers_next_iteration_within_frozen_authority(tmp_path, monkeypatch, native_analysis):
+    binary, native_home, calls = native_analysis
     # Real new-project readiness has no repository-understanding artifact.
     # Its first delivery must supply current inventory to the next Manager.
     source = tmp_path / "source"
@@ -403,12 +443,14 @@ def test_verified_outcome_creates_once_then_delivers_next_iteration_within_froze
     assert [event["kind"] for event in events()] == [
         "manager_choice", "worker", "review", "manager_discovery", "worker", "review"]
     assert len(checks.read_text().splitlines()) == 2
-    job_store = WorkerJobStore(source)
-    jobs = job_store.list_jobs()
-    managers = [job for job in jobs if job["role"] == "orchestrator"]
-    assert len(jobs) == 6 and len(managers) == 2
-    assert all(job["status"] == "completed" and job["execution_policy"] == "read_only" for job in managers)
-    discovery_job = next(job for job in managers if job["phase"] == "project_outcome_discovery")
-    assert json.loads((job_store.root / discovery_job["id"] / "context.md").read_text()) == packet
+    jobs = WorkerJobStore(source).list_jobs()
+    assert len(jobs) == 4 and not any(job["role"] == "orchestrator" for job in jobs)
+    managers = store.read()["manager_app_server"]["requests"]
+    assert len(managers) == 2
+    assert all(item["status"] == "completed" and item["result"]["manager_execution"]["adapter"] == "codex-app-server"
+               for item in managers.values())
+    discovery_id, discovery = next((identifier, item) for identifier, item in managers.items()
+                                   if item["phase"] == "project_outcome_discovery")
+    assert json.loads(discovery["context"]) == packet
     captured_digest = sha256(json.dumps(packet, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    assert discovery_job["idempotency_key"].endswith(":project-outcome:" + captured_digest)
+    assert discovery_id == "project-outcome:" + captured_digest

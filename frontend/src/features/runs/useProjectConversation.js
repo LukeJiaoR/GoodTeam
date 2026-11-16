@@ -15,7 +15,7 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
   const perform = async (name, operation) => {
     // Revocation must remain reachable while an answer or chat request is
     // unresolved. It cannot release the ordinary mutation's pending latch.
-    const stop = name === 'stop_project_continuation';
+    const stop = ['stop_project_continuation', 'stop_manager_request'].includes(name);
     const request = stop ? stopping : pending;
     if (request.current || !stop && stopping.current) return false;
     request.current = true;
@@ -24,7 +24,15 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
     let result;
     try {
       result = await operation();
-      await refresh();
+      if (result?.accepted || stop) {
+        // Durable admission releases the composer while the native turn runs.
+        // Polling owns subsequent stream/finish updates; a slow GET is not a
+        // reason to prevent another user message. The same applies once Stop
+        // has durably acknowledged revocation.
+        void refresh().catch(() => {});
+      } else {
+        await refresh();
+      }
       return result;
     } catch (caught) {
       setError(caught);
@@ -55,7 +63,7 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
   return {
     busy, error, delivery, deliver,
     send: (text, attachments = []) => deliver('message', text, (messageId) => runApi.sendTaskAssistantMessage(projectKey, {
-      message_id: messageId, text, context_run_id: contextRunId,
+      message_id: messageId, text, context_run_id: contextRunId, background: true,
       ...(attachments.length ? { attachments: attachments.map(item => item.id) } : {}),
     }), '', attachments),
     answer: (questionId, text) => {
@@ -67,6 +75,7 @@ export default function useProjectConversation({ projectKey, contextRunId = '', 
     queue: (text) => deliver('queue_task', text, (messageId) => runApi.taskAssistantAction(projectKey, {
       action: 'queue_task', message_id: messageId, text,
     })),
-    act: (request) => perform(request.action, () => runApi.taskAssistantAction(projectKey, request)),
+    act: (request) => perform(request.action, () => runApi.taskAssistantAction(projectKey,
+      request.action === 'retry_message' ? { ...request, background: true } : request)),
   };
 }

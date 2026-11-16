@@ -32,12 +32,11 @@ export default function WorkerDialog({ presentation = 'dialog', children, agents
   const [submitError, setSubmitError] = useState(null);
   const [draft, setDraft] = useState(() => {
     if (worker) return draftFromWorker(worker);
-    if (manager) return { ...EMPTY_DRAFT, provider: managerRuntime?.provider || '', model: managerRuntime?.model || '', reasoningDepth: managerRuntime?.reasoningDepth || 'default', additionalPrompt: managerRuntime?.additionalPrompt || '' };
+    if (manager) return { ...EMPTY_DRAFT, provider: managerRuntime?.provider || 'codex', model: managerRuntime?.model || '', reasoningDepth: managerRuntime?.reasoningDepth || 'default', additionalPrompt: managerRuntime?.additionalPrompt || '' };
     return { ...EMPTY_DRAFT, ...newWorkerRuntime(defaultProvider), role: roleEntry?.role || '' };
   });
 
-  const runtimeBusy = manager && (assistantSession?.runtime?.status === 'checking'
-    || Object.values(assistantSession?.assistant_requests || {}).some((request) => request.status === 'running'));
+  const runtimeBusy = manager && assistantSession?.runtime?.status === 'checking';
   const locked = saving || Boolean(runtimeBusy);
   const runtimeMatches = manager && draft.provider === (managerRuntime?.provider || '')
     && draft.model === (managerRuntime?.model || '')
@@ -127,7 +126,7 @@ export default function WorkerDialog({ presentation = 'dialog', children, agents
               </label>
             </>
           ) : null}
-          <RuntimeFields draft={draft} setDraft={changeDraft} agents={agents} backendOptions={backendOptions} defaultProvider={worker?.provider || managerRuntime?.provider || defaultProvider} agentsLoading={agentsLoading} onRefresh={onRefresh} t={t} />
+          <RuntimeFields draft={draft} setDraft={changeDraft} agents={agents} backendOptions={backendOptions} defaultProvider={worker?.provider || managerRuntime?.provider || defaultProvider} agentsLoading={agentsLoading} onRefresh={onRefresh} fixedProvider={manager} t={t} />
         </fieldset>
 
         {error ? <div className="team-dialog__error"><ProductError error={error} t={t} /></div> : null}

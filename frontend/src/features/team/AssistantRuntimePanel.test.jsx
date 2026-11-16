@@ -41,6 +41,8 @@ test('invalidates a refreshing and failed catalog without changing the draft or 
     .mockResolvedValue({ agents: [{ ...catalog.agents[0], models: ['new-catalog-model'], model_default: 'new-catalog-model' }] });
   const { user, api } = setup({ getSettingsAgents });
   await waitFor(() => expect(modelOptions()).toContain('old-catalog-model'));
+  expect(screen.getByLabelText('Agent')).toBeDisabled();
+  expect([...screen.getByLabelText('Agent').options].map((option) => option.textContent)).toEqual(['Codex app-server']);
   await user.selectOptions(screen.getByLabelText('Reasoning depth'), 'xhigh');
   await user.clear(screen.getByLabelText('Additional instructions'));
   await user.type(screen.getByLabelText('Additional instructions'), 'Preserve this unsaved instruction.');

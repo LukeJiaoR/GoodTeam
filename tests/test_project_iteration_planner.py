@@ -57,6 +57,11 @@ def test_manager_can_select_other_than_source_priority_and_persist(tmp_path):
     calls = []
 
     def fake_manager(**kwargs):
+        # Foreground admission remains available during background planning.
+        from goodteam_os.assistant_requests import conversation_lock
+
+        with conversation_lock(session_store):
+            pass
         calls.append(kwargs)
         return manager_response(kwargs["backlog"])
 

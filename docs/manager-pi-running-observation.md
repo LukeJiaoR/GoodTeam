@@ -1,5 +1,10 @@
 # Running observation uses the captured Pi Manager contract
 
+> Manager runtime migration (#738): current execution uses [Codex app-server](manager-app-server.md).
+> Pi Manager / classification / project-slot descriptions below are historical;
+> shared task, Worker, review and authorization contracts remain applicable.
+
+
 This connects the existing running-observation entry to the previously captured
 `manager_pi_methods.v1` Runtime. It does not remove the existing live authorization
 check, enable generic read-only Pi Workers, or create a second supervisor.

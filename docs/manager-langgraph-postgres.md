@@ -1,5 +1,10 @@
 # Manager conversation and PostgreSQL migration
 
+> Manager runtime migration (#738): current execution uses [Codex app-server](manager-app-server.md).
+> Pi Manager / classification / project-slot descriptions below are historical;
+> shared task, Worker, review and authorization contracts remain applicable.
+
+
 Date: 2026-11-07. This is a bounded implementation trial, not a production
 cutover or acceptance of open-ended project autonomy.
 

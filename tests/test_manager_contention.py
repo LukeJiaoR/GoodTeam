@@ -1,4 +1,4 @@
-"""Continuation contention is deferred before its billable reservation."""
+"""Native Manager work overlaps while original authority and budgets remain bound."""
 from copy import deepcopy
 
 import pytest
@@ -8,7 +8,7 @@ from goodteam_os import project_iteration_continuation as continuation
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
-def test_busy_continuation_defers_then_uses_one_slot_without_refunding_unknown_calls(tmp_path, monkeypatch):
+def test_conversation_capture_defers_but_independent_manager_work_can_overlap(tmp_path, monkeypatch):
     store = TaskAssistantSessionStore(tmp_path, "DEMO")
     grant = dict(id="grant", status="active", authority="authority", task_ids=["task"],
                  manager_calls=0, max_manager_calls=2, batches_started=0, max_batches=2,
@@ -16,8 +16,6 @@ def test_busy_continuation_defers_then_uses_one_slot_without_refunding_unknown_c
     row = dict(id="task", status="todo")
     snapshot = dict(version="sha256:" + "a" * 64, candidates=[dict(task_id="task", eligible_to_plan=True)])
     monkeypatch.setattr(continuation, "authority_snapshot", lambda *a: "authority")
-    monkeypatch.setattr(continuation, "require_no_active_project_goal", lambda *a: None)
-    monkeypatch.setattr(continuation, "active_project_run", lambda *a: False)
     monkeypatch.setattr(continuation, "_scope_tasks", lambda *a: ({"task": row}, [row]))
     monkeypatch.setattr(continuation, "project_iteration_backlog", lambda *a, **k: snapshot)
     calls = []
@@ -27,11 +25,11 @@ def test_busy_continuation_defers_then_uses_one_slot_without_refunding_unknown_c
             store._mutate(lambda s: {**s, "project_continuation": {**s["project_continuation"], "status": "stopped"}})
         kwargs["reserve_planning"]()
         assert store.read()["project_continuation"]["manager_calls"] == 1
-        # The production runner can reuse ONLY the current active same-thread
-        # lease; a second unrelated caller still cannot take the project slot.
+        # The continuation keeps its original lease and budget while a
+        # foreground logical request can own a separate native execution.
         with manager._manager_turn_lock(tmp_path, "planning", resource_slot=kwargs["resource_slot"]):
-            with pytest.raises(manager.ManagerResourceBusy):
-                with manager.manager_resource_slot(tmp_path):
+            with manager.manager_resource_slot(tmp_path) as foreground:
+                with manager._manager_turn_lock(tmp_path, "foreground", resource_slot=foreground):
                     pass
             calls.append("entered")
             if mode[0] == "unknown":
@@ -62,10 +60,8 @@ def test_busy_continuation_defers_then_uses_one_slot_without_refunding_unknown_c
     assert not deferred.get("planning_backlog_version") and not calls
     reset()
     with manager.manager_resource_slot(tmp_path):
-        deferred = tick()
-    assert deferred["status"] == "active" and deferred["reason"] == "manager_resource_busy"
-    assert deferred["manager_calls"] == 0 and not deferred.get("planning_backlog_version") and not calls
-    assert tick()["status"] == "active" and calls == ["entered"]
+        progressed = tick()
+    assert progressed["status"] == "active" and calls == ["entered"]
     assert store.read()["project_continuation"]["manager_calls"] == 1
     reset()
     mode[0] = "unknown"
@@ -110,3 +106,23 @@ def test_resource_lease_is_only_reusable_while_active_on_its_owner(tmp_path):
     with pytest.raises(manager.ManagerExecutionError):
         with manager._manager_turn_lock(tmp_path, "expired", resource_slot=lease):
             pass
+
+
+def test_same_logical_work_serializes_without_blocking_another_request(tmp_path):
+    import threading
+
+    attempted, entered = threading.Event(), threading.Event()
+
+    def repeat():
+        attempted.set()
+        with manager._manager_turn_lock(tmp_path, "same-request"):
+            entered.set()
+
+    with manager._manager_turn_lock(tmp_path, "same-request"):
+        thread = threading.Thread(target=repeat)
+        thread.start()
+        assert attempted.wait(2)
+        with manager._manager_turn_lock(tmp_path, "foreground-message"):
+            assert not entered.is_set()
+    thread.join(timeout=2)
+    assert entered.is_set() and not thread.is_alive()

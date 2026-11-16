@@ -1,5 +1,10 @@
 # Project Manager and task boundaries
 
+> Manager runtime migration (#738): current execution uses [Codex app-server](manager-app-server.md).
+> Pi Manager / classification / project-slot descriptions below are historical;
+> shared task, Worker, review and authorization contracts remain applicable.
+
+
 The Task Assistant is a project coordinator. It has no business task assignment.
 A conversation can reference a task without becoming that task or controlling its
 execution. Worker roles own business tasks; runs and attempts provide execution

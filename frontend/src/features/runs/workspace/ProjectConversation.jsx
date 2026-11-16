@@ -99,7 +99,8 @@ export default function ProjectConversation({
   contextTitle,
   onClearContext,
 }) {
-  const requestStatus = Object.values(assistantState?.assistant_requests || {}).find((request) => request.status !== 'succeeded')?.status;
+  const requestStatus = Object.values(assistantState?.assistant_requests || {}).find((request) => request.status === 'running')?.status
+    || Object.values(assistantState?.assistant_requests || {}).find((request) => ['failed', 'interrupted'].includes(request.status))?.status;
   const continuationNotice = iterationSession?.project_continuation_notice;
   const responding = ['message', 'retry_message'].includes(assistantBusy) || assistantState?.status === 'running' || requestStatus === 'running';
   const needsAssistantAttention = ['failed', 'interrupted'].includes(requestStatus)
@@ -177,7 +178,9 @@ export default function ProjectConversation({
               {(timeline || []).map((item) => <TimelineItem item={item} key={item.id || item.message_id} language={language} t={t}
                 continuationNoticeId={continuationNotice?.kind ? continuationNotice.id : undefined} />)}
               {Object.entries(assistantState?.assistant_requests || {}).filter(([, request]) => request.status === 'running').map(([id, request]) => (
-                <AssistantPendingReply key={`${id}:${request.attempt}`} request={request} t={t} />
+                <AssistantPendingReply key={`${id}:${request.attempt}`} request={request} t={t}
+                  onStop={onAssistantAction && ['model', 'applying'].includes(request.phase)
+                    ? () => onAssistantAction({ action: 'stop_manager_request', message_id: id, expected_attempt: request.attempt }) : undefined} />
               ))}
             </ol>
             <div className="project-conversation-attention" tabIndex={-1} role="region" aria-label={t('assistant.project.viewPending')}>
@@ -249,7 +252,7 @@ export default function ProjectConversation({
             awaitingReply={Object.values(assistantState?.assistant_requests || {}).some(request => request.status === 'running')}
             key={projectKey}
             draftKey={JSON.stringify([projectKey, 'project-conversation'])}
-            busy={Boolean(assistantBusy) || Object.values(assistantState?.assistant_requests || {}).some((request) => request.status === 'running')}
+            busy={Boolean(assistantBusy)}
             onStart={onStart}
             onQueueTask={onQueueTask}
             changeIntent={mission?.read_only ? null : attention?.intent_commit}
