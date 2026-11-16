@@ -534,6 +534,10 @@ export const en = {
   'assistant.error.invalid_response': "The model returned an invalid response. Retry or update the runtime.",
   'assistant.error.execution_failed': "Execution failed. Check the runtime configuration and connection before retrying.",
   'assistant.error.manager_resource_busy': "The Manager is processing another request. This message is saved; retry it shortly.",
+  'assistant.error.manager_stopped': 'Manager work was stopped.',
+  'assistant.error.manager_interrupted': 'The Manager turn was interrupted. Review its saved progress before retrying.',
+  'assistant.error.manager_runtime_changed': 'Finish or stop the current Manager turn before changing its runtime.',
+  'assistant.error.operation_conflict': 'This request belongs to different original input.',
   'assistant.error.interrupted': "The result is uncertain. Inspect the timeline, task proposal and Team state before sending a new request. Automatic retry is disabled.",
   'assistant.command.disable_role': "Disable role",
   'assistant.command.enable_role': "Enable role",
@@ -1801,3 +1805,4 @@ export const en = {
   'work.attachments.message': 'Please review these attachments.',
   'work.attachments.messageOnly': 'These attachments have not been sent. Switch to Message to send them, or remove the attachments before continuing.',
 };
+

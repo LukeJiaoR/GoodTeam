@@ -20,6 +20,8 @@ export default function AssistantPendingReply({ request, onStop, t }) {
       setStopping(false);
     }
   };
+  const activity = typeof request.activity === 'string' ? request.activity
+    : request.activity ? `${request.activity.kind}: ${request.activity.status}` : '';
   return (
     <li className="team-manager-event assistant-pending-reply" data-actor="assistant">
       <div className="team-manager-event__bubble">
@@ -30,7 +32,7 @@ export default function AssistantPendingReply({ request, onStop, t }) {
           <small className="assistant-pending-reply__timer" aria-live="off">{t('assistant.wait.elapsed', { seconds: elapsed })}</small>
         </div>
         {request.stream_text ? <div className="assistant-pending-reply__text" style={{ whiteSpace: 'pre-wrap' }}>{request.stream_text}</div> : null}
-        {request.activity ? <p className="assistant-pending-reply__activity" role="status">{request.activity}</p> : null}
+        {activity ? <p className="assistant-pending-reply__activity" role="status">{activity}</p> : null}
         {elapsed >= 30 && !request.stream_text ? <p className="assistant-pending-reply__long">{t('assistant.wait.long')}</p> : null}
         {onStop ? <button type="button" onClick={stop} disabled={stopping || request.stop_requested}>
           {t('assistant.project.stopResponse')}
@@ -39,3 +41,4 @@ export default function AssistantPendingReply({ request, onStop, t }) {
     </li>
   );
 }
+

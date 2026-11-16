@@ -54,7 +54,10 @@ for line in sys.stdin:
         send({"id":request["id"],"result":{"turn":turns[turn]}})
         send({"method":"turn/started","params":{"threadId":thread,"turn":turns[turn]}})
         counts[text] = counts.get(text,0)+1
-        if text == "fail-once" and counts[text] == 1:
+        if text == "unauthorized":
+            turns[turn]["error"] = {"message": "Unexpected status 401 Unauthorized", "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 401}}}
+            finish(thread, turn, "failed", "")
+        elif text == "fail-once" and counts[text] == 1:
             finish(thread, turn, "failed", "partial response")
         elif not text.startswith("hold"):
             finish(thread, turn)
@@ -198,3 +201,15 @@ def test_native_recovery_cannot_revive_a_concurrently_stopped_request(runtime, m
         release.set()
         assert recovering.result(timeout=3)["status"] == "stopped"
     assert native.store.read()["manager_app_server"]["requests"]["recover"]["status"] == "stopped"
+
+
+
+def test_provider_failure_keeps_authentication_category_and_diagnostics(runtime):
+    from goodteam_os.assistant_runtime import safe_failure
+
+    native, _ = runtime
+    with pytest.raises(ManagerExecutionError) as failure:
+        native.run(logical_id="authentication", text="unauthorized", context="snapshot")
+    assert safe_failure(failure.value)["code"] == "authentication_failed"
+    assert not native.active and not native.by_request
+    assert native.client.stderr_path == native.store.path.with_name("manager-app-server.stderr.log")

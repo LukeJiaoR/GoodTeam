@@ -35,6 +35,16 @@ def _error(message, code="execution_failed"):
     return ManagerExecutionError(message, code=code)
 
 
+def _native_turn_failure(turn):
+    if turn.get("status") == "failed":
+        from goodteam_os.assistant_runtime import safe_failure
+
+        # Preserve the provider failure category; do not expose raw provider payloads.
+        failure = safe_failure(RuntimeError(json.dumps(turn.get("error") or {})))
+        return _error(failure["message"], failure["code"])
+    return _error("Native Manager turn did not complete.", "manager_interrupted")
+
+
 @dataclass
 class _Turn:
     thread_key: str
@@ -137,6 +147,7 @@ class ManagerAppServer:
         if self.client is not None:
             self.client.close()
         self.client = CodexAppServer(command, cwd=self.root, env=env,
+                                    stderr_path=self.store.path.with_name("manager-app-server.stderr.log"),
                                     on_event=self._event, on_request=self._request)
         self.client.start()
         self.fingerprint = fingerprint
@@ -453,7 +464,7 @@ class ManagerAppServer:
                         turn.stopped = True
                         raise _error("Background Manager authority changed during execution.", "manager_stopped")
                     if native_turn.get("status") != "completed":
-                        raise _error("Native Manager turn did not complete.", "manager_interrupted")
+                        raise _native_turn_failure(native_turn)
                     result = {"text": self._text(turn), "manager_execution": {
                         "adapter": "codex-app-server", "role": "orchestrator", "thread_id": turn.thread_id,
                         "turn_id": turn.turn_id, "logical_id": logical_id, "status": "completed",
@@ -600,3 +611,4 @@ def stop_background_work(workspace, project_key):
         for identifier in identifiers:
             receipts.append(runtime.stop(identifier))
     return receipts
+

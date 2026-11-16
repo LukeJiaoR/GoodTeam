@@ -534,6 +534,10 @@ export const zhCN = {
   'assistant.error.invalid_response': "模型返回格式不正确，请重试或修改运行时。",
   'assistant.error.execution_failed': "执行失败，请检查运行时配置并验证连接后重试。",
   'assistant.error.manager_resource_busy': "Manager 正在处理另一项请求。这条消息已保存，请稍后重试。",
+  'assistant.error.manager_stopped': 'Manager 已停止。',
+  'assistant.error.manager_interrupted': 'Manager 会话已中断，请查看已保存的进展后再重试。',
+  'assistant.error.manager_runtime_changed': '请先完成或停止当前 Manager 会话，再更改运行配置。',
+  'assistant.error.operation_conflict': '此请求对应的原始输入不同。',
   'assistant.error.interrupted': "执行结果不确定。请核对对话记录、任务提案和 Team 状态，再发送新请求；此请求不支持直接重试。",
   'assistant.command.disable_role': "禁用角色",
   'assistant.command.enable_role': "启用角色",
@@ -1801,3 +1805,4 @@ export const zhCN = {
   'work.attachments.message': '请查看这些附件。',
   'work.attachments.messageOnly': '附件尚未发送。请切换到“消息”发送附件，或先移除附件再继续。',
 };
+
