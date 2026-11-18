@@ -50,11 +50,11 @@ graph.py: Workflow 图、节点路由与项目上下文。
 http_transport.py: Finite resource boundaries for GoodTeam's local dashboard HTTP transport.
 intent_commit.py: 任务变更意图的持久化与确定性解释。
 legacy_reviewer_reports.py: Read-only legacy Reviewer prose, separate from structured Skill receipts.
-manager_app_server.py: Manager 原生会话、记忆快照、并发与执行恢复。
+manager_app_server.py: Manager 运行时准入、原生会话、记忆快照与执行恢复。
 manager_assignment.py: Manager callable assignment adapter; existing task cards and queue own work.
 manager_completion.py: Read native Manager completion from the original conversation receipt.
 manager_dialogue.py: Bounded Manager conversation runtime; original services retain all authority.
-manager_execution.py: Manager 对话与后台判断入口及运行资源限制。
+manager_execution.py: Manager 对话与后台判断入口、项目运行设置及资源限制。
 manager_runtime_observation.py: Bounded local Runtime observation for Manager conversations, never control.
 manager_skill_context.py: Pinned Manager Role/Skill input for the native app-server session.
 manager_tools.py: 将 Manager 原生工具接入既有项目、队列与授权服务。
@@ -140,12 +140,12 @@ task_assistant_session.py: 项目助手会话状态与事件存储。
 task_delegation.py: One task input contract shared by role dispatch entry points.
 task_input_context.py: Task-facing, bounded input metadata; no private prompts or Runtime authority.
 tasks.py: 项目任务账、任务意图与任务板。
-team_control_plane.py: Team Control Plane: Role capabilities vs Worker instances with an audit ledger.
+team_control_plane.py: 保存项目角色、Worker 和 Manager 本机授权，记录团队变更。
 team_workspace.py: Team 工作区只读聚合。
 telegram.py: Telegram 交互、审核会话与消息格式。
 telegram_approval_binding.py: Bind workflow decisions to the material actually displayed by Telegram.
 telegram_runtime_controls.py: Telegram 对既有运行时会话的控制。
-web.py: 本地 Web 与项目 API 请求入口。
+web.py: 本地 Web 与项目 API 请求入口，检查 Manager 本机授权请求来源。
 web_search.py: Opt-in hosted search for an existing Pi job, never a new worker runtime.
 worker_capabilities.py: Portable persisted effort values and conservative CLI discovery fallbacks.
 worker_output_context.py: Bounded, invocation-bound Worker output. Never a control/reply join.

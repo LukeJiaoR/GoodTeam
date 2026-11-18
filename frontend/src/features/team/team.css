@@ -1,3 +1,8 @@
+/* [INPUT]: Team 界面类名与产品主题。
+ * [OUTPUT]: Team 页面和配置对话框样式。
+ * [POS]: Team 界面的共享样式。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 .team-page {
   width: min(100% - 3rem, 86rem);
   margin: 0 auto;
@@ -328,6 +333,7 @@
   font: inherit;
 }
 .team-dialog__prompt { grid-column: 1 / -1; }
+.team-dialog__fields label.team-dialog__trust { display: flex; align-items: center; margin-bottom: 0.3rem; }
 
 .team-runtime-fields { grid-column: 1 / -1; min-width: 0; }
 .team-runtime-fields__heading,

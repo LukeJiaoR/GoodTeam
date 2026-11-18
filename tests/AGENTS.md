@@ -59,7 +59,7 @@ test_manager_dialogue.py: Offline continuation adapter with an in-memory checkpo
 test_manager_execution.py: Manager conversation uses native threads and plain replies, never WorkerJobs.
 test_manager_goal_intake.py: Saving later work never admits it into an already active Goal.
 test_manager_input_priority.py: Durable admission and native recovery do not block project conversation.
-test_manager_runtime_config.py: Manager migration keeps model choices and ordinary Worker backends.
+test_manager_runtime_config.py: 验证 Manager 配置迁移和项目级本机 Codex 授权。
 test_manager_runtime_observation.py: Read real local session files; no provider execution or paid Manager call.
 test_manager_skill_context.py: Native Manager input reuses pinned Role/Skill records without a Worker job.
 test_manager_tools.py: Host tools retain queue identity and the shared project's control allowance.

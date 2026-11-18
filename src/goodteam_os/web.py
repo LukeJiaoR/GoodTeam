@@ -1,3 +1,8 @@
+"""[INPUT]: GoodTeam 请求、工作区与项目服务。
+[OUTPUT]: Web 服务、项目 API 和 HTTP 请求验证。
+[POS]: 本机用户在此授权 Manager 使用本机 Codex。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 import ipaddress
 import json
 import hmac
@@ -8228,6 +8233,24 @@ def serve(
                 raw_body = read_request_body(self)
                 if is_project_path or is_skill_path:
                     request = _parse_project_api_request(raw_body)
+                    if re.fullmatch(r"/projects/[^/]+/team/commands", normalized_path):
+                        commands = request.get("commands")
+                        grants_local_codex = isinstance(commands, list) and any(
+                            isinstance(command, dict) and command.get("trust_local_codex") is True
+                            for command in commands
+                        )
+                        if grants_local_codex and not (
+                            _request_host_is_loopback(host)
+                            and ipaddress.ip_address(self.client_address[0]).is_loopback
+                            and _protected_execution_origin_is_trusted(
+                                origin=str(self.headers.get("Origin", "")),
+                                request_host=str(self.headers.get("Host", "")),
+                                server_host=host, server_port=self.server.server_port,
+                                fetch_site=str(self.headers.get("Sec-Fetch-Site", "")),
+                            )
+                        ):
+                            raise ProjectApiError("local_codex_requires_loopback",
+                                                  "Enable Use local Codex from the local GoodTeam dashboard.", 403)
                     project_response = (
                         handle_project_api_post(workspace, project_path, request, **runtime_kwargs, **correction_kwargs)
                         if is_project_path

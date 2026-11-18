@@ -1,4 +1,8 @@
-"""Manager migration keeps model choices and ordinary Worker backends."""
+"""[INPUT]: 团队存储、Manager 运行配置和独立项目目录。
+[OUTPUT]: 验证配置迁移和本机 Codex 授权。
+[POS]: 通过团队配置验证 Manager 启动边界。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from copy import deepcopy
 
 import pytest
@@ -21,7 +25,7 @@ def test_real_manager_runtime_migrates_without_replacing_worker_backends(tmp_pat
     store.load_or_migrate(legacy_target=target)
     state = store.read()
     runtime = state["manager"]["runtime"]
-    assert runtime == dict(provider="codex", model="chosen-model", reasoning_depth="high", additional_prompt="Keep context.")
+    assert runtime == dict(provider="codex", model="chosen-model", reasoning_depth="high", additional_prompt="Keep context.", trust_local_codex=False)
     assert next(item for item in state["workers"] if item["role"] == "implementation")["runtime"]["provider"] == "claude"
     manager = resolve_worker_from_state(state, "orchestrator")
     assert manager["adapter"] == "codex" and manager["runtime_kind"] == "app_server"
@@ -50,3 +54,29 @@ def test_real_manager_runtime_migrates_without_replacing_worker_backends(tmp_pat
                             actor="user", surface="team_ui")
     assert changed["changed"] and changed["team"]["manager"]["runtime"]["model"] == "another-model"
     assert changed["team"]["manager"]["runtime"]["reasoning_depth"] == "xhigh"
+
+
+
+def test_only_team_settings_can_authorize_local_manager(tmp_path, monkeypatch):
+    from goodteam_os.manager_app_server import ManagerAppServer
+    from goodteam_os.manager_execution import ManagerExecutionError
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    config = tmp_path / "projects" / "demo.yaml"
+    config.parent.mkdir()
+    config.write_text(f"key: DEMO\nrepos:\n  root: {root}\nworker_backend:\n  mode: codex\n")
+    store = TeamControlPlaneStore(tmp_path, "DEMO")
+    store.load_or_migrate(legacy_target={"worker_backend": {"mode": "codex"}})
+    runtime = ManagerAppServer(config, "DEMO")
+    command = {"kind": "change_manager_runtime", "trust_local_codex": True}
+    with pytest.raises(ManagerExecutionError, match="Enable Use local Codex"):
+        runtime._runtime_config()
+    with pytest.raises(TeamControlPlaneError, match="requires a boolean choice"):
+        store.execute([command], actor="user", surface="manager_conversation")
+    saved = store.execute([command], actor="user", surface="team_ui")
+    assert saved["team"]["manager"]["runtime"]["trust_local_codex"] is True
+    monkeypatch.setenv("GOODTEAM_CODEX_PATH", str(tmp_path / "codex"))
+    argv, _env, public, _fingerprint = runtime._runtime_config()
+    assert argv == [str(tmp_path / "codex"), "app-server"]
+    assert public["provider_authority"] == "native_managed"

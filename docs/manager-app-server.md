@@ -30,23 +30,22 @@ result or grant review, merge or deployment permissions.
 
 ## Runtime and configuration
 
-Install a Codex CLI that supports the app-server v2 thread/turn and dynamic-tool
-protocol. GoodTeam locates `codex` on PATH or uses `GOODTEAM_CODEX_PATH`. The
-Manager's Team configuration selects its model, reasoning depth and additional
-prompt; its backend is Codex app-server. A GoodTeam API provider connection is
-passed through the existing Codex provider adapter, with credentials only in the
-child environment. Worker backend choices are independent.
+In the project's Manager settings, select **Use local Codex** to authorize the
+native runtime from the loopback dashboard. The choice defaults to off, is saved in the project Team state,
+and is recorded in the Team audit log. Conversation, background analysis and
+native recovery require this authorization. Clearing it blocks new requests
+and recovery. Use Stop to interrupt a turn already in progress.
 
-The initial connection sends `initialize` with `experimentalApi: true`, then
-`initialized`. Manager tools are registered as `thread/start.dynamicTools` and
-serviced through `item/tool/call`. Subsequent turns use `thread/resume`,
-`turn/start`, `turn/steer` and `turn/interrupt`. Manager built-in execution uses a
-read-only sandbox and `approvalPolicy: never`. Those settings do not confine
-configured external MCP servers. The native process still inherits Codex
-configuration, so the complete external tool and provider configuration is not
-bound to the scoped host tools. This is an unresolved merge blocker. Dynamic tool
-schema shape is verified against the installed Codex schema in the isolated
-transport checks.
+GoodTeam launches `codex app-server` from PATH or `GOODTEAM_CODEX_PATH`.
+Codex owns the sign-in, model connection, integration configuration, and managed
+policies. Changing local MCP settings can change what the Manager can use.
+External tools follow their own permissions and confirmation rules. GoodTeam
+commands continue to use the project queue and approvals. A connection check
+verifies that the runtime responds. It does not certify tool isolation.
+
+The transport uses app-server v2. GoodTeam registers scoped tools at
+`thread/start.dynamicTools` and answers `item/tool/call`. Subsequent turns use
+`thread/resume`, `turn/start`, `turn/steer`, and `turn/interrupt`.
 
 `GOODTEAM_MANAGER_TURN_TIMEOUT_SECONDS` bounds a turn (default 600 seconds).
 Process exits, tool errors, unknown outcomes and unsupported Worker capabilities

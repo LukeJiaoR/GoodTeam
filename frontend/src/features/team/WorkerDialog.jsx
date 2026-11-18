@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 项目团队视图、运行设置和保存回调。
+ * [OUTPUT]: Worker 与 Manager 配置对话框。
+ * [POS]: 项目的 Manager 授权由用户在此编辑。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { X } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
 import Button from '../../components/ui/Button';
@@ -32,15 +38,19 @@ export default function WorkerDialog({ presentation = 'dialog', children, agents
   const [submitError, setSubmitError] = useState(null);
   const [draft, setDraft] = useState(() => {
     if (worker) return draftFromWorker(worker);
-    if (manager) return { ...EMPTY_DRAFT, provider: managerRuntime?.provider || 'codex', model: managerRuntime?.model || '', reasoningDepth: managerRuntime?.reasoningDepth || 'default', additionalPrompt: managerRuntime?.additionalPrompt || '' };
+    if (manager) return { ...EMPTY_DRAFT, provider: managerRuntime?.provider || 'codex', model: managerRuntime?.model || '', reasoningDepth: managerRuntime?.reasoningDepth || 'default', additionalPrompt: managerRuntime?.additionalPrompt || '', trustLocalCodex: managerRuntime?.trustLocalCodex === true };
     return { ...EMPTY_DRAFT, ...newWorkerRuntime(defaultProvider), role: roleEntry?.role || '' };
   });
 
   const runtimeBusy = manager && assistantSession?.runtime?.status === 'checking';
   const locked = saving || Boolean(runtimeBusy);
+  const localCodex = manager && draft.provider === 'codex';
+  const saveOnly = localCodex && !draft.trustLocalCodex;
+  const trustHint = useId();
   const runtimeMatches = manager && draft.provider === (managerRuntime?.provider || '')
     && draft.model === (managerRuntime?.model || '')
     && draft.reasoningDepth === (managerRuntime?.reasoningDepth || 'default')
+    && draft.trustLocalCodex === (managerRuntime?.trustLocalCodex === true)
     && draft.additionalPrompt.trim() === (managerRuntime?.additionalPrompt || '');
   const verificationStatus = saving ? 'checking'
     : verification?.error || submitError ? 'failed'
@@ -60,7 +70,8 @@ export default function WorkerDialog({ presentation = 'dialog', children, agents
       setVerification(null);
       setSubmitError(null);
       try {
-        const result = await onSubmit([{ kind: 'change_manager_runtime', provider: draft.provider || managerRuntime?.provider || 'codex', model: draft.model.trim(), reasoning_depth: draft.reasoningDepth, additional_prompt: draft.additionalPrompt.trim() }]);
+        const result = await onSubmit([{ kind: 'change_manager_runtime', provider: draft.provider || managerRuntime?.provider || 'codex', model: draft.model.trim(), reasoning_depth: draft.reasoningDepth, additional_prompt: draft.additionalPrompt.trim(),
+          ...(localCodex && { trust_local_codex: draft.trustLocalCodex }) }]);
         setVerification(result);
       } catch (caught) {
         setSubmitError(caught);
@@ -127,13 +138,22 @@ export default function WorkerDialog({ presentation = 'dialog', children, agents
             </>
           ) : null}
           <RuntimeFields draft={draft} setDraft={changeDraft} agents={agents} backendOptions={backendOptions} defaultProvider={worker?.provider || managerRuntime?.provider || defaultProvider} agentsLoading={agentsLoading} onRefresh={onRefresh} fixedProvider={manager} t={t} />
+          {localCodex ? <div className="team-dialog__prompt">
+            <label className="team-dialog__trust">
+              <input type="checkbox" checked={draft.trustLocalCodex} aria-describedby={trustHint}
+                onChange={(event) => changeDraft({ ...draft, trustLocalCodex: event.target.checked })} />
+              <span>{t('team.dialog.trustLocalCodex')}</span>
+            </label>
+            <small id={trustHint}>{t('team.dialog.trustLocalCodexHint')}</small>
+          </div> : null}
         </fieldset>
 
         {error ? <div className="team-dialog__error"><ProductError error={error} t={t} /></div> : null}
 
         {manager ? <section className="team-runtime-check" aria-label={t('assistant.runtime')}>
+          {verification?.saved && saveOnly ? <p role="status">{t('team.dialog.managerSaved')}</p> : null}
           <span role="status">{t(`assistant.status.${verificationStatus}`)}</span>
-          <p>{t('team.dialog.saveAndCheckHint')}</p>
+          <p>{t(saveOnly ? 'team.dialog.localCodexOff' : 'team.dialog.saveAndCheckHint')}</p>
           {verification?.saved && verification?.error ? <p>{t('team.dialog.savedCheckFailed')}</p> : null}
           {runtimeError ? <p role="alert">{t(`assistant.error.${runtimeError.code}`)}</p>
             : verification?.error || submitError ? <ProductError error={verification?.error || submitError} t={t} /> : null}
@@ -143,7 +163,7 @@ export default function WorkerDialog({ presentation = 'dialog', children, agents
 
         <footer className="team-dialog__footer">
           <Button variant="secondary" disabled={saving} onClick={onClose}>{t(manager && verification?.saved ? 'team.dialog.close' : 'team.dialog.cancel')}</Button>
-          <Button type="submit" busy={saving} disabled={locked}>{manager ? t('team.dialog.saveAndCheck') : editing ? t('team.dialog.saveWorker') : t('team.dialog.createWorker')}</Button>
+          <Button type="submit" busy={saving} disabled={locked}>{manager ? t(saveOnly ? 'team.dialog.saveManager' : 'team.dialog.saveAndCheck') : editing ? t('team.dialog.saveWorker') : t('team.dialog.createWorker')}</Button>
         </footer>
       </form>
     </div>

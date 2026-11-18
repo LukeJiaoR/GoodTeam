@@ -1,3 +1,8 @@
+"""[INPUT]: 项目配置与团队状态。
+[OUTPUT]: Manager 对话、分析入口与运行设置。
+[POS]: 将项目授权和输入交给 Manager 运行时。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import fcntl
@@ -92,7 +97,8 @@ def _manager_settings(target: dict[object, object]) -> dict[str, object]:
     if state is not None:
         runtime = dict(dict(state.get("manager", {}) or {}).get("runtime", {}) or {})
         settings = {"reasoning_depth": runtime.get("reasoning_depth", "default"),
-                    "additional_prompt": str(runtime.get("additional_prompt", "") or "")}
+                    "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
+                    "trust_local_codex": runtime.get("trust_local_codex") is True}
     else:
         settings = worker_type_settings_for_role(target, "orchestrator")
     if settings.get("reasoning_depth", "default") == "default":

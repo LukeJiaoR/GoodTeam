@@ -1,6 +1,6 @@
 """[INPUT]: 原生 Codex 运行时、项目状态、角色记忆与 Manager 工具。
 [OUTPUT]: 可恢复的 Manager 对话、后台判断与原生执行记录。
-[POS]: 管理原生会话生命周期；业务状态仍由既有服务拥有。
+[POS]: 先验证运行时边界，再管理原生会话。业务状态由既有服务拥有。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 
 Native Manager conversations. Business state remains in the existing services.
@@ -17,8 +17,8 @@ from datetime import UTC, datetime
 from hashlib import sha256
 import json
 import os
-from pathlib import Path
 import shutil
+from pathlib import Path
 import threading
 from typing import Any
 
@@ -123,28 +123,20 @@ class ManagerAppServer:
         from goodteam_os.database import provider_environment
         from goodteam_os.manager_execution import _configured_manager_model, _manager_settings, _model_name
         from goodteam_os.projects import load_project_target
-        from goodteam_os.providers import ProviderStore, PROVIDER_KEY_ENV, codex_connection_arguments
 
         target = load_project_target(self.config)
         settings = _manager_settings(target)
-        providers = ProviderStore()
-        reference = providers.capture()
-        connection = providers.resolve(reference)
-        model = _model_name(_configured_manager_model(target))
-        if connection and not model:
-            model = connection.get("model", "")
+        if settings.get("trust_local_codex") is not True:
+            raise _error("Enable Use local Codex in this project's Manager settings.", "manager_local_codex_disabled")
         binary = os.environ.get("GOODTEAM_CODEX_PATH") or shutil.which("codex")
         if not binary:
             raise _error("Codex app-server is unavailable. Install Codex or set GOODTEAM_CODEX_PATH.")
-        command, env = [binary, "app-server"], provider_environment()
-        if connection:
-            command.extend(codex_connection_arguments(connection))
-            if connection.get("api_key"):
-                env[PROVIDER_KEY_ENV] = connection["api_key"]
-        public = {"model": model, "reasoning_depth": settings.get("reasoning_depth", "high"),
-                  "additional_prompt": settings.get("additional_prompt", ""), "provider_connection": reference}
+        public = {"model": _model_name(_configured_manager_model(target)),
+                  "reasoning_depth": settings.get("reasoning_depth", "high"),
+                  "additional_prompt": settings.get("additional_prompt", ""),
+                  "provider_authority": "native_managed"}
         fingerprint = sha256(json.dumps(public, sort_keys=True).encode()).hexdigest()
-        return command, env, public, fingerprint
+        return [binary, "app-server"], provider_environment(), public, fingerprint
 
     def _connect(self, command, env, fingerprint):
         if self.client is not None and self.client.alive and self.fingerprint == fingerprint:
@@ -348,6 +340,8 @@ class ManagerAppServer:
                     raise _error("Manager request identity belongs to different input.", "operation_conflict")
                 if previous:
                     return
+            # 记忆检索也可能使用远程模型，先验证运行时再准备输入。
+            self._runtime_config()
             if phase == "project_outcome_discovery":
                 # 成果发现已经冻结记忆，不能在调用时引入新事实。
                 try:
