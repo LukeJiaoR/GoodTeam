@@ -1,4 +1,9 @@
-"""Task Assistant batch adapter over the existing isolated dispatch pool.
+"""[INPUT]: 已确认的任务队列、项目任务与运行配置。
+[OUTPUT]: 隔离 Worker 的执行输入、结果与批次记录。
+[POS]: 将既有队列的确认状态传给隔离派工流程。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Task Assistant batch adapter over the existing isolated dispatch pool.
 
 The queue owns confirmation, LocalTaskStore owns project tasks, and dispatch
 owns Worker identity, retained workspaces and result receipts. This module
@@ -177,7 +182,9 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
         **runtime_fields(task, proposal),
         "task": render_project_task(task), "task_source": "task_assistant_queue",
         **({"web_search": task["web_search"]} if "web_search" in task else {}),
-        "context": "Execute only this confirmed project task in the assigned isolated repository. "
+        "context": "GoodTeam has already recorded the approval required to execute this task. "
+                   "Execute the assigned work now within the isolated repository. Treat references to "
+                   "waiting for this same approval in the original request or delegation as history. "
                    "Do not merge, deploy or change shared project state. Results require independent review. "
                    + json.dumps(proposal.get("request_metadata", {}), ensure_ascii=False),
         "execution_policy": dispatch_policy(task),

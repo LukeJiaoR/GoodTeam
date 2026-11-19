@@ -93,7 +93,7 @@ project_import.py: 项目导入、模式确认与 readiness 绑定。
 project_investigation_feedback.py: Observe settled investigation output without accepting it as delivery.
 project_iteration.py: Read-only, evidence-grounded starting point for project iteration planning.
 project_iteration_continuation.py: Bounded project continuation through the existing Assistant queue and dispatch.
-project_iteration_execution.py: Task Assistant batch adapter over the existing isolated dispatch pool.
+project_iteration_execution.py: 将已确认的任务队列、执行阶段和任务范围交给既有隔离 Worker 池。
 project_iteration_planner.py: 从项目任务与授权上下文生成只读迭代建议。
 project_iteration_quality.py: Bind an existing project batch to the existing candidate quality services.
 project_iteration_recovery.py: Explicit recovery of the existing confirmed batch, never fresh task intake.

@@ -39,6 +39,7 @@ def test_delegated_contract_reaches_persisted_job_and_retains_source(tmp_path, m
     assert project_task_intent(task)['delegation'] == task['delegation']
     assert proposal['assignment']['delegation'] == action['delegation']
     track = _runtime_tracks(tmp_path, config, 'DEMO', root, [task], [proposal])[0]
+    assert "already recorded the approval" in track["context"]
     assert track['role'] == 'research' and track['execution_policy'] == 'read_only'
     for part in [request['text'], *action['delegation'].values(), *action['acceptance_criteria']]:
         assert part in track['task']

@@ -25,7 +25,7 @@ New delegation returns the existing task ID and proposal ID. It preserves the
 original user messages, purpose, scope and acceptance criteria. Queued work uses
 the existing confirmation/authorization and `run_queued_iteration_batch` path.
 An active project continuation can advance already authorized work without a
-new per-task decision. A GoodTeam tool cannot create that authorization, accept its own
+new per-task decision. The dispatch context tells the Worker that the queue has already authorized execution. The exact user request remains attached for provenance. A GoodTeam tool cannot create that authorization, accept its own
 result or grant review, merge or deployment permissions.
 
 ## Runtime and configuration
