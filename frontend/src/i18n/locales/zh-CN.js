@@ -1816,4 +1816,3 @@ export const zhCN = {
   'work.attachments.message': '请查看这些附件。',
   'work.attachments.messageOnly': '附件尚未发送。请切换到“消息”发送附件，或先移除附件再继续。',
 };
-

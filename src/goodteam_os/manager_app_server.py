@@ -694,4 +694,3 @@ def stop_background_work(workspace, project_key):
         for identifier in identifiers:
             receipts.append(runtime.stop(identifier))
     return receipts
-

@@ -46,4 +46,3 @@ export default function AssistantPendingReply({ request, onStop, t }) {
     </li>
   );
 }
-

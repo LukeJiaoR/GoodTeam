@@ -1816,4 +1816,3 @@ export const en = {
   'work.attachments.message': 'Please review these attachments.',
   'work.attachments.messageOnly': 'These attachments have not been sent. Switch to Message to send them, or remove the attachments before continuing.',
 };
-
