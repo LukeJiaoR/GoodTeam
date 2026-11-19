@@ -41,6 +41,6 @@ export async function importProject(page, fixture) {
   const payload = await imported.json();
   fixture.key = payload.project.project_key;
   await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/work$`));
-  await expect(page.getByRole('heading', { name: 'Task Assistant', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Project conversation', exact: true })).toBeVisible();
   return payload;
 }

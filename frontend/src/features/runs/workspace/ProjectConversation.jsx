@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 接收项目对话、待办和现有任务操作。
+ * [OUTPUT]: 提供 ProjectConversation 项目对话界面。
+ * [POS]: 在工作台主栏呈现当前对话范围、消息和输入框。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { blockerSummary } from './blockerPresentation';
 import { focusWorkContext } from './currentWorkContext.js';
 import { useRef } from 'react';
@@ -124,31 +130,23 @@ export default function ProjectConversation({
 
   return (
     <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')} {...sectionProps}>
-      <div className="project-conversation-toolbar">
-      <header className="team-pane__header">
-        <div className="team-manager-heading">
-          <div>
-            <div className="team-manager-heading__title">
-              <h2 id="team-manager-title" className="sr-only">{t('work.manager.name')}</h2>
-              <StatusBadge tone={managerTone}>{managerStatus}</StatusBadge>
-            </div>
-            <span className="team-pane__eyebrow">{t('work.manager.subtitle')}</span>
-          </div>
+      <header className="project-conversation-toolbar">
+        <div className="project-conversation-scope">
+          <h2>{contextTitle ? t('assistant.project.taskContext', { title: contextTitle }) : t('assistant.project.projectContext')}</h2>
+          {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
         </div>
-        {onConfigureRuntime ? <button type="button" className="project-assistant-settings"
-          aria-label={t('assistant.configure')} title={t('assistant.configure')} onClick={onConfigureRuntime}>
-          <Settings size={18} aria-hidden="true" />
-        </button> : null}
+        <div className="project-conversation-toolbar__actions">
+          <StatusBadge tone={managerTone}>{managerStatus}</StatusBadge>
+          {canManageTasks ? <button type="button" aria-expanded={taskManagementOpen} aria-controls="project-task-navigation" onClick={event => {
+            onManageTasks?.();
+            focusWorkContext(event.currentTarget.closest('.product-work-page'), onManageTasks ? 'tasks' : 'execution');
+          }}>{t('work.manager.manageTasks')}</button> : null}
+          {onConfigureRuntime ? <button type="button" className="project-assistant-settings"
+            aria-label={t('assistant.configure')} title={t('assistant.configure')} onClick={onConfigureRuntime}>
+            <Settings size={18} aria-hidden="true" />
+          </button> : null}
+        </div>
       </header>
-      <div className="project-conversation-scope">
-        {canManageTasks ? <button type="button" aria-expanded={taskManagementOpen} aria-controls="project-task-navigation" onClick={event => {
-          onManageTasks?.();
-          focusWorkContext(event.currentTarget.closest('.product-work-page'), onManageTasks ? 'tasks' : 'execution');
-        }}>{t('work.manager.manageTasks')}</button> : null}
-        <span>{contextTitle ? t('assistant.project.taskContext', { title: contextTitle }) : t('assistant.project.projectContext')}</span>
-        {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
-      </div>
-      </div>
       <ProjectQuestionBoard board={questionBoard ?? iterationSession?.question_board}
         onAnswerQuestion={onAnswerQuestion} t={t} />
       <ConversationReadingFrame key={scope} scope={scope} timeline={timeline || []} attentionKey={attentionKey}
