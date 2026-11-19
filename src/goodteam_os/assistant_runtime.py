@@ -1,3 +1,8 @@
+"""[INPUT]: 项目配置、角色配置与任务会话状态。
+[OUTPUT]: Manager 运行时快照、验证状态和公开失败原因。
+[POS]: 将内部运行时状态转换为任务助手可展示的数据。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import hashlib
@@ -15,13 +20,15 @@ def runtime_snapshot(config):
     target = load_project_target(config)
     settings = _manager_settings(target)
     public = {
-        "provider": resolve_role_adapter(target, "orchestrator"),
+        "provider": (resolve_role_adapter(target, "orchestrator")
+                     if resolve_role_adapter(target, "orchestrator") in {"builtin", "fake", "noop", "human"} else "codex"),
         "model": _model_name(_configured_manager_model(target)),
         "reasoning_depth": settings.get("reasoning_depth", "default"),
     }
     if public["provider"] == "codex":
-        from goodteam_os.providers import ProviderStore
-        public["provider_connection"] = ProviderStore().capture()
+        public["trust_local_codex"] = settings.get("trust_local_codex") is True
+        public["provider_authority"] = "native_managed"
+        public["transport"] = "app-server"
     encoded = json.dumps({**public, "settings": settings}, sort_keys=True).encode()
     return {**public, "fingerprint": hashlib.sha256(encoded).hexdigest()}
 
@@ -57,6 +64,15 @@ def safe_failure(error):
     )
     code = next((name for name, terms in categories if any(term in raw for term in terms)), "execution_failed")
     supplied = getattr(error, "code", None)
+    if supplied in {"manager_stopped", "manager_interrupted", "manager_runtime_changed",
+                    "manager_local_codex_disabled", "operation_conflict"}:
+        return {"code": supplied, "message": {
+            "manager_stopped": "Manager work was stopped.",
+            "manager_interrupted": "The original Manager turn was interrupted. Its native execution and tool receipts are retained.",
+            "manager_runtime_changed": "Finish or stop the current Manager turn before changing its runtime.",
+            "manager_local_codex_disabled": "Enable Use local Codex in this project's Manager settings.",
+            "operation_conflict": "This request identity belongs to different original input.",
+        }[supplied]}
     if supplied in {name for name, _terms in categories}:
         code = supplied
     return {"code": code, "message": "Task Assistant request failed. Check the runtime configuration and retry."}

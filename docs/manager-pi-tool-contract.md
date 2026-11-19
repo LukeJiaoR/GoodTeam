@@ -1,5 +1,10 @@
 # Manager-specific Pi coordination contract
 
+> Manager runtime migration (#738): current execution uses [Codex app-server](manager-app-server.md).
+> Pi Manager / classification / project-slot descriptions below are historical;
+> shared task, Worker, review and authorization contracts remain applicable.
+
+
 ## Production path
 
 New Pi Manager calls from the existing registered-project producer capture

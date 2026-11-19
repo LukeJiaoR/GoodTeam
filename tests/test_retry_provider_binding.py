@@ -7,16 +7,13 @@ import sys
 
 import pytest
 
-from goodteam_os.assistant_requests import worker_attempt_id
-from goodteam_os.manager_execution import ManagerExecutionError, run_manager_chat_turn
 from goodteam_os.providers import ProviderError, ProviderStore
 from goodteam_os.reviewer_retry_inputs import create_reviewer_retry
 from goodteam_os.workers import WorkerJobStore
 
 
-@pytest.mark.parametrize("kind", ["manager", "reviewer"])
 @pytest.mark.parametrize("binding", ["managed", "local", "historical"])
-def test_legacy_retry_keeps_original_connection_after_provider_switch(tmp_path, monkeypatch, kind, binding):
+def test_reviewer_retry_keeps_original_connection_after_provider_switch(tmp_path, monkeypatch, binding):
     providers = [{"id": "provider-" + digit * 32, "revision": 1, "name": name,
                   "agent": "codex", "protocol": "responses", "base_url": "http://127.0.0.1:1/v1",
                   "model": "fixture-model", "api_key": name + "-fixture-key"}
@@ -65,22 +62,11 @@ Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(
     config.write_text(f"key: DEMO\nrepos:\n  root: {project}\nworker_backend:\n  mode: codex\n"
                       "role_model_overrides:\n  orchestrator: codex:fixture-model\n")
     workers = WorkerJobStore(project)
-    context = "Original captured context for " + kind
-
-    def manager_turn(attempt, captured_context):
-        return run_manager_chat_turn(project_config=config, project_key="DEMO", text="Inspect this project",
-            context=captured_context, logical_message_id="original-message",
-            message_id=worker_attempt_id("DEMO", "original-message", attempt))
-
-    if kind == "manager":
-        with pytest.raises(ManagerExecutionError):
-            manager_turn(1, context)
-        original = workers.list_jobs()[0]
-    else:
-        original = workers.create_job(run_id="review-run", project_key="DEMO", role="code_review",
-            adapter="codex", model="fixture-model", task="Review captured input", context=context,
-            execution_policy="read_only", idempotency_key="original-review")
-        assert workers.run_job(original["id"])["status"] == "failed"
+    context = "Original captured context for reviewer"
+    original = workers.create_job(run_id="review-run", project_key="DEMO", role="code_review",
+        adapter="codex", model="fixture-model", task="Review captured input", context=context,
+        execution_policy="read_only", idempotency_key="original-review")
+    assert workers.run_job(original["id"])["status"] == "failed"
     original_path = workers.root / original["id"] / "job.json"
     if binding == "historical":
         saved = json.loads(original_path.read_text())
@@ -92,9 +78,6 @@ Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(
     monkeypatch.setenv("RETRY_FIXTURE_FAIL", "0")
 
     def retry():
-        if kind == "manager":
-            result = manager_turn(2, "Newly rendered context must not replace the captured input")
-            return workers.root / result["manager_execution"]["job_id"]
         job, created = create_reviewer_retry(workers, original, retry_attempt=2,
             idempotency_key=hashlib.sha256(b"review-retry").hexdigest())
         if created:

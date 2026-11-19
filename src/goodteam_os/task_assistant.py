@@ -89,7 +89,7 @@ class TaskAssistantService:
 
         store = TaskAssistantSessionStore(self.workspace, project_key)
         if recover_requests:
-            assistant_requests.recover_interrupted(store)
+            assistant_requests.recover_interrupted(store, project_config=self.project_config)
         session = store.read()
         from goodteam_os.project_iteration_recovery import project_batch_recovery_evidence
 
@@ -175,6 +175,41 @@ class TaskAssistantService:
 
     def check_runtime(self, *, project_key, root, message_id):
         return assistant_requests.check_runtime(self, project_key=project_key, root=root, message_id=message_id)
+
+    def _send_native_message(self, *, project_key, root, text, message_id, attempt_id, context_run_id=""):
+        """Continue the Manager's native conversation; its tools own business calls."""
+        from goodteam_os.assistant_conversation import conversation_scope
+        from goodteam_os.manager_execution import ManagerExecutionError
+        from goodteam_os.project_environment import environment_for_task
+        from goodteam_os.worker_setup import load_worker_setup
+
+        store = TaskAssistantSessionStore(self.workspace, project_key)
+        session = store.read()
+        captured_run = (session.get("assistant_requests", {}).get(message_id) or {}).get("conversation_run_id", "")
+        scope = conversation_scope(store, context_run_id, root=root)
+        if captured_run and not context_run_id:
+            if (not scope or scope.get("kind") != "running_task"
+                    or (scope.get("run") or {}).get("run_id") != captured_run):
+                # Admission already chose the referenced task. A delayed start
+                # resolves that original history or fails; it cannot retarget.
+                context_run_id = captured_run
+                scope = conversation_scope(store, context_run_id, root=root)
+        context = _manager_chat_context(
+            self._readiness_state(project_key, root), assess_project_mode(root), session,
+            team_view=self.team_view(project_key), current_message_id=message_id,
+            root=root, project_key=project_key, run_id=context_run_id, workspace=self.workspace)
+        context += "\nReferenced task context: " + json.dumps(scope, ensure_ascii=False, default=str)
+        context += self.attachment_context(project_key, root, session, message_id)
+        environment = environment_for_task(root, load_worker_setup(self.project_config))
+        environment.pop("setup", None)
+        context += "\nProject environment (host facts): " + json.dumps(environment, ensure_ascii=False)
+        turn = self.manager_turn(project_config=self.project_config, project_key=project_key,
+            message_id=attempt_id, logical_message_id=message_id, text=text, context=context)
+        if not assistant_requests._recover_native_reply(store, message_id, session["assistant_requests"][message_id]["attempt"]):
+            raise ManagerExecutionError("Native Manager reply could not be confirmed for this request.",
+                                        code="manager_interrupted")
+        return {"intent": "project_question", "native_manager": True,
+                "reply_suppressed": turn.get("reply_suppressed", False)}
 
     def _send_message(
         self,

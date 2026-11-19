@@ -1,5 +1,10 @@
 # Reuse original Manager completions across the Loop
 
+> Manager runtime migration (#738): current execution uses [Codex app-server](manager-app-server.md).
+> Pi Manager / classification / project-slot descriptions below are historical;
+> shared task, Worker, review and authorization contracts remain applicable.
+
+
 The new Manager Pi producer publishes an immutable request plus mutable terminal
 status. Its replay returns a status projection on top of that request. Chat and
 intent previously called run_job unconditionally when task_skill_context existed:

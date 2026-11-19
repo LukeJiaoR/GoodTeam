@@ -227,7 +227,7 @@ function Composer({
       <Button busy={sending && !awaitingReply} disabled={blocked || attachments.pending || (!goal.trim() && !hasAttachments)} type="submit" data-send-icon={!queuing && !changing}
         title={t('work.composer.keyboardHint')}>
         {!queuing && !changing ? <ArrowUp size={20} aria-hidden="true" /> : null}
-        <span className={!queuing && !changing ? 'sr-only' : undefined}>{t(awaitingReply && !queuing && !changing ? 'work.composer.awaitingReply' : queuing ? 'assistant.project.saveTask' : changing ? 'work.manager.intent.reviewInterpretation' : 'work.taskAssistant.send')}</span>
+        <span className={!queuing && !changing ? 'sr-only' : undefined}>{t(queuing ? 'assistant.project.saveTask' : changing ? 'work.manager.intent.reviewInterpretation' : 'work.taskAssistant.send')}</span>
       </Button>
       </div>
       </div>

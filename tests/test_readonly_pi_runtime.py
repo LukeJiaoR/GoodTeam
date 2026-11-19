@@ -4,8 +4,7 @@ Not real Git baseline, installed Pi SDK, or model acceptance.
 
 from types import SimpleNamespace
 import pytest
-from test_manager_pi_method_producer import setup
-from test_manager_pi_runtime import fake_manager_pi
+from pi_worker_fixtures import setup, fake_pi_with_restore
 from goodteam_os.dispatch import dispatch_tracks
 from goodteam_os.skills.pi_methods import PiMethodInput
 from goodteam_os.skills.pi_resources import PiResourceChannel
@@ -56,7 +55,7 @@ def test_dispatch_readonly_to_real_fake_rpc_restore(tmp_path, monkeypatch, missi
 
     def mapping(source, run_id, ids, **kw):
         assert source == root and run_id == job["run_id"] and ids is None
-        return SimpleNamespace(workspace=lambda id: target if id == job["id"] else None)
+        return SimpleNamespace(workspace=lambda id: target if id == job["id"] else None, metadata={})
 
     monkeypatch.setattr(spaces, "prepare_dispatch_workspace", mapping)
     method = PiMethodInput(workers, job["id"])
@@ -93,7 +92,7 @@ def test_dispatch_readonly_to_real_fake_rpc_restore(tmp_path, monkeypatch, missi
 
     monkeypatch.setattr(PiResourceChannel, "start", witness)
     monkeypatch.setattr("goodteam_os.session_runtimes.PI_STARTUP_TIMEOUT_FLOOR_SECONDS", 0.02)
-    fake = fake_manager_pi(tmp_path)
+    fake = fake_pi_with_restore(tmp_path)
     cfg = PiRuntimeConfig(str(fake), "", "", "", tmp_path / "sessions", 0.1 if missing else 2)
 
     def runtime():

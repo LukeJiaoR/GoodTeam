@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 界面文案键与插值约定。
+ * [OUTPUT]: 简体中文界面文案。
+ * [POS]: 由 i18n 入口加载的语言词典。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 export const zhCN = {
   "providers.memoryTitle": "项目记忆检索",
   "providers.memoryHint": "独立选择向量化模型，不影响编码模型。需要 GoodTeam PostgreSQL 启用 pgvector，且所选服务商支持 embeddings 接口。",
@@ -329,6 +335,8 @@ export const zhCN = {
   "assistant.project.viewPending": "查看待处理事项",
   "assistant.project.returnLatest": "回到最新",
   "assistant.project.responding": "正在回复",
+  "assistant.status.stopped": "已停止",
+  "assistant.project.stopResponse": "停止回复",
   "assistant.project.needsAttention": "回复需要处理",
   "assistant.project.available": "可对话",
   "assistant.project.projectContext": "项目对话",
@@ -532,6 +540,11 @@ export const zhCN = {
   'assistant.error.invalid_response': "模型返回格式不正确，请重试或修改运行时。",
   'assistant.error.execution_failed': "执行失败，请检查运行时配置并验证连接后重试。",
   'assistant.error.manager_resource_busy': "Manager 正在处理另一项请求。这条消息已保存，请稍后重试。",
+  'assistant.error.manager_stopped': 'Manager 已停止。',
+  'assistant.error.manager_interrupted': 'Manager 会话已中断，请查看已保存的进展后再重试。',
+  "assistant.error.manager_local_codex_disabled": "请在此项目的 Manager 配置中开启「使用本机 Codex」。",
+  'assistant.error.manager_runtime_changed': '请先完成或停止当前 Manager 会话，再更改运行配置。',
+  'assistant.error.operation_conflict': '此请求对应的原始输入不同。',
   'assistant.error.interrupted': "执行结果不确定。请核对对话记录、任务提案和 Team 状态，再发送新请求；此请求不支持直接重试。",
   'assistant.command.disable_role': "禁用角色",
   'assistant.command.enable_role': "启用角色",
@@ -934,7 +947,11 @@ export const zhCN = {
   "team.dialog.workerDescription": "设置此 Worker 的执行方式，更改用于后续新作业。",
   'team.dialog.managerEyebrow': '任务助手',
   "team.dialog.managerTitle": "任务助手配置",
-  "team.dialog.managerDescription": "设置任务助手用于对话和规划的执行器与模型。",
+  "team.dialog.trustLocalCodex": "使用本机 Codex",
+  "team.dialog.trustLocalCodexHint": "Manager 会使用本机 Codex 的登录、模型连接和工具，包括今后添加的 MCP。外部工具按自身权限运行，可以直接改动外部服务，无需经过 GoodTeam 审批。",
+  "team.dialog.localCodexOff": "开启此选项后，当前项目才能启动 Manager。",
+  "team.dialog.managerSaved": "已保存 Manager 设置。",
+  "team.dialog.managerDescription": "Manager 由 Codex app-server 持续承载。在此设置模型、推理深度和补充指令。",
   'team.dialog.role': '角色',
   'team.dialog.selectRole': '选择角色',
   'team.dialog.name': '名称',

@@ -11,7 +11,7 @@ with persistent state, reviewable evidence, and explicit human decisions.
   <a href="docs/architecture.md"><img src="https://img.shields.io/badge/Architecture-Local--first-2563EB?style=flat-square" alt="Architecture: local-first"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.11+"></a>
   <a href="frontend/package.json"><img src="https://img.shields.io/badge/Frontend-React%2019%20%2B%20Vite-0891B2?style=flat-square&amp;logo=react&amp;logoColor=white" alt="Frontend: React 19 + Vite"></a>
-  <a href="docs/worker-backends.md#pi-persistent-sessions"><img src="https://img.shields.io/badge/Runtime-Pi%20RPC%20%2F%20JSONL-7C3AED?style=flat-square" alt="Runtime: Pi RPC / JSONL"></a>
+  <a href="docs/manager-app-server.md"><img src="https://img.shields.io/badge/Manager-Codex%20app--server-7C3AED?style=flat-square" alt="Manager: Codex app-server"></a>
   <a href="docs/m0-product-acceptance.md"><img src="https://img.shields.io/badge/Stage-M0%20acceptance%20pending-D97706?style=flat-square" alt="Stage: M0 acceptance pending"></a>
 </p>
 
@@ -30,6 +30,11 @@ Task Assistant queue and isolated Worker pool. Owners can approve a fixed task
 list, or additionally opt into bounded follow-up discovery from verified landed
 results. Checks, independent review, failure recovery and delivery retain their
 own evidence; a Worker completion does not mark the project task delivered.
+
+The [Manager uses persistent Codex app-server conversations](docs/manager-app-server.md)
+and scoped tools over these services. User input remains available during native
+background analysis and Worker execution. Other Roles retain their own native
+backends; Codex Workers stream progress and support owned-process cancellation.
 
 **GoodTeam owns the control plane; coding agents and external tools are adapters.** A Worker can produce a patch, a test result, or a recommendation. It cannot turn its own output into approval.
 
@@ -55,7 +60,7 @@ The desktop Web experience stays centered on one project conversation:
 | --- | --- |
 | **Durable conversation** | Project understanding, task clarification, progress, and recovery stay in one Task Assistant conversation, preserving the original request across workflow runs. |
 | **Configurable engineering team** | **Role → TeamRole → Worker** separates capabilities, project membership, and runtime identity. Codex, Claude/Anthropic, Pi, `fake`, `human`, and `noop` adapters serve different execution needs. |
-| **Persistent Pi runtime** | Pi RPC sessions support explicit resume, steering, follow-up, abort, and incremental event replay. Session metadata and JSONL protocol/event records remain tied to the originating job. |
+| **Native Manager and Workers** | Manager app-server threads provide streaming conversation, tool calls and independent background analysis. Pi Worker sessions retain resume, steering, follow-up and abort; Codex Workers expose streamed progress and owned-process Stop. |
 | **Traceable delivery** | Tasks, attempts, Workers, worktrees, PRs, commit SHAs, CI, artifacts, and reviewer evidence connect through execution identity and a durable ledger. |
 | **Project iteration** | Continue across approved batches, with optional outcome-based discovery inside an explicit objective and path scope. Task, batch and planning-call limits are optional; usage remains recorded and Stop remains available. Existing batch execution supports up to 10 concurrent Workers. |
 | **Candidate quality and recovery** | Explicit batch checks and independent review can request one authorized correction. Retry only proven failed tasks while retaining successful siblings, or explicitly abandon stopped, undelivered work. |

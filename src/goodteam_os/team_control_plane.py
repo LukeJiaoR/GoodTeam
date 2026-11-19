@@ -1,4 +1,9 @@
-"""Team Control Plane: Role capabilities vs Worker instances with an audit ledger.
+"""[INPUT]: 项目角色配置、团队命令与状态存储。
+[OUTPUT]: 团队状态、能力视图和变更审计。
+[POS]: 保存项目的 Manager 授权和 Worker 配置。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Team Control Plane: Role capabilities vs Worker instances with an audit ledger.
 
 Domain boundaries enforced here:
 
@@ -230,6 +235,19 @@ def _sanitize_worker_runtime(raw: object) -> dict[str, str]:
     }
 
 
+def manager_runtime(runtime: object) -> dict[str, object]:
+    """Current Manager execution uses app-server; Worker providers stay independent.
+
+    Retain selected model/effort/instructions during the current-state migration.
+    This projection does not rewrite historical execution snapshots or decisions.
+    """
+    selected = _sanitize_worker_runtime(runtime)
+    if selected["provider"] not in {*BUILTIN_WORKER_MODES, "builtin"}:
+        selected["provider"] = "codex"
+    return {**selected, "trust_local_codex": selected["provider"] == "codex"
+            and isinstance(runtime, dict) and runtime.get("trust_local_codex") is True}
+
+
 def _sanitize_worker_record(raw: object) -> dict[str, object]:
     if not isinstance(raw, dict):
         raise TeamControlPlaneError("Worker records must be objects")
@@ -276,7 +294,7 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
     if not isinstance(workers_raw, list):
         raise TeamControlPlaneError("Team workers must be a list")
     manager = payload.get("manager", {})
-    manager_runtime = _sanitize_worker_runtime(dict(manager).get("runtime", {}) if isinstance(manager, dict) else {})
+    manager_config = manager_runtime(dict(manager).get("runtime", {}) if isinstance(manager, dict) else {})
     project_key = normalize_project_key(str(payload.get("project_key", "") or ""))
     try:
         skill_bindings = normalize_binding_map(
@@ -297,7 +315,7 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
         "revision": int(payload.get("revision", 0) or 0),
         "roles": roles,
         "workers": [_sanitize_worker_record(item) for item in workers_raw],
-        "manager": {"runtime": manager_runtime, "updated_at": str(dict(manager).get("updated_at", "") or "") if isinstance(manager, dict) else ""},
+        "manager": {"runtime": manager_config, "updated_at": str(dict(manager).get("updated_at", "") or "") if isinstance(manager, dict) else ""},
         "skill_bindings": skill_bindings,
         "migrated": dict(payload.get("migrated", {}) or {}) if isinstance(payload.get("migrated", {}), dict) else {},
         "executed_commands": dict(payload.get("executed_commands", {}) or {}) if isinstance(payload.get("executed_commands", {}), dict) else {},
@@ -743,19 +761,19 @@ def build_team_state_from_legacy_config(project_key: str, target: dict[str, obje
             )
 
     manager_settings = dict(settings.get(MANAGER_ROLE, {}) or {}) if isinstance(settings.get(MANAGER_ROLE, {}), dict) else {}
-    manager_runtime = {
+    manager_config = manager_runtime({
         "provider": normalize_provider(workers_config.get(MANAGER_ROLE, "") or default_provider),
         "model": _model_part(str(overrides.get(MANAGER_ROLE, "") or "")),
         "reasoning_depth": validate_reasoning_depth(manager_settings.get("reasoning_depth", "default")),
         "additional_prompt": str(manager_settings.get("additional_prompt", "") or "").strip()[:ADDITIONAL_PROMPT_MAX_CHARS],
-    }
+    })
     return {
         "schema_version": TEAM_CONTROL_PLANE_SCHEMA_VERSION,
         "project_key": key,
         "revision": 1,
         "roles": roles,
         "workers": workers,
-        "manager": {"runtime": manager_runtime, "updated_at": _now()},
+        "manager": {"runtime": manager_config, "updated_at": _now()},
         "skill_bindings": {
             **{role_subject(role): default_binding(role_subject(role), project_key=key) for role in ROLE_KEYS},
             **{
@@ -1487,16 +1505,25 @@ def _cmd_rename_worker(state, command, *, actor, surface, decision_id, source_re
 
 def _cmd_change_manager_runtime(state, command, *, actor, surface, decision_id, source_ref, reason):
     manager = dict(state["manager"])  # type: ignore[arg-type]
-    runtime = dict(manager.get("runtime", {}) or {})
+    runtime = manager_runtime(manager.get("runtime", {}))
     before = dict(runtime)
     if "provider" in command:
-        runtime["provider"] = validate_provider(command.get("provider"))
+        provider = validate_provider(command.get("provider"))
+        if provider not in {"codex", *BUILTIN_WORKER_MODES}:
+            raise TeamControlPlaneError("Manager uses Codex app-server. Configure other native agents on Worker Roles.")
+        runtime["provider"] = provider
     if "model" in command:
         runtime["model"] = str(command.get("model", "") or "").strip()
     if "reasoning_depth" in command:
         runtime["reasoning_depth"] = validate_reasoning_depth(command.get("reasoning_depth"))
     if "additional_prompt" in command:
         runtime["additional_prompt"] = str(command.get("additional_prompt", "") or "").strip()[:ADDITIONAL_PROMPT_MAX_CHARS]
+    if "trust_local_codex" in command:
+        if actor != "user" or surface != "team_ui" or type(command["trust_local_codex"]) is not bool:
+            raise TeamControlPlaneError("Local Codex authorization requires a boolean choice in Team settings.")
+        runtime["trust_local_codex"] = command["trust_local_codex"]
+    if runtime["provider"] != "codex":
+        runtime["trust_local_codex"] = False
     if runtime == before:
         return []
     manager["runtime"] = runtime
@@ -1665,7 +1692,9 @@ def build_team_capability_view(
         "manager": {
             "role": MANAGER_ROLE,
             "label": "Task Assistant",
-            "runtime": dict(manager.get("runtime", {}) or {}),
+            "runtime": manager_runtime(manager.get("runtime", {})),
+            "runtime_kind": ("builtin" if manager_runtime(manager.get("runtime", {}))["provider"]
+                             in {*BUILTIN_WORKER_MODES, "builtin"} else "app_server"),
             "skill_binding": project_binding(
                 normalize_binding(
                     dict(state.get("skill_bindings", {}) or {}).get(manager_subject(MANAGER_ROLE), {}),
@@ -1867,7 +1896,7 @@ def _worker_resolution(worker: dict[str, object], *, desired_instances: int = 1)
 
 def _manager_resolution(state: dict[str, object]) -> dict[str, object]:
     manager = dict(state["manager"])  # type: ignore[arg-type]
-    runtime = dict(manager.get("runtime", {}) or {})
+    runtime = manager_runtime(manager.get("runtime", {}))
     adapter = normalize_provider(runtime.get("provider", ""))
     reasoning_depth = str(runtime.get("reasoning_depth", "default") or "default")
     return {
@@ -1878,8 +1907,8 @@ def _manager_resolution(state: dict[str, object]) -> dict[str, object]:
         "model": str(runtime.get("model", "") or ""),
         "reasoning_depth": reasoning_depth,
         "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
-        "pi_thinking_level": _pi_level_for(adapter, reasoning_depth),
-        "desired_instances": 1,
+        "pi_thinking_level": "",
+        "runtime_kind": "app_server" if adapter == "codex" else "builtin",
     }
 
 
@@ -1951,9 +1980,9 @@ def _sync_legacy_worker_config_view(config_path: Path, state: dict[str, object])
 
     default_provider = "codex"
     manager = dict(state["manager"])  # type: ignore[arg-type]
-    manager_runtime = dict(manager.get("runtime", {}) or {})
-    if manager_runtime.get("provider"):
-        default_provider = str(manager_runtime["provider"])
+    manager_config = manager_runtime(manager.get("runtime", {}))
+    if manager_config.get("provider"):
+        default_provider = str(manager_config["provider"])
     workers: dict[str, str] = {}
     role_models: dict[str, str] = {}
     type_settings: dict[str, dict[str, object]] = {}
@@ -1985,13 +2014,12 @@ def _sync_legacy_worker_config_view(config_path: Path, state: dict[str, object])
             "additional_prompt": runtime.get("additional_prompt", ""),
             "desired_instances": len(active),
         }
-    workers[MANAGER_ROLE] = str(manager_runtime.get("provider", "") or default_provider)
-    if manager_runtime.get("model"):
-        role_models[MANAGER_ROLE] = f"{manager_runtime.get('provider', '')}:{manager_runtime['model']}"
+    workers[MANAGER_ROLE] = str(manager_config.get("provider", "") or default_provider)
+    if manager_config.get("model"):
+        role_models[MANAGER_ROLE] = f"{manager_config.get('provider', '')}:{manager_config['model']}"
     type_settings[MANAGER_ROLE] = {
-        "reasoning_depth": manager_runtime.get("reasoning_depth", "default"),
-        "additional_prompt": manager_runtime.get("additional_prompt", ""),
-        "desired_instances": 1,
+        "reasoning_depth": manager_config.get("reasoning_depth", "default"),
+        "additional_prompt": manager_config.get("additional_prompt", ""),
     }
     try:
         update_worker_backend_config(

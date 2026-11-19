@@ -324,9 +324,9 @@ class PiSessionRuntime:
         # Keep the check at the actual start/resume boundary too: callers must
         # not bypass Worker preflight by constructing this Runtime directly.
         reject_unverified_runtime_entry(self.job_root, self.job, method_input=self.method_input)
-        if self.job.get("phase") == "project_running_observation" and (
-                self.prompt_authorizer is None or self.method_input is None or not self.method_input.manager_tools):
-            raise PiSessionMismatch("Running observation requires its original atomic Manager prompt authority")
+        if self.job.get("role") == "orchestrator" or (
+                self.method_input is not None and self.method_input.manager_tools):
+            raise PiSessionMismatch("Manager execution has moved to Codex app-server; the retained Pi job cannot restart.")
         if self.method_input is not None and self.runtime_cwd != self.method_input.runtime_context().runtime_cwd:
             raise PiSessionMismatch("Method runtime cwd differs from its original workspace")
         self.config.session_dir.mkdir(parents=True, exist_ok=True)
@@ -357,27 +357,17 @@ class PiSessionRuntime:
         if self.config.model:
             command.extend(["--model", self.config.model])
         environment = None
-        if self.method_input is not None and (self.method_input.manager_tools or self.method_input.readonly_tools):
-            if self.method_input.manager_tools:
-                from goodteam_os.pi_manager_tools import PiManagerTools
-                self.manager_policy = PiManagerTools()
-                self.tool_policy = self.manager_policy
-                self.tool_contract_key = "manager_tool_contract"
-                extension = "pi_manager_tools.mjs"
-            else:
-                from goodteam_os.pi_read_only import PiReadOnlyTools
-                self.readonly_policy = PiReadOnlyTools(methods=True, authorized_search=self.job.get("web_search") is not None)
-                self.tool_policy = self.readonly_policy
-                self.tool_contract_key = "readonly_tool_contract"
-                extension = "pi_read_only.mjs"
+        if self.method_input is not None and self.method_input.readonly_tools:
+            from goodteam_os.pi_read_only import PiReadOnlyTools
+            self.readonly_policy = PiReadOnlyTools(methods=True, authorized_search=self.job.get("web_search") is not None)
+            self.tool_policy = self.readonly_policy
+            self.tool_contract_key = "readonly_tool_contract"
             contract = {"version": self.tool_policy.version, "tools": list(self.tool_policy.tools),
                         "guarantee": "tool-level; not an OS sandbox"}
             if existing is not None and existing.get(self.tool_contract_key) != contract:
                 raise PiSessionMismatch("Original restricted session lacks this exact tool contract")
-            if self.method_input.manager_tools and self.job.get("web_search") is not None:
-                raise PiSessionMismatch("Manager methods cannot acquire a search task capability")
             command.extend(self.tool_policy.arguments())
-            command.extend(["--extension", str(Path(__file__).with_name(extension))])
+            command.extend(["--extension", str(Path(__file__).with_name("pi_read_only.mjs"))])
             if resume:
                 if not source:
                     raise PiSessionMissing("Restricted resume needs its original session")

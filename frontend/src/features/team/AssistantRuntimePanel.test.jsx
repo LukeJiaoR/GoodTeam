@@ -41,6 +41,8 @@ test('invalidates a refreshing and failed catalog without changing the draft or 
     .mockResolvedValue({ agents: [{ ...catalog.agents[0], models: ['new-catalog-model'], model_default: 'new-catalog-model' }] });
   const { user, api } = setup({ getSettingsAgents });
   await waitFor(() => expect(modelOptions()).toContain('old-catalog-model'));
+  expect(screen.getByLabelText('Agent')).toBeDisabled();
+  expect([...screen.getByLabelText('Agent').options].map((option) => option.textContent)).toEqual(['Codex app-server']);
   await user.selectOptions(screen.getByLabelText('Reasoning depth'), 'xhigh');
   await user.clear(screen.getByLabelText('Additional instructions'));
   await user.type(screen.getByLabelText('Additional instructions'), 'Preserve this unsaved instruction.');
@@ -63,11 +65,13 @@ test('invalidates a refreshing and failed catalog without changing the draft or 
   expect(screen.getByLabelText('Model')).toHaveValue('saved-model');
   expect(screen.getByLabelText('Reasoning depth')).toHaveValue('xhigh');
   expect(api.taskAssistantAction).not.toHaveBeenCalled();
+  expect(screen.getByRole('checkbox', { name: 'Use local Codex' })).not.toBeChecked();
+  await user.click(screen.getByRole('checkbox', { name: 'Use local Codex' }));
   await user.click(screen.getByRole('button', { name: 'Save and check connection' }));
   await waitFor(() => expect(api.taskAssistantAction).toHaveBeenCalledOnce());
   expect(api.sendTeamCommands).toHaveBeenCalledExactlyOnceWith('DEMO', [{
     kind: 'change_manager_runtime', provider: 'codex', model: 'saved-model', reasoning_depth: 'xhigh',
-    additional_prompt: 'Preserve this unsaved instruction.',
+    additional_prompt: 'Preserve this unsaved instruction.', trust_local_codex: true,
   }], { reason: 'Update Task Assistant runtime' });
 });
 

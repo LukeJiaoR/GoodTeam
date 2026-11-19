@@ -85,13 +85,22 @@ def track():
     return {"role": "implementation", "adapter": "codex", "task": "Write the assigned worker output."}
 
 
-def test_collection_omits_only_untracked_pnpm_cache_and_keeps_source_limits(tmp_path):
+def test_capture_excludes_runtime_repositories_and_untracked_cache_but_keeps_source_limits(tmp_path):
     source = repository(tmp_path / "source")
     tracked = source / ".pnpm-store/intentional-source.txt"
     tracked.parent.mkdir()
     tracked.write_text("original tracked source\n")
     git(source, "add", str(tracked))
     git(source, "commit", "-qm", "Tracked file remains source regardless of directory")
+    (source / ".gitignore").write_text("")
+    git(source, "add", ".gitignore")
+    git(source, "commit", "-qm", "Allow runtime metadata to appear in untracked listings")
+    git(source, "config", "core.excludesFile", "/dev/null")
+    metadata_repo = source / ".goodteam/workers/jobs/prior/.codex-home/.tmp/plugins"
+    metadata_repo.mkdir(parents=True)
+    git(metadata_repo, "init", "-q")
+    (metadata_repo / "local-cache").write_text("from a prior Worker")
+    assert git(source, "ls-files", "--others", "--exclude-standard") == str(metadata_repo.relative_to(source)) + "/"
     limits = SnapshotLimits(max_file_bytes=1024)
     prepared = prepare_dispatch_workspace(source, "pnpm-cache", ["worker"], limits=limits)
     root = prepared.workspace("worker")

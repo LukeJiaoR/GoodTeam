@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: Team API 返回的角色和运行设置。
+ * [OUTPUT]: 团队视图与编辑命令。
+ * [POS]: 为 Team 界面保留已保存的 Manager 授权。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 const ROLE_FALLBACK_LABEL = (role) => String(role || '').replaceAll('_', ' ');
 
 export function newWorkerRuntime(provider = 'codex') {
@@ -94,6 +100,8 @@ export function buildTeamModel(data) {
     })),
   }));
   const managerRuntime = team.manager?.runtime || {};
+  const managerProvider = ['builtin', 'fake', 'noop', 'human'].includes(managerRuntime.provider)
+    ? managerRuntime.provider : 'codex';
   return {
     schemaVersion: team.schema_version || '',
     revision: team.revision || 0,
@@ -101,11 +109,12 @@ export function buildTeamModel(data) {
     manager: {
       role: team.manager?.role || 'orchestrator',
       label: team.manager?.label || 'Task Assistant',
-      provider: managerRuntime.provider || '',
+      provider: managerProvider,
       model: managerRuntime.model || '',
       reasoningDepth: managerRuntime.reasoning_depth || 'default',
       additionalPrompt: managerRuntime.additional_prompt || '',
-      runtimeLabel: runtimeLabel(managerRuntime),
+      trustLocalCodex: managerRuntime.trust_local_codex === true,
+      runtimeLabel: runtimeLabel({ ...managerRuntime, provider: managerProvider === 'codex' ? 'Codex app-server' : managerProvider }),
       skillBinding: {
         schemaVersion: team.manager?.skill_binding?.schema_version || 'role_skill_bindings.v1',
         projectKey: team.manager?.skill_binding?.project_key || team.project_key || '',

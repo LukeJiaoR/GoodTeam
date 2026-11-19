@@ -1,6 +1,5 @@
 """Representative continuity, complete-prompt budget and planner replay contracts."""
 import json
-import os
 import sys
 
 import pytest
@@ -13,6 +12,7 @@ from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.workers import WorkerJobStore
 from test_dispatch_isolation import git, repository
+from test_manager_completion_planning import native_manager as native_manager
 
 
 def test_explicit_project_statements_survive_compaction_without_expanding_intake(tmp_path):
@@ -64,51 +64,39 @@ def test_complete_ordinary_prompt_budget_rejects_before_cli_call(tmp_path, monke
     assert "Small complete context." in prompt and len(prompt.encode()) <= 192 * 1024
 
 
-def test_planning_reuses_only_current_inputs_and_pins_an_automatic_attempt(tmp_path, monkeypatch):
+def test_planning_reuses_only_current_inputs_and_pins_an_automatic_attempt(tmp_path, native_manager):
+    _, _, _, response, calls = native_manager
     source = repository(tmp_path / "source")
     config = tmp_path / "project.yaml"
     config.write_text(f"key: DEMO\nrepos:\n  root: {source}\nworker_backend:\n  mode: codex\n")
-    binary = tmp_path / "bin/codex"
-    binary.parent.mkdir()
-    calls = tmp_path / "planning-calls.jsonl"
-    binary.write_text(f"#!{sys.executable}\n" + r'''import json, os, sys
-from pathlib import Path
-if '--version' in sys.argv:
-    print('offline context planning fixture')
-    raise SystemExit(0)
-prompt = sys.stdin.read()
-packet = json.loads(prompt.split('## Context\n\n', 1)[1].split('\n\n## Sandbox Context', 1)[0])
-assert packet['project_head']
-assert packet['previous_delivery']['status'] == 'unavailable'
-ids = [row['task_id'] for row in packet['backlog']['candidates'] if row['eligible_to_plan']]
-assert not set(ids) & {row['task_id'] for row in packet['out_of_scope_tasks']}
-with Path(os.environ['PLANNING_FIXTURE_CALLS']).open('a') as stream:
-    stream.write(json.dumps(packet) + '\n')
-Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dumps({
-    'selected_task_id': ids[-1] if packet['project_head'] == os.environ['PLANNING_FIXTURE_INITIAL_HEAD'] else ids[0],
-    'compared_task_ids': ids,
-    'rationale': 'Choose this eligible task using the current repository and supplied project evidence.'}))
-''')
-    binary.chmod(0o755)
-    monkeypatch.setenv("PATH", str(binary.parent) + os.pathsep + os.environ["PATH"])
-    monkeypatch.setenv("PLANNING_FIXTURE_CALLS", str(calls))
     initial_head = git(source, "rev-parse", "HEAD")
-    monkeypatch.setenv("PLANNING_FIXTURE_INITIAL_HEAD", initial_head)
     ledger = LocalTaskStore(source, "DEMO")
     tasks = [ledger.create_task(title=f"Iteration {i}", description="Implement a bounded project improvement.",
                                 role="implementation") for i in range(3)]
+
+    def choose(task_id):
+        response.write_text(json.dumps({"selected_task_id": task_id,
+            "compared_task_ids": [task["id"] for task in tasks[:2]],
+            "rationale": "Choose this eligible task using the current repository and supplied project evidence."}))
+
+    def packets():
+        return [json.loads(json.loads(line)["input"][0]["text"].split(
+            "Current project context (data):\n", 1)[1]) for line in calls.read_text().splitlines()]
+
     spec = dict(workspace=tmp_path, project_key="DEMO", root=source, project_config=config,
                 expected_backlog_version=project_iteration_backlog(source, "DEMO")["version"],
                 allowed_task_ids=[task["id"] for task in tasks[:2]], confirmed=True)
+    choose(tasks[1]["id"])
     first = plan_next_iteration(**spec)
     assert plan_next_iteration(**spec)["reused"] is True
     git(source, "commit", "--allow-empty", "-m", "New repository revision")
+    choose(tasks[0]["id"])
     second = plan_next_iteration(**spec)
     assert second["reused"] is False
     assert second["iteration_choice"]["source_event_id"] != first["iteration_choice"]["source_event_id"]
     store = TaskAssistantSessionStore(tmp_path, "DEMO")
     assert second["iteration_choice"]["selected_task_id"] != first["iteration_choice"]["selected_task_id"]
-    # Returning to an earlier input reuses its Worker but makes that advice
+    # Returning to an earlier input reuses its native turn but makes that advice
     # current again for both the display and the existing queue handoff.
     git(source, "checkout", "--detach", initial_head)
     restored = plan_next_iteration(**spec)["iteration_choice"]
@@ -125,7 +113,7 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dump
     store.append_message("new-goal", "user", "项目目标：优先完成可离线验证的迭代。")
     assert plan_next_iteration(**spec)["reused"] is False
     assert len(calls.read_text().splitlines()) == 3
-    statement = json.loads(calls.read_text().splitlines()[-1])["conversation"]["project_statements"]["excerpts"][0]
+    statement = packets()[-1]["conversation"]["project_statements"]["excerpts"][0]
     assert store.read()["timeline"][statement["source_index"]]["message_id"] == statement["message_id"] == "new-goal"
     # An automatic reservation is finite even if a reply was lost and HEAD moved.
     plan_next_iteration(**spec, planning_attempt_id="continuation:one-paid-slot")
@@ -133,7 +121,15 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(json.dump
     with pytest.raises(ValueError, match="planning input changed"):
         plan_next_iteration(**spec, planning_attempt_id="continuation:one-paid-slot")
     assert len(calls.read_text().splitlines()) == 4
-    assert all(job["execution_policy"] == "read_only" for job in WorkerJobStore(source).list_jobs())
+    captured = packets()
+    assert captured[0]["project_head"] == initial_head != captured[1]["project_head"]
+    for packet in captured:
+        assert packet["project_head"] and packet["previous_delivery"]["status"] == "unavailable"
+        eligible = {row["task_id"] for row in packet["backlog"]["candidates"] if row["eligible_to_plan"]}
+        assert not eligible & {row["task_id"] for row in packet["out_of_scope_tasks"]}
+    assert not WorkerJobStore(source).list_jobs()
+    native = store.read()["manager_app_server"]["requests"]
+    assert len(native) == 4 and all(item["status"] == "completed" for item in native.values())
 
 
 def test_legacy_reserved_planning_cannot_spend_again_after_identity_upgrade(tmp_path):

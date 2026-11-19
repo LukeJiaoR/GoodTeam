@@ -1,158 +1,47 @@
+"""Manager conversation uses native threads and plain replies, never WorkerJobs."""
 import json
-from pathlib import Path
+
 import pytest
 
 from goodteam_os import manager_execution
+from goodteam_os.manager_app_server import close_runtimes
+from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+from test_manager_completion_planning import native_manager as native_manager_fixture
+
+native_manager = native_manager_fixture
 
 
-def test_retired_inspection_intent_cannot_start_a_manager_action():
-    with pytest.raises(manager_execution.ManagerExecutionError):
-        manager_execution._parse_chat_turn(json.dumps({
-            "intent": "project_understanding", "response": "Inspecting the repository.",
-        }))
-
-
-def _project_config(tmp_path: Path) -> Path:
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    config = tmp_path / "demo.local.yaml"
-    config.write_text(
-        "\n".join(
-            [
-                "name: Demo",
-                "key: DEMO",
-                "repos:",
-                f"  root: {project_root}",
-                "worker_backend:",
-                "  mode: codex",
-                "workers:",
-                "  orchestrator: claude",
-                "role_model_overrides:",
-                "  orchestrator: claude:claude-opus-4-5",
-                "worker_type_settings:",
-                "  orchestrator:",
-                "    reasoning_depth: high",
-                '    additional_prompt: "Prefer concise risk language."',
-                "    desired_instances: 7",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    return config
-
-
-def test_manager_chat_turn_runs_configured_orchestrator_and_returns_decision(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-    action = {"kind": "queue_task", "role": "research", "execution_policy": "read_only",
-              "write_domains": [], "acceptance_criteria": ["Identify the cause with project evidence."],
-              "delegation": {"purpose": "Investigate login", "context": "Login fails", "scope": "Read only diagnosis"}}
-
-    class FakeStore:
-        def __init__(self, project_root: Path) -> None:
-            self.root = project_root / ".goodteam" / "workers" / "jobs"
-
-        def create_or_reuse_job(self, **spec):
-            captured["spec"] = spec
-            (self.root / "job-chat").mkdir(parents=True)
-            return {"id": "job-chat", "status": "queued"}, True
-
-        def run_job(self, job_id: str):
-            result_path = self.root / job_id / "result.md"
-            result_path.write_text(
-                json.dumps(
-                    {
-                        "intent": "work_request",
-                        "response": "我会先把登录问题整理成一个可确认的任务。",
-                        "task_intake": {"ready": True, "missing_decisions": [], "source_message_ids": ["message-1"]},
-                        "task_action": action,
-                    },
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-            return {
-                "status": "completed",
-                "result_path": str(result_path),
-                "runtime_model": "claude-opus-4-5",
-            }
-
-    monkeypatch.setattr(manager_execution, "WorkerJobStore", FakeStore)
-
-    turn = manager_execution.run_manager_chat_turn(
-        project_config=_project_config(tmp_path),
-        project_key="DEMO",
-        message_id="message-1",
-        text="登录",
-        context="Project mode: existing_project",
-    )
-
-    spec = captured["spec"]
-    assert spec["role"] == "orchestrator"
-    assert spec["adapter"] == "claude"
-    assert spec["model"] == "claude-opus-4-5"
-    assert spec["reasoning_depth"] == "high"
-    assert spec["additional_prompt"] == "Prefer concise risk language."
-    assert spec["desired_instances"] == 1
-    assert spec["phase"] == "task_assistant_chat"
-    assert spec["execution_policy"] == "read_only"
-    assert spec["idempotency_key"] == "task-assistant-turn:message-1"
-    assert turn["intent"] == "work_request"
-    assert turn["response"] == "我会先把登录问题整理成一个可确认的任务。"
-    assert turn["manager_execution"]["job_id"] == "job-chat"
-    assert turn["task_action"] == action
-    with pytest.raises(manager_execution.ManagerExecutionError, match="invalid task action"):
-        manager_execution._parse_chat_turn(json.dumps({**turn, "task_action": {**action, "worker_id": "research-a"}}))
-
-
-def test_manager_chat_turn_reuses_completed_job_for_message_retry(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    jobs: dict[str, dict[str, object]] = {}
-    run_calls = []
-
-    class FakeStore:
-        def __init__(self, project_root: Path) -> None:
-            self.root = project_root / ".goodteam" / "workers" / "jobs"
-
-        def create_or_reuse_job(self, **spec):
-            key = str(spec["idempotency_key"])
-            if key in jobs:
-                return jobs[key], False
-            job_root = self.root / "job-chat"
-            job_root.mkdir(parents=True)
-            job = {"id": "job-chat", "status": "queued", **spec}
-            jobs[key] = job
-            return job, True
-
-        def run_job(self, job_id: str):
-            run_calls.append(job_id)
-            result_path = self.root / job_id / "result.md"
-            result_path.write_text(
-                json.dumps({"intent": "work_request", "response": "已整理为待确认任务。",
-                            "task_intake": {"ready": True, "missing_decisions": [], "source_message_ids": ["message-retry"]}}),
-                encoding="utf-8",
-            )
-            result = {"id": job_id, "status": "completed", "result_path": str(result_path)}
-            jobs["task-assistant-turn:message-retry"] = result
-            return result
-
-    monkeypatch.setattr(manager_execution, "WorkerJobStore", FakeStore)
-    values = {
-        "project_config": _project_config(tmp_path),
-        "project_key": "DEMO",
-        "message_id": "message-retry",
-        "text": "修复登录",
-        "context": "Project mode: existing_project",
-    }
-
+def test_manager_conversation_keeps_native_thread_and_reuses_original_completed_turn(native_manager):
+    workspace, root, config, response, calls = native_manager
+    response.write_text("We have one concrete task to discuss. What should its acceptance prove?")
+    values = dict(project_config=config, project_key="DEMO", message_id="attempt-1",
+                  logical_message_id="first", text="Let's discuss the goal.", context="Original project context")
     first = manager_execution.run_manager_chat_turn(**values)
-    repeated = manager_execution.run_manager_chat_turn(**values)
+    assert first["response"] == response.read_text()
+    assert first["native_manager"] and first["manager_execution"]["adapter"] == "codex-app-server"
+    assert not (root / ".goodteam/workers/jobs").exists()
+    response.write_text("The requirement is now clear; the earlier discussion is retained.")
+    second = manager_execution.run_manager_chat_turn(**{
+        **values, "logical_message_id": "second", "message_id": "attempt-2", "text": "Keep it read-only."})
+    assert second["manager_execution"]["thread_id"] == first["manager_execution"]["thread_id"]
+    assert second["manager_execution"]["turn_id"] != first["manager_execution"]["turn_id"]
+    assert len(calls.read_text().splitlines()) == 2
+    close_runtimes()
+    replay = manager_execution.run_manager_chat_turn(**{**values, "message_id": "retry", "context": "New UI snapshot"})
+    assert replay == first
+    assert len(calls.read_text().splitlines()) == 2
+    record = TaskAssistantSessionStore(workspace, "DEMO").read()["manager_app_server"]["requests"]["first"]
+    assert record["context"] == "Original project context"
+    with pytest.raises(manager_execution.ManagerExecutionError, match="different input"):
+        manager_execution.run_manager_chat_turn(**{**values, "text": "A different request under the same identity"})
 
-    assert repeated == first
-    assert run_calls == ["job-chat"]
 
+def test_assignment_validation_keeps_bounded_role_contract():
+    action = {"kind": "queue_task", "role": "research", "execution_policy": "read_only", "write_domains": [],
+              "acceptance_criteria": ["Cite the retained project evidence."],
+              "delegation": {"purpose": "Understand the project", "context": "Current repository", "scope": "Read only"}}
+    payload = {"intent": "work_request", "response": "Queue request.", "task_action": action,
+               "task_intake": {"ready": True, "missing_decisions": [], "source_message_ids": ["request"]}}
+    assert manager_execution._parse_chat_turn(json.dumps(payload))["task_action"] == action
+    with pytest.raises(manager_execution.ManagerExecutionError):
+        manager_execution._parse_chat_turn(json.dumps({**payload, "task_action": {**action, "worker_id": "invented"}}))

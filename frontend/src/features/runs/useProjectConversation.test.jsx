@@ -70,3 +70,28 @@ test('transport failure releases the composer before refresh and keeps resend id
   await act(async () => { rejectAnswer(new Error('The original continuation was stopped.')); await pendingAnswer; });
   expect(result.current.busy).toBe('');
 });
+
+test('durable acceptance releases input before background completion and slow refresh', async () => {
+  runApi.sendTaskAssistantMessage.mockReset();
+  runApi.taskAssistantAction.mockReset();
+  runApi.sendTaskAssistantMessage.mockResolvedValue({ accepted: true, session: {
+    assistant_requests: { first: { status: 'running' } },
+  } });
+  const refresh = vi.fn(() => new Promise(() => {}));
+  const { result } = renderHook(() => useProjectConversation({ projectKey: 'DEMO', refresh }));
+  await act(async () => { await result.current.send('Inspect the active task.'); });
+  expect(result.current.busy).toBe('');
+  expect(result.current.delivery.status).toBe('recorded');
+  await act(async () => { await result.current.send('What has already finished?'); });
+  expect(runApi.sendTaskAssistantMessage).toHaveBeenCalledTimes(2);
+  expect(runApi.sendTaskAssistantMessage.mock.lastCall[1]).toMatchObject({ background: true });
+  expect(runApi.sendTaskAssistantMessage.mock.calls[0][1].message_id)
+    .not.toBe(runApi.sendTaskAssistantMessage.mock.calls[1][1].message_id);
+  // Once Stop is recorded, its slow refresh must not silently reject new input.
+  runApi.taskAssistantAction.mockResolvedValue({ session: { assistant_requests: { first: { status: 'stopped' } } } });
+  await act(async () => {
+    await result.current.act({ action: 'stop_manager_request', message_id: 'first', expected_attempt: 1 });
+  });
+  await act(async () => { await result.current.send('Continue with the revised requirement.'); });
+  expect(runApi.sendTaskAssistantMessage).toHaveBeenCalledTimes(3);
+});

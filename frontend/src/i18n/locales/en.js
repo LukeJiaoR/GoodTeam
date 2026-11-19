@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 界面文案键与插值约定。
+ * [OUTPUT]: 英文界面文案。
+ * [POS]: 由 i18n 入口加载的语言词典。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 export const en = {
   "providers.memoryTitle": "Project memory retrieval",
   "providers.memoryHint": "Choose an embedding model independently of the coding model. Requires pgvector in GoodTeam PostgreSQL and an embeddings endpoint on the selected provider.",
@@ -329,6 +335,8 @@ export const en = {
   "assistant.project.viewPending": "View pending items",
   "assistant.project.returnLatest": "Return to latest",
   "assistant.project.responding": "Responding",
+  "assistant.status.stopped": "Stopped",
+  "assistant.project.stopResponse": "Stop response",
   "assistant.project.needsAttention": "Response needs attention",
   "assistant.project.available": "Available",
   "assistant.project.projectContext": "Project conversation",
@@ -532,6 +540,11 @@ export const en = {
   'assistant.error.invalid_response': "The model returned an invalid response. Retry or update the runtime.",
   'assistant.error.execution_failed': "Execution failed. Check the runtime configuration and connection before retrying.",
   'assistant.error.manager_resource_busy': "The Manager is processing another request. This message is saved; retry it shortly.",
+  'assistant.error.manager_stopped': 'Manager work was stopped.',
+  'assistant.error.manager_interrupted': 'The Manager turn was interrupted. Review its saved progress before retrying.',
+  "assistant.error.manager_local_codex_disabled": "Enable Use local Codex in this project’s Manager settings.",
+  'assistant.error.manager_runtime_changed': 'Finish or stop the current Manager turn before changing its runtime.',
+  'assistant.error.operation_conflict': 'This request belongs to different original input.',
   'assistant.error.interrupted': "The result is uncertain. Inspect the timeline, task proposal and Team state before sending a new request. Automatic retry is disabled.",
   'assistant.command.disable_role': "Disable role",
   'assistant.command.enable_role': "Enable role",
@@ -934,7 +947,11 @@ export const en = {
   "team.dialog.workerDescription": "Choose how this worker runs. Changes apply to new jobs.",
   'team.dialog.managerEyebrow': 'Task Assistant',
   "team.dialog.managerTitle": "Task Assistant settings",
-  "team.dialog.managerDescription": "Choose the agent and model the Task Assistant uses to respond and plan.",
+  "team.dialog.trustLocalCodex": "Use local Codex",
+  "team.dialog.trustLocalCodexHint": "Manager uses your local Codex sign-in, model connection, and tools, including MCP servers you add later. External tools follow their own permissions and can make changes outside GoodTeam approvals.",
+  "team.dialog.localCodexOff": "Enable this option to start Manager for this project.",
+  "team.dialog.managerSaved": "Manager settings saved.",
+  "team.dialog.managerDescription": "Codex app-server keeps the Manager conversation active. Choose its model, reasoning depth and instructions.",
   'team.dialog.role': 'Role',
   'team.dialog.selectRole': 'Select a role',
   'team.dialog.name': 'Name',

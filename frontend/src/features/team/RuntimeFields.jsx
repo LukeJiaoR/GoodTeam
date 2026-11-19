@@ -2,12 +2,13 @@ import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { changeRuntimeSelection, newWorkerRuntime, runtimeOptions } from './teamModel';
 
-export default function RuntimeFields({ draft, setDraft, backendOptions, agents, defaultProvider, agentsLoading, onRefresh, prompt = true, t }) {
+export default function RuntimeFields({ draft, setDraft, backendOptions, agents, defaultProvider, agentsLoading, onRefresh, prompt = true, fixedProvider = false, t }) {
   const [customModel, setCustomModel] = useState(false);
   const [promptOpen, setPromptOpen] = useState(Boolean(draft.additionalPrompt));
   const options = runtimeOptions(agents, draft.provider, draft.model, defaultProvider);
   agentsLoading = options.agent?.discovery_status ? options.agent.discovery_status === 'loading' : agentsLoading;
-  const providers = [...new Set([draft.provider, defaultProvider, ...backendOptions].filter(Boolean))];
+  const providers = fixedProvider ? [draft.provider || 'codex']
+    : [...new Set([draft.provider, defaultProvider, ...backendOptions].filter(Boolean))];
   const changeSelection = (patch) => setDraft(changeRuntimeSelection(draft, patch, agents, defaultProvider));
   const effortLabel = (value) => t(`team.dialog.reasoning${value[0].toUpperCase()}${value.slice(1)}`);
   const currentUnsupported = draft.reasoningDepth !== 'default' && !options.reasoningDepths.includes(draft.reasoningDepth);
@@ -33,11 +34,11 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
       <div className="team-runtime-fields__grid">
         <label>
           <span>{t('team.dialog.provider')}</span>
-          <select aria-label={t('team.dialog.provider')} value={draft.provider || defaultProvider} onChange={(event) => {
+          <select aria-label={t('team.dialog.provider')} disabled={fixedProvider} value={draft.provider || defaultProvider} onChange={(event) => {
             setCustomModel(false);
             changeSelection({ provider: event.target.value, model: newWorkerRuntime(event.target.value).model });
           }}>
-            {providers.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
+            {providers.map((provider) => <option key={provider} value={provider}>{fixedProvider && provider === 'codex' ? 'Codex app-server' : provider}</option>)}
           </select>
           {!agentsLoading && !options.agent?.stale && (diagnosticHint || diagnosticFallback) ? <small className={options.agent?.ready === false ? 'team-field-warning' : undefined}>
             {t('team.config.localDiagnostic')}: {diagnosticHint || t(diagnosticFallback)}

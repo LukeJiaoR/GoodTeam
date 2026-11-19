@@ -39,9 +39,18 @@ def test_api_failure_reload_retry_and_replay(tmp_path, monkeypatch):
 
 
 def test_runtime_check_requires_explicit_consent(tmp_path, monkeypatch):
-    calls, _service, _root = setup_api(tmp_path, monkeypatch)
+    calls, service, _root = setup_api(tmp_path, monkeypatch)
     with pytest.raises(web.ProjectApiError) as error:
         web.handle_project_api_post(tmp_path, "/api/projects/DEMO/task-assistant/actions",
                                     {"action": "check_runtime", "message_id": "c1"})
     assert 409 == error.value.status
     assert [] == calls
+    from goodteam_os import manager_execution
+    service.manager_turn = manager_execution.run_manager_chat_turn
+    monkeypatch.setattr(service, "_manager_runtime_is_builtin", lambda: False)
+    analyses = []
+    monkeypatch.setattr(manager_execution, "run_manager_analysis", lambda **kwargs: analyses.append(kwargs))
+    status, _ = web.handle_project_api_post(tmp_path, "/api/projects/DEMO/task-assistant/actions",
+        {"action": "check_runtime", "message_id": "c1", "confirmed": True})
+    assert status == 200 and len(analyses) == 1 and not calls
+    assert analyses[0]["phase"] == "runtime_check" and analyses[0]["logical_id"].startswith("runtime-check:")

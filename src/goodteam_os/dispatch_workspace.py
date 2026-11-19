@@ -1,4 +1,9 @@
-"""Retained, isolated Git workspaces for direct dispatch.
+"""[INPUT]: 项目 Git 工作树、文件限制和派工身份。
+[OUTPUT]: 隔离工作区、源代码快照和集成证据。
+[POS]: 派工前捕获项目文件，排除 GoodTeam 运行时目录。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Retained, isolated Git workspaces for direct dispatch.
 
 Callers hold ``dispatch_workspace_lock`` across preparation, execution and
 integration. The source checkout is only inspected; raw file bytes, its original
@@ -168,10 +173,16 @@ def _capture(root: Path, limits: SnapshotLimits, *, expected_identity=None, extr
         # pnpm can put its content-addressed dependency store in a new project.
         # It is generated cache, even before the Worker adds a Git ignore rule.
         # Keep tracked and retained-baseline paths above; only omit new cache.
-        paths.update(name for path in
-                     _read_git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split(b"\0") if path
-                     for name in [canonical_relative_path(os.fsdecode(path))]
-                     if ".pnpm-store" not in Path(name).parts[:-1])
+        for raw_path in _read_git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split(b"\0"):
+            if not raw_path:
+                continue
+            name = os.fsdecode(raw_path)
+            # Git can report nested runtime repos as directory names ending in a slash.
+            if _metadata_path(name):
+                continue
+            name = canonical_relative_path(name)
+            if ".pnpm-store" not in Path(name).parts[:-1]:
+                paths.add(name)
         source = {}
         if original:
             head = os.fsdecode(_read_git(root, ["rev-parse", "--verify", "HEAD^{commit}"]).strip())

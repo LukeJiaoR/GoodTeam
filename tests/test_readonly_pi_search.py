@@ -9,8 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_manager_pi_method_producer import setup
-from test_manager_pi_runtime import fake_manager_pi
+from pi_worker_fixtures import setup, fake_pi_with_restore
 from test_web_search import POLICY, PAYLOAD
 from goodteam_os.dispatch import dispatch_tracks
 from goodteam_os.session_runtimes import PiRuntimeConfig, PiSessionRuntime
@@ -63,7 +62,7 @@ def test_readonly_methods_search_retains_original_authority(tmp_path, monkeypatc
 
     def mapping(source, run_id, ids, **_kwargs):
         assert source == root and run_id == job['run_id'] and ids is None
-        return SimpleNamespace(workspace=lambda job_id: target if job_id == job['id'] else None)
+        return SimpleNamespace(workspace=lambda job_id: target if job_id == job['id'] else None, metadata={})
 
     monkeypatch.setattr(spaces, 'prepare_dispatch_workspace', mapping)
     method = PiMethodInput(workers, job['id'])
@@ -100,7 +99,7 @@ def test_readonly_methods_search_retains_original_authority(tmp_path, monkeypatc
 
     monkeypatch.setattr(PiResourceChannel, 'start', witness)
     runtime = PiSessionRuntime(project_root=root, job_root=workers.root / job['id'], job=job,
-        runtime_cwd=target, config=PiRuntimeConfig(str(fake_manager_pi(tmp_path)), '', '', '', tmp_path / 'sessions', 2),
+        runtime_cwd=target, config=PiRuntimeConfig(str(fake_pi_with_restore(tmp_path)), '', '', '', tmp_path / 'sessions', 2),
         stderr_path=tmp_path / 'stderr', method_input=method)
     try:
         runtime.start_or_resume()

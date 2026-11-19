@@ -1,4 +1,10 @@
-"""Disposable pgvector + real local HTTP; vectors are protocol fixtures only."""
+"""[INPUT]: 一次性 pgvector、本地 HTTP 嵌入服务与发现运行时夹具。
+[OUTPUT]: 角色记忆检索与项目迭代发现检查。
+[POS]: 验证真实存储和本地协议的记忆输入链路。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Disposable pgvector + real local HTTP; vectors are protocol fixtures only.
+"""
 import json
 import os
 import threading
@@ -14,6 +20,7 @@ from goodteam_os.memory import RoleMemoryStore, runtime_role_memory_store
 from goodteam_os.memory_embeddings import PostgresMemoryRetriever
 from goodteam_os.providers import ProviderError, ProviderStore
 from goodteam_os.workers import WorkerJobStore
+from test_project_outcome_discovery import native_analysis as native_analysis
 
 
 @pytest.fixture
@@ -213,7 +220,7 @@ def test_embedding_failure_is_visible_and_never_falls_back_or_follows_redirects(
 
 
 @pytest.mark.parametrize("retrieval_available", [True, False])
-def test_two_round_discovery_receives_learned_memory_through_pg(tmp_path, monkeypatch, embedding_service, retrieval_available):
+def test_two_round_discovery_receives_learned_memory_through_pg(tmp_path, monkeypatch, embedding_service, retrieval_available, native_analysis):
     from goodteam_os import project_outcome_discovery
     from test_project_outcome_discovery import test_verified_outcome_creates_once_then_delivers_next_iteration_within_frozen_authority
 
@@ -231,7 +238,7 @@ def test_two_round_discovery_receives_learned_memory_through_pg(tmp_path, monkey
         mode["truncated"] = not retrieval_available
 
     monkeypatch.setattr(project_outcome_discovery, "_remember", remember_with_fixture_lesson)
-    test_verified_outcome_creates_once_then_delivers_next_iteration_within_frozen_authority(tmp_path, monkeypatch)
+    test_verified_outcome_creates_once_then_delivers_next_iteration_within_frozen_authority(tmp_path, monkeypatch, native_analysis)
     events = [json.loads(line) for line in (tmp_path / "cli-calls.jsonl").read_text().splitlines()]
     packet = next(event["packet"] for event in events if event["kind"] == "manager_discovery")
     if retrieval_available:

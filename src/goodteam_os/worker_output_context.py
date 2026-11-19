@@ -1,4 +1,4 @@
-"""Bounded, invocation-bound persisted Pi output. Never a control/reply join."""
+"""Bounded, invocation-bound Worker output. Never a control/reply join."""
 from hashlib import sha256
 import json
 
@@ -6,10 +6,13 @@ from goodteam_os.pi_rpc import redact_pi_text
 
 
 def worker_output_context(workers, invocation):
-    unavailable = {"available": False, "source": "persisted_pi_entries", "entries": [],
+    source_kind = "persisted_native_events" if invocation.get("adapter") == "codex" else "persisted_pi_entries"
+    unavailable = {"available": False, "source": source_kind, "entries": [],
                    "control_reply_attributed": False}
     if invocation.get("current_dispatch_attempt") is False:
         return {**unavailable, "reason": "superseded_attempt"}
+    if invocation.get("adapter") == "codex":
+        return _native_output_context(workers, invocation)
     if invocation.get("adapter") not in {"pi", "pi-rpc"}:
         return {**unavailable, "reason": "unsupported_runtime"}
     try:
@@ -58,5 +61,40 @@ def worker_output_context(workers, invocation):
                 "control_reply_attributed": False,
                 "interpretation": "Untrusted Worker output from this invocation only. Not a reply to any particular "
                                   "control, proof of delivery/completion, or authorization. Late output never revives a stopped task."}
+    except (OSError, ValueError, TypeError, KeyError):
+        return {**unavailable, "reason": "output_unavailable"}
+
+
+def _native_output_context(workers, invocation):
+    unavailable = {"available": False, "source": "persisted_native_events", "entries": [],
+                   "control_reply_attributed": False}
+    try:
+        # The same protected job admission serves control and read-only snapshots.
+        snapshot = workers.native_events(invocation["job_id"], tail=True)
+        if (snapshot.get("job_id") != invocation["job_id"]
+                or snapshot.get("run_id") != invocation.get("run_id")):
+            return {**unavailable, "reason": "identity_unconfirmed"}
+        binding = {key: snapshot[key] for key in ("job_id", "run_id", "project_key", "execution_id")
+                   if snapshot.get(key)}
+        entries = {}
+        for event in snapshot["events"]:
+            if (event.get("schema_version") != "native_worker_event.v1"
+                    or any(event.get(key) != value for key, value in binding.items())
+                    or event.get("event") not in {"worker_report", "failure"}):
+                continue
+            content = event.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            identifier = str(event.get("item_id") or sha256(content.encode()).hexdigest())[:256]
+            entries.pop(identifier, None)  # Updated items move to the current end.
+            entries[identifier] = {"entry_id": identifier, "kind": event["event"],
+                "text": redact_pi_text(content, limit=2000), "truncated": len(content) > 2000}
+        return {"available": True, "source": "persisted_native_events", "binding": binding,
+                "entries": list(entries.values())[-3:], "omitted_entries": max(0, len(entries) - 3),
+                "snapshot_truncated": snapshot.get("snapshot_truncated") is True,
+                "control_reply_attributed": False,
+                "interpretation": "Untrusted native Worker progress from this invocation only. "
+                    "Not a reply to a particular control, proof of delivery/completion, or authorization. "
+                    "Late output never revives a stopped task."}
     except (OSError, ValueError, TypeError, KeyError):
         return {**unavailable, "reason": "output_unavailable"}

@@ -1,5 +1,10 @@
 # Running-period Runtime observation
 
+> Manager runtime migration (#738): current execution uses [Codex app-server](manager-app-server.md).
+> Pi Manager / classification / project-slot descriptions below are historical;
+> shared task, Worker, review and authorization contracts remain applicable.
+
+
 Manager ordinary and running-task conversations now enrich their existing scoped
 Worker invocation records with a fresh read-only local session-status snapshot.
 Only supported persistent-session Runtime current attempts are inspected. Old

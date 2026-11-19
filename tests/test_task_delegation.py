@@ -29,7 +29,7 @@ def test_delegated_contract_reaches_persisted_job_and_retains_source(tmp_path, m
             'task_action': action}
     service = TaskAssistantService(tmp_path, project_config=config, manager_turn=lambda **_: _parse_chat_turn(json.dumps(turn)))
     monkeypatch.setattr(service, '_readiness_state', lambda *_: {'project_mode': 'existing_project', 'lifecycle': 'ready'})
-    monkeypatch.setattr(service, 'session', lambda *_: TaskAssistantSessionStore(tmp_path, 'DEMO').read())
+    monkeypatch.setattr(service, 'session', lambda *_, **kwargs: TaskAssistantSessionStore(tmp_path, 'DEMO').read())
     request = dict(project_key='DEMO', root=root, text='Check the configured provider.', message_id='request')
     session = service.send_message(**request)['session']
     proposal = session['queued_task_proposals'][0]
@@ -39,6 +39,7 @@ def test_delegated_contract_reaches_persisted_job_and_retains_source(tmp_path, m
     assert project_task_intent(task)['delegation'] == task['delegation']
     assert proposal['assignment']['delegation'] == action['delegation']
     track = _runtime_tracks(tmp_path, config, 'DEMO', root, [task], [proposal])[0]
+    assert "already recorded the approval" in track["context"]
     assert track['role'] == 'research' and track['execution_policy'] == 'read_only'
     for part in [request['text'], *action['delegation'].values(), *action['acceptance_criteria']]:
         assert part in track['task']

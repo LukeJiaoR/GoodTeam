@@ -27,6 +27,7 @@ from goodteam_os.pi_rpc import PiRpcError
 from goodteam_os.worker_capabilities import BACKEND_REASONING_DEPTHS, REASONING_DEPTHS
 from goodteam_os.providers import ProviderStore, ProviderError, PROVIDER_KEY_ENV, codex_connection_arguments
 from goodteam_os.provider_usage import record_codex_usage
+from goodteam_os.native_worker_events import NativeWorkerAborted
 from goodteam_os.session_runtimes import (
     SESSION_BACKENDS,
     PiSessionRuntime,
@@ -1517,6 +1518,41 @@ class WorkerJobStore:
                           "History includes returned results awaiting review, not just successful work. "
                           "Ended invocations remain historical records. This context provides no mutating job-control action."}
 
+    def native_events(self, job_id: str, *, after: int = 0, limit: int = 50, tail: bool = False) -> dict[str, Any]:
+        """Read native progress for the original job without treating output as authority."""
+        job_root, job = self._native_job(job_id)
+        from goodteam_os.native_worker_events import read_native_worker_events
+
+        status = self._read_json(job_root / "status.json") if (job_root / "status.json").is_file() else {}
+        if status and (status.get("job_id") != job_id or status.get("run_id") != job.get("run_id")):
+            raise ValueError("Native Worker status does not match the original invocation.")
+        return {**read_native_worker_events(job_root, after=after, limit=limit, tail=tail),
+                "job_id": job_id, "run_id": job.get("run_id"),
+                **{key: job[key] for key in ("project_key", "execution_id") if job.get(key)},
+                "status": status.get("status", job.get("status", "unknown")),
+                "heartbeat": str(status.get("heartbeat_at") or "")}
+
+    def abort_native_job(self, job_id: str, *, wait_for_ack: bool = True) -> dict[str, Any]:
+        """Cancel an exact, currently owned native process, never a saved PID."""
+        job_root, _job = self._native_job(job_id)
+        from goodteam_os.native_worker_events import abort_native_worker
+
+        return {"job_id": job_id, **abort_native_worker(job_root, wait_for_ack=wait_for_ack)}
+
+    def _native_job(self, job_id: str) -> tuple[Path, dict[str, Any]]:
+        if not job_id or Path(job_id).name != job_id:
+            raise ValueError("job_id is invalid")
+        job_root = self.root / job_id
+        if job_root.resolve().parent != self.root.resolve():
+            raise ValueError("Native Worker job is outside this project's job store.")
+        job = self._read_json(job_root / "job.json")
+        if job.get("id") != job_id or job.get("adapter") != "codex":
+            raise ValueError("This job has no supported native Worker event/control channel.")
+        from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
+
+        reject_unverified_runtime_entry(job_root, job)
+        return job_root, job
+
     def run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
         from goodteam_os.skills.worker_requests import is_skill_job_id
 
@@ -1623,7 +1659,9 @@ class WorkerJobStore:
                     exit_code = status_payload.get("exit_code")
                     last_failure_class = classify_worker_failure(summary, exit_code, stderr=stderr)
                     status_payload["failure_class"] = last_failure_class
-                    if job_root.name.startswith("job-correction-") or _is_host_cli_timeout(summary, exit_code):
+                    if status_payload.get("status") == "aborted":
+                        disposition = "stopped"
+                    elif job_root.name.startswith("job-correction-") or _is_host_cli_timeout(summary, exit_code):
                         disposition = "human_handoff"
                     elif not is_transient(last_failure_class) or attempts >= max_attempts:
                         disposition = "escalated"
@@ -2883,6 +2921,7 @@ class WorkerJobStore:
                                       started_at=started_at, status=status, stdout=stdout)
 
         running_summary = f"{label} is running."
+        native_events = job.get("adapter") == "codex" and "--json" in command and not correction
         base_extra = {
             "command": process_command,
             "model": model,
@@ -2894,6 +2933,9 @@ class WorkerJobStore:
             **runtime_evidence,
             "invocation_evidence": runtime_evidence,
         }
+        if native_events:
+            base_extra.update(runtime_events_path=str(job_root / "native_events.jsonl"),
+                              runtime_capabilities=["event_stream", "abort"])
         stdout_path.write_text("", encoding="utf-8")
         stderr_path.write_text("", encoding="utf-8")
         process: subprocess.Popen[str] | None = None
@@ -2974,9 +3016,21 @@ class WorkerJobStore:
                         authority.check_native_current(task_input)
                     stdout, stderr = communicate_correction(process, process_input, seconds=timeout_seconds,
                         check_current=check_current)
+                elif native_events:
+                    from goodteam_os.native_worker_events import communicate_native_worker
+
+                    stdout, stderr = communicate_native_worker(process, process_input, timeout=timeout_seconds,
+                        job_root=job_root, job=job, redact=safe_output)
                 else:
                     stdout, stderr = process.communicate(input=process_input, timeout=timeout_seconds)
                 returncode = int(process.returncode if process.returncode is not None else 1)
+        except NativeWorkerAborted as exc:
+            stop_heartbeat.set()
+            stdout_path.write_text(safe_output(exc.stdout), encoding="utf-8")
+            stderr_path.write_text(safe_output(exc.stderr), encoding="utf-8")
+            result_path.write_text("Worker stopped by its owner. Result acceptance remains pending.\n", encoding="utf-8")
+            return _WorkerOutcome(self._write_status(job_root, job, "aborted", "Native Worker stopped.",
+                extra={**base_extra, "exit_code": process.returncode, "termination_confirmed": True}), prompt, transport_ref)
         except subprocess.TimeoutExpired as exc:
             stop_heartbeat.set()
             partial_stdout = safe_output(_timeout_text(exc.output))
