@@ -37,7 +37,7 @@ delivery_outcomes.py: Read-only, run-bound reports. A report or successful proce
 dispatch.py: Worker 批次派发与结果核验。
 dispatch_capacity.py: Shared project Worker capacity; original jobs remain the execution ledger.
 dispatch_methods.py: Per-track method capture for new mixed batches, using original Skill stores.
-dispatch_workspace.py: Retained, isolated Git workspaces for direct dispatch.
+dispatch_workspace.py: 捕获项目 Git 工作树并排除运行时目录，为派工保留隔离工作区。
 failure_patterns.py: 失败模式归一化、匹配与路由记录。
 frontend_assets.py: 本地 Web 前端构建目录定位。
 full_smoke.py: 隔离工作区的完整 smoke 命令入口。
