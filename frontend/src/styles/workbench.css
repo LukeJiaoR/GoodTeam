@@ -1,5 +1,9 @@
-/* V11 workbench: compact project navigation, a fixed reading column and
-   contextual panels. This layer deliberately leaves other page content alone. */
+/*
+ * [INPUT]: 使用 studio.css 的工作台样式和产品颜色变量。
+ * [OUTPUT]: 定义项目导航、对话阅读列和执行状态栏的排版。
+ * [POS]: 在工作台内覆盖功能组件的展示样式。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 .product-shell.product-shell--studio {
   grid-template-columns: 256px minmax(0, 1fr);
 }
@@ -68,40 +72,85 @@
 .product-shell--studio .studio-topbar { height: 48px; padding-inline: 24px; gap: 10px; font-size: 13px; }
 
 /* Stable canvas: opening a worker or evidence panel never changes chat width. */
-.product-shell--studio .work-workspace-shell[data-workspace] { --work-bg: var(--product-surface); --work-surface-muted: var(--product-bg); background: var(--work-bg); }
-.product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { position: relative; width: 100%; max-width: none; height: calc(100dvh - 48px); min-height: 0; margin: 0; padding: 12px 24px 16px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding: 0 260px 12px 0; gap: 8px 12px; align-items: baseline; }
+.product-shell--studio .work-workspace-shell[data-workspace] { --workbench-aside: 16rem; --workbench-inset: 1.5rem; --workbench-rail: color-mix(in srgb, var(--product-bg) 82%, var(--product-surface)); --workbench-selection: color-mix(in srgb, var(--product-accent) 9%, var(--product-surface)); --work-bg: var(--product-surface); --work-surface-muted: var(--product-bg); background: var(--work-bg); }
+.product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { position: relative; width: 100%; max-width: none; height: calc(100dvh - 48px); min-height: 0; margin: 0; padding: 0 var(--workbench-inset) 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { margin-inline: calc(-1 * var(--workbench-inset)); padding: 10px 24rem 10px var(--workbench-inset); min-block-size: 3rem; gap: 5px 10px; align-items: center; background: var(--workbench-rail); border-block-end: 1px solid var(--product-border); }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__project { display: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity { display: block; flex: 0 1 auto; max-width: 440px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity strong { display: block; font-size: 14px; line-height: 1.5; font-weight: 500; letter-spacing: normal; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity strong { display: block; font-size: 14px; line-height: 1.5; font-weight: 600; letter-spacing: normal; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__state { display: flex; flex: 1 1 180px; align-items: baseline; gap: 8px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__state p { font-size: 12px; line-height: 1.5; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context .product-status-badge { white-space: nowrap; padding: 3px 7px; font-size: 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context > button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .studio-work-toolbar { position: absolute; top: 10px; right: 24px; padding: 0; min-height: 28px; font-size: 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace,
-.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed="true"] { position: relative; display: grid; flex: 1 1 0; grid-template-areas: 'center execution'; grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: minmax(0, 1fr); gap: 28px; min-height: 0; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace-center { gap: 0; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager { --chat-body: var(--studio-text-body); --chat-control: var(--studio-text-control); --chat-meta: var(--studio-text-small); height: auto; min-height: 0; overflow: hidden; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; width: 100%; max-width: 760px; margin-inline: auto; min-height: 32px; padding: 0 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--product-border) 50%, transparent); }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-pane__header { order: 2; width: auto; min-height: 28px; padding: 0; gap: 6px; flex: 0 0 auto; display: flex; align-items: center; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-pane__eyebrow { display: none !important; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-manager-heading { display: flex; align-items: center; gap: 6px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-manager-heading .product-status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; background: var(--product-surface-muted); border: 1px solid var(--product-border); font-size: 11px; font-weight: 500; line-height: 1.2; color: var(--product-text-muted); }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-manager-heading .product-status-badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--product-text-muted); flex-shrink: 0; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-manager-heading .product-status-badge[data-tone="active"] { color: var(--product-text); border-color: color-mix(in srgb, var(--product-accent) 30%, var(--product-border)); }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-manager-heading .product-status-badge[data-tone="active"]::before { background: #10b981; box-shadow: 0 0 6px #10b98180; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager .team-manager-heading .product-status-badge[data-tone="warning"]::before { background: #f59e0b; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-scope { display: flex; align-items: center; flex: 1; width: auto; min-width: 0; padding: 0; gap: 8px; border: 0; font-size: 12px; color: var(--product-text-muted); }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-scope > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-scope button { flex-shrink: 0; padding: 3px 8px; min-height: 24px; border-radius: 6px; border: 1px solid var(--product-border); background: var(--product-surface); color: var(--product-text); font-size: 11px; cursor: pointer; transition: background-color 140ms ease; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-scope button:hover { background: var(--product-surface-muted); }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-assistant-settings { width: 26px; height: 26px; border-radius: 6px; padding: 0; display: grid; place-items: center; border: 1px solid var(--product-border); background: var(--product-surface); color: var(--product-text-muted); cursor: pointer; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-assistant-settings:hover { color: var(--product-text); background: var(--product-surface-muted); }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-conversation { padding: 12px 0 20px; gap: 12px; min-height: 0; scrollbar-width: thin; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-timeline { width: 100%; max-width: 760px; margin-inline: auto; padding: 0 0 16px; gap: 12px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event:not(.team-manager-event--system) { margin-block: 6px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event--system { margin-block: 4px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed="true"] { position: relative; display: grid; flex: 1 1 0; grid-template-areas: 'center execution'; grid-template-columns: minmax(0, 1fr) var(--workbench-aside); grid-template-rows: minmax(0, 1fr); gap: 0; min-height: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-workspace-center { gap: 0; min-inline-size: 0; padding-inline: clamp(.5rem, 2.2vw, 2.5rem); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--manager {
+  --chat-measure: 52rem;
+  --chat-body: .875rem;
+  --chat-control: .8125rem;
+  --chat-meta: .75rem;
+  height: auto;
+  min-height: 0;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem 1rem;
+  padding-block: .625rem .625rem;
+  border-block-end: 1px solid var(--product-border);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-conversation-toolbar, .team-manager-timeline, .project-conversation-planning, .project-conversation-attention, .project-conversation-follow, .project-conversation-welcome, .team-manager-dock) {
+  inline-size: 100%;
+  max-inline-size: var(--chat-measure);
+  margin-inline: auto;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-scope {
+  display: flex;
+  flex: 1 1 12rem;
+  flex-wrap: wrap;
+  align-items: center;
+  min-inline-size: 0;
+  gap: .375rem .75rem;
+  margin: 0;
+  padding: 0;
+}
+.project-conversation-scope h2 {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--work-text);
+  overflow-wrap: anywhere;
+}
+.project-conversation-toolbar__actions { display: flex; align-items: center; flex-wrap: wrap; gap: .375rem .625rem; }
+.project-conversation-toolbar__actions .product-status-badge { font-size: var(--chat-meta); }
+.project-conversation-toolbar button {
+  min-block-size: 2rem;
+  padding: .25rem .625rem;
+  border: 1px solid var(--product-border);
+  border-radius: 6px;
+  background: var(--product-surface);
+  color: var(--product-text);
+  font-size: var(--chat-control);
+  cursor: pointer;
+}
+.project-conversation-toolbar button:hover { background: var(--product-surface-muted); }
+.project-conversation-toolbar .project-assistant-settings { display: grid; place-items: center; inline-size: 2rem; padding: 0; color: var(--product-text-muted); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-conversation {
+  padding: .5rem 0 .75rem;
+  gap: .5rem;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable both-edges;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-timeline { padding: 0 0 .5rem; gap: .75rem; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event:not(.team-manager-event--system) { margin-block: .25rem; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event--system { margin-block: 0; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-system-chip { display: inline-flex; align-items: center; gap: 7px; width: auto; max-width: 100%; padding: 4px 10px; background: var(--product-surface-muted); border: 1px solid color-mix(in srgb, var(--product-border) 60%, transparent); border-radius: 8px; font-size: 12px; line-height: 1.5; color: var(--product-text-muted); transition: border-color 140ms ease, background-color 140ms ease; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-system-chip:hover { border-color: var(--product-border); background: var(--product-surface); }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-system-chip__icon { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 4px; background: color-mix(in srgb, var(--product-text-muted) 12%, transparent); color: var(--product-text-muted); flex-shrink: 0; }
@@ -111,9 +160,9 @@
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-system-chip[data-tone="warning"] .team-manager-system-chip__icon { background: color-mix(in srgb, #f59e0b 15%, transparent); color: #f59e0b; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-system-chip__text { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-tag { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--product-accent, #3b82f6) 12%, transparent); color: var(--product-accent, #3b82f6); font-size: 11px; font-family: var(--font-mono, monospace); font-weight: 500; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-system-card { display: block; width: 100%; max-width: 100%; background: var(--product-surface-muted); border: 1px solid color-mix(in srgb, var(--product-border) 60%, transparent); border-radius: 8px; overflow: hidden; transition: border-color 140ms ease, box-shadow 140ms ease; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-system-card:hover { border-color: var(--product-border); }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-system-card[open] { background: var(--product-surface); border-color: var(--product-border); box-shadow: 0 2px 8px #00000008; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-system-card { display: block; width: 100%; max-width: 100%; background: transparent; border-block-end: 1px solid var(--product-border); transition: background-color 140ms ease; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-system-card:hover { background: var(--workbench-rail); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-system-card[open] { background: var(--workbench-rail); }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card[open] .team-manager-system-chip__text { white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; line-height: 1.5; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card__summary-text { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--product-text); word-break: break-word; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card__summary { display: flex; align-items: center; cursor: pointer; list-style: none; user-select: none; }
@@ -128,34 +177,38 @@
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card__param dd { margin: 0; font-size: 11px; font-family: var(--font-mono, monospace); color: var(--product-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-system-card__output { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--product-bg); border: 1px solid var(--product-border); font-size: 11px; font-family: var(--font-mono, monospace); line-height: 1.4; max-height: 140px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__bubble { max-width: 100%; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__bubble :is(p, .md-renderer, .md-list-item, .md-task-item) { font-size: 14px; line-height: 1.7; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event[data-actor="user"] .team-manager-event__bubble { padding: 8px 14px; border-radius: 14px; max-width: 88%; background: var(--product-surface-muted); }
+.conversation-author { display: flex; align-items: center; gap: .375rem; margin-block-end: .25rem; color: var(--product-accent-strong); font-size: var(--chat-meta); font-weight: 600; }
+.conversation-author svg { flex-shrink: 0; }
+.dark .conversation-author { color: var(--product-focus); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__bubble :is(.md-renderer, .project-understanding-reply) { gap: .625rem; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__bubble :is(p, .md-renderer, .md-list-item, .md-task-item) { font-size: var(--chat-body); line-height: 1.55; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event[data-actor="user"] .team-manager-event__bubble { padding: 8px 14px; border-radius: 10px 10px 3px 10px; max-width: 88%; background: var(--workbench-selection); }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event[data-actor="user"] .team-manager-event__bubble .md-renderer > :first-child { margin-top: 0; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event[data-actor="user"] .team-manager-event__bubble .md-renderer > :last-child { margin-bottom: 0; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__note { font-size: 12px; color: var(--product-text-muted); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px dashed var(--product-border); }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 11px; color: var(--product-text-muted); }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event[data-actor="user"] .team-manager-event__meta { justify-content: flex-end; }
-.product-shell--studio .work-workspace-shell[data-workspace] .conversation-message-time { font-size: 11px; color: var(--product-text-muted); opacity: .75; white-space: nowrap; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-message-time { font-size: var(--chat-meta); color: var(--product-text-muted); white-space: nowrap; }
 .product-shell--studio .work-workspace-shell[data-workspace] .conversation-message-details > summary { height: 24px; width: 28px; opacity: .45; }
 .product-shell--studio .work-workspace-shell[data-workspace] .conversation-message-details > summary:is(:hover, :focus-visible) { opacity: 1; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-event__meta > .conversation-message-details { position: relative; inset-inline-end: auto; bottom: auto; }
-.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-conversation-planning, .project-conversation-attention) { width: 100%; max-width: 760px; margin-inline: auto; font-size: 13px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-follow { position: sticky; top: 0; z-index: 20; width: 100%; max-width: 760px; margin-inline: auto; font-size: 12px; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: 8px; box-shadow: 0 4px 16px #0000000d; padding: 6px 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-conversation-planning, .project-conversation-attention) { font-size: var(--chat-control); }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-follow { position: sticky; top: 0; z-index: 20; font-size: var(--chat-control); background: var(--product-surface); border: 1px solid var(--product-border); border-radius: 8px; box-shadow: 0 4px 16px #0000000d; padding: 6px 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .assistant-pending-reply__status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--product-text-muted); }
 .product-shell--studio .work-workspace-shell[data-workspace] .assistant-pending-reply__timer { font-size: 11px; opacity: .75; }
 .product-shell--studio .work-workspace-shell[data-workspace] .assistant-pending-reply__long { font-size: 12px; color: var(--product-text-muted); margin-top: 4px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary { min-height: 30px; font-size: 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary { min-height: 36px; font-size: var(--chat-control); }
 .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary strong { font-weight: 500; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-welcome { max-width: 760px; padding: 24px 0; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-welcome h3 { font-size: 18px; font-weight: 500; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-welcome p { font-size: 14px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-dock { width: 100%; max-width: 760px; padding: 12px 0 0; margin-inline: auto; }
-.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor { border-radius: 14px; box-shadow: 0 2px 4px #00000004, 0 8px 24px #00000005; }
-.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor textarea { min-height: 52px; max-height: 180px; padding: 12px 14px 4px; font-size: 14px; resize: none; overflow-y: auto; }
-.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row { padding: 4px 10px 8px; gap: 8px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row .product-button { min-height: 30px; padding: 5px 8px; font-size: 12px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row [data-send-icon="true"] { width: 30px; height: 30px; border-radius: 8px; padding: 0; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-composer-modes button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-welcome { padding: clamp(1.5rem, 5dvh, 3rem) 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-welcome h3 { font-size: 1.25rem; font-weight: 600; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-welcome p { font-size: var(--chat-body); }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-manager-dock { padding: .5rem 0 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor { border-radius: 10px; background: var(--workbench-rail); box-shadow: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor textarea { min-height: 52px; max-height: 180px; padding: 12px 14px 4px; font-size: var(--chat-body); line-height: 1.55; resize: none; overflow-y: auto; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row { padding: 2px 10px 6px; gap: 8px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row .product-button { min-height: 36px; padding: 5px 8px; font-size: var(--chat-control); }
+.product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row [data-send-icon="true"] { width: 36px; height: 36px; border-radius: 8px; padding: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-composer-modes button { min-height: 36px; padding: 4px 8px; font-size: var(--chat-control); }
 .product-shell--studio .work-workspace-shell[data-workspace] .project-composer-modes button[aria-pressed="true"] { border-radius: 6px; font-weight: 400; }
 .product-shell--studio .work-workspace-shell[data-workspace] .conversation-tools .team-change-context > button,
 .product-shell--studio .work-workspace-shell[data-workspace] .team-change-context-help > summary { width: 28px; height: 28px; min-height: 28px; }
@@ -187,18 +240,18 @@
   .conversation-attachment-spinner { animation: attachment-spin 1s linear infinite; }
   @keyframes attachment-spin { to { transform: rotate(360deg); } }
 }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--execution { align-self: start; width: 300px; max-height: 100%; overflow-y: auto; border-radius: 12px; background: var(--product-bg); box-shadow: none; font-size: 13px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--execution { align-self: stretch; inline-size: 100%; max-height: 100%; overflow-y: auto; background: var(--workbench-rail); box-shadow: none; font-size: 13px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--execution .team-pane__header { min-height: 44px; padding: 10px 14px; border: 0; display: flex; align-items: center; gap: 8px; }
-.team-right-panel-tabs { display: flex; align-items: center; flex: 1; min-width: 0; background: var(--product-surface-muted); border-radius: 8px; padding: 2px; gap: 2px; }
-.team-right-panel-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 28px; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--product-text-muted); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background-color 140ms ease, color 140ms ease; }
+.work-workspace-shell .team-pane__header > .team-right-panel-tabs { display: flex; align-items: center; flex: 1; min-width: 0; border-block-end: 1px solid var(--product-border); gap: 8px; }
+.team-right-panel-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 28px; padding: 4px 6px; border: 0; border-block-end: 2px solid transparent; background: transparent; color: var(--product-text-muted); font-size: 12px; font-weight: 500; cursor: pointer; white-space: normal; text-align: center; transition: background-color 140ms ease, color 140ms ease; }
 .team-right-panel-tab:hover { color: var(--product-text); }
-.team-right-panel-tab.is-active, .team-right-panel-tab[aria-selected="true"] { background: var(--product-surface); color: var(--product-text); box-shadow: 0 1px 3px #0000000a; }
+.team-right-panel-tab.is-active, .team-right-panel-tab[aria-selected="true"] { border-block-end-color: var(--product-accent); color: var(--product-text); }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-execution-heading { display: flex; gap: 8px; align-items: baseline; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-execution-heading strong { font-size: 13px; font-weight: 500; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-actor-list { display: grid; flex: 0 0 auto; gap: 2px; padding: 0 6px 8px; overflow: visible; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-actor-list > li { padding: 0; border: 0; border-radius: 6px; background: transparent; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-actor-list > li { margin: 0 6px; padding: 0; border: 0; border-block-end: 1px solid var(--product-border); border-radius: 0; background: transparent; box-shadow: none; }
 .team-worker-summary { display: flex; width: 100%; align-items: flex-start; gap: 10px; padding: 10px 8px; text-align: start; background: transparent; border: 0; border-radius: 6px; color: var(--work-text); cursor: pointer; }
-.team-worker-summary:hover, .team-worker-summary[aria-expanded="true"] { background: var(--product-surface-muted); }
+.team-worker-summary:hover, .team-worker-summary[aria-expanded="true"] { background: var(--workbench-selection); }
 .team-worker-copy { display: grid; gap: 3px; min-width: 0; flex: 1; }
 .team-worker-identity { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .team-worker-identity strong { min-width: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 500; }
@@ -208,34 +261,41 @@
 .team-worker-dot[data-state="running"] { border-color: var(--product-accent-soft); border-top-color: var(--product-accent); border-right-color: var(--product-accent); }
 .team-worker-dot[data-state="completed"] { background: var(--work-text-muted); border: 3px solid var(--product-bg); outline: 1px solid var(--work-text-muted); }
 .team-worker-dot[data-state="blocked"] { background: #b94435; border-color: #b94435; }
-.team-worker-detail { flex-shrink: 0; margin: 0 14px 10px; padding-top: 8px; border-top: 1px solid var(--work-border); }
+.team-worker-detail { margin: 0 8px 8px 24px; padding-block-start: 8px; border-block-start: 1px solid var(--work-border); }
 .team-worker-detail[hidden] { display: none; }
-.team-worker-detail-heading { display: flex; align-items: center; justify-content: space-between; }
-.team-worker-detail-heading strong { font-size: 13px; font-weight: 500; }
-.team-worker-detail p { font-size: 12px; line-height: 1.6; margin: 6px 0; overflow-wrap: anywhere; }
-.team-worker-detail dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; font-size: 12px; margin: 12px 0; }
+.team-worker-detail dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; font-size: 12px; margin: 0 0 8px; }
 .team-worker-detail dt { color: var(--work-text-muted); }
 .team-worker-detail dd { margin: 0; overflow-wrap: anywhere; }
 .team-execution-context { padding: 10px 14px; font-size: 12px; border-top: 1px solid var(--work-border); }
 .team-execution-context > summary { color: var(--work-text-muted); cursor: pointer; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes { position: absolute; z-index: 20; inset: 0 0 0 auto; width: min(300px, 100%); grid-area: auto; border-radius: 12px; background: var(--product-surface); border: 1px solid var(--product-border); box-shadow: -8px 0 28px #0000000a; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes { position: absolute; z-index: 20; inset: 0 0 0 auto; width: min(var(--workbench-aside), 100%); grid-area: auto; border-radius: 12px; background: var(--product-surface); border: 1px solid var(--product-border); box-shadow: -8px 0 28px #0000000a; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .team-pane__header { min-height: 48px; padding: 10px 14px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes h2 { font-size: 13px; font-weight: 500; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane[hidden] { display: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-mobile-nav { display: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] :is(.team-worker-summary, .team-panel-close):focus-visible { outline: 2px solid var(--product-focus); outline-offset: -2px; }
 
+@media (min-width: 1200px) {
+  .product-shell--studio .work-workspace-shell[data-workspace] :is(.team-pane--execution, .team-pane--outcomes) {
+    border: 0;
+    border-inline-start: 1px solid var(--product-border);
+    border-radius: 0;
+    background: var(--workbench-rail);
+    box-shadow: none;
+  }
+}
+
 @media (max-width: 1199px) {
   .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace,
   .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed="true"] { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: 'center'; flex: 1 1 0; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--execution { position: absolute; z-index: 20; top: 0; right: 0; width: min(300px, 100%); max-height: calc(100% - var(--composer-height, 152px)); grid-area: auto; box-shadow: 0 8px 28px #0000000a; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--execution { position: absolute; z-index: 20; top: 0; right: 0; width: min(var(--workbench-aside), 100%); max-height: calc(100% - var(--composer-height, 152px)); grid-area: auto; box-shadow: 0 8px 28px #0000000a; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes { bottom: var(--composer-height, 152px); }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace:not(.team-workspace--composing) .team-pane--manager { flex: 1 1 0; height: auto; min-height: 0; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-mobile-nav { display: flex; position: static; z-index: auto; flex: 0 0 auto; align-items: center; gap: 4px; padding: 0 0 8px; margin: 0; border: 0; background: transparent; box-shadow: none; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-mobile-nav button { display: flex; align-items: center; gap: 6px; min-height: 30px; border: 0; border-radius: 6px; padding: 5px 8px; font-size: 12px; color: var(--work-text-muted); background: transparent; cursor: pointer; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-mobile-nav button[aria-pressed="true"] { background: var(--product-surface-muted); color: var(--work-text); }
   .product-shell--studio .work-workspace-shell[data-workspace] .studio-work-toolbar__actions > button { display: none; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding-right: 100px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding-inline-end: 100px; }
 }
 @media (max-width: 767px) {
   .product-shell.product-shell--studio { display: grid; grid-template-columns: 48px minmax(0, 1fr); }
@@ -245,18 +305,20 @@
   .product-shell--studio .studio-sidebar { padding-block: max(12px, env(safe-area-inset-top)) 12px; }
   .product-shell--studio .studio-topbar { height: 44px; padding-inline: 12px; gap: 8px; font-size: 12px; }
   .product-shell--studio .studio-topbar__label { display: none; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { height: calc(100dvh - 44px); padding: 10px 12px max(12px, env(safe-area-inset-bottom)); }
-  .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding: 0 0 8px; gap: 4px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { --workbench-inset: .75rem; height: calc(100dvh - 44px); padding-block-end: max(12px, env(safe-area-inset-bottom)); }
+  .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding: 8px var(--workbench-inset); gap: 4px; }
   .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity { flex-basis: 100%; max-width: 100%; padding-right: 90px; }
   .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__state { flex-basis: 100%; }
   .product-shell--studio .work-workspace-shell[data-workspace] .studio-work-toolbar { top: 10px; right: 8px; }
   .product-shell--studio .work-workspace-shell[data-workspace] .studio-project-tools > summary { min-height: 28px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace-center { padding-inline: 0; }
   .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-toolbar { gap: 4px; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-scope { flex-wrap: wrap; gap: 0 4px; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-timeline { padding-inline: 0; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-conversation { scrollbar-gutter: auto; }
+  .project-conversation-toolbar button { min-block-size: 2.5rem; }
+  .project-conversation-toolbar .project-assistant-settings { inline-size: 2.5rem; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-dock { padding: 8px 0 0; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor textarea { font-size: 1rem; }
   .product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row { flex-wrap: nowrap; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor textarea { font-size: 16px; }
   .product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row [data-send-icon="true"] { flex-shrink: 0; }
   .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary { flex-wrap: wrap; }
 }

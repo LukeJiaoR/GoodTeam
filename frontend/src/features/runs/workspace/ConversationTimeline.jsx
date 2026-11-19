@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 接收对话记录、系统事件和来源证据。
+ * [OUTPUT]: 提供消息行和工作台头像。
+ * [POS]: 区分助手回复、用户消息和系统事件。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import {
   AlertCircle,
   AlertTriangle,
@@ -197,7 +203,9 @@ function TimelineItem({ item, language, t, continuationNoticeId }) {
   return (
     <li data-reading-id={timelineReadingId(item)} tabIndex={-1} className="team-manager-event" data-actor={item.actor} data-kind={item.kind} data-delivery={item.delivery_status}>
       <div className="team-manager-event__bubble">
-        <strong className="sr-only">{actorLabel}</strong>
+        {item.actor === 'user' ? <strong className="sr-only">{actorLabel}</strong> : (
+          <div className="conversation-author"><Bot size={14} aria-hidden="true" /><strong>{actorLabel}</strong></div>
+        )}
         <AttachmentList files={item.attachments} t={t} />
         {hasDoubleContent ? (
           <div className="team-manager-event__note">{copy}</div>

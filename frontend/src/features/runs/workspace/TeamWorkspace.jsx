@@ -1,7 +1,13 @@
+/**
+ * [INPUT]: 接收项目对话、Worker 状态和交付记录。
+ * [OUTPUT]: 提供 TeamWorkspace 工作台和任务详情入口。
+ * [POS]: 组织工作台视图，并把 Worker 详情绑定到对应成员行。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import ProjectConversation from './ProjectConversation';
 import { TeamAvatar } from './ConversationTimeline';
 import { TaskAttention, TaskRunControls } from './TaskAttention';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   ChevronRight,
   FileCheck2,
@@ -57,7 +63,7 @@ function executionStatusReason(actor, t) {
 
 function ExecutionPane({ actors, blocker, controls, context, onInspectAttempt, onClose, onSwitchToOutcomes, outcomesCount, reducedMotion, sectionProps, t }) {
   const [selectedId, setSelectedId] = useState('');
-  const selected = actors.find(actor => actor.id === selectedId);
+  const workerListId = useId();
   return <section className="team-pane team-pane--execution" aria-label={t('work.team.workerStatus')} {...sectionProps}>
     <header className="team-pane__header">
       {onSwitchToOutcomes ? (
@@ -75,31 +81,35 @@ function ExecutionPane({ actors, blocker, controls, context, onInspectAttempt, o
       {onClose ? <button type="button" className="team-panel-close" aria-label={t('work.navigation.closePanel')} onClick={onClose}><X size={15} /></button> : null}
     </header>
     {blocker}
-    {actors.length ? <ol className="team-actor-list">{actors.map(actor => {
+    {actors.length ? <ol className="team-actor-list">{actors.map((actor, index) => {
       const role = translated(t, `work.plan.role.${actor.role}`, actor.role);
       const reason = executionStatusReason(actor, t);
+      const status = statusText(actor.state, t);
+      const expanded = selectedId === actor.id;
+      const detailId = `${workerListId}-worker-${index}`;
       return <li key={actor.id} data-state={actor.state}>
-        <button type="button" className="team-worker-summary" aria-expanded={selectedId === actor.id} aria-controls="team-worker-detail" onClick={() => setSelectedId(selectedId === actor.id ? '' : actor.id)}>
+        <button type="button" className="team-worker-summary" aria-expanded={expanded} aria-controls={detailId}
+          onClick={() => setSelectedId(expanded ? '' : actor.id)}>
           <span className="team-worker-dot" data-state={actor.state} data-motion={reducedMotion ? 'static' : 'ambient'} aria-hidden="true" />
-          <span className="team-worker-copy"><span className="team-worker-identity"><strong>{role}</strong><span>{statusText(actor.state, t)}</span></span>
+          <span className="team-worker-copy">
+            <span className="team-worker-identity"><strong>{role}</strong><span>{status}</span></span>
             <span className="team-worker-task" title={actor.responsibility}>{actor.responsibility || t('work.team.noResponsibility')}</span>
             {reason ? <span className="team-worker-reason">{reason}</span> : null}
           </span>
         </button>
+        <div id={detailId} className="team-worker-detail" hidden={!expanded}>
+          {expanded ? <>
+            <dl>
+              <dt>{t('work.navigation.assignment')}</dt><dd>{actor.task_id || actor.id}</dd>
+              {actor.dependency_task_title ? <><dt>{t('work.navigation.waitingFor')}</dt><dd>{actor.dependency_task_title}</dd></> : null}
+            </dl>
+            {onInspectAttempt && actor.current_attempt_id ? <button type="button" className="team-attempt-inspect" onClick={() => onInspectAttempt(actor)}>
+              {t('work.attempt.inspect')}<ChevronRight size={14} aria-hidden="true" />
+            </button> : null}
+          </> : null}
+        </div>
       </li>;
     })}</ol> : <p className="team-pane__empty">{t('work.team.executionEmpty')}</p>}
-    <section id="team-worker-detail" className="team-worker-detail" hidden={!selected}>
-      {selected ? <>
-        <div className="team-worker-detail-heading"><strong>{translated(t, `work.plan.role.${selected.role}`, selected.role)}</strong><button type="button" className="team-panel-close" aria-label={t('work.navigation.closeWorker')} onClick={() => setSelectedId('')}><X size={14} /></button></div>
-        <p>{selected.responsibility || t('work.team.noResponsibility')}</p>
-        <dl><dt>{t('work.navigation.state')}</dt><dd>{statusText(selected.state, t)}</dd>
-          <dt>{t('work.navigation.assignment')}</dt><dd>{selected.task_id || selected.id}</dd>
-          {selected.dependency_task_title ? <><dt>{t('work.navigation.waitingFor')}</dt><dd>{selected.dependency_task_title}</dd></> : null}
-        </dl>
-        {executionStatusReason(selected, t) ? <p className="team-worker-reason">{executionStatusReason(selected, t)}</p> : null}
-        {onInspectAttempt && selected.current_attempt_id ? <button type="button" className="team-attempt-inspect" onClick={() => onInspectAttempt(selected)}>{t('work.attempt.inspect')}<ChevronRight size={14} aria-hidden="true" /></button> : null}
-      </> : null}
-    </section>
     {controls}
     {context ? <details className="team-execution-context"><summary>{t('work.navigation.executionContext')}</summary>{context}</details> : null}
   </section>;

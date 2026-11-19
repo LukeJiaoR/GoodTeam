@@ -28,6 +28,39 @@ test('project import waits for the user and research uses ordinary task intake',
   expect(automaticWork).toEqual([`/api/projects/${fixture.key}/task-assistant/messages`]);
 });
 
+test('the workbench keeps worker detail next to its owner at desktop and phone widths', async ({ page, fixture }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await importProject(page, fixture);
+  await page.route('**/api/state?*', async route => {
+    const response = await route.fetch();
+    const json = await response.json();
+    json.team_workspace.execution_actors = [
+      { id: 'worker-one', state: 'waiting', role: 'implementation', task_id: 'TASK-1' },
+      { id: 'worker-two', state: 'waiting', role: 'qa', task_id: 'TASK-2' },
+    ];
+    await route.fulfill({ response, json });
+  });
+  await page.reload();
+  const manager = page.getByRole('region', { name: 'Task Assistant', exact: true });
+  await expect(manager.locator('.conversation-author').first()).toHaveText('Task Assistant');
+  const title = await manager.getByRole('heading', { name: 'Project conversation' }).boundingBox();
+  const composer = manager.getByRole('textbox', { name: 'Message', exact: true });
+  const before = await composer.boundingBox();
+  expect((await manager.locator('.conversation-editor').boundingBox()).x).toBeCloseTo(title.x, 0);
+  await expect(composer).toHaveCSS('font-size', '14px');
+  const worker = page.locator('.team-worker-summary').first();
+  await worker.click();
+  await expect(worker.locator('xpath=following-sibling::*[1]')).toHaveText(/TASK-1/);
+  expect(await composer.boundingBox()).toEqual(before);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#team-tab-execution').click();
+  await expect(composer).toHaveCSS('font-size', '16px');
+  if (await worker.getAttribute('aria-expanded') !== 'true') await worker.click();
+  await worker.press('Enter');
+  await expect(worker).toHaveAttribute('aria-expanded', 'false');
+});
+
 test('project Manager keeps chatting across tasks and saves future work without assigning it to itself', async ({ page, fixture }, testInfo) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const evidence = [];
@@ -43,14 +76,15 @@ test('project Manager keeps chatting across tasks and saves future work without 
   await page.getByRole('button', { name: 'Hide delivery panel', exact: true }).click();
   const dock = manager.locator('.team-manager-dock');
   const beforeDetails = await dock.boundingBox();
-  expect(beforeDetails.width).toBe(760);
+  expect(beforeDetails.width).toBe(832);
   expect(await page.locator('.studio-sidebar').evaluate(node => node.getBoundingClientRect().width)).toBe(256);
   expect(await manager.locator('textarea').evaluate(node => getComputedStyle(node).fontSize)).toBe('14px');
-  expect(await page.locator('.team-pane--execution').evaluate(node => node.getBoundingClientRect().width)).toBe(300);
+  expect(await page.locator('.team-pane--execution').evaluate(node => node.getBoundingClientRect().width)).toBe(256);
   const userBubble = manager.locator('.team-manager-event[data-actor="user"] .team-manager-event__bubble').first();
   const assistantBubble = manager.locator('.team-manager-event:not([data-actor="user"]):not(.team-manager-event--system) .team-manager-event__bubble').first();
   const chat = await manager.locator('.team-manager-timeline').boundingBox();
   const userMessage = await userBubble.boundingBox();
+  await expect(assistantBubble.locator('.conversation-author')).toHaveText('Task Assistant');
   const assistantMessage = await assistantBubble.boundingBox();
   expect(userMessage.x + userMessage.width).toBeCloseTo(chat.x + chat.width, 0);
   expect(assistantMessage.x).toBeCloseTo(chat.x, 0);
@@ -59,7 +93,9 @@ test('project Manager keeps chatting across tasks and saves future work without 
   const worker = page.locator('.team-worker-summary').first();
   await worker.click();
   await expect(worker).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.locator('#team-worker-detail')).toBeVisible();
+  const workerDetail = worker.locator('xpath=following-sibling::*[1]');
+  await expect(workerDetail).toHaveAttribute('id', await worker.getAttribute('aria-controls'));
+  await expect(workerDetail).toBeVisible();
   expect(await dock.boundingBox()).toEqual(beforeDetails);
   await testInfo.attach('workbench-worker-detail-1920x1080', { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' });
   await manager.getByRole('button', { name: 'New task', exact: true }).click();
@@ -133,11 +169,10 @@ test('project Manager keeps chatting across tasks and saves future work without 
   await page.locator('#team-tab-execution').click();
   const narrowWorker = page.locator('.team-worker-summary').first();
   if (await narrowWorker.getAttribute('aria-expanded') !== 'true') await narrowWorker.click();
-  expect(await page.locator('#team-panel-execution').evaluate(panel => {
-    const list = panel.querySelector('.team-actor-list').getBoundingClientRect();
-    const detail = panel.querySelector('#team-worker-detail').getBoundingClientRect();
-    return list.bottom <= detail.top && panel.scrollHeight > panel.clientHeight;
-  })).toBe(true);
+  await expect(narrowWorker.locator('xpath=following-sibling::*[1]')).toBeVisible();
+  await narrowWorker.press('Enter');
+  await expect(narrowWorker).toHaveAttribute('aria-expanded', 'false');
   await expect(composer).toBeVisible();
+  await narrowWorker.click();
   await testInfo.attach('project-manager-narrow', { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' });
 });
