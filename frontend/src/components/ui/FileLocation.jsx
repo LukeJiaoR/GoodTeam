@@ -1,7 +1,11 @@
 import { useRef, useState } from 'react';
 import { Check, ChevronDown, Copy, FolderOpen } from 'lucide-react';
-import { fileName } from '../../lib/presentation/filePresentation';
 import './fileLocation.css';
+
+function fileName(path) {
+  if (typeof path !== 'string') return '';
+  return path.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || path;
+}
 
 export default function FileLocation({ path, label, t }) {
   const detailsRef = useRef(null);
