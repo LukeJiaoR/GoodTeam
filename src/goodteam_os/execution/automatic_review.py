@@ -28,12 +28,14 @@ from .task_snapshot import TaskInputError, canonical_bytes, digest
 
 SCHEMA = "automatic_candidate_review.v1"
 MACHINE_SCHEMA = "candidate_machine_review.v1"
-POLICY = "candidate_review_policy.v1"
-PLAN_POLICY = "candidate_review_policy.v2"
+LEGACY_POLICY = "candidate_review_policy.v1"
+LEGACY_PLAN_POLICY = "candidate_review_policy.v2"
+POLICY = "candidate_review_policy.v3"
 
 
-def review_policy(snapshot, approved_plan=None):
-    policy = {"schema_version": POLICY, "protocol": REVIEW_PROTOCOL,
+def review_policy(snapshot, approved_plan=None, *, legacy=False):
+    version = (LEGACY_PLAN_POLICY if approved_plan is not None else LEGACY_POLICY) if legacy else POLICY
+    policy = {"schema_version": version, "protocol": REVIEW_PROTOCOL,
             "criterion_ids": [f"criterion:{snapshot.payload_digest}:{i}"
                               for i in range(len(snapshot.task.task_contract.acceptance_criteria))],
             "blocking_severities": ["critical", "high", "medium", "low"],
@@ -43,7 +45,7 @@ def review_policy(snapshot, approved_plan=None):
         # This is coverage of semantic judgments, not a keyword check or a new
         # approval gate. The report retains each judgment's rationale/evidence.
         binding_id = approved_plan["binding_id"]
-        policy.update(schema_version=PLAN_POLICY, approved_plan_binding_id=binding_id,
+        policy.update(approved_plan_binding_id=binding_id,
             plan_checks=[
                 {"name": f"{binding_id}:artifact:{item['artifact_key']}",
                  "artifact_key": item["artifact_key"], "artifact_version": item["artifact_version"]}
@@ -61,10 +63,21 @@ def policy_decision(policy, result, report):
     if status == "failed" or findings:
         feedback = "; ".join(f"{row['title']}: {row['recommendation']}" for row in findings)
         return "request_changes", ("Host check failed. " if status == "failed" else "") + feedback[:3500]
-    checks = report["checks"]
-    required = policy["criterion_ids"] + [row["name"] for row in policy.get("plan_checks", [])]
-    if (not policy["criterion_ids"] or any(sum(row["name"] == name for row in checks) != 1 for name in required)
-            or any(row["status"] != "checked" or not row["evidence_ids"] for row in checks)):
+    required = set(policy["criterion_ids"])
+    if not required:
+        return "inconclusive", "candidate_review_coverage_incomplete"
+    required.update(row["name"] for row in policy.get("plan_checks", []))
+    legacy = policy["schema_version"] in (LEGACY_POLICY, LEGACY_PLAN_POLICY)
+    seen = set()
+    for row in report["checks"]:
+        name = row["name"]
+        if name not in required and not legacy:
+            continue
+        if (name in seen or row["status"] != "checked" or not row["evidence_ids"]):
+            return "inconclusive", "candidate_review_coverage_incomplete"
+        if name in required:
+            seen.add(name)
+    if seen != required:
         return "inconclusive", "candidate_review_coverage_incomplete"
     return "approve", "candidate_review_policy_satisfied"
 
@@ -83,12 +96,14 @@ class AutomaticCandidateReviewService:
         from .approved_plan import binding_for
 
         binding = binding_for(self.project_root, snapshot)
-        expected = review_policy(snapshot, binding)
-        if binding is not None and saved is not None and saved.get("policy") == review_policy(snapshot):
+        frozen = saved.get("policy") if saved is not None else None
+        if binding is not None and frozen == review_policy(snapshot, legacy=True):
             # Never rewrite an in-flight immutable request or reinterpret an old
             # report as having covered a requirement it was not asked to cover.
             raise TaskInputError("automatic_review_plan_coverage_upgrade_required")
-        return expected
+        # Older decisions must still verify against the policy that issued them.
+        legacy = review_policy(snapshot, binding, legacy=True)
+        return legacy if frozen == legacy else review_policy(snapshot, binding)
 
     def configuration(self, execution_id):
         """Read the frozen start, including incomplete-start recovery; never admit work."""
@@ -113,7 +128,7 @@ class AutomaticCandidateReviewService:
 
         binding = binding_for(self.project_root, snapshot)
         return {"schema_version": SCHEMA, "original": snapshot.to_dict(), "start": start,
-                "policy": review_policy(snapshot, binding), **({"approved_plan": binding} if binding is not None else {})}
+                "policy": start["policy"], **({"approved_plan": binding} if binding is not None else {})}
 
     def _capture(self, snapshot, start):
         scope = registered_project_scope(self.project_root)

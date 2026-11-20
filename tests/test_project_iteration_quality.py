@@ -113,7 +113,9 @@ if mode == 'review':
                 'findings': findings, 'evidence': evidence,
                 'checks': [{'name': criterion, 'status': 'checked', 'evidence_ids': ['E0', 'E1'],
                             'detail': 'Compared both exact candidate files to the two assigned requirements.'}
-                           for criterion in criteria]})
+                           for criterion in criteria] + [{
+                               'name': 'Full host command independently executed', 'status': 'not_run',
+                               'evidence_ids': [], 'detail': 'Relied on the exact-candidate host check receipt.'}]})
 elif '--output-last-message' in sys.argv:
     name = re.search(r'TASK_FILE=(unit-[ab]\.txt)', prompt).group(1)
     assert Path(sys.argv[sys.argv.index('--cd') + 1]) == Path.cwd()
