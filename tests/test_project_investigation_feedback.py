@@ -61,7 +61,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
 
     class Session:
         def __init__(self, *_):
-            pass
+            self.path = tmp_path / "task-assistant-session.json"
 
         def read(self):
             return deepcopy(state)
@@ -87,7 +87,8 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
         def list_tasks(self):
             return deepcopy(rows)
 
-        def create_task_once(self, *, creation_ref, intent):
+        def create_task_once(self, *, creation_ref, intent, authorized_roles=None):
+            assert authorized_roles is None or intent["role"] in authorized_roles
             previous = next((row for row in rows if creation_ref in row.get("external_refs", [])), None)
             if previous:
                 assert all(previous[key] == val for key, val in intent.items())
@@ -105,10 +106,7 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
         monkeypatch.setattr(module, "authority_snapshot", lambda *_: deepcopy(authority))
     from contextlib import nullcontext
     monkeypatch.setattr(continuation, "goal_guard", lambda *_: nullcontext())
-    monkeypatch.setattr(continuation, "active_project_run", lambda *_: None)
-    monkeypatch.setattr(continuation, "require_no_active_project_goal", lambda *_: None)
     monkeypatch.setattr(workflow_recovery, "linked_parent", lambda *_, **__: None)
-    monkeypatch.setattr(planner, "_require_planning_idle", lambda *_: None)
     monkeypatch.setattr(planner, "_project_evidence", lambda *_, **__: {"status": "unavailable"})
     monkeypatch.setattr(discovery, "_head", lambda *_: head)
     monkeypatch.setattr(continuation, "_require_clean_checkout", lambda *_: None)
@@ -577,12 +575,8 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
     rows.append({**deepcopy(seed), "id": "OTHER-1", "title": "Unrelated backlog change", "status": "todo"})
     outcome["project_head"] = "f" * 40
     result.write_text("The earlier research has newer contextual observations.")
-    def planning_busy(*_):
-        raise AssertionError("Answer recording must not demand an idle project")
-    with monkeypatch.context() as answer_patch:
-        answer_patch.setattr(planner, "_require_planning_idle", planning_busy)
-        answer(identifier)
-        answer(second_identifier, text="The internal API support team owns the contract.", message_id="second-answer")
+    answer(identifier)
+    answer(second_identifier, text="The internal API support team owns the contract.", message_id="second-answer")
     assert len(calls) == len(starts) == 2
     answers = human_feedback(state["project_continuation"])
     assert len(answers) == 2 and answers[0]["question"] == question

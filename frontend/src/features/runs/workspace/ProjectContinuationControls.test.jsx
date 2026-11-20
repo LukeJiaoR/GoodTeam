@@ -11,7 +11,7 @@ it('binds explicit scoped continuation and reviewed landed delivery to visible e
   fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
   fireEvent.click(start);
   const initial = action.mock.calls[0][0];
-  expect(initial).toMatchObject({ action: 'start_project_continuation', task_ids: ['APP-1'], max_batches: 3,
+  expect(initial).toMatchObject({ action: 'start_project_continuation', task_ids: ['APP-1'], max_batches: null,
     confirmed: true, billing_acknowledged: true });
   expect(initial).not.toHaveProperty('discovery');
   const batch = { run_id: `task-batch-${'a'.repeat(64)}`, status: 'review', task_ids: ['APP-1'],
@@ -65,6 +65,7 @@ it('opts into bounded outcome discovery with exact consent and shows the observe
   fireEvent.change(screen.getByLabelText(/Allowed project paths/), { target: { value: 'src/import/\ntests/import' } });
   fireEvent.change(screen.getByLabelText(/Maximum new tasks/), { target: { value: '2' } });
   fireEvent.change(screen.getByLabelText(/Total Manager calls/), { target: { value: '5' } });
+  fireEvent.change(screen.getByLabelText('Maximum batches'), { target: { value: '3' } });
   expect(consent).not.toBeChecked();
   fireEvent.click(consent);
   fireEvent.click(start);
@@ -252,7 +253,7 @@ it('requires fresh consent for optional running observations and bounded Worker 
   expect(action.mock.lastCall[0].idempotency_key).not.toBe(first.idempotency_key);
 });
 
-it('exposes optional Planner and feedback authority without upgrading an existing grant', () => {
+it('binds Team Role and feedback authority to fresh consent without upgrading existing grants', () => {
   const action = vi.fn();
   const props = { projectKey: 'APP', onAction: action, canStart: true,
     snapshot: { version: 'scope', candidates: [{ task_id: 'APP-1', title: 'Read-only seed', status: 'todo' }] } };
@@ -262,49 +263,39 @@ it('exposes optional Planner and feedback authority without upgrading an existin
   fireEvent.change(screen.getByLabelText(/Allowed project paths/), { target: { value: 'src' } });
   const start = screen.getByRole('button', { name: 'Authorize and start continuation' });
   const consent = screen.getByLabelText(/I confirm the initial tasks/);
-  const investigation = screen.getByLabelText('Allow Manager to delegate read-only investigation when needed');
-  const planner = screen.getByLabelText('Allow Manager to delegate Planner when needed');
-  const feedback = screen.getByLabelText('Allow decisions from known outcomes without a delivered result');
-  expect(investigation).not.toBeChecked();
-  expect(planner).not.toBeChecked();
-  expect(feedback).not.toBeChecked();
-  fireEvent.click(consent);
-  fireEvent.click(start);
-  const old = action.mock.lastCall[0];
-  for (const flag of ['allow_investigation', 'allow_planning', 'allow_undelivered_feedback', 'allow_initial_readonly_feedback']) {
-    expect(old.discovery).not.toHaveProperty(flag);
-  }
-  for (const toggle of [investigation, planner, feedback]) {
-    fireEvent.click(toggle);
-    expect(consent).not.toBeChecked();
-    expect(start).toBeDisabled();
-    fireEvent.click(consent);
-  }
-  fireEvent.click(screen.getByLabelText('Allow initial read-only task outcomes before the first engineering delivery'));
-  expect(consent).not.toBeChecked();
+  const feedback = screen.getByLabelText(/Allow decisions from known undelivered outcomes/);
+  const initialFeedback = () => screen.getByLabelText('Allow initial read-only task outcomes before the first engineering delivery');
+  expect(feedback).toBeChecked();
+  expect(initialFeedback()).toBeChecked();
   fireEvent.click(consent);
   fireEvent.click(start);
   const enabled = action.mock.lastCall[0];
-  expect(enabled.discovery).toMatchObject({ allow_investigation: true, allow_planning: true,
-    allow_undelivered_feedback: true, allow_initial_readonly_feedback: true });
-  expect(enabled.idempotency_key).not.toBe(old.idempotency_key);
+  expect(enabled.discovery).toMatchObject({ allow_team_roles: true, allow_undelivered_feedback: true,
+    allow_candidate_handoff: true, allow_initial_readonly_feedback: true });
+  expect(enabled.discovery).not.toHaveProperty('allow_investigation');
+  expect(enabled.discovery).not.toHaveProperty('allow_planning');
   fireEvent.click(start);
   expect(action.mock.lastCall[0]).toEqual(enabled);
   fireEvent.click(feedback);
   expect(consent).not.toBeChecked();
+  expect(start).toBeDisabled();
   fireEvent.click(consent);
   fireEvent.click(start);
-  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_initial_readonly_feedback');
-  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_undelivered_feedback');
+  const narrowed = action.mock.lastCall[0];
+  expect(narrowed.idempotency_key).not.toBe(enabled.idempotency_key);
+  for (const flag of ['allow_undelivered_feedback', 'allow_candidate_handoff', 'allow_initial_readonly_feedback']) {
+    expect(narrowed.discovery).not.toHaveProperty(flag);
+  }
   fireEvent.click(feedback);
-  expect(screen.getByLabelText('Allow initial read-only task outcomes before the first engineering delivery')).not.toBeChecked();
+  expect(initialFeedback()).not.toBeChecked();
   view.rerender(<ProjectContinuationControls {...props} session={{ project_continuation: {
-    id: 'old', status: 'active', discovery: old.discovery } }} />);
-  expect(screen.getByText('Planner delegation: Not allowed')).toBeInTheDocument();
-  expect(screen.queryByLabelText('Allow Manager to delegate Planner when needed')).not.toBeInTheDocument();
+    id: 'old', status: 'active', discovery: { objective: 'Legacy grant', allowed_write_domains: ['src'], allow_planning: true } } }} />);
+  expect(screen.getByText('Planner delegation: Allowed')).toBeInTheDocument();
+  expect(screen.getByText('Read-only investigation: Not allowed')).toBeInTheDocument();
+  expect(screen.queryByText('Enabled Team Roles as needed: Allowed')).not.toBeInTheDocument();
   view.rerender(<ProjectContinuationControls {...props} session={{ project_continuation: {
     id: 'new', status: 'active', discovery: enabled.discovery } }} />);
-  expect(screen.getByText('Planner delegation: Allowed')).toBeInTheDocument();
+  expect(screen.getByText('Enabled Team Roles as needed: Allowed')).toBeInTheDocument();
   expect(screen.getByText('Initial read-only continuation: Allowed')).toBeInTheDocument();
 });
 
@@ -317,11 +308,10 @@ it('exposes optional Planner and feedback authority without upgrading an existin
   fireEvent.click(screen.getByLabelText('Discover follow-up tasks within an explicit scope'));
   fireEvent.change(screen.getByLabelText(/Project objective/), {target: {value: 'Clarify the audience within the approved documentation scope.'}});
   fireEvent.change(screen.getByLabelText(/Allowed project paths/), {target: {value: 'docs'}});
-  expect(screen.getByText(/I confirm the initial tasks/)).toHaveTextContent('current task facts');
+  expect(start).toBeDisabled();
   fireEvent.click(screen.getByLabelText(/I confirm the initial tasks/));
   fireEvent.click(start);
   expect(action).toHaveBeenCalledOnce();
-  expect(action.mock.lastCall[0]).toMatchObject({task_ids: ['APP-1'], discovery: {allow_backlog_judgment: true}});
-  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_investigation');
-  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_planning');
+  expect(action.mock.lastCall[0]).toMatchObject({task_ids: ['APP-1'],
+    discovery: {allow_backlog_judgment: true, allow_team_roles: true}});
 });
