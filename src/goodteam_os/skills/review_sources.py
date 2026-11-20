@@ -29,13 +29,28 @@ MAX_SOURCE_BYTES = 768 * 1024
 _OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 
 
+def review_evidence_paths(paths):
+    if not isinstance(paths, list) or len(paths) > 8:
+        raise SkillError("review_target_invalid", "Select at most eight exact Git evidence paths.")
+    selected = [resource_path(path) for path in paths]
+    if len(set(selected)) != len(selected) or any(
+            any(part.casefold() == ".git" for part in path.split("/")) for path in selected):
+        raise SkillError("review_target_invalid", "Evidence paths must be unique Git files.")
+    return sorted(selected)
+
+
 def source_request(value):
-    if (not isinstance(value, dict) or set(value) != {"kind", "base_sha", "head_sha"}
+    if (not isinstance(value, dict) or set(value) - {"evidence_paths"} != {"kind", "base_sha", "head_sha"}
             or value.get("kind") != "git_change"
             or any(not isinstance(value[k], str) or _OID.fullmatch(value[k]) is None for k in ("base_sha", "head_sha"))
             or len(value["base_sha"]) != len(value["head_sha"])):
         raise SkillError("review_target_invalid", "Git review requires two full commit IDs, not refs, URLs or directories.")
-    return deepcopy(value)
+    result = deepcopy(value)
+    if "evidence_paths" in result:
+        result["evidence_paths"] = review_evidence_paths(result["evidence_paths"])
+        if not result["evidence_paths"]:
+            raise SkillError("review_target_invalid", "Evidence paths cannot be empty when supplied.")
+    return result
 
 
 def _encoded(value):
@@ -118,7 +133,7 @@ def capture_git_sources(root, request):
         raise SkillError("review_source_empty", "The requested commits have no supported complete change to review.")
     if (len(parts) - 1) // 2 > MAX_FILES:
         raise SkillError("review_source_limit", "The complete change has too many files; none was silently omitted.")
-    entries, sources = [], {}
+    changes = []
     for index in range(0, len(parts) - 1, 2):
         header = parts[index].decode("ascii").split()
         if len(header) != 5 or not header[0].startswith(":") or header[4] not in {"A", "D", "M", "T"}:
@@ -129,6 +144,23 @@ def capture_git_sources(root, request):
             raise SkillError("review_source_unsupported", "This change contains an unsupported source filename.") from exc
         if any(part.casefold() == ".git" for part in path.split("/")):
             raise SkillError("review_source_unsupported", "Git administrative paths cannot enter a Runtime source projection.")
+        changes.append((path, header))
+    changed_paths = {path for path, _header in changes}
+    width = len(selected["head_sha"])
+    for path in selected.get("evidence_paths", []):
+        if path in changed_paths:
+            continue
+        raw_entry = git.read("ls-tree", "--full-tree", "-z", selected["head_sha"], "--", ":(literal)" + path,
+                             maximum=8192)
+        fields, _, name = raw_entry.partition(b"\t")
+        tokens = fields.decode("ascii").split()
+        if name != path.encode("utf-8") + b"\0" or len(tokens) != 3 or tokens[1] != "blob":
+            raise SkillError("review_source_unsupported", "An evidence path is not an exact tracked candidate file.")
+        changes.append((path, [":000000", tokens[0], "0" * width, tokens[2], "E"]))
+    if len(changes) > MAX_FILES:
+        raise SkillError("review_source_limit", "The change and its evidence exceed the file budget.")
+    entries, sources = [], {}
+    for path, header in changes:
         entry = {"path": path, "change": header[4]}
         for side, mode, oid in (("base", header[0][1:], header[2]), ("head", header[1], header[3])):
             if mode == "000000" and oid == "0" * len(selected["head_sha"]):
@@ -167,16 +199,18 @@ def validate_git_sources(payload, request):
             or not isinstance(payload["sources"], dict) or len(_encoded(payload)) > MAX_SOURCE_BYTES):
         raise SkillError("review_source_invalid", "The captured source identity or budget is invalid.")
     paths, names = set(), set()
+    evidence = set(selected.get("evidence_paths", []))
     try:
         for entry in payload["files"]:
-            if set(entry) != {"path", "change", "base", "head"} or entry["change"] not in {"A", "D", "M"}:
+            if set(entry) != {"path", "change", "base", "head"} or entry["change"] not in {"A", "D", "M", "E"}:
                 raise ValueError("Invalid entry")
             path = resource_path(entry["path"])
             if path in paths or any(part.casefold() == ".git" for part in path.split("/")):
                 raise ValueError("Duplicate source")
             paths.add(path)
             if ((entry["change"] == "A" and (entry["base"] is not None or entry["head"] is None))
-                    or (entry["change"] == "D" and (entry["head"] is not None or entry["base"] is None))
+                    or (entry["change"] == "E" and (path not in evidence or entry["base"] is not None or entry["head"] is None))
+                    or (entry["change"] == "D" and (path in evidence or entry["head"] is not None or entry["base"] is None))
                     or (entry["change"] == "M" and (entry["base"] is None or entry["head"] is None))):
                 raise ValueError("Invalid sides")
             for side in ("base", "head"):
@@ -193,7 +227,7 @@ def validate_git_sources(payload, request):
                         or value["size"] != len(data) or value["digest"] != content_digest(data)):
                     raise ValueError("Changed source bytes")
                 names.add(name)
-        if set(payload["sources"]) != names:
+        if set(payload["sources"]) != names or not evidence <= paths or not any(row["change"] != "E" for row in payload["files"]):
             raise ValueError("Missing or unrelated source")
     except (ValueError, TypeError, KeyError, AttributeError, UnicodeError) as exc:
         raise SkillError("review_source_invalid", "Captured source bytes or manifest are incomplete or changed.") from exc
@@ -208,5 +242,6 @@ def captured_git_target(snapshot):
     target = {"kind": "git_change", "artifact_key": "git-change", "artifact_version": content_digest(_encoded(payload)),
               "base_sha": request["base_sha"], "head_sha": request["head_sha"],
               "display_name": request["base_sha"][:12] + " → " + request["head_sha"][:12],
-              "files": payload["files"], "source_scope": "all_changed_files_both_sides"}
+              "files": payload["files"], "source_scope": ("all_changed_files_both_sides_and_candidate_evidence"
+                                                           if request.get("evidence_paths") else "all_changed_files_both_sides")}
     return target, payload["sources"]

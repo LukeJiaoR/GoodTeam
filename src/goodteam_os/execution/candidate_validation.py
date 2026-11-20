@@ -15,7 +15,7 @@ import shutil
 from goodteam_os.memory_storage import atomic_write, read_bytes, role_lock
 
 from .candidate_probe import probe_candidate
-from .candidate_process import MAX_SECONDS, now, run_explicit_command
+from .candidate_process import MAX_REVIEW_OUTPUT_BYTES, MAX_SECONDS, now, run_explicit_command
 from .task_snapshot import TaskInputError, canonical_bytes, digest, execution_key
 from .task_snapshot_store import store_for_project
 
@@ -123,7 +123,11 @@ class CandidateValidationService:
                    "criteria": contract["criteria"], "seconds": seconds, "producer": "explicit_operator_cli"}
         if snapshot.task.source_type == "project_task_batch":
             from goodteam_os.project_iteration_quality import batch_quality_binding
-            request["batch_source"] = batch_quality_binding(self.project_root, snapshot)["receipt_id"]
+            binding = batch_quality_binding(self.project_root, snapshot)
+            request["batch_source"] = binding["receipt_id"]
+            review_paths = binding["configuration"].get("review_evidence_paths")
+            if review_paths:
+                request["review_evidence_paths"] = review_paths
             request["producer"] = "confirmed_project_batch_quality"
         if correction_worker:
             request["correction_worker"] = correction_worker
@@ -169,7 +173,9 @@ class CandidateValidationService:
             CorrectionLoopService(self.project_root).admit_validation(snapshot, plan, expected)
             _write(root / "validation-current.json", expected)
             _write(started_path, expected)
-            observed = run_explicit_command(command, source_root, seconds=seconds)
+            wants_output = bool(request.get("review_evidence_paths"))
+            observed = run_explicit_command(command, source_root, seconds=seconds, capture_review_output=wants_output)
+            review_output = observed.pop("review_output", None)
             try:
                 probe_candidate(source_root, head_sha)
                 if self.source_root(snapshot, request) != source_root:
@@ -182,8 +188,33 @@ class CandidateValidationService:
             result = _bound({"schema_version": "candidate_validation_receipt.v1", **expected,
                              "snapshot_digest": snapshot.payload_digest, "candidate": plan["candidate"],
                              "criteria": request["criteria"], "observation": observed})
+            if review_output is not None and observed["output_complete"] and observed["status"] in {"passed", "failed"}:
+                _write(root / ("validation-review-output-" + key + ".json"),
+                       {"receipt_id": result["receipt_id"], "streams": review_output})
             _write(result_path, result)
             return result
+
+    def _review_output(self, snapshot, result):
+        """Read opt-in logs for the Reviewer only; validation projections contain digests."""
+        path = self._root(snapshot.execution_id) / ("validation-review-output-" + result["operation_key"] + ".json")
+        saved = _read(path)
+        if saved is None or set(saved) != {"receipt_id", "streams"} or saved["receipt_id"] != result["receipt_id"]:
+            raise TaskInputError("validation_review_output_unavailable")
+        streams = saved["streams"]
+        if not isinstance(streams, dict) or set(streams) != {"stdout", "stderr"}:
+            raise TaskInputError("validation_review_output_invalid")
+        total = 0
+        for name, text in streams.items():
+            if not isinstance(text, str):
+                raise TaskInputError("validation_review_output_invalid")
+            data = text.encode("utf-8")
+            total += len(data)
+            if result["observation"]["output"][name] != {"sha256": digest(data), "bytes": len(data)}:
+                raise TaskInputError("validation_review_output_invalid")
+        if total > MAX_REVIEW_OUTPUT_BYTES:
+            raise TaskInputError("validation_review_output_invalid")
+        return streams
+
 
     def _verify_result(self, plan, expected, started, result):
         if (started != expected or result != _bound(result)

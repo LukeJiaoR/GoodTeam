@@ -270,6 +270,11 @@ class AutomaticCandidateReviewService:
             raise TaskInputError("correction_check_changed")
         key = "candidate-review:" + digest(result["receipt_id"].encode())
         payload = {**self._confirmation(snapshot, start), "validation_plan": plan, "validation_receipt": result}
+        target = {"kind": "git_change", "base_sha": start["base_sha"], "head_sha": result["candidate"]["head_sha"]}
+        evidence_paths = plan["request"].get("review_evidence_paths")
+        if evidence_paths:
+            payload["host_check_output"] = self.validation._review_output(snapshot, result)
+            target["evidence_paths"] = evidence_paths
         return {"run_id": context["task"]["logical_id"], "role": "code_review",
             "adapter": start["reviewer_adapter"], "model": start["reviewer_model"],
             "project_key": context["task"]["project_key"], "idempotency_key": key,
@@ -284,12 +289,15 @@ class AutomaticCandidateReviewService:
                    "Explain the semantic judgment and its limits in detail, with exact candidate source evidence. "
                    "Merely repeating identifiers, quoting the plan, a passing test, or an empty findings list is not an assessment. "
                    "Report unmet intent or scope/constraint conflicts as actionable findings; uncertain alignment is inconclusive."
-                   if payload.get("approved_plan") else "")),
+                   if payload.get("approved_plan") else "")
+                + (" The host_check_output is the observed stdout/stderr for the exact recorded validation_plan. "
+                   "The named evidence files are captured from HEAD even when unchanged. "
+                   "Identify which evidence you checked; do not claim to have rerun the host command."
+                   if evidence_paths else "")),
             "context": canonical_bytes(payload).decode(), "constraints": snapshot.task.task_contract.constraints,
             "expected_artifacts": [], "execution_policy": "read_only", "session_policy": "new",
             "worker_session_ref": "", "task_skill_context": context, "skill_subject": "role:code_review",
-            "review_target": {"kind": "git_change", "base_sha": start["base_sha"],
-                              "head_sha": result["candidate"]["head_sha"]}}
+            "review_target": target}
 
     def _registered_job(self, snapshot, start, context, plan, result, *, create):
         expected = self._request(snapshot, start, context, plan, result)

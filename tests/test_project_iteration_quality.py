@@ -102,16 +102,28 @@ if mode == 'review':
                          'line_start': 1, 'line_end': 1, 'quote': text,
                          'observation': 'Offline protocol fixture observed the exact candidate file content.'})
     broken = sources['head/unit-a.txt'] != 'fixed\n'
+    support = []
+    supplied, _ = json.JSONDecoder().raw_decode(prompt.split('## Original task inputs\n\n', 1)[1])
+    context = json.loads(supplied['context'])
+    if 'host_check_output' in context:
+        logs = context['host_check_output']
+        assert logs['stdout'] == 'Checked both tasks against the retained regression\n'
+        assert ('AssertionError' in logs['stderr']) == broken
+        assert sources['head/regression.txt'] == 'Retained regression evidence\n'
+        assert next(row for row in target['files'] if row['path'] == 'regression.txt')['change'] == 'E'
+        evidence.append({'id': 'E2', 'path': 'head/regression.txt', 'line_start': 1, 'line_end': 1,
+                         'quote': sources['head/regression.txt'], 'observation': 'Reviewed the unchanged regression alongside the captured host output.'})
+        support.append('E2')
     criteria = sorted(set(re.findall(r'criterion:[0-9a-f]{64}:\d+', prompt)))
     assert len(criteria) == 2
     findings = [{'id': 'F1', 'severity': 'high', 'title': 'Assigned output remains broken',
                  'detail': 'unit-a.txt contains broken rather than the required fixed text.',
                  'evidence_ids': ['E0'], 'recommendation': 'Write fixed followed by a newline to unit-a.txt.'}] if broken else []
-    event('review', target=target, broken=broken)
+    event('review', target=target, broken=broken, supplemental_evidence=bool(support))
     final_turn({'schema_version': 'goodteam.code-review-report.v1',
                 'summary': 'Offline source-backed protocol fixture; no real model judgment.',
                 'findings': findings, 'evidence': evidence,
-                'checks': [{'name': criterion, 'status': 'checked', 'evidence_ids': ['E0', 'E1'],
+                'checks': [{'name': criterion, 'status': 'checked', 'evidence_ids': ['E0', 'E1', *support],
                             'detail': 'Compared both exact candidate files to the two assigned requirements.'}
                            for criterion in criteria] + [{
                                'name': 'Full host command independently executed', 'status': 'not_run',
@@ -193,6 +205,9 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
 
     binaries, native_home, calls = _offline_native_cli(tmp_path, monkeypatch)
     source = repository(tmp_path / "source")
+    (source / 'regression.txt').write_text('Retained regression evidence\n')
+    git(source, 'add', 'regression.txt')
+    git(source, 'commit', '-qm', 'Add unchanged regression input')
     original_head = git(source, "rev-parse", "HEAD")
     config = tmp_path / "projects/demo.local.yaml"
     config.parent.mkdir()
@@ -224,9 +239,11 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
     check = ("import json; from pathlib import Path; "
              "observed = {p: Path(p).read_text() for p in ('unit-a.txt', 'unit-b.txt')}; "
              f"Path({str(checks)!r}).open('a').write(json.dumps(observed) + '\\n'); "
+             "print('Checked both tasks against the retained regression'); "
              "assert observed == {'unit-a.txt': 'fixed\\n', 'unit-b.txt': 'ready\\n'}")
     prepared = prepare_project_batch_quality(**run, argv=[sys.executable, "-I", "-B", "-c", check], criteria=[0, 1],
-        reviewer_model="offline-fixture", fix_model="offline-fixture", seconds=30, wall_seconds=300, fix_seconds=30)
+        reviewer_model="offline-fixture", fix_model="offline-fixture", seconds=30, wall_seconds=300,
+        fix_seconds=30, evidence_paths=["regression.txt"])
     snapshot = store_for_project(source, existing_only=True).load(prepared["execution_id"])
     assert snapshot.task.source_type == "project_task_batch"
     assert not calls.read_text().count('"kind": "review"')
@@ -239,6 +256,7 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
     first = advance_project_batch_quality(**advance)
     assert first["quality"]["status"] == "blocked"
     assert first["quality"]["check_status"] == "failed"
+    assert first["quality"]["validation"]["review"], first["quality"]["reason"]
     assert first["quality"]["validation"]["review"]["decision"] == "request_changes"
     assert first["quality"]["reason"] == "correction_verified_runtime_unavailable"
     assert "exact-attempt native correction policy" in first["quality"]["next_action"]
@@ -293,6 +311,8 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
     events = [json.loads(line) for line in calls.read_text().splitlines()]
     reviews = [item for item in events if item["kind"] == "review"]
     assert [item["target"]["head_sha"] for item in reviews] == [initial_head, final_head]
+    assert all(item["supplemental_evidence"] for item in reviews)
+    assert "review_output" not in evidence["validation"]["receipt"]["observation"]
     assert [item["broken"] for item in reviews] == [True, False]
     assert [item["kind"] for item in events].count("correction") == 1
     assert len({item["cwd"] for item in events}) == 5

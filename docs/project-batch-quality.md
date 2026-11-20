@@ -49,6 +49,18 @@ cannot revert that batch to human-only acceptance.
    policy. Criteria describe what the operator selected for the check; that
    mapping alone is not proof of semantic coverage.
 
+   If the check relies on tracked files outside the diff, add
+   `--review-evidence-path tests/test_requested_behavior.py` before `--`.
+   Repeat for up to eight exact project-relative paths. The Reviewer receives
+   those files from the checked HEAD, plus the original diff without omissions.
+   This option also shares the check's exact stdout and stderr with the Reviewer
+   (up to 8 KiB combined, complete UTF-8 only) for each candidate, including a
+   corrected candidate. Use a concise check that does not print secrets. The
+   normal validation receipt retains only stream sizes and hashes; the private
+   output is verified against that receipt before review. Missing files or
+   incomplete output block review rather than silently dropping evidence.
+   The option is frozen at preparation and cannot retrofit an existing batch.
+
 3. Configure an existing task-bound local or trusted Codex Reviewer policy for
    that displayed task identity and the original project root. Then advance:
 
