@@ -188,12 +188,12 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
     <ul>{scopedTasks.map(task => <li key={task.task_id}>{task.task_id}: {task.title}</li>)}</ul>
     <label><input type="checkbox" checked={discover} onChange={event => setDiscover(event.target.checked)} disabled={disabled} />
       {zh ? '在明确授权范围内发现后续任务' : 'Discover follow-up tasks within an explicit scope'}</label>
-    {discover ? <fieldset disabled={disabled} style={{ display: 'grid', gap: '.5rem', minWidth: 0 }}>
+    {discover ? <fieldset className="project-continuation-fieldset" disabled={disabled}>
       <legend>{zh ? '后续任务的授权范围' : 'Follow-up task authorization'}</legend>
-      <label style={{ display: 'grid', gap: '.25rem' }}>{zh ? '项目目标（20–2000 字符）' : 'Project objective (20–2000 characters)'}
+      <label className="project-continuation-field">{zh ? '项目目标（20–2000 字符）' : 'Project objective (20–2000 characters)'}
         <textarea value={objective} onChange={event => setObjective(event.target.value)} rows={3} maxLength={2000} />
       </label>
-      <label style={{ display: 'grid', gap: '.25rem' }}>{zh ? '允许写入的项目路径（每行一个）' : 'Allowed project paths (one per line)'}
+      <label className="project-continuation-field">{zh ? '允许写入的项目路径（每行一个）' : 'Allowed project paths (one per line)'}
         <textarea value={paths} onChange={event => setPaths(event.target.value)} rows={3} spellCheck={false}
           placeholder={'src\ntests'} />
       </label>

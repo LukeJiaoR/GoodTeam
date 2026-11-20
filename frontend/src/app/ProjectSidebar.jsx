@@ -24,11 +24,11 @@ export default function ProjectSidebar({ projectKey, workRoute, destinations, se
     }}>
       <div className="studio-sidebar-heading">
         <NavLink className="studio-brand" to="/projects" aria-label={t('product.brand')}><FolderKanban size={18} aria-hidden="true" /><span>{t('product.brand')}</span></NavLink>
-        <button type="button" className="studio-sidebar-toggle" aria-label={t(expanded ? 'work.navigation.collapse' : 'work.navigation.expand')} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}</button>
+        <button type="button" className="studio-sidebar-toggle" aria-label={t(expanded ? 'work.navigation.collapse' : 'work.navigation.expand')} title={t(expanded ? 'work.navigation.collapse' : 'work.navigation.expand')} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}</button>
       </div>
       <div className="studio-sidebar-content">
         <label className="studio-sidebar-search"><Search size={14} aria-hidden="true" /><input aria-label={t('work.navigation.search')} placeholder={t('work.navigation.search')} value={query} onChange={event => setQuery(event.target.value)} type="search" /></label>
-        <NavLink className={navClass} to="/projects" end aria-label={t('product.studio.projects')}><FolderKanban size={15} aria-hidden="true" /><span>{t('product.studio.projects')}</span></NavLink>
+        <NavLink className={navClass} to="/projects" end aria-label={t('product.studio.projects')} title={t('product.studio.projects')}><FolderKanban size={15} aria-hidden="true" /><span>{t('product.studio.projects')}</span></NavLink>
         <div className="studio-project-list">
           {['error', 'stale'].includes(status) ? <button type="button" className="studio-project-refresh" onClick={refresh}>{t('work.navigation.reloadProjects')}</button> : null}
           {items.map(project => {
@@ -45,13 +45,13 @@ export default function ProjectSidebar({ projectKey, workRoute, destinations, se
         </div>
         {projectKey ? <nav className="studio-navigation" aria-label={t('product.navigation.projectLabel')}>
           <p className="studio-project-tools-label">{projectKey} · {t('product.studio.projectTools')}</p>
-          {PAGES.filter(([key]) => key !== 'work' || !workRoute).map(([key, Icon, label]) => <NavLink className={navClass} to={destinations[key]} key={key} aria-label={t(label)}><Icon size={15} aria-hidden="true" /><span>{t(label)}</span></NavLink>)}
+          {PAGES.map(([key, Icon, label]) => <NavLink className={navClass} to={destinations[key]} key={key} aria-label={t(label)} title={t(label)}><Icon size={15} aria-hidden="true" /><span>{t(label)}</span></NavLink>)}
         </nav> : null}
         <div className="studio-sidebar__footer">
-          <NavLink className={navClass} to={settingsDestination} aria-label={t('product.studio.settings')}><Settings2 size={15} aria-hidden="true" /><span>{t('product.studio.settings')}</span></NavLink>
+          <NavLink className={navClass} to={settingsDestination} aria-label={t('product.studio.settings')} title={t('product.studio.settings')}><Settings2 size={15} aria-hidden="true" /><span>{t('product.studio.settings')}</span></NavLink>
           <div className="studio-preferences">
             <label><span className="sr-only">{t('product.language.label')}</span><select aria-label={t('product.language.label')} value={languagePreference} onChange={event => setLanguagePreference(event.target.value)}>{[['auto', 'auto'], ['en', 'en'], ['zh-CN', 'zhCN']].map(([value, label]) => <option value={value} key={value}>{t(`product.language.${label}`)}</option>)}</select></label>
-            <button type="button" onClick={() => setDarkMode(!darkMode)} aria-label={`${t('product.appearance.label')}: ${t(darkMode ? 'product.appearance.dark' : 'product.appearance.light')}`} aria-pressed={darkMode}>{darkMode ? <Moon size={15} /> : <Sun size={15} />}</button>
+            <button type="button" onClick={() => setDarkMode(!darkMode)} aria-label={`${t('product.appearance.label')}: ${t(darkMode ? 'product.appearance.dark' : 'product.appearance.light')}`} title={`${t('product.appearance.label')}: ${t(darkMode ? 'product.appearance.dark' : 'product.appearance.light')}`} aria-pressed={darkMode}>{darkMode ? <Moon size={15} /> : <Sun size={15} />}</button>
           </div>
         </div>
       </div>

@@ -78,6 +78,7 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
   return (
     <main id="main-content" className="projects-page">
       <PageHeading
+        compact
         title={t('projects.launcher.title')}
         actions={(
           <Button id="projects-add-project" className="projects-add-button" onClick={() => setImportOpen(true)}>

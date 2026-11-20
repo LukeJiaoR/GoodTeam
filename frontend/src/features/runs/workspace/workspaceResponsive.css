@@ -49,56 +49,6 @@
 }
 
 @media (max-width: 767px) {
-  .work-workspace-shell .team-mobile-nav {
-    position: sticky;
-    z-index: 12;
-    top: 0;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.35rem;
-    margin-bottom: 0.7rem;
-    padding: 0.35rem;
-    background: color-mix(in srgb, var(--work-material) 92%, transparent);
-    border-radius: 16px;
-    box-shadow: var(--work-shadow-soft);
-    backdrop-filter: blur(12px);
-  }
-}
-
-@media (max-width: 767px) {
-  .work-workspace-shell .team-mobile-nav button {
-    position: relative;
-    min-height: 2.55rem;
-    padding: 0.35rem 0.5rem;
-    color: var(--work-text-muted);
-    background: transparent;
-    border: 0;
-    border-radius: 12px;
-    font-size: 0.78rem;
-  }
-}
-
-@media (max-width: 767px) {
-  .work-workspace-shell .team-mobile-nav button[data-active="true"] {
-    color: var(--work-accent-strong);
-    background: var(--work-material);
-    box-shadow: var(--work-shadow-compact);
-  }
-}
-
-@media (max-width: 767px) {
-  .work-workspace-shell .team-mobile-nav__attention {
-    position: absolute;
-    top: 0.35rem;
-    right: 0.35rem;
-    width: 0.42rem;
-    height: 0.42rem;
-    background: var(--work-accent);
-    border-radius: 999px;
-  }
-}
-
-@media (max-width: 767px) {
   .work-workspace-shell .team-pane {
     min-height: calc(100dvh - 18rem);
     border-radius: 18px;
@@ -221,21 +171,18 @@
 
   .work-workspace-shell .team-mobile-nav {
     display: grid;
-    position: fixed;
+    position: sticky;
     z-index: 60;
-    top: auto;
-    bottom: max(0.65rem, env(safe-area-inset-bottom));
-    left: 50%;
+    top: 8.5rem;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.2rem;
-    width: min(calc(100% - 2rem), 42rem);
-    margin: 0;
+    width: 100%;
+    margin: 0 0 .75rem;
     padding: 0.35rem;
     background: var(--work-material);
-    border: 0;
-    border-radius: 16px;
+    border: 1px solid color-mix(in srgb, var(--work-highlight) 30%, transparent);
+    border-radius: 18px;
     box-shadow: var(--work-shadow-raised);
-    transform: translateX(-50%);
     backdrop-filter: none;
   }
 
@@ -246,17 +193,18 @@
     align-items: center;
     justify-content: center;
     min-width: 0;
-    min-height: 2.35rem;
+    min-height: 2.75rem;
     padding: 0.35rem 0.45rem;
     color: var(--work-text-muted);
     background: transparent;
     border: 0;
-    border-radius: 11px;
+    border-radius: 12px;
     font: inherit;
     font-size: 0.76rem;
     font-weight: 620;
     white-space: nowrap;
     cursor: pointer;
+    transition: color 140ms ease;
   }
 
   .work-workspace-shell .team-mobile-nav [role="tab"]::after {
@@ -428,27 +376,15 @@
     box-shadow: var(--work-shadow-soft);
   }
 
-  .work-workspace-shell .team-mobile-nav {
-    background: var(--work-material);
-    border: 1px solid color-mix(in srgb, var(--work-highlight) 30%, transparent);
-    border-radius: 18px;
-    box-shadow: var(--work-shadow-raised);
-  }
-
-  .work-workspace-shell .team-mobile-nav [role="tab"] {
-    min-height: 2.75rem;
-    border-radius: 12px;
-    transition: color 140ms ease;
-  }
-
-  .work-workspace-shell .team-mobile-nav [role="tab"][data-active="true"] {
-    background: var(--work-material-deep);
-    box-shadow: var(--work-shadow-inset);
-  }
-
   .work-workspace-shell .team-manager-event__bubble {
     max-width: calc(100% - 2.35rem);
   }
+
+  .work-workspace-shell .team-outcomes-scroll { overflow: visible; }
+  .work-workspace-shell .team-workspace:not(.team-workspace--composing) .team-pane--manager {
+    height: max(26rem, calc(100dvh - 20rem));
+  }
+  .work-workspace-shell .team-manager-conversation { overflow-y: auto; }
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -481,25 +417,5 @@
   .work-workspace-shell .team-manager-suggestions button:hover,
   .work-workspace-shell .team-outcome-card__details-button:hover {
     transform: none !important;
-  }
-}
-
-@media (max-width: 767px) {
-  .work-workspace-shell .team-outcomes-scroll { overflow: visible; }
-  .work-workspace-shell .team-workspace:not(.team-workspace--composing) .team-pane--manager {
-    height: max(26rem, calc(100dvh - 20rem));
-  }
-  .work-workspace-shell .team-manager-conversation { overflow-y: auto; }
-}
-
-@media (max-width: 767px) {
-  .work-workspace-shell .team-mobile-nav {
-    position: sticky;
-    top: 8.5rem;
-    bottom: auto;
-    left: auto;
-    transform: none;
-    width: 100%;
-    margin-bottom: .75rem;
   }
 }

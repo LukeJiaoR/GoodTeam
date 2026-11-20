@@ -750,6 +750,7 @@ export default function WorkPage() {
   const [attemptSelection, setAttemptSelection] = useState(null);
   if (attemptSelection && attemptSelection.scope !== retryScope) setAttemptSelection(null);
   const workspaceRef = useRef(null);
+  const [workToolbarHost, setWorkToolbarHost] = useState(null);
   const [taskManagementProject, setTaskManagementProject] = useState('');
   const taskManagementOpen = taskManagementProject === projectKey;
   const [mutationBusy, setBusy] = useState('');
@@ -1284,7 +1285,10 @@ export default function WorkPage() {
     <main ref={workspaceRef} id="main-content" className="product-page product-work-page" data-context-scope={`${projectKey}:${runId}`}>
       {attentionFocus}
       {projectNavigationHost ? createPortal(<fieldset className="studio-navigation-scope" disabled={interactionsPaused}>{taskNavigation}</fieldset>, projectNavigationHost) : null}
-      {currentContext}
+      <div className="work-header-rail">
+        {currentContext}
+        <div className="work-header-rail__toolbar" ref={setWorkToolbarHost} />
+      </div>
       {status === 'stale' ? <ProductError error={error} onRetry={() => { void handleRefreshContext(); }} t={t} /> : null}
       {status === 'stale' ? <p role="status">{t('work.context.staleActions')}</p> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={() => loadRuns()} t={t} /> : null}
@@ -1304,6 +1308,7 @@ export default function WorkPage() {
       {hasProjectedWorkspace ? (
         <>
           <TeamWorkspace
+            toolbarHost={workToolbarHost}
             projectTools={<GitRecoveryPanel projectKey={projectKey} language={language} />}
             executionContext={executionContext}
             historyContext={historyContext}

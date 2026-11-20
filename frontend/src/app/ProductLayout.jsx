@@ -43,7 +43,11 @@ export default function ProductLayout() {
     setSidebarExpanded(true);
     const group = projectNavigationHost?.closest('details');
     if (group) group.open = true;
-    requestAnimationFrame(() => projectNavigationHost?.querySelector('#project-task-navigation')?.focus());
+    requestAnimationFrame(() => {
+      const nav = projectNavigationHost?.querySelector('#project-task-navigation');
+      nav?.scrollIntoView?.({ block: 'nearest' });
+      nav?.focus();
+    });
   };
   return (
     <ToastProvider>
