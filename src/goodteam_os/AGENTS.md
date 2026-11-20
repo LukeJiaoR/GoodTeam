@@ -29,7 +29,7 @@ context_continuity.py: Bounded, deterministic context projections, never a secon
 conversation_attachments.py: Project-scoped, immutable reference files for chat; never execution authority.
 conversation_projection.py: Read-only conversation records shared by project and historical task views.
 cross_project_memory.py: 跨项目记忆检索与报告。
-database.py: Shared PostgreSQL configuration for application data and Manager checkpoints.
+database.py: 共享 PostgreSQL 配置与 Manager 检查点；进程退出前关闭连接池。
 database_migration.py: Explicit offline import of existing task, conversation, Workflow and Goal state.
 debate.py: 审批门的 Reviewer 讨论与调度。
 delivery_changes.py: Retain a small explicit delivery set from the workflow's immutable Git result.
@@ -57,7 +57,7 @@ manager_dialogue.py: Bounded Manager conversation runtime; original services ret
 manager_execution.py: Manager 对话与后台判断入口、项目运行设置及资源限制。
 manager_runtime_observation.py: Bounded local Runtime observation for Manager conversations, never control.
 manager_skill_context.py: Pinned Manager Role/Skill input for the native app-server session.
-manager_tools.py: 将 Manager 原生工具接入既有项目、队列与授权服务。
+manager_tools.py: 将原生工具接入项目服务。Skill 存储不安全时保留只读对话。
 manager_worker_control.py: Explicit project-chat supervision through the existing Pi control protocol.
 memory.py: 项目及角色记忆事件、检索与快照校验。
 memory_embeddings.py: Opt-in embeddings and a rebuildable PG projection of eligible role memory.
@@ -140,14 +140,14 @@ task_assistant_session.py: 项目助手会话状态与事件存储。
 task_delegation.py: One task input contract shared by role dispatch entry points.
 task_input_context.py: Task-facing, bounded input metadata; no private prompts or Runtime authority.
 tasks.py: 项目任务账、任务意图与任务板。
-team_control_plane.py: 保存项目角色、Worker 和 Manager 本机授权，记录团队变更。
+team_control_plane.py: 保存项目角色、Worker 和 Manager 运行配置，记录团队变更。
 team_workspace.py: Team 工作区只读聚合。
 telegram.py: Telegram 交互、审核会话与消息格式。
 telegram_approval_binding.py: Bind workflow decisions to the material actually displayed by Telegram.
 telegram_runtime_controls.py: Telegram 对既有运行时会话的控制。
-web.py: 本地 Web 与项目 API 请求入口，检查 Manager 本机授权请求来源。
+web.py: 本地 Web 与项目 API 请求入口，校验 HTTP 请求。
 web_search.py: Opt-in hosted search for an existing Pi job, never a new worker runtime.
-worker_capabilities.py: Portable persisted effort values and conservative CLI discovery fallbacks.
+worker_capabilities.py: 定义 Manager 请求档位、持久化档位与 Worker 目录后备值。
 worker_output_context.py: Bounded, invocation-bound Worker output. Never a control/reply join.
 worker_setup.py: Read optional project setup context for ordinary Planner/Worker tasks.
 workers.py: Worker 作业、运行时与结果持久化。

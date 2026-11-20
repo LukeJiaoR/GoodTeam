@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 模拟团队状态、模型目录和保存 API。
+ * [OUTPUT]: 验证 Manager 设置的编辑、保存和刷新。
+ * [POS]: 核对配置表单与团队命令的边界。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
@@ -6,7 +12,7 @@ import AssistantRuntimePanel from './AssistantRuntimePanel';
 
 const t = (key, params) => translate('en', key, params);
 const data = {
-  team: { roles: [], manager: { runtime: {
+  team: { roles: [], manager: { reasoning_default: 'high', reasoning_depths: ['low', 'medium', 'high', 'xhigh'], runtime: {
     provider: 'codex', model: 'saved-model', reasoning_depth: 'high', additional_prompt: 'Keep APIs stable.',
   } } },
   start_context: { worker_backend_options: ['codex', 'pi'], worker_backend: { mode: 'codex' } },
@@ -18,14 +24,14 @@ const catalog = { agents: [{
   reasoning_depths: ['high', 'xhigh'],
 }] };
 
-function setup(apiOverrides = {}) {
+function setup(apiOverrides = {}, initialData = data) {
   const api = {
     getSettingsAgents: vi.fn().mockResolvedValue(catalog),
     sendTeamCommands: vi.fn().mockResolvedValue({ ok: true }),
     taskAssistantAction: vi.fn().mockResolvedValue({ task_assistant_session: { runtime: { status: 'verified' } } }),
     ...apiOverrides,
   };
-  const props = { data, projectKey: 'DEMO', onClose: vi.fn(), refresh: vi.fn().mockResolvedValue(data), t, api };
+  const props = { data: initialData, projectKey: 'DEMO', onClose: vi.fn(), refresh: vi.fn().mockResolvedValue(data), t, api };
   const view = render(<AssistantRuntimePanel {...props} />);
   return { ...view, props, api, user: userEvent.setup() };
 }
@@ -65,13 +71,12 @@ test('invalidates a refreshing and failed catalog without changing the draft or 
   expect(screen.getByLabelText('Model')).toHaveValue('saved-model');
   expect(screen.getByLabelText('Reasoning depth')).toHaveValue('xhigh');
   expect(api.taskAssistantAction).not.toHaveBeenCalled();
-  expect(screen.getByRole('checkbox', { name: 'Use local Codex' })).not.toBeChecked();
-  await user.click(screen.getByRole('checkbox', { name: 'Use local Codex' }));
+  expect(screen.queryByRole('checkbox', { name: 'Use local Codex' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Save and check connection' }));
   await waitFor(() => expect(api.taskAssistantAction).toHaveBeenCalledOnce());
   expect(api.sendTeamCommands).toHaveBeenCalledExactlyOnceWith('DEMO', [{
     kind: 'change_manager_runtime', provider: 'codex', model: 'saved-model', reasoning_depth: 'xhigh',
-    additional_prompt: 'Preserve this unsaved instruction.', trust_local_codex: true,
+    additional_prompt: 'Preserve this unsaved instruction.',
   }], { reason: 'Update Task Assistant runtime' });
 });
 
@@ -114,4 +119,21 @@ test('provider diagnostic text cannot create executable markup or an action', as
   expect(diagnostic.querySelector('img, a, script')).toBeNull();
   expect(within(screen.getByRole('dialog')).queryByRole('button', { name: 'Log in' })).not.toBeInTheDocument();
   expect(api.taskAssistantAction).not.toHaveBeenCalled();
+});
+
+test('shows the effective Manager effort and saves a concrete choice without a Worker catalog', async () => {
+  const initialData = structuredClone(data);
+  initialData.team.manager.runtime.reasoning_depth = 'default';
+  const { user, api } = setup({ getSettingsAgents: vi.fn().mockResolvedValue({ agents: [] }) }, initialData);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh models' })).toBeEnabled());
+  const effort = screen.getByLabelText('Reasoning depth');
+  expect(effort).toBeEnabled();
+  expect(effort).toHaveValue('high');
+  expect([...effort.options].map(option => option.value)).toEqual(['low', 'medium', 'high', 'xhigh']);
+  await user.selectOptions(effort, 'medium');
+  await user.click(screen.getByRole('button', { name: 'Save and check connection' }));
+  expect(api.sendTeamCommands).toHaveBeenCalledExactlyOnceWith('DEMO', [
+    expect.objectContaining({ kind: 'change_manager_runtime', reasoning_depth: 'medium' }),
+  ], { reason: 'Update Task Assistant runtime' });
+  expect(api.taskAssistantAction).toHaveBeenCalledOnce();
 });

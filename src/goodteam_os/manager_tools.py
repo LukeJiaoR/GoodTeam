@@ -1,6 +1,6 @@
 """[INPUT]: Manager 请求、项目状态、既有队列与授权服务。
 [OUTPUT]: 供原生 Manager 调用的工具描述与业务回执。
-[POS]: 将原生工具调用接入既有服务，不创建新的授权。
+[POS]: 接入项目工具。Skill 存储不可用时保留只读对话。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 
 App-server tools over GoodTeam's existing project services.
@@ -50,17 +50,24 @@ class ManagerTools:
         self.logical_id, self.background = logical_id, background
         self.authority_check = authority_check
         self.skills = None
+        self.skill_storage_unavailable = False
 
     def instructions(self, *, text, context):
         from goodteam_os.projects import load_project_target
         from goodteam_os.team_control_plane import TeamControlPlaneStore
         from goodteam_os.manager_skill_context import ManagerSkillContext
+        from goodteam_os.skills.models import SkillError
 
         target = load_project_target(self.runtime.config)
         TeamControlPlaneStore(self.runtime.workspace, self.runtime.key).load_or_migrate(
             legacy_target=target, config_path=self.runtime.config)
-        self.skills = ManagerSkillContext(self.runtime.workspace, self.runtime.key, self.runtime.root,
-            self.logical_id, {"text": text, "context": context, "background": self.background})
+        try:
+            self.skills = ManagerSkillContext(self.runtime.workspace, self.runtime.key, self.runtime.root,
+                self.logical_id, {"text": text, "context": context, "background": self.background})
+        except SkillError as error:
+            if self.background or error.code != "unsafe_store_root":
+                raise
+            self.skill_storage_unavailable = True
         prompt = """You are GoodTeam's Manager, coordinating the project's native Agent team.
 Continue the conversation in the user's language. Use ordinary prose, not a classification JSON envelope.
 Use the provided tools to inspect current tasks and Workers, delegate concrete work and obtain real receipts.
@@ -79,7 +86,10 @@ Do not run business work yourself in the Manager shell; delegate to the appropri
             prompt += "\nThis is an existing bounded background judgment. Follow its requested output schema. Tools are read-only for this judgment.\n"
         from goodteam_os.manager_execution import _manager_settings
         extra = _manager_settings(target).get("additional_prompt", "")
-        return prompt + "\n" + self.skills.instructions + "\n" + extra
+        method_context = (self.skills.instructions if self.skills is not None else
+            "GoodTeam Skill storage is unavailable. Continue the conversation using read-only project tools. "
+            "If the user asks you to take a project action, explain that it could not be started.")
+        return prompt + "\n" + method_context + "\n" + extra
 
     def specs(self):
         values = [
@@ -88,9 +98,11 @@ Do not run business work yourself in the Manager shell; delegate to the appropri
                   {"job_id": _STRING}),
             _spec("goodteam_result", "Read a task batch's actual output and independent review status. Does not approve delivery.",
                   {"run_id": _STRING}, ("run_id",)),
-            _spec("goodteam_skill_resource", "Read a resource from this invocation's pinned Manager Skill package.",
-                  {"skill_id": _STRING, "path": _STRING}, ("skill_id", "path")),
         ]
+        if self.skill_storage_unavailable:
+            return values
+        values.append(_spec("goodteam_skill_resource", "Read a resource from this invocation's pinned Manager Skill package.",
+                            {"skill_id": _STRING, "path": _STRING}, ("skill_id", "path")))
         if not self.background:
             values += [
                 _spec("goodteam_delegate", "Create an exact task card and queue it for a native Role. Returns real task/proposal IDs. Existing confirmation or project authorization controls execution.", {

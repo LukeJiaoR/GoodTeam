@@ -30,18 +30,23 @@ result or grant review, merge or deployment permissions.
 
 ## Runtime and configuration
 
-In the project's Manager settings, select **Use local Codex** to authorize the
-native runtime from the loopback dashboard. The choice defaults to off, is saved in the project Team state,
-and is recorded in the Team audit log. Conversation, background analysis and
-native recovery require this authorization. Clearing it blocks new requests
-and recovery. Use Stop to interrupt a turn already in progress.
-
-GoodTeam launches `codex app-server` from PATH or `GOODTEAM_CODEX_PATH`.
+GoodTeam launches `codex app-server` from PATH or `GOODTEAM_CODEX_PATH` for
+Manager conversations, background analysis, and native recovery. The old
+project toggle no longer controls startup. Use Stop to interrupt an active turn.
 Codex owns the sign-in, model connection, integration configuration, and managed
 policies. Changing local MCP settings can change what the Manager can use.
 External tools follow their own permissions and confirmation rules. GoodTeam
 commands continue to use the project queue and approvals. A connection check
 verifies that the runtime responds. It does not certify tool isolation.
+
+If the Skill store is inside a Worker-writable root, foreground chat can
+still reply and inspect project state. Skill loading and project actions
+stay disabled for that turn. Background judgments still require Skill preflight.
+
+Manager settings show the concrete effort requested on `turn/start`.
+An unset legacy value resolves to `high`. Users can choose `low`, `medium`,
+`high`, or `xhigh` without a Worker model catalog. A connection check tests
+the selected value against Codex. Worker effort settings remain independent.
 
 The transport uses app-server v2. GoodTeam registers scoped tools at
 `thread/start.dynamicTools` and answers `item/tool/call`. Subsequent turns use

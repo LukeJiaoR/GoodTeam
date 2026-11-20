@@ -1,6 +1,6 @@
 """[INPUT]: 项目角色配置、团队命令与状态存储。
 [OUTPUT]: 团队状态、能力视图和变更审计。
-[POS]: 保存项目的 Manager 授权和 Worker 配置。
+[POS]: 保存项目运行配置，分别验证 Manager 和 Worker 的档位。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 
 Team Control Plane: Role capabilities vs Worker instances with an audit ledger.
@@ -53,7 +53,9 @@ from goodteam_os.skills.bindings import (
     workflow_role_subject,
 )
 from goodteam_os.skills.models import SkillError
-from goodteam_os.worker_capabilities import REASONING_DEPTHS
+from goodteam_os.worker_capabilities import (
+    MANAGER_DEFAULT_REASONING_DEPTH, MANAGER_REASONING_DEPTHS, REASONING_DEPTHS,
+)
 from goodteam_os.state import normalize_project_key
 from goodteam_os import state_documents
 from goodteam_os.database import database_configured
@@ -244,8 +246,7 @@ def manager_runtime(runtime: object) -> dict[str, object]:
     selected = _sanitize_worker_runtime(runtime)
     if selected["provider"] not in {*BUILTIN_WORKER_MODES, "builtin"}:
         selected["provider"] = "codex"
-    return {**selected, "trust_local_codex": selected["provider"] == "codex"
-            and isinstance(runtime, dict) and runtime.get("trust_local_codex") is True}
+    return selected
 
 
 def _sanitize_worker_record(raw: object) -> dict[str, object]:
@@ -623,7 +624,14 @@ class TeamControlPlaneStore:
             try:
                 for worker in _workers(state):
                     validate_runtime_choice(worker["runtime"], before_runtimes.get(str(worker["id"])), catalogs=catalogs)
-                validate_runtime_choice(dict(state["manager"]).get("runtime", {}), before_manager, catalogs=catalogs)
+                manager_choice = dict(state["manager"]).get("runtime", {})
+                depth = manager_choice.get("reasoning_depth", "default")
+                # Manager 走原生 app-server，不使用 Worker 的接入目录。
+                if manager_choice.get("provider") == "codex":
+                    if depth != before_manager.get("reasoning_depth") and depth not in ("default", *MANAGER_REASONING_DEPTHS):
+                        raise ValueError(f"Manager reasoning depth {depth!r} is not selectable.")
+                else:
+                    validate_runtime_choice(manager_choice, before_manager, catalogs=catalogs)
             except ValueError as exc:
                 raise TeamControlPlaneError(str(exc)) from exc
             if events:
@@ -1518,12 +1526,6 @@ def _cmd_change_manager_runtime(state, command, *, actor, surface, decision_id, 
         runtime["reasoning_depth"] = validate_reasoning_depth(command.get("reasoning_depth"))
     if "additional_prompt" in command:
         runtime["additional_prompt"] = str(command.get("additional_prompt", "") or "").strip()[:ADDITIONAL_PROMPT_MAX_CHARS]
-    if "trust_local_codex" in command:
-        if actor != "user" or surface != "team_ui" or type(command["trust_local_codex"]) is not bool:
-            raise TeamControlPlaneError("Local Codex authorization requires a boolean choice in Team settings.")
-        runtime["trust_local_codex"] = command["trust_local_codex"]
-    if runtime["provider"] != "codex":
-        runtime["trust_local_codex"] = False
     if runtime == before:
         return []
     manager["runtime"] = runtime
@@ -1692,6 +1694,8 @@ def build_team_capability_view(
         "manager": {
             "role": MANAGER_ROLE,
             "label": "Task Assistant",
+            "reasoning_default": MANAGER_DEFAULT_REASONING_DEPTH,
+            "reasoning_depths": list(MANAGER_REASONING_DEPTHS),
             "runtime": manager_runtime(manager.get("runtime", {})),
             "runtime_kind": ("builtin" if manager_runtime(manager.get("runtime", {}))["provider"]
                              in {*BUILTIN_WORKER_MODES, "builtin"} else "app_server"),
