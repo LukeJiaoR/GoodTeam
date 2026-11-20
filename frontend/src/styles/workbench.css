@@ -1,6 +1,6 @@
 /*
  * [INPUT]: 使用 studio.css 的工作台样式和产品颜色变量。
- * [OUTPUT]: 定义项目导航、对话阅读列和执行状态栏的排版。
+ * [OUTPUT]: 定义项目导航、图标折叠轨、流式顶栏、阅读列表单与右侧执行/交付栏的排版。
  * [POS]: 在工作台内覆盖功能组件的展示样式。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
@@ -46,11 +46,64 @@
 .studio-project-refresh { cursor: pointer; text-decoration: underline; }
 .studio-sidebar :is(button, a, summary, select):focus-visible { outline: 2px solid var(--product-focus); outline-offset: -2px; }
 .studio-sidebar-backdrop { display: none; }
-.product-shell--studio[data-sidebar="collapsed"] .studio-sidebar { padding-inline: 8px; }
-.product-shell--studio[data-sidebar="collapsed"] :is(.studio-sidebar-content, .studio-brand) { display: none; }
-.product-shell--studio[data-sidebar="collapsed"] .studio-sidebar-heading { padding: 0; }
+.product-shell--studio[data-sidebar="collapsed"] .studio-sidebar {
+  padding-inline: 0;
+  align-items: center;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.product-shell--studio[data-sidebar="collapsed"] :is(.studio-brand, .studio-sidebar-search, .studio-project-list, .studio-project-tools-label, .studio-navigation__link > span, .studio-preferences label) {
+  display: none;
+}
+.product-shell--studio[data-sidebar="collapsed"] .studio-sidebar-heading {
+  width: 100%;
+  justify-content: center;
+  padding: 0;
+}
+.product-shell--studio[data-sidebar="collapsed"] .studio-sidebar-content {
+  width: 100%;
+  align-items: center;
+  gap: 4px;
+}
+.product-shell--studio[data-sidebar="collapsed"] .studio-navigation {
+  width: 100%;
+  justify-items: center;
+  gap: 4px;
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.product-shell--studio[data-sidebar="collapsed"] .studio-sidebar__footer {
+  width: 100%;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--product-border);
+}
+.product-shell--studio[data-sidebar="collapsed"] .studio-navigation__link {
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+.product-shell--studio[data-sidebar="collapsed"] .studio-preferences {
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+}
+.product-shell--studio[data-sidebar="collapsed"] .studio-preferences button {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+}
 .studio-navigation-scope { margin: 0; padding: 0; min-width: 0; border: 0; }
-.studio-sidebar .project-task-navigation { padding: 2px 0; font-size: 13px; }
+.studio-sidebar .project-task-navigation { padding: 2px 0; font-size: 13px; border-radius: 6px; transition: background-color 180ms ease; }
+.studio-sidebar .project-task-navigation:focus-visible,
+.studio-sidebar .project-task-navigation:focus { outline: 2px solid var(--product-focus); outline-offset: -2px; background: color-mix(in srgb, var(--product-accent) 6%, transparent); }
 .studio-sidebar .project-task-navigation__heading { display: none; }
 .studio-sidebar .project-task-navigation :is(ul, li) { list-style: none; margin: 0; padding: 0; }
 .studio-sidebar .project-task-navigation h3 { margin: 12px 0 2px; padding: 0 10px 0 32px; font-size: 12px; font-weight: 400; color: var(--product-text-muted); }
@@ -74,7 +127,32 @@
 /* Stable canvas: opening a worker or evidence panel never changes chat width. */
 .product-shell--studio .work-workspace-shell[data-workspace] { --workbench-aside: 16rem; --workbench-inset: 1.5rem; --workbench-rail: color-mix(in srgb, var(--product-bg) 82%, var(--product-surface)); --workbench-selection: color-mix(in srgb, var(--product-accent) 9%, var(--product-surface)); --work-bg: var(--product-surface); --work-surface-muted: var(--product-bg); background: var(--work-bg); }
 .product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { position: relative; width: 100%; max-width: none; height: calc(100dvh - 48px); min-height: 0; margin: 0; padding: 0 var(--workbench-inset) 12px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { margin-inline: calc(-1 * var(--workbench-inset)); padding: 10px 24rem 10px var(--workbench-inset); min-block-size: 3rem; gap: 5px 10px; align-items: center; background: var(--workbench-rail); border-block-end: 1px solid var(--product-border); }
+.product-shell--studio .work-workspace-shell[data-workspace] .work-header-rail {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-inline: calc(-1 * var(--workbench-inset));
+  padding: 8px var(--workbench-inset);
+  min-block-size: 3rem;
+  background: var(--workbench-rail);
+  border-block-end: 1px solid var(--product-border);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .work-header-rail > .work-current-context {
+  flex: 1 1 20rem;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  min-block-size: 0;
+  gap: 5px 10px;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__project { display: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity { display: block; flex: 0 1 auto; max-width: 440px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity strong { display: block; font-size: 14px; line-height: 1.5; font-weight: 600; letter-spacing: normal; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -82,7 +160,43 @@
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__state p { font-size: 12px; line-height: 1.5; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context .product-status-badge { white-space: nowrap; padding: 3px 7px; font-size: 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context > button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .studio-work-toolbar { position: absolute; top: 10px; right: 24px; padding: 0; min-height: 28px; font-size: 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .work-header-rail__toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-inline-start: auto;
+}
+.work-header-rail__toolbar:empty { display: none; }
+.studio-work-toolbar-scope { display: contents; border: 0; margin: 0; padding: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .work-header-rail .studio-work-toolbar {
+  position: static;
+  display: flex;
+  padding: 0;
+  min-height: 28px;
+  font-size: 12px;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .studio-work-toolbar__actions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--product-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .studio-work-toolbar__actions > button:hover {
+  background: var(--product-surface);
+  color: var(--product-text);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .studio-work-toolbar__actions > button[data-active="true"] {
+  background: var(--product-surface);
+  border-color: var(--product-border);
+  color: var(--product-text);
+}
 .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace,
 .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed="true"] { position: relative; display: grid; flex: 1 1 0; grid-template-areas: 'center execution'; grid-template-columns: minmax(0, 1fr) var(--workbench-aside); grid-template-rows: minmax(0, 1fr); gap: 0; min-height: 0; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace-center { gap: 0; min-inline-size: 0; padding-inline: clamp(.5rem, 2.2vw, 2.5rem); }
@@ -104,11 +218,14 @@
   padding-block: .625rem .625rem;
   border-block-end: 1px solid var(--product-border);
 }
-.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-conversation-toolbar, .team-manager-timeline, .project-conversation-planning, .project-conversation-attention, .project-conversation-follow, .project-conversation-welcome, .team-manager-dock) {
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-conversation-toolbar, .project-question-board, .team-manager-timeline, .project-conversation-planning, .project-conversation-attention, .project-conversation-follow, .project-conversation-welcome, .team-manager-dock) {
   inline-size: 100%;
   max-inline-size: var(--chat-measure);
   margin-inline: auto;
 }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-question-board { margin-block: .5rem .25rem; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-question-board--empty { display: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-question-board__list { max-height: min(24vh, 15rem); }
 .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-scope {
   display: flex;
   flex: 1 1 12rem;
@@ -197,8 +314,138 @@
 .product-shell--studio .work-workspace-shell[data-workspace] .assistant-pending-reply__status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--product-text-muted); }
 .product-shell--studio .work-workspace-shell[data-workspace] .assistant-pending-reply__timer { font-size: 11px; opacity: .75; }
 .product-shell--studio .work-workspace-shell[data-workspace] .assistant-pending-reply__long { font-size: 12px; color: var(--product-text-muted); margin-top: 4px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary { min-height: 36px; font-size: var(--chat-control); }
-.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary strong { font-weight: 500; }
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning {
+  border: 1px solid var(--product-border);
+  border-radius: 10px;
+  background: var(--workbench-rail);
+  margin-block: .25rem .5rem;
+  overflow: hidden;
+  font-size: var(--chat-control);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary {
+  min-height: 36px;
+  padding: 6px 12px;
+  gap: 8px;
+  font-size: var(--chat-control);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary:hover {
+  background: color-mix(in srgb, var(--product-surface-muted) 65%, transparent);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary strong { font-weight: 550; }
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .project-iteration-suggestion {
+  padding: 12px;
+  border-block-start: 1px solid var(--product-border);
+  border-block-end: 0;
+  background: transparent;
+  font-size: var(--chat-control);
+  line-height: 1.5;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .project-iteration-suggestion > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: 550;
+  color: var(--work-text);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) :is(p, ul, ol) {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) :is(ul, ol) {
+  padding-inline-start: 18px;
+  display: grid;
+  gap: 4px;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) small {
+  color: var(--work-text-muted);
+  font-size: var(--chat-meta);
+  line-height: 1.45;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) fieldset,
+.product-shell--studio .work-workspace-shell[data-workspace] .project-continuation-fieldset {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--product-border);
+  border-radius: 8px;
+  background: var(--product-surface);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) legend {
+  padding-inline: 4px;
+  font-size: var(--chat-meta);
+  font-weight: 600;
+  color: var(--work-text);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] .project-continuation-field,
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) label:not(:has(> input[type="checkbox"])) {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: var(--chat-meta);
+  color: var(--work-text-muted);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) label:has(> input[type="checkbox"]) {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.45;
+  color: var(--work-text);
+  cursor: pointer;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  accent-color: var(--product-accent);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--product-border);
+  border-radius: 6px;
+  background: var(--product-surface);
+  color: var(--work-text);
+  font: inherit;
+  font-size: var(--chat-control);
+  line-height: 1.45;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) input[type="number"] {
+  max-width: 10rem;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) button {
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
+  min-block-size: 2rem;
+  padding: .3rem .75rem;
+  border: 1px solid var(--product-border);
+  border-radius: 6px;
+  background: var(--product-surface);
+  color: var(--work-text);
+  font: inherit;
+  font-size: var(--chat-control);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) button:hover:not(:disabled) {
+  background: var(--product-surface-muted);
+  border-color: var(--work-text-muted);
+}
+.product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
 .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-welcome { padding: clamp(1.5rem, 5dvh, 3rem) 0; }
 .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-welcome h3 { font-size: 1.25rem; font-weight: 600; }
 .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-welcome p { font-size: var(--chat-body); }
@@ -269,13 +516,27 @@
 .team-execution-context { padding: 10px 14px; font-size: 12px; border-top: 1px solid var(--work-border); }
 .team-execution-context > summary { color: var(--work-text-muted); cursor: pointer; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes { position: absolute; z-index: 20; inset: 0 0 0 auto; width: min(var(--workbench-aside), 100%); grid-area: auto; border-radius: 12px; background: var(--product-surface); border: 1px solid var(--product-border); box-shadow: -8px 0 28px #0000000a; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .team-pane__header { min-height: 48px; padding: 10px 14px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .team-pane__header { min-height: 44px; padding: 10px 14px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes h2 { font-size: 13px; font-weight: 500; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .team-outcomes-scroll { padding-bottom: 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-outcomes-scroll > :is(.work-context-disclosure, .goal-continuation) { margin: 10px 12px; padding: 10px 12px; border-radius: 8px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-outcomes-scroll > .work-context-disclosure { padding: 0; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes :is(.team-execution-evidence, .delivery-summary) { padding: 10px 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .skill-review-executions { margin-block: 8px; padding-inline: 12px; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .team-outcome-list { padding: 8px 12px; gap: 8px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane[hidden] { display: none; }
+.product-shell--studio .work-workspace-shell[data-workspace] .team-pane-backdrop { display: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-mobile-nav { display: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] :is(.team-worker-summary, .team-panel-close):focus-visible { outline: 2px solid var(--product-focus); outline-offset: -2px; }
 
 @media (min-width: 1200px) {
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-aside-collapsed="true"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'center';
+  }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-aside-collapsed="true"] :is(.team-pane--execution, .team-pane--outcomes) {
+    display: none;
+  }
   .product-shell--studio .work-workspace-shell[data-workspace] :is(.team-pane--execution, .team-pane--outcomes) {
     border: 0;
     border-inline-start: 1px solid var(--product-border);
@@ -285,9 +546,23 @@
   }
 }
 
+@media (min-width: 1440px) {
+  .product-shell--studio .work-workspace-shell[data-workspace] {
+    --workbench-outcomes: clamp(16rem, 22vw, 22rem);
+  }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace:not([data-evidence-collapsed="true"]):not([data-aside-collapsed="true"]) {
+    grid-template-columns: minmax(0, 1fr) var(--workbench-outcomes);
+  }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes {
+    width: min(var(--workbench-outcomes), 100%);
+    box-shadow: -8px 0 24px #00000008;
+  }
+}
+
 @media (max-width: 1199px) {
   .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace,
   .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace[data-evidence-collapsed="true"] { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: 'center'; flex: 1 1 0; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .team-pane-backdrop { display: block; position: absolute; z-index: 15; inset: 0 0 var(--composer-height, 152px) 0; border: 0; padding: 0; background: #00000018; cursor: pointer; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--execution { position: absolute; z-index: 20; top: 0; right: 0; width: min(var(--workbench-aside), 100%); max-height: calc(100% - var(--composer-height, 152px)); grid-area: auto; box-shadow: 0 8px 28px #0000000a; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes { bottom: var(--composer-height, 152px); }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace:not(.team-workspace--composing) .team-pane--manager { flex: 1 1 0; height: auto; min-height: 0; }
@@ -295,7 +570,6 @@
   .product-shell--studio .work-workspace-shell[data-workspace] .team-mobile-nav button { display: flex; align-items: center; gap: 6px; min-height: 30px; border: 0; border-radius: 6px; padding: 5px 8px; font-size: 12px; color: var(--work-text-muted); background: transparent; cursor: pointer; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-mobile-nav button[aria-pressed="true"] { background: var(--product-surface-muted); color: var(--work-text); }
   .product-shell--studio .work-workspace-shell[data-workspace] .studio-work-toolbar__actions > button { display: none; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding-inline-end: 100px; }
 }
 @media (max-width: 767px) {
   .product-shell.product-shell--studio { display: grid; grid-template-columns: 48px minmax(0, 1fr); }
@@ -303,14 +577,17 @@
   .product-shell--studio[data-sidebar="expanded"] .studio-main { grid-column: 2; }
   .product-shell--studio .studio-sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 45; border: 0; background: #00000024; }
   .product-shell--studio .studio-sidebar { padding-block: max(12px, env(safe-area-inset-top)) 12px; }
+  .product-shell--studio .studio-navigation .studio-navigation__link { flex-direction: row; min-height: 30px; padding: 6px 10px; }
+  .product-shell--studio[data-sidebar="collapsed"] :is(.studio-navigation__link, .studio-preferences button) { width: 44px; padding: 0; }
   .product-shell--studio .studio-topbar { height: 44px; padding-inline: 12px; gap: 8px; font-size: 12px; }
   .product-shell--studio .studio-topbar__label { display: none; }
   .product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { --workbench-inset: .75rem; height: calc(100dvh - 44px); padding-block-end: max(12px, env(safe-area-inset-bottom)); }
-  .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding: 8px var(--workbench-inset); gap: 4px; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity { flex-basis: 100%; max-width: 100%; padding-right: 90px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .work-header-rail { padding: 6px var(--workbench-inset); gap: 4px 8px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .work-header-rail > .work-current-context { flex-basis: 12rem; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity { flex-basis: 100%; max-width: 100%; }
   .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__state { flex-basis: 100%; }
-  .product-shell--studio .work-workspace-shell[data-workspace] .studio-work-toolbar { top: 10px; right: 8px; }
   .product-shell--studio .work-workspace-shell[data-workspace] .studio-project-tools > summary { min-height: 28px; }
+  .product-shell--studio .work-workspace-shell[data-workspace] .studio-project-tools__panel { max-inline-size: calc(100vw - 64px); }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-workspace-center { padding-inline: 0; }
   .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-toolbar { gap: 4px; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-conversation { scrollbar-gutter: auto; }
@@ -318,6 +595,8 @@
   .project-conversation-toolbar .project-assistant-settings { inline-size: 2.5rem; }
   .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-dock { padding: 8px 0 0; }
   .product-shell--studio .work-workspace-shell[data-workspace] .conversation-editor textarea { font-size: 1rem; }
+  .product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select) { font-size: 1rem; }
+  .product-shell--studio .work-workspace-shell[data-workspace] :is(.project-iteration-suggestion, .project-continuation-controls) button { min-block-size: 2.5rem; }
   .product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row { flex-wrap: nowrap; }
   .product-shell--studio .work-workspace-shell[data-workspace] .conversation-submit-row [data-send-icon="true"] { flex-shrink: 0; }
   .product-shell--studio .work-workspace-shell[data-workspace] .project-conversation-planning > summary { flex-wrap: wrap; }

@@ -54,11 +54,13 @@ task-intake and Team-confirmation contracts. Running-work questions can discuss
 independent ideas without mutating the running contract. Exact-target Request
 changes still uses the existing Intent Commit and explicit confirmation.
 
-The workbench places the current task and its status above the conversation.
-The title, transcript and composer share a reading column. Assistant replies
-show the author. On wide screens, Worker status and delivery share a
-16rem sidebar. Worker details expand below the selected member. Narrow
-screens use the view switcher for status and delivery.
+The workbench places the current task, status and toolbar controls in a flow
+header rail above the conversation. The title, active question board, transcript,
+planning controls and composer share a reading column. Assistant replies show
+the author. On wide screens, Worker status and delivery share a collapsible
+right sidebar (16rem for Worker status, wider when viewing delivery on wide
+screens); Worker details expand below the selected member. Narrow screens use
+the view switcher with backdrop dismissal for status and delivery.
 
 ## Saved future tasks
 

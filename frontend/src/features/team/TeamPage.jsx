@@ -245,6 +245,7 @@ export default function TeamPage({ api = settingsApi }) {
   return (
     <main id="main-content" className="team-page">
       <PageHeading
+        compact
         eyebrow={data?.start_context?.project_name || projectKey}
         title={t('team.title')}
         description={t('team.description')}

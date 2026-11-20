@@ -96,6 +96,9 @@ export function focusWorkContext(root, target, { reducedMotion = false, isCurren
   // The existing mobile controller owns which pane is visible.
   if (!sidebarTasks && tab && globalThis.matchMedia?.('(max-width: 1199px)')?.matches
       && (tab.getAttribute('aria-pressed') === 'false' || tab.getAttribute('aria-selected') === 'false')) tab.click();
+  if (!sidebarTasks && destination.tab === 'execution' && root.querySelector('.team-pane--execution[hidden]')) {
+    root.querySelector('button[aria-controls="team-panel-execution"][aria-expanded="false"]')?.click();
+  }
   if (!sidebarTasks && destination.tab === 'outcomes' && root.querySelector('.team-pane--outcomes[hidden]')) {
     root.querySelector('button[aria-controls="team-panel-outcomes"][aria-expanded="false"]')?.click();
   }

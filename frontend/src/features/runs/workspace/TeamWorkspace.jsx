@@ -1,13 +1,14 @@
 /**
- * [INPUT]: 接收项目对话、Worker 状态和交付记录。
- * [OUTPUT]: 提供 TeamWorkspace 工作台和任务详情入口。
- * [POS]: 组织工作台视图，并把 Worker 详情绑定到对应成员行。
+ * [INPUT]: 接收项目对话、Worker 状态、交付记录与顶栏挂载点。
+ * [OUTPUT]: 提供 TeamWorkspace 工作台、可折叠右侧栏和任务详情入口。
+ * [POS]: 组织工作台视图，将顶部工具区接入流式顶栏，并把 Worker 详情绑定到对应成员行。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
 import ProjectConversation from './ProjectConversation';
 import { TeamAvatar } from './ConversationTimeline';
 import { TaskAttention, TaskRunControls } from './TaskAttention';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronRight,
   FileCheck2,
@@ -78,7 +79,7 @@ function ExecutionPane({ actors, blocker, controls, context, onInspectAttempt, o
       ) : (
         <div className="team-execution-heading"><strong id="team-execution-title">{t('work.team.workerStatus')}</strong><span className="team-pane__eyebrow">{t('work.team.workerCount', { count: actors.length })}</span></div>
       )}
-      {onClose ? <button type="button" className="team-panel-close" aria-label={t('work.navigation.closePanel')} onClick={onClose}><X size={15} /></button> : null}
+      {onClose ? <button type="button" className="team-panel-close" aria-label={t('work.navigation.closePanel')} title={t('work.navigation.closePanel')} onClick={onClose}><X size={15} /></button> : null}
     </header>
     {blocker}
     {actors.length ? <ol className="team-actor-list">{actors.map((actor, index) => {
@@ -156,7 +157,7 @@ function OutcomesPane({
             <span className="team-pane__eyebrow">{t('work.team.resultsHelp')}</span>
           </div>
         )}
-        {onClose ? <button type="button" className="team-panel-close" aria-label={t('work.navigation.closePanel')} onClick={onClose}><X size={15} /></button> : null}
+        {onClose ? <button type="button" className="team-panel-close" aria-label={t('work.navigation.closePanel')} title={t('work.navigation.closePanel')} onClick={onClose}><X size={15} /></button> : null}
       </header>
       <div className="team-outcomes-scroll">
       {navigation}
@@ -313,6 +314,7 @@ function AdvancedInspector({
 }
 
 function TeamWorkspace({
+  toolbarHost = null,
   onConfigureRuntime,
   onOpenReview,
   onInspectAttempt,
@@ -359,6 +361,7 @@ function TeamWorkspace({
 }) {
   const mobileWorkspace = useMobileTeamWorkspace();
   const [mobileTab, setMobileTab] = useState('manager');
+  const [asideCollapsed, setAsideCollapsed] = useState(false);
   const [evidenceVisibility, setEvidenceVisibility] = useState(null);
   const [expandedTaskId, setExpandedTaskId] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState('');
@@ -386,7 +389,7 @@ function TeamWorkspace({
   const evidenceContext = `${projectKey}:${mission?.run_id || mission?.id || ''}:${attention?.target_id || ''}`;
   const evidenceOpen = evidenceVisibility?.context === evidenceContext
     ? evidenceVisibility.open : attention?.kind === 'approval';
-  const evidenceHidden = !mobileWorkspace && !evidenceOpen;
+  const evidenceHidden = !mobileWorkspace && (asideCollapsed || !evidenceOpen);
   const activeAttemptIds = new Set((workspace.execution_actors || []).filter(actor => actor.role !== 'orchestrator').map(actor => actor.current_attempt_id));
   const activeJobs = (data.worker_jobs || []).filter(job => activeAttemptIds.has(job.id) && job.status === 'running');
   const attentionReviewTask = attention?.target_type === 'review' && attention?.target_id
@@ -427,6 +430,7 @@ function TeamWorkspace({
     if (!attentionReviewTask) return;
     returnFocusRef.current = trigger || document.activeElement;
     setActiveReviewTaskId(attentionReviewTask.id);
+    setAsideCollapsed(false);
     setEvidenceVisibility({ context: evidenceContext, open: true });
     if (!mobileWorkspace) {
       outcomeRefs.current.get(attentionReviewTask.id)?.scrollIntoView?.({
@@ -445,6 +449,25 @@ function TeamWorkspace({
     setSelectedReviewTargetId('');
     returnFocus?.focus?.();
   }, []);
+  const closeMobileDrawer = useCallback((restoreFocus = true) => {
+    const activeTab = mobileTab;
+    setMobileTab('manager');
+    if (restoreFocus && activeTab !== 'manager') {
+      mobileTabRefs.current.get(activeTab)?.focus();
+    }
+  }, [mobileTab]);
+  useEffect(() => {
+    if (!mobileWorkspace || mobileTab === 'manager') return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (event.target?.closest?.('.studio-project-tools[open], dialog, [role="dialog"]')) return;
+      if (document.querySelector('dialog[open], [role="dialog"]:not([hidden])')) return;
+      event.preventDefault();
+      closeMobileDrawer();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [closeMobileDrawer, mobileTab, mobileWorkspace]);
   const handleMobileTabKeyDown = useCallback((event, currentTab) => {
     const currentIndex = MOBILE_TEAM_TABS.indexOf(currentTab);
     let nextIndex;
@@ -462,6 +485,7 @@ function TeamWorkspace({
     id: `team-panel-${tab}`,
     'data-mobile-active': tab === 'manager' || mobileTab === tab ? 'true' : 'false',
     'data-read-only': readOnly ? 'true' : undefined,
+    ...(!mobileWorkspace && tab === 'execution' ? { hidden: asideCollapsed } : {}),
     ...(!mobileWorkspace && tab === 'outcomes' ? { hidden: evidenceHidden } : {}),
     ...(mobileWorkspace ? {
       'aria-labelledby': `team-tab-${tab}`,
@@ -482,22 +506,56 @@ function TeamWorkspace({
     { id: 'manager', label: t('work.team.manager') },
     { id: 'outcomes', label: t('work.team.historyDelivery') },
   ];
+  const workToolbar = (
+    <div className="studio-work-toolbar">
+      <div className="studio-work-toolbar__actions">
+        {projectTools ? <details className="studio-project-tools" onKeyDown={event => {
+          if (event.key !== 'Escape') return;
+          event.stopPropagation();
+          event.currentTarget.open = false;
+          event.currentTarget.querySelector('summary')?.focus();
+        }}>
+          <summary><Wrench size={16} aria-hidden="true" />{t('product.studio.projectTools')}</summary>
+          <div className="studio-project-tools__panel">{projectTools}</div>
+        </details> : null}
+        <button
+          type="button"
+          aria-controls="team-panel-outcomes"
+          aria-expanded={!evidenceHidden}
+          data-active={!evidenceHidden ? 'true' : undefined}
+          onClick={() => {
+            setAsideCollapsed(false);
+            setEvidenceVisibility({ context: evidenceContext, open: evidenceHidden });
+          }}
+        >
+          {evidenceHidden ? <PanelRightOpen size={16} aria-hidden="true" /> : <PanelRightClose size={16} aria-hidden="true" />}
+          {t(evidenceHidden ? 'product.studio.showEvidence' : 'product.studio.hideEvidence')}
+        </button>
+        {!mobileWorkspace && asideCollapsed ? (
+          <button
+            type="button"
+            className="studio-work-toolbar__reopen"
+            aria-controls="team-panel-execution"
+            aria-expanded={false}
+            aria-label={t('work.team.workerStatus')}
+            title={t('work.team.workerStatus')}
+            onClick={() => {
+              setAsideCollapsed(false);
+              setEvidenceVisibility({ context: evidenceContext, open: false });
+            }}
+          >
+            <PanelRightOpen size={16} aria-hidden="true" />
+            <span>{t('work.team.workerStatus')}</span>
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
   return (
     <>
-      <div className="studio-work-toolbar">
-        <div className="studio-work-toolbar__actions">
-          {projectTools ? <details className="studio-project-tools" onKeyDown={event => {
-            if (event.key !== 'Escape') return;
-            event.stopPropagation();
-            event.currentTarget.open = false;
-            event.currentTarget.querySelector('summary')?.focus();
-          }}>
-            <summary><Wrench size={16} aria-hidden="true" />{t('product.studio.projectTools')}</summary>
-            <div className="studio-project-tools__panel">{projectTools}</div>
-          </details> : null}
-          <button type="button" aria-controls="team-panel-outcomes" aria-expanded={!evidenceHidden} onClick={() => setEvidenceVisibility({ context: evidenceContext, open: evidenceHidden })}>{evidenceHidden ? <PanelRightOpen size={16} aria-hidden="true" /> : <PanelRightClose size={16} aria-hidden="true" />}{t(evidenceHidden ? 'product.studio.showEvidence' : 'product.studio.hideEvidence')}</button>
-        </div>
-      </div>
+      {toolbarHost
+        ? createPortal(<fieldset className="studio-work-toolbar-scope" disabled={interactionsDisabled}>{workToolbar}</fieldset>, toolbarHost)
+        : workToolbar}
       <div
         aria-label={t('work.team.navigation')}
         className="team-mobile-nav"
@@ -537,6 +595,7 @@ function TeamWorkspace({
         className="team-workspace"
         ref={panelsRef}
         aria-label={t('work.team.workspace')}
+        data-aside-collapsed={!mobileWorkspace && asideCollapsed ? 'true' : undefined}
         data-evidence-collapsed={evidenceHidden ? 'true' : undefined}
         data-read-only={readOnly ? 'true' : undefined}
       >
@@ -545,7 +604,7 @@ function TeamWorkspace({
           executionRunning={activeJobs.length > 0}
           canManageTasks={true}
           taskManagementOpen={navigationInSidebar ? taskManagementOpen : mobileWorkspace ? taskManagementOpen : !evidenceHidden}
-          onManageTasks={() => { if (navigationInSidebar) { onManageTasks?.(); return; } setEvidenceVisibility({ context: evidenceContext, open: true }); if (mobileWorkspace) { setMobileTab('outcomes'); onManageTasks?.(); } }}
+          onManageTasks={() => { if (navigationInSidebar) { onManageTasks?.(); return; } setAsideCollapsed(false); setEvidenceVisibility({ context: evidenceContext, open: true }); if (mobileWorkspace) { setMobileTab('outcomes'); onManageTasks?.(); } }}
           onConfigureRuntime={onConfigureRuntime}
           acceptedMessage={conversationDelivery && conversationDelivery.projectKey === projectKey && !conversationDelivery.intentId
             && (conversationDelivery.contextKey || '').startsWith('message:')
@@ -590,10 +649,19 @@ function TeamWorkspace({
           onClearContext={onClearContext}
         />
         </div>
+        {mobileWorkspace && mobileTab !== 'manager' ? (
+          <button
+            type="button"
+            className="team-pane-backdrop"
+            aria-label={t('work.navigation.closePanel')}
+            onClick={() => closeMobileDrawer()}
+            tabIndex={-1}
+          />
+        ) : null}
         <ExecutionPane
           onInspectAttempt={onInspectAttempt}
-          onClose={mobileWorkspace ? () => setMobileTab('manager') : undefined}
-          onSwitchToOutcomes={!mobileWorkspace ? () => setEvidenceVisibility({ context: evidenceContext, open: true }) : undefined}
+          onClose={() => (mobileWorkspace ? closeMobileDrawer() : setAsideCollapsed(true))}
+          onSwitchToOutcomes={!mobileWorkspace ? () => { setAsideCollapsed(false); setEvidenceVisibility({ context: evidenceContext, open: true }); } : undefined}
           outcomesCount={outcomes.length}
           blocker={attention?.kind === 'blocker' ? <TaskAttention attention={attention} activeJobs={activeJobs} error={error} jobs={data.worker_jobs || []} projectKey={projectKey} busy={busy} onRetry={readOnly ? undefined : onRetry} retry={retry} t={t} /> : null}
           context={executionContext}
@@ -605,8 +673,8 @@ function TeamWorkspace({
           t={t}
         />
         <OutcomesPane
-          onClose={() => { setEvidenceVisibility({ context: evidenceContext, open: false }); setMobileTab('manager'); }}
-          onSwitchToExecution={!mobileWorkspace ? () => setEvidenceVisibility({ context: evidenceContext, open: false }) : undefined}
+          onClose={() => { setEvidenceVisibility({ context: evidenceContext, open: false }); if (mobileWorkspace) closeMobileDrawer(); }}
+          onSwitchToExecution={!mobileWorkspace ? () => { setAsideCollapsed(false); setEvidenceVisibility({ context: evidenceContext, open: false }); } : undefined}
           actorsCount={(workspace.execution_actors || []).filter((actor) => actor.role !== 'orchestrator').length}
           navigation={taskNavigation}
           historyContext={historyContext}

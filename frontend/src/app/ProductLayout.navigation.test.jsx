@@ -79,3 +79,16 @@ test('workspace breadcrumb identifies the route rather than words in the project
   expect(screen.getByRole('link', { name: 'Projects', exact: true })).not.toHaveAttribute('aria-current');
   expect(screen.getByRole('link', { name: 'Knowledge base' })).toHaveAttribute('aria-current', 'page');
 });
+
+test('keeps Workbench visible in the project nav and preserves icon links when collapsed', async () => {
+  const user = userEvent.setup();
+  openRoute('/projects/one/work');
+  expect(screen.getByRole('link', { name: 'Workbench', exact: true })).toHaveAttribute('aria-current', 'page');
+  await user.click(screen.getByRole('button', { name: 'Collapse sidebar', expanded: true }));
+  expect(document.querySelector('.product-shell')).toHaveAttribute('data-sidebar', 'collapsed');
+  for (const name of ['Projects', 'Workbench', 'Reviews', 'Team', 'Knowledge base', 'Settings']) {
+    const link = screen.getByRole('link', { name, exact: true });
+    expect(link).toBeVisible();
+    expect(link).toHaveAttribute('title', name);
+  }
+});
