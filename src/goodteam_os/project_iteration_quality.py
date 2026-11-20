@@ -22,6 +22,7 @@ from goodteam_os.goal_continuation import goal_guard
 from goodteam_os.memory_storage import role_lock
 from goodteam_os.project_iteration import normalize_write_domains
 from goodteam_os.skills.models import SkillError
+from goodteam_os.skills.review_sources import review_evidence_paths
 from goodteam_os.skills.task_start import registered_project_scope
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
@@ -147,6 +148,7 @@ def batch_candidate_source(root, snapshot, request):
     binding, candidate = _current_source(root, snapshot)
     configuration = binding["configuration"]
     if (request.get("batch_source") != binding["receipt_id"] or request.get("builder_worker")
+            or request.get("review_evidence_paths") != configuration.get("review_evidence_paths")
             or any(request.get(key) != value for key, value in configuration["validation_contract"].items())):
         raise TaskInputError("batch_quality_check_changed")
     initial = binding["source"]["integration"]["candidate_commit"]
@@ -175,7 +177,8 @@ def batch_candidate_source(root, snapshot, request):
 
 
 def prepare_project_batch_quality(*, workspace, project_key, root, run_id, argv, criteria,
-                                  reviewer_model, fix_model, seconds=30, wall_seconds=900, fix_seconds=120):
+                                  reviewer_model, fix_model, seconds=30, wall_seconds=900, fix_seconds=120,
+                                  evidence_paths=None):
     """Explicit local command/configuration only; freeze input without running a model."""
     from goodteam_os.project_iteration_execution import _require_execution_slot
 
@@ -187,6 +190,7 @@ def prepare_project_batch_quality(*, workspace, project_key, root, run_id, argv,
             or type(wall_seconds) is not int or not 1 <= wall_seconds <= 3600
             or type(fix_seconds) is not int or not 1 <= fix_seconds <= 600):
         raise TaskInputError("batch_quality_configuration_invalid")
+    paths = review_evidence_paths([] if evidence_paths is None else evidence_paths)
     with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
         batch = _batch(workspace, project_key, root, run_id)
         _require_execution_slot(workspace, project_key, run_id,
@@ -228,6 +232,8 @@ def prepare_project_batch_quality(*, workspace, project_key, root, run_id, argv,
             "wall_seconds": wall_seconds, "fix_seconds": fix_seconds,
             "correction_runtime": {"role": "implementation", "adapter": "codex", "model": fix_model,
                                    "execution_policy": "standard"}}
+        if paths:
+            configuration["review_evidence_paths"] = paths
         required = _bound({"schema_version": _SCHEMA, "batch_run_id": run_id, "snapshot": snapshot.reference,
                           "input_digest": identifier, "configuration_digest": digest(canonical_bytes(configuration))})
         with role_lock(store.root / execution_key(run_id)):

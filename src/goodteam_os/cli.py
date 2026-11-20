@@ -96,6 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--seconds", type=int, default=30)
             command.add_argument("--wall-seconds", type=int, default=900)
             command.add_argument("--fix-seconds", type=int, default=120)
+            command.add_argument("--review-evidence-path", action="append",
+                                 help="Attach an exact tracked candidate file and opt into sharing full bounded check stdout/stderr with the Reviewer (repeatable)")
             command.add_argument("argv", nargs=argparse.REMAINDER)
         elif name == "advance":
             command.add_argument("--expected-input-digest", required=True)
@@ -698,7 +700,8 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
                 command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
                 payload = prepare_project_batch_quality(**selected, argv=command, criteria=args.criterion,
                     reviewer_model=args.reviewer_model, fix_model=args.fix_model, seconds=args.seconds,
-                    wall_seconds=args.wall_seconds, fix_seconds=args.fix_seconds)
+                    wall_seconds=args.wall_seconds, fix_seconds=args.fix_seconds,
+                    evidence_paths=args.review_evidence_path)
             elif args.quality_command == "advance":
                 payload = advance_project_batch_quality(**selected, expected_input_digest=args.expected_input_digest,
                     confirmed=True, billing_acknowledged=args.acknowledge_external_cost,

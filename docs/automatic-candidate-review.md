@@ -207,15 +207,17 @@ current head. A later candidate does not silently rebase the review onto whateve
 The Reviewer supplies advisory findings, criterion checks and source evidence.
 It cannot approve the candidate, modify sources or advance the gate itself. The
 controller consumes the existing protected `ReviewResultStore` result and applies
-`candidate_review_policy.v1`:
+`candidate_review_policy.v3` for new reviews:
 
 - An unknown host check is `inconclusive`.
 - A failed host check or any critical/high/medium/low finding produces
   `request_changes`, preserving actionable feedback.
 - Approval requires a passed host check, no blocking findings and exactly one
   checked entry for every original criterion ID, each with source evidence.
-  Missing, duplicate, unchecked or otherwise unresolved coverage is
-  `inconclusive`. Repeated criterion text keeps separate criterion IDs.
+  Missing, duplicate, unchecked or otherwise unresolved **required** coverage is
+  `inconclusive`. Repeated criterion text keeps separate criterion IDs. Additional
+  checks remain in the report but do not affect coverage; findings are evaluated
+  independently of whether a check is required.
 
 A report's `checked` label and evidence references are a review judgment, not
 independent verification of semantic truth. The command-to-criterion mapping also
@@ -296,10 +298,10 @@ checks and must be reported separately when performed.
 
 ## Approved-intent review coverage
 
-For new automatic reviews with an existing approved-plan binding, policy v2 pins
-one named assessment per approved intent artifact and one for the derived task
-mapping to that binding and its exact artifact versions. The independent
-Reviewer must explain semantic alignment of the actual candidate with the
+For new automatic reviews with an existing approved-plan binding, v3 also pins
+one required assessment per approved intent artifact and one for the derived task
+mapping to that binding and its exact artifact versions.
+The Reviewer must explain semantic alignment of the actual candidate with the
 relevant intent, scope and constraints, supported by exact candidate source
 references. A plan quote, matching identifier or green check is not itself that
 judgment. Conflicts produce actionable findings; missing, duplicate, unperformed
@@ -309,8 +311,10 @@ advisory report and bounded fix loop, not a new human gate or Planner.
 The retained report contains the assessments, their rationale and evidence; the
 machine receipt pins its report digest, exact head, check receipt and policy.
 These remain reviewer judgments, not independently verified semantic truth.
-Executions without an approved-plan binding retain the exact v1 contract and do
-not gain plan-approval provenance. Missing or stale bindings still block.
+Executions without an approved-plan binding do not gain plan-approval provenance.
+Missing or stale bindings still block. Frozen v1 (criteria only) and v2 (criteria
+and approved intent) reviews retain their original coverage rules and receipts.
+An old inconclusive review is not automatically retried or upgraded to approval.
 
 A previously frozen v1 automatic review with a plan binding stops with
 `automatic_review_plan_coverage_upgrade_required`: its inputs, reports and

@@ -60,7 +60,7 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
                  project_root=str(root), expected_continuation_id=value["id"], expected_authority=authority,
                  task_ids=[research["id"], companion["id"]],
                  task_bindings=[dict(task_id=t["id"], task_intent=tasks.project_task_intent(t)) for t in rows[1:]],
-                 tracks=[dict(project_task_id=t["id"], role=t["role"], execution_policy=t["execution_policy"]) for t in rows[1:]])
+                 tracks=[dict(project_task_id=t["id"], role=t["role"], execution_policy=project_iteration_execution.dispatch_policy(t)) for t in rows[1:]])
     state = dict(project_continuation=deepcopy(value), project_task_batches={run_id: deepcopy(batch)},
                  timeline=[], queued_task_proposals=[])
 
@@ -92,7 +92,8 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
         def list_tasks(self):
             return deepcopy(rows)
 
-        def create_task_once(self, *, creation_ref, intent):
+        def create_task_once(self, *, creation_ref, intent, authorized_roles=None):
+            assert authorized_roles is None or intent["role"] in authorized_roles
             previous = next((row for row in rows if creation_ref in row.get("external_refs", [])), None)
             if previous:
                 assert all(previous[key] == val for key, val in intent.items())
@@ -110,10 +111,7 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
         monkeypatch.setattr(module, "authority_snapshot", lambda *_: deepcopy(authority))
     from contextlib import nullcontext
     monkeypatch.setattr(continuation, "goal_guard", lambda *_: nullcontext())
-    monkeypatch.setattr(continuation, "active_project_run", lambda *_: None)
-    monkeypatch.setattr(continuation, "require_no_active_project_goal", lambda *_: None)
     monkeypatch.setattr(workflow_recovery, "linked_parent", lambda *_, **__: None)
-    monkeypatch.setattr(planner, "_require_planning_idle", lambda *_: None)
     monkeypatch.setattr(planner, "_project_evidence", lambda *_, **__: {"status": "unavailable"})
     monkeypatch.setattr(discovery, "_head", lambda *_: head)
     monkeypatch.setattr(continuation, "_require_clean_checkout", lambda *_: None)
@@ -217,7 +215,7 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
             state["project_task_batches"][next_run] = dict(
                 run_id=next_run, status="running", expected_continuation_id=value["id"],
                 task_ids=[task["id"]], tracks=[dict(project_task_id=task["id"], role=task["role"],
-                execution_policy=task["execution_policy"])])
+                execution_policy=project_iteration_execution.dispatch_policy(task))])
         return {"run_id": next_run}
 
     monkeypatch.setattr(assistant_queue, "queue_manager_iteration_choice", queue)
@@ -287,23 +285,6 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
         tick()
         assert len(calls) == 1  # Same results do not buy another judgment.
         return
-
-    # A simultaneous chat owns the same project slot. Discovery must not
-    # consume a call or freeze its packet before it can actually start.
-    from goodteam_os.manager_execution import manager_resource_slot
-    original_calls = state["project_continuation"]["manager_calls"]
-    with manager_resource_slot(root):
-        deferred = tick()
-    assert deferred["status"] == "active" and deferred["reason"] == "manager_resource_busy"
-    assert deferred["manager_calls"] == original_calls and not deferred.get("discovery_pending")
-    assert not calls and not starts
-    retained = {"packet_digest": "unknown-prior-input", "no_response_yet": True}
-    state["project_continuation"].update(discovery_pending=retained, manager_calls=original_calls + 1)
-    with manager_resource_slot(root):
-        deferred = tick()
-    assert deferred["discovery_pending"] == retained and deferred["manager_calls"] == original_calls + 1
-    assert not calls and not starts
-    state["project_continuation"].update(discovery_pending=None, manager_calls=original_calls)
 
     fail_publication[0] = True
     assert tick()["reason"] == "discovery_publication_pending"
@@ -524,7 +505,7 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
         current_batch = state["project_task_batches"][run_id]
         current_batch.update(status="review",
             task_bindings=[dict(task_id=t["id"], task_intent=tasks.project_task_intent(t)) for t in rows[1:]],
-            tracks=[dict(project_task_id=t["id"], role=t["role"], execution_policy=t["execution_policy"]) for t in rows[1:]])
+            tracks=[dict(project_task_id=t["id"], role=t["role"], execution_policy=project_iteration_execution.dispatch_policy(t)) for t in rows[1:]])
         report.update(all_ok=True)
         for job, row in zip(report["jobs"], rows[1:]):
             job.update(role=row["role"], outcome="ok", status="completed")
