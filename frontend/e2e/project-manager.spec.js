@@ -99,11 +99,38 @@ test('the workbench keeps worker detail next to its owner at desktop and phone w
   await outcomesToggle.click();
   await expect(outcomesToggle).toHaveAttribute('data-active', 'true');
   await expect(page.locator('#team-panel-outcomes')).toBeVisible();
-  expect((await page.locator('#team-panel-outcomes').boundingBox()).width).toBeGreaterThan(256);
+  const outcomesBox = await page.locator('#team-panel-outcomes').boundingBox();
+  expect(outcomesBox.width).toBeGreaterThan(256);
+  await composer.fill('Check send button clearance');
+  const sendButton = manager.getByRole('button', { name: 'Send', exact: true });
+  const sendBox = await sendButton.boundingBox();
+  expect(sendBox.x + sendBox.width).toBeLessThanOrEqual(outcomesBox.x);
+  expect(await sendButton.evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    return Boolean(hit && node.contains(hit));
+  })).toBe(true);
+  await composer.fill('');
   await outcomesToggle.click();
   await expect(page.locator('#team-panel-outcomes')).toBeHidden();
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#team-tab-execution').focus();
+  await page.locator('#team-tab-execution').press('Enter');
+  await expect(page.locator('#team-panel-execution')).toBeVisible();
+  await expect(page.locator('#team-panel-execution')).toHaveAttribute('data-mobile-active', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#team-panel-execution')).toHaveAttribute('data-mobile-active', 'false');
+  await expect(page.locator('.team-pane-backdrop')).toBeHidden();
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe('team-tab-execution');
+
+  await page.locator('#team-tab-execution').press('Enter');
+  await expect(page.locator('#team-panel-execution')).toBeVisible();
+  await page.locator('#team-panel-execution .team-panel-close').focus();
+  await page.locator('#team-panel-execution .team-panel-close').press('Enter');
+  await expect(page.locator('#team-panel-execution')).toHaveAttribute('data-mobile-active', 'false');
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe('team-tab-execution');
+
   await page.locator('#team-tab-execution').click();
   await expect(composer).toHaveCSS('font-size', '16px');
   if (await worker.getAttribute('aria-expanded') !== 'true') await worker.click();

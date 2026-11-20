@@ -449,6 +449,25 @@ function TeamWorkspace({
     setSelectedReviewTargetId('');
     returnFocus?.focus?.();
   }, []);
+  const closeMobileDrawer = useCallback((restoreFocus = true) => {
+    const activeTab = mobileTab;
+    setMobileTab('manager');
+    if (restoreFocus && activeTab !== 'manager') {
+      mobileTabRefs.current.get(activeTab)?.focus();
+    }
+  }, [mobileTab]);
+  useEffect(() => {
+    if (!mobileWorkspace || mobileTab === 'manager') return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (event.target?.closest?.('.studio-project-tools[open], dialog, [role="dialog"]')) return;
+      if (document.querySelector('dialog[open], [role="dialog"]:not([hidden])')) return;
+      event.preventDefault();
+      closeMobileDrawer();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [closeMobileDrawer, mobileTab, mobileWorkspace]);
   const handleMobileTabKeyDown = useCallback((event, currentTab) => {
     const currentIndex = MOBILE_TEAM_TABS.indexOf(currentTab);
     let nextIndex;
@@ -579,14 +598,6 @@ function TeamWorkspace({
         data-aside-collapsed={!mobileWorkspace && asideCollapsed ? 'true' : undefined}
         data-evidence-collapsed={evidenceHidden ? 'true' : undefined}
         data-read-only={readOnly ? 'true' : undefined}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape' && mobileWorkspace && mobileTab !== 'manager') {
-            event.stopPropagation();
-            const activeTab = mobileTab;
-            setMobileTab('manager');
-            mobileTabRefs.current.get(activeTab)?.focus();
-          }
-        }}
       >
         <div className="team-workspace-center">
         <ProjectConversation
@@ -643,13 +654,13 @@ function TeamWorkspace({
             type="button"
             className="team-pane-backdrop"
             aria-label={t('work.navigation.closePanel')}
-            onClick={() => setMobileTab('manager')}
+            onClick={() => closeMobileDrawer()}
             tabIndex={-1}
           />
         ) : null}
         <ExecutionPane
           onInspectAttempt={onInspectAttempt}
-          onClose={() => (mobileWorkspace ? setMobileTab('manager') : setAsideCollapsed(true))}
+          onClose={() => (mobileWorkspace ? closeMobileDrawer() : setAsideCollapsed(true))}
           onSwitchToOutcomes={!mobileWorkspace ? () => { setAsideCollapsed(false); setEvidenceVisibility({ context: evidenceContext, open: true }); } : undefined}
           outcomesCount={outcomes.length}
           blocker={attention?.kind === 'blocker' ? <TaskAttention attention={attention} activeJobs={activeJobs} error={error} jobs={data.worker_jobs || []} projectKey={projectKey} busy={busy} onRetry={readOnly ? undefined : onRetry} retry={retry} t={t} /> : null}
@@ -662,7 +673,7 @@ function TeamWorkspace({
           t={t}
         />
         <OutcomesPane
-          onClose={() => { setEvidenceVisibility({ context: evidenceContext, open: false }); setMobileTab('manager'); }}
+          onClose={() => { setEvidenceVisibility({ context: evidenceContext, open: false }); if (mobileWorkspace) closeMobileDrawer(); }}
           onSwitchToExecution={!mobileWorkspace ? () => { setAsideCollapsed(false); setEvidenceVisibility({ context: evidenceContext, open: false }); } : undefined}
           actorsCount={(workspace.execution_actors || []).filter((actor) => actor.role !== 'orchestrator').length}
           navigation={taskNavigation}
