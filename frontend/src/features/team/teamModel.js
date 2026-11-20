@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Team API 返回的角色和运行设置。
  * [OUTPUT]: 团队视图与编辑命令。
- * [POS]: 为 Team 界面保留已保存的 Manager 授权。
+ * [POS]: 将 Manager 运行配置和推理档位投影到团队设置。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
 const ROLE_FALLBACK_LABEL = (role) => String(role || '').replaceAll('_', ' ');
@@ -112,8 +112,9 @@ export function buildTeamModel(data) {
       provider: managerProvider,
       model: managerRuntime.model || '',
       reasoningDepth: managerRuntime.reasoning_depth || 'default',
+      reasoningDefault: team.manager?.reasoning_default || 'high',
+      reasoningDepths: team.manager?.reasoning_depths || [],
       additionalPrompt: managerRuntime.additional_prompt || '',
-      trustLocalCodex: managerRuntime.trust_local_codex === true,
       runtimeLabel: runtimeLabel({ ...managerRuntime, provider: managerProvider === 'codex' ? 'Codex app-server' : managerProvider }),
       skillBinding: {
         schemaVersion: team.manager?.skill_binding?.schema_version || 'role_skill_bindings.v1',

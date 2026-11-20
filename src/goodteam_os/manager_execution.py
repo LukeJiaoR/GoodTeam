@@ -1,6 +1,6 @@
-"""[INPUT]: 项目配置与团队状态。
+"""[INPUT]: 项目配置、团队状态与 Manager 推理深度约定。
 [OUTPUT]: Manager 对话、分析入口与运行设置。
-[POS]: 将项目授权和输入交给 Manager 运行时。
+[POS]: 将项目配置和输入交给 Manager 运行时。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from __future__ import annotations
@@ -17,6 +17,7 @@ from typing import Any
 
 from goodteam_os.graph import worker_type_settings_for_role
 from goodteam_os.models import resolve_project_model_profile
+from goodteam_os.worker_capabilities import MANAGER_DEFAULT_REASONING_DEPTH
 
 
 class ManagerExecutionError(RuntimeError):
@@ -97,12 +98,11 @@ def _manager_settings(target: dict[object, object]) -> dict[str, object]:
     if state is not None:
         runtime = dict(dict(state.get("manager", {}) or {}).get("runtime", {}) or {})
         settings = {"reasoning_depth": runtime.get("reasoning_depth", "default"),
-                    "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
-                    "trust_local_codex": runtime.get("trust_local_codex") is True}
+                    "additional_prompt": str(runtime.get("additional_prompt", "") or "")}
     else:
         settings = worker_type_settings_for_role(target, "orchestrator")
     if settings.get("reasoning_depth", "default") == "default":
-        settings["reasoning_depth"] = "high"
+        settings["reasoning_depth"] = MANAGER_DEFAULT_REASONING_DEPTH
     settings.pop("desired_instances", None)
     settings.pop("pi_thinking_level", None)
     return settings

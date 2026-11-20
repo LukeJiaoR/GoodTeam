@@ -10,10 +10,6 @@ export async function saveAssistantRuntime({ api, projectKey, commands, refresh 
   try {
     await api.sendTeamCommands(projectKey, commands, { reason: 'Update Task Assistant runtime' });
     saved = true;
-    if (commands.some((command) => command.trust_local_codex === false)) {
-      await refresh();
-      return { saved };
-    }
     const result = await api.taskAssistantAction(projectKey, {
       action: 'check_runtime', confirmed: true,
       message_id: globalThis.crypto?.randomUUID?.() || `check-${Date.now()}`,

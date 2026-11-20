@@ -1,6 +1,12 @@
-"""Shared PostgreSQL configuration for application data and Manager checkpoints."""
+"""
+[INPUT]: 依赖 psycopg 连接与 psycopg_pool 线程池。
+[OUTPUT]: 提供共享 PostgreSQL 配置、连接和 Manager 检查点。
+[POS]: 持久化公共入口；退出时在线程销毁前关闭连接池。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
+import atexit
 from contextlib import contextmanager
 from functools import lru_cache
 from hashlib import sha256
@@ -74,6 +80,7 @@ class PostgresDatabase:
                     "prepare_threshold": 0, "options": f"-c search_path={schema}",
                     "application_name": "goodteam"},
         )
+        atexit.register(self.pool.close)
         self._setup_lock = Lock()
         self._checkpointer = None
 

@@ -126,8 +126,6 @@ class ManagerAppServer:
 
         target = load_project_target(self.config)
         settings = _manager_settings(target)
-        if settings.get("trust_local_codex") is not True:
-            raise _error("Enable Use local Codex in this project's Manager settings.", "manager_local_codex_disabled")
         binary = os.environ.get("GOODTEAM_CODEX_PATH") or shutil.which("codex")
         if not binary:
             raise _error("Codex app-server is unavailable. Install Codex or set GOODTEAM_CODEX_PATH.")
@@ -485,13 +483,14 @@ class ManagerAppServer:
                             tools = ManagerTools(self, logical_id=logical_id, background=background,
                                                  authority_check=authority_check)
                             instructions = tools.instructions(text=text, context=context)
+                            thread_fingerprint = fingerprint + ":chat-only" if tools.skill_storage_unavailable else fingerprint
                             saved = (self.store.read().get("manager_app_server", {}).get("threads", {})
                                      .get(thread_key) or {})
                             params = {"cwd": str(self.root), "sandbox": "read-only", "approvalPolicy": "never",
                                       "developerInstructions": instructions}
                             if public["model"]:
                                 params["model"] = public["model"]
-                            if (saved and saved.get("fingerprint") == fingerprint and memory_revision is not None
+                            if (saved and saved.get("fingerprint") == thread_fingerprint and memory_revision is not None
                                     and saved.get("memory_revision") == memory_revision):
                                 native = self.client.resume_thread(saved["thread_id"], **params)
                             else:
@@ -500,7 +499,7 @@ class ManagerAppServer:
                             def bind(session):
                                 state = session.setdefault("manager_app_server", {})
                                 state.setdefault("threads", {})[thread_key] = {"thread_id": thread_id,
-                                    "fingerprint": fingerprint, "memory_revision": memory_revision}
+                                                  "fingerprint": thread_fingerprint, "memory_revision": memory_revision}
                                 return session
                             self.store._mutate(bind)
                             turn = _Turn(thread_key, thread_id, [logical_id], phase, tools, client=self.client,

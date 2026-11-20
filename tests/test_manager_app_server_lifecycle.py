@@ -113,6 +113,20 @@ def wait_running(runtime, logical_id):
     pytest.fail("Native turn never became running")
 
 
+def test_chat_survives_blocked_skill_storage(runtime, monkeypatch):
+    native, log = runtime
+    monkeypatch.setenv("GOODTEAM_STATE_DIR", str(native.workspace / "operator-state"))
+
+    result = native.run(logical_id="plain-chat", text="Discuss my project idea.", context="")
+
+    assert result["text"] == "actual answer"
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    thread = next(call["params"] for call in calls if call["method"] == "thread/start")
+    assert {tool["name"] for tool in thread["dynamicTools"]} == {
+        "goodteam_project", "goodteam_workers", "goodteam_result",
+    }
+
+
 def test_background_analysis_does_not_block_chat_steer_or_scoped_stop(runtime):
     native, log = runtime
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:

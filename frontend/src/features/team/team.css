@@ -333,7 +333,6 @@
   font: inherit;
 }
 .team-dialog__prompt { grid-column: 1 / -1; }
-.team-dialog__fields label.team-dialog__trust { display: flex; align-items: center; margin-bottom: 0.3rem; }
 
 .team-runtime-fields { grid-column: 1 / -1; min-width: 0; }
 .team-runtime-fields__heading,

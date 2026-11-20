@@ -24,7 +24,7 @@ test_codex_local_engine.py: 验证 codex local engine 的行为。
 test_codex_relay.py: Model-free real relay child/pipe/HTTP evidence; no Docker admission claim.
 test_context_freshness.py: Project iterations must not reuse understanding of changed source files.
 test_conversation_attachments.py: 验证 conversation attachments 的行为。
-test_database_subprocess.py: 验证 database subprocess 的行为。
+test_database_subprocess.py: 验证数据库配置隔离与连接池退出清理。
 test_delivery_api.py: 验证 delivery api 的行为。
 test_delivery_backlog_judgment.py: Real grant/ledger/question/answer/queue path; Manager and capability are fixtures.
 test_delivery_feedback_drain.py: Real grant/ledger/source/discovery; Git verification and Manager are fixtures.
@@ -50,7 +50,7 @@ test_init.py: 验证 init 的行为。
 test_intent_commit.py: 验证 intent commit 的行为。
 test_iteration_context_inputs.py: Representative continuity, complete-prompt budget and planner replay contracts.
 test_load_profile.py: 验证 load profile 的行为。
-test_manager_app_server_lifecycle.py: 验证 Manager 原生请求、并发控制与角色记忆。
+test_manager_app_server_lifecycle.py: 验证 Manager 原生请求、并发控制、角色记忆与只读对话回退。
 test_manager_assignment.py: Native Manager tools traverse the real queue and isolated subprocess pool.
 test_manager_completion.py: Completed native replies retain their exact thread/turn identity across restart.
 test_manager_completion_planning.py: Native planning replay keeps the original billable turn and input binding.
@@ -59,7 +59,7 @@ test_manager_dialogue.py: Offline continuation adapter with an in-memory checkpo
 test_manager_execution.py: Manager conversation uses native threads and plain replies, never WorkerJobs.
 test_manager_goal_intake.py: Saving later work never admits it into an already active Goal.
 test_manager_input_priority.py: Durable admission and native recovery do not block project conversation.
-test_manager_runtime_config.py: 验证 Manager 配置迁移和项目级本机 Codex 授权。
+test_manager_runtime_config.py: 验证 Manager 配置迁移、默认启动和推理档位。
 test_manager_runtime_observation.py: Read real local session files; no provider execution or paid Manager call.
 test_manager_skill_context.py: Native Manager input reuses pinned Role/Skill records without a Worker job.
 test_manager_tools.py: Host tools retain queue identity and the shared project's control allowance.

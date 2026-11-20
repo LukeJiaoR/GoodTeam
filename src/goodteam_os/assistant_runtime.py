@@ -26,7 +26,6 @@ def runtime_snapshot(config):
         "reasoning_depth": settings.get("reasoning_depth", "default"),
     }
     if public["provider"] == "codex":
-        public["trust_local_codex"] = settings.get("trust_local_codex") is True
         public["provider_authority"] = "native_managed"
         public["transport"] = "app-server"
     encoded = json.dumps({**public, "settings": settings}, sort_keys=True).encode()
@@ -65,12 +64,11 @@ def safe_failure(error):
     code = next((name for name, terms in categories if any(term in raw for term in terms)), "execution_failed")
     supplied = getattr(error, "code", None)
     if supplied in {"manager_stopped", "manager_interrupted", "manager_runtime_changed",
-                    "manager_local_codex_disabled", "operation_conflict"}:
+                    "operation_conflict"}:
         return {"code": supplied, "message": {
             "manager_stopped": "Manager work was stopped.",
             "manager_interrupted": "The original Manager turn was interrupted. Its native execution and tool receipts are retained.",
             "manager_runtime_changed": "Finish or stop the current Manager turn before changing its runtime.",
-            "manager_local_codex_disabled": "Enable Use local Codex in this project's Manager settings.",
             "operation_conflict": "This request identity belongs to different original input.",
         }[supplied]}
     if supplied in {name for name, _terms in categories}:
