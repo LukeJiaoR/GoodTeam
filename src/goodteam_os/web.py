@@ -7665,7 +7665,7 @@ def serve(
             )
 
             if not is_project_path and not is_skill_path and not is_execution_path and normalized_path not in {
-                "/start", "/report-bug", "/context-estimate", "/context-generate",
+                "/report-bug", "/context-estimate", "/context-generate",
                 "/intent-commit/start", "/intent-commit/discuss",
                 "/intent-commit/keep-discussing", "/intent-commit/confirm",
                 "/approve", "/recover-takeover-brief", "/artifact", "/project-config",
@@ -7804,22 +7804,6 @@ def serve(
                     except FsListBadRequestError as exc:
                         self._send_api_error(exc)
                         return
-                elif normalized_path == "/start":
-                    result = start_workflow(
-                        workspace=workspace,
-                        idea=str(request.get("idea", "")),
-                        project_key=str(request.get("project_key", "")),
-                        model_config=Path(str(request.get("model_config", "models.yaml"))),
-                        model_profile=str(request.get("model_profile", "balanced")),
-                        delivery_mode=str(request.get("delivery_mode", "")),
-                        delivery_standards=request.get("delivery_standards", ""),
-                        source_type=str(request.get("source_type", "new_project")),
-                        project_config=Path(str(request["project_config"])) if str(request.get("project_config", "")).strip() else None,
-                        role_model_overrides=[str(value) for value in request.get("role_model_overrides", [])],
-                        dry_run=bool(request.get("dry_run", False)),
-                        expected_team_revision=request.get("expected_team_revision"),
-                        run_id=str(request.get("run_id", "")),
-                    )
                 elif normalized_path == "/report-bug":
                     result = report_bug(
                         workspace=workspace,

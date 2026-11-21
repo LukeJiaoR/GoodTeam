@@ -71,15 +71,6 @@ Operator checks:
 
 ## 2. Start Or Resume A Run
 
-Start from an idea or issue:
-
-```bash
-goodteam-os start "Build the next scoped increment" \
-  --project-key MYAPP \
-  --project-config projects/myapp.local.yaml \
-  --workspace ./run
-```
-
 Open the dashboard:
 
 ```bash

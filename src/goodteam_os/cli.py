@@ -26,7 +26,7 @@ from goodteam_os.service import DEFAULT_PORT, restart_service, service_state_dir
 from goodteam_os.supervisor import ComponentHeartbeat, run_operator_component, run_supervisor, run_telegram_component
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
 from goodteam_os.telegram import poll_telegram_approvals
-from goodteam_os.web import serve, start_workflow
+from goodteam_os.web import serve
 from goodteam_os.workers import WorkerJobStore
 
 if TYPE_CHECKING:
@@ -53,19 +53,6 @@ def _operator_startup_arguments(command):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="goodteam")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    start = subparsers.add_parser("start")
-    start.add_argument("idea")
-    start.add_argument("--project-key", default="GTO")
-    start.add_argument("--workspace", type=Path, default=Path("."))
-    start.add_argument("--model-config", type=Path, default=Path("models.yaml"))
-    start.add_argument("--model-profile", default="")
-    start.add_argument("--role-model", action="append", default=[])
-    start.add_argument("--delivery-mode", choices=list(DELIVERY_MODES), default="")
-    start.add_argument("--source-type", choices=["new_project", "existing_project"], default="new_project")
-    start.add_argument("--project-config", type=Path)
-    start.add_argument("--dry-run", action="store_true")
-    start.add_argument("--request-id", default="", help="Reuse this ID when retrying the same project request")
 
     serve_command = subparsers.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
@@ -408,23 +395,6 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             root = dict(queued.get("metadata", {})).get("project_root") if queued else None
             if root and args.operator_review_config.absolute().resolve().is_relative_to(Path(root).resolve()):
                 raise ValueError("Operator startup configuration must be outside every selected Worker project root.")
-    if args.command == "start":
-        payload = start_workflow(
-            workspace=args.workspace,
-            idea=args.idea,
-            project_key=args.project_key,
-            model_config=args.model_config,
-            model_profile=args.model_profile,
-            delivery_mode=args.delivery_mode,
-            source_type=args.source_type,
-            project_config=args.project_config,
-            role_model_overrides=args.role_model,
-            dry_run=args.dry_run,
-            run_id=args.request_id,
-            background=False,
-        )
-        print(json.dumps(payload, indent=2))
-        return 0
     if args.command == "serve":
         heartbeat = (
             ComponentHeartbeat(args.heartbeat_file, args.heartbeat_token).beat if args.heartbeat_file else None
