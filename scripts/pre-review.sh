@@ -148,7 +148,7 @@ trap cleanup EXIT
 
 if [ -z "$WORKTREE" ]; then
   SAFE_HEAD="${HEAD_REF//\//-}"
-  WORKTREE="$ROOT/../goodteam-pre-review-pr-$PR-$SAFE_HEAD"
+  WORKTREE="$(dirname "$ROOT")/goodteam-pre-review-pr-$PR-$SAFE_HEAD"
   THROWAWAY_WORKTREE="$WORKTREE"
   if [ -e "$WORKTREE" ]; then
     echo "[pre-review] removing stale throwaway worktree path: $WORKTREE"
