@@ -23,14 +23,14 @@
 #   1. Resolves PR head branch via gh.
 #   2. Fetches origin and computes file list + full patch (base...head).
 #   3. Writes review input artifact to /tmp and builds a read-only review task file.
-#   4. Dispatches exactly one code_review track via goodteam-os dispatch.
+#   4. Dispatches exactly one code_review track through the shared isolated Worker pool.
 #   5. Prints where the job result.md will be written for the human reviewer.
 #
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-PY="$ROOT/.venv/bin/python"
+PY="${GOODTEAM_PYTHON:-$ROOT/.venv/bin/python}"
 . "$ROOT/scripts/lib/pre-review.sh"
 
 PR=""
@@ -163,17 +163,25 @@ fi
 DISPATCH_OK=0
 LAST_STATUS=""
 for candidate_adapter in $(pre_review_fallback_adapters "$ADAPTER"); do
-  TRACK="code_review:$candidate_adapter:$TASK_FILE"
-  CMD=(env PYTHONPATH=src "$PY" -m goodteam_os.cli dispatch
-    --project-root "$WORKTREE"
-    --track "$TRACK")
-  if [ "$ALLOW_UNSAFE" = 1 ]; then
-    CMD+=(--allow-unsafe)
-  fi
+  echo "[pre-review] running independent code review with $candidate_adapter"
+  if PYTHONPATH=src "$PY" - "$WORKTREE" "$candidate_adapter" "$TASK_FILE" "$ALLOW_UNSAFE" <<'PY_REVIEW'
+from pathlib import Path
+import sys
 
-  echo "[pre-review] dispatching read-only review track: $TRACK"
-  echo "[pre-review] command: ${CMD[*]}"
-  if "${CMD[@]}"; then
+from goodteam_os.dispatch import dispatch_tracks, ensure_dispatch_project_root_is_safe
+
+root, adapter, task_path, allow_unsafe = sys.argv[1:]
+task = Path(task_path)
+safety = ensure_dispatch_project_root_is_safe(Path(root), allow_unsafe=allow_unsafe == "1")
+if not safety["safe"]:
+    raise SystemExit(safety["reason"])
+report = dispatch_tracks(project_root=Path(root), require_isolation=True,
+                         tracks=[{"role": "code_review", "adapter": adapter,
+                                  "execution_policy": "read_only", "task": task.read_text(encoding="utf-8"), "task_source": str(task)}],
+                         allow_unsafe=allow_unsafe == "1")
+raise SystemExit(0 if report["all_ok"] else 1)
+PY_REVIEW
+  then
     DISPATCH_OK=1
     break
   fi
@@ -202,6 +210,7 @@ if [ -n "$REPORT_SRC" ] && [ -s "$REPORT_SRC" ]; then
 else
   echo "[pre-review] warning: no review report found at $WORKTREE/.goodteam/workers/jobs/*/result.md"
   echo "[pre-review] review report location: unavailable"
+  exit 1
 fi
 
 echo "[pre-review] review is read-only: no merge, no code changes, no commits."

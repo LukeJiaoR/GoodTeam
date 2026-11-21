@@ -8,7 +8,7 @@ from goodteam_os.review_policy import (
     evaluate_review_evidence_policy,
     normalize_review_evidence_policy_config,
 )
-from goodteam_os.state import ApprovalDecision, StateStore, create_initial_state
+from goodteam_os.state import ApprovalDecision, create_initial_state
 
 
 def _provenance(
@@ -248,36 +248,3 @@ review_evidence_policy:
     assert "Human operator decides" in staging["review_evidence_policy"]["rationale"]
     assert state.approvals["staging"] == ApprovalDecision.PENDING
     assert state.next_node == "await_staging_approval"
-
-
-def test_approval_action_still_accepts_human_decision_when_policy_would_block(tmp_path: Path, monkeypatch):
-    workspace, project_root = _workspace_with_project(
-        tmp_path,
-        review_evidence_policy="""
-review_evidence_policy:
-  mode: strict
-  blockers:
-    - failed_invocation
-""",
-    )
-    _write_worker_status(project_root, _provider_status())
-    state = _staging_state()
-    artifact = workspace / "staging-fixture.md"
-    artifact.write_text("# Failed invocation evidence\nModel-free fixture for the explicit manual override contract.")
-    state.artifacts[web._approval_artifact_for_gate("staging")] = str(artifact)
-    StateStore(workspace).write_project_current(state, "DEMO")
-
-    monkeypatch.setattr(web, "advance_approved_workflow", lambda **kwargs: kwargs["state"])
-    monkeypatch.setattr(web, "sync_project_stage_tasks", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(web, "notify_current_approval_gate", lambda *_args, **_kwargs: None)
-
-    payload = web.decide_approval(
-        workspace=workspace,
-        project_key="DEMO",
-        approval="staging",
-        decision="approved",
-        note="operator reviewed the failed invocation evidence",
-    )
-
-    assert payload["decision"] == "approved"
-    assert payload["approvals"]["staging"] == "approved"

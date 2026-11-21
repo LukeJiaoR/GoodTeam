@@ -1,3 +1,8 @@
+"""[INPUT]: 项目身份、会话文档与事务锁。
+[OUTPUT]: 持久化消息、草稿和任务确认。
+[POS]: 助手会话原始记录。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import fcntl
@@ -324,124 +329,6 @@ class TaskAssistantSessionStore:
 
         return self._mutate(mutate)
 
-    def claim_workflow_start(
-        self,
-        proposal_id: str,
-        claim_id: str,
-        run_id: str,
-        *,
-        owner_pid: int | None = None,
-    ) -> dict[str, object]:
-        identifier = str(claim_id).strip()
-        requested_run_id = str(run_id).strip()
-        if not identifier or not requested_run_id:
-            raise ValueError("Workflow start claim and run ID must not be blank")
-
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or not proposal.get("confirmed"):
-                raise ValueError("Task proposal is unavailable")
-            if proposal.get("run_id") or proposal.get("start_claim_id"):
-                return session
-            proposal["start_claim_id"] = identifier
-            proposal["start_run_id"] = requested_run_id
-            proposal["start_owner_pid"] = int(owner_pid if owner_pid is not None else os.getpid())
-            proposal["start_claimed_at"] = _now()
-            proposal["start_status"] = "claimed"
-            proposal["start_error"] = ""
-            session["proposed_task"] = proposal
-            session["status"] = "workflow_starting"
-            return session
-
-        return self._mutate(mutate)
-
-    def mark_workflow_start_indeterminate(
-        self,
-        proposal_id: str,
-        *,
-        claim_id: str = "",
-        reason: str = "",
-    ) -> dict[str, object]:
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or proposal.get("run_id"):
-                return session
-            active_claim = str(proposal.get("start_claim_id", ""))
-            owns_claim = bool(claim_id) and active_claim == str(claim_id)
-            owner_is_dead = bool(active_claim) and not _pid_alive(int(proposal.get("start_owner_pid", 0) or 0))
-            if not owns_claim and not owner_is_dead:
-                return session
-            proposal["start_status"] = "indeterminate"
-            proposal["start_error"] = str(reason).strip()
-            session["proposed_task"] = proposal
-            session["status"] = "workflow_start_indeterminate"
-            return session
-
-        return self._mutate(mutate)
-
-    def release_workflow_start(self, proposal_id: str, claim_id: str) -> dict[str, object]:
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id:
-                raise ValueError("Task proposal is unavailable")
-            if proposal.get("run_id") or proposal.get("start_claim_id") != str(claim_id):
-                return session
-            proposal["start_claim_id"] = ""
-            proposal["start_run_id"] = ""
-            proposal["start_owner_pid"] = 0
-            proposal["start_claimed_at"] = ""
-            session["proposed_task"] = proposal
-            session["status"] = "preparing_to_start"
-            return session
-
-        return self._mutate(mutate)
-
-    def bind_workflow(self, proposal_id: str, run_id: str, *, claim_id: str = "") -> dict[str, object]:
-        if not str(run_id).strip():
-            raise ValueError("Workflow run_id must not be blank")
-
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id:
-                raise ValueError("Task proposal is unavailable")
-            active_claim = str(proposal.get("start_claim_id", ""))
-            if active_claim and active_claim != str(claim_id):
-                raise ValueError("Workflow start claim is owned by another request")
-            start_run_id = str(proposal.get("start_run_id", ""))
-            if start_run_id and start_run_id != str(run_id):
-                raise ValueError("Workflow run does not match the claimed operation")
-            bound_run = str(proposal.get("run_id", ""))
-            if bound_run and bound_run != run_id:
-                raise ValueError("Task proposal is already bound to another run")
-            proposal["run_id"] = str(run_id)
-            proposal["start_status"] = "completed"
-            proposal["start_error"] = ""
-            session["proposed_task"] = proposal
-            session["status"] = "workflow_active"
-            return session
-
-        return self._mutate(mutate)
-
-    def reconcile_workflow(self, proposal_id: str, run_id: str) -> dict[str, object]:
-        if not str(run_id).strip():
-            raise ValueError("Workflow run_id must not be blank")
-
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or proposal.get("start_run_id") != str(run_id):
-                raise ValueError("Workflow does not match the claimed task proposal")
-            bound_run = str(proposal.get("run_id", ""))
-            if bound_run and bound_run != str(run_id):
-                raise ValueError("Task proposal is already bound to another run")
-            proposal["run_id"] = str(run_id)
-            proposal["start_status"] = "completed"
-            proposal["start_error"] = ""
-            session["proposed_task"] = proposal
-            session["status"] = "workflow_active"
-            return session
-
-        return self._mutate(mutate)
-
     def _mutate(self, operation):
         with self._lock, state_documents.document_lock(self.path):
             self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -506,18 +393,6 @@ def _upgrade_session_v1(payload: dict[str, object]) -> dict[str, object]:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def _opening_presentation(mode: str) -> tuple[str, tuple[str, ...]]:

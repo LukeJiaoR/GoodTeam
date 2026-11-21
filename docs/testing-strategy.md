@@ -51,8 +51,7 @@ deployment require their own explicitly scoped authorization and evidence.
 | Project candidate quality and failed-task recovery | `tests/test_project_iteration_quality.py`, `test_project_iteration_recovery.py` |
 | Bounded outcome discovery through the real planner interface | `tests/test_project_outcome_discovery.py` |
 | Real Worker dispatch and isolation | `tests/test_dispatch_isolation.py`, `test_dispatch_capacity.py` |
-| Workflow graph and gates | `tests/test_workflow_table.py`, `test_review_gate.py` |
-| Goal continuation and HTTP recovery | `tests/test_goal_continuation.py`, `test_workflow_http_recovery.py` |
+| Goal authority and service scanning | `tests/test_goal_continuation.py`, `test_goal_continuation_http.py` |
 | Execution state and safe paths | `tests/test_execution_idempotency.py`, `test_execution_path_claims.py` |
 | Independent review and delivery | `tests/test_review_policy.py`, `test_delivery_review_truth.py` |
 | Project memory | `tests/test_memory_core.py` |

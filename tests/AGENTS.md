@@ -11,7 +11,6 @@ http_transport_helpers.py: HTTP transport objects for handler-unit fixtures usin
 native_observation_fixtures.py: A native receipt fixture at the Manager transport seam; no provider execution.
 pi_worker_fixtures.py: Shared offline native Pi Worker fixtures, independent of retired Manager tests.
 review_workbench_helpers.py: review workbench helpers 的测试辅助设施。
-test_api_approve_debate_ref.py: 验证 api approve debate ref 的行为。
 test_assistant_recovery_api.py: 验证 assistant recovery api 的行为。
 test_backlog_board.py: Real grant/ledger/question/answer/queue path; Manager and capability are fixtures.
 test_backlog_wait_receipt.py: Committed waiting decisions reconcile their own lost acknowledgement only.
@@ -39,16 +38,13 @@ test_execution_path_claims.py: 验证 execution path claims 的行为。
 test_execution_review_surfaces.py: CLI/HTTP review reads retain evidence without the standalone browser page.
 test_execution_sandbox_integration.py: 验证 execution sandbox integration 的行为。
 test_feedback_recovery_handoff.py: Explicit recovery rejoins released feedback ownership; execution is a fixture.
-test_fix_profile.py: 验证 fix profile 的行为。
 test_full_smoke_preflight.py: 验证 full smoke preflight 的行为。
 test_goal_assessment_native.py: 验证 goal assessment native 的行为。
 test_goal_continuation.py: Model-free continuation contracts using real run facts and isolated workflow.
 test_goal_continuation_http.py: Real HTTP/background service/run/Worker evidence, with synthetic local models.
 test_greenfield_recovery.py: Representative regressions from the real StockFlow greenfield trial.
 test_init.py: 验证 init 的行为。
-test_intent_commit.py: 验证 intent commit 的行为。
 test_iteration_context_inputs.py: Representative continuity, complete-prompt budget and planner replay contracts.
-test_load_profile.py: 验证 load profile 的行为。
 test_manager_app_server_lifecycle.py: 验证 Manager 原生请求、并发控制、角色记忆与只读对话回退。
 test_manager_assignment.py: Native Manager tools traverse the real queue and isolated subprocess pool.
 test_manager_completion.py: Completed native replies retain their exact thread/turn identity across restart.
@@ -117,7 +113,6 @@ test_repository_ancestor_identity.py: Ancestor churn is unrelated content, but r
 test_repository_inventory.py: 验证 repository inventory 的行为。
 test_retry_provider_binding.py: Legacy retry routes through real offline CLI processes in disposable roots.
 test_review_capture.py: Pinned native JSONL compatibility; no provider or project acceptance claim.
-test_review_gate.py: 验证 review gate 的行为。
 test_review_inputs.py: The tool-free local Reviewer still receives the complete inline input.
 test_review_policy.py: 验证 review policy 的行为。
 test_review_provenance.py: 验证 review provenance 的行为。
@@ -141,10 +136,5 @@ test_worker_artifact_redaction.py: Synthetic credentials must not propagate from
 test_worker_invocation_context.py: Real job persistence/readback with fixture states, not live-model acceptance.
 test_worker_output_context.py: Offline original Runtime entry -> existing Manager observation contract.
 test_worker_retry_evidence_process.py: Actual offline CLI boundaries: retry evidence, host timeout, and artifact copy.
-test_workflow_http_helpers.py: Fixture diagnostics must preserve failures rather than hide them as waits.
-test_workflow_http_recovery.py: Real HTTP/process acceptance: durable decisions outlive failure and races.
-test_workflow_requirement_handoff.py: Controlled Worker-input probe; never invokes a provider or native runtime.
-test_workflow_table.py: 验证 workflow table 的行为。
-workflow_http_helpers.py: Owned subprocesses and real HTTP clients for recovery acceptance.
 
 [PROTOCOL]: Update this header on change, then check AGENTS.md

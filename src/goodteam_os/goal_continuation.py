@@ -1,7 +1,7 @@
-"""Goal intent over the existing task queue and batch execution.
-
-Already-started Workflow history retains its original evidence and controls.
-New work binds ordinary tasks; Goal projection never owns their execution state.
+"""[INPUT]: Goal 授权、任务账、批次交付证据。
+[OUTPUT]: 推进已绑定批次并评估交付。
+[POS]: Goal 服务同时扫描 Manager 外部输入。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from goodteam_os.goal_assessment import (
-    CompletedAssessmentProtocolError, assess_goal, evidence_digest, run_evidence, verify_completed_assessment,
+    CompletedAssessmentProtocolError, assess_goal, evidence_digest, verify_completed_assessment,
 )
 from goodteam_os.manager_execution import ManagerResourceBusy
 from goodteam_os.goals import GoalStore
@@ -134,19 +134,10 @@ def stop_goal_action(workspace, project_key, request):
         with goal_guard(workspace, project_key, goal_id=request.get("goal_id"), blocking=False):
             return {"goal": stop(GoalStore(workspace, project_key))}
     except GoalBusyError:
-        # A synchronously starting workflow can hold the Goal guard while its
-        # Worker runs. Revocation may proceed through the original transactional
-        # ledger only after the exact claimed workflow has a durable checkpoint.
-        # Before that checkpoint, retain the serialized claim/start boundary.
         store = GoalStore(workspace, project_key)
         goal = store.get_goal(request.get("goal_id"))
         work = goal.get("active_work") or {}
         if work.get("execution"):
-            return {"goal": stop(store)}
-        current = StateStore(workspace).read_project_current(project_key)
-        if (goal["status"] == "active" and work.get("status") == "dispatching"
-                and current is not None and current.run_id == work.get("run_id")
-                and current.idea == work.get("task")):
             return {"goal": stop(store)}
         with goal_guard(workspace, project_key, goal_id=request.get("goal_id")):
             return {"goal": stop(GoalStore(workspace, project_key))}
@@ -196,25 +187,19 @@ def handle_goal_action(workspace, project_key, root, request):
                 if goal.get("authority_snapshot") != authority_snapshot(workspace, project_key, config, root):
                     raise ValueError("Goal configuration or model catalog changed; retry is blocked.")
                 execution = work.get("execution")
-                if execution is not None:
-                    from goodteam_os.goal_assessment import batch_run_evidence
-                    from goodteam_os.project_iteration_quality import _batch
+                if not execution:
+                    raise ValueError("Only a delivered Goal batch can retry assessment.")
+                from goodteam_os.goal_assessment import batch_run_evidence
+                from goodteam_os.project_iteration_quality import _batch
 
-                    batch = _batch(workspace, project_key, root, execution["run_id"])
-                    if (batch.get("status") != "delivered"
-                            or batch.get("proposal_ids") != execution["proposal_ids"]
-                            or batch.get("expected_revisions") != execution["expected_revisions"]
-                            or batch.get("goal_source") != {"goal_id": goal["id"], "work_id": work["id"]}):
-                        raise ValueError("The original delivered Goal batch cannot be proven; retry is blocked.")
-                    evidence = batch_run_evidence(workspace, project_root=root, project_key=project_key,
-                        run_id=execution["run_id"], task_id=execution["project_task_id"])
-                else:
-                    current = StateStore(workspace).read_project_current(project_key)
-                    if (not current or current.run_id != work["run_id"] or current.idea != work["task"]
-                            or current.current_node != "complete"
-                            or current.pending_transition.get("status") in {"recording", "executing", "interrupted"}):
-                        raise ValueError("The same completed workflow cannot be proven; retry is blocked.")
-                    evidence = run_evidence(workspace, current, project_root=root)
+                batch = _batch(workspace, project_key, root, execution["run_id"])
+                if (batch.get("status") != "delivered"
+                        or batch.get("proposal_ids") != execution["proposal_ids"]
+                        or batch.get("expected_revisions") != execution["expected_revisions"]
+                        or batch.get("goal_source") != {"goal_id": goal["id"], "work_id": work["id"]}):
+                    raise ValueError("The original delivered Goal batch cannot be proven; retry is blocked.")
+                evidence = batch_run_evidence(workspace, project_root=root, project_key=project_key,
+                    run_id=execution["run_id"], task_id=execution["project_task_id"])
                 if evidence_digest(evidence) != failure["evidence_digest"]:
                     raise ValueError("The original assessment evidence changed; retry is blocked.")
                 verify_completed_assessment(root, goal, work, failure["attempt"], failure["job_id"], evidence)
@@ -305,24 +290,6 @@ def _goal_view(goal, states, current_by_project, archived_by_project, *, workspa
     if result.get("active_work"):
         result["active_work"] = next(work for work in result["work_units"] if work["id"] == result["active_work"]["id"])
     return result
-
-
-def _sync_execution_projection(workspace, goal, tasks):
-    view = goal_view(workspace, goal)
-    cards = tasks.list_tasks()
-    for work in view["work_units"]:
-        if work.get("execution"):
-            continue
-        actual = work.get("observed_execution_status")
-        if actual not in {"done", "canceled", "blocked", "in_progress", "awaiting_approval"} or work["status"] not in {"dispatching", "running"}:
-            continue
-        card = next((card for card in cards if card.get("goal_id") == goal["id"] and card.get("work_id") == work["id"]), None)
-        status = "review" if actual == "awaiting_approval" else actual
-        approval = work.get("observed_approval", "")
-        if card and (card["status"] != status or card.get("observed_execution_status") != actual
-                     or card.get("observed_approval", "") != approval):
-            tasks.update_task(card["id"], status=status, observed_execution_status=actual, observed_approval=approval)
-    return view
 
 
 def _block(store, goal, reason):
@@ -438,16 +405,9 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking
     with goal_guard(workspace, project_key, goal_id=goal_id, blocking=blocking):
         store = GoalStore(workspace, project_key)
         goal = store.get_goal(goal_id)
-        current = StateStore(workspace).read_project_current(project_key)
         work = goal.get("active_work")
-        # Recovery is a workflow fact, independent of future Goal authority or
-        # configuration availability. Never touch an unrelated/new project run.
-        if (work and current and current.run_id == work["run_id"] and current.idea == work["task"]
-                and current.pending_transition.get("status") in {"recording", "executing"}):
-            from goodteam_os.workflow_mutations import recover_transition
-
-            current = recover_transition(workspace, project_key,
-                                         expected_run_id=work["run_id"], expected_idea=work["task"])
+        if work and not work.get("execution"):
+            return goal_view(workspace, goal)
         try:
             key, target, root = _project_target_and_root(workspace, project_key)
             config = _project_config_for_key(workspace, key)
@@ -461,83 +421,27 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking
         tasks = LocalTaskStore(root, key)
         store.sync_tasks(goal_id, tasks)
         if goal["status"] != "active":
-            return _sync_execution_projection(workspace, goal, tasks)
+            return goal_view(workspace, goal)
         if goal.get("authority_snapshot") != authority:
             goal = _block(store, goal, "Project, Team or runtime configuration changed since Goal confirmation. Reconfirm a new Goal.")
             store.sync_tasks(goal_id, tasks)
             return goal
-        if (work and work.get("execution")) or work is None:
-            from goodteam_os.project_iteration_execution import ProjectBatchResourceBusy
-            from goodteam_os.workflow_mutations import WorkflowBusyError
-            from goodteam_os.state_documents import DocumentLockBusy
+        from goodteam_os.project_iteration_execution import ProjectBatchResourceBusy
+        from goodteam_os.workflow_mutations import WorkflowBusyError
+        from goodteam_os.state_documents import DocumentLockBusy
 
-            try:
-                goal = _tick_task_goal(workspace, key, root, config, store, goal, tasks, assessor)
-            except (ManagerResourceBusy, ProjectBatchResourceBusy, WorkflowBusyError, DocumentLockBusy):
-                # No new execution was admitted; retain the exact work for the
-                # next scan rather than turning capacity contention into failure.
-                goal = store.get_goal(goal_id)
-            except Exception as exc:
-                goal = store.get_goal(goal_id)
-                if goal["status"] == "active":
-                    goal = _block(store, goal, f"Goal task continuation stopped: {exc}")
-            store.sync_tasks(goal_id, tasks)
-            return goal_view(workspace, goal)
-        # Existing unbound active work remains attached to its original Workflow.
-        # A workflow can publish its final node before its approval transaction
-        # finishes. Wait for that existing authority boundary; do not assess or
-        # claim a successor in the middle of an in-flight decision.
-        if (work and current and current.run_id == work["run_id"] and current.idea == work["task"]
-                and current.pending_transition.get("status") in {"recording", "executing"}):
-            return goal
-        if work and work["status"] in {"dispatching", "running"}:
-            if current is None or current.run_id != work["run_id"]:
-                goal = _block(store, goal, "Goal dispatch ownership cannot be proven from the current workflow. Automatic replay is blocked.")
-            elif current.idea != work["task"]:
-                goal = _block(store, goal, "Bound workflow input differs from the confirmed Goal work.")
-            elif current.current_node == "start":
-                goal = _block(store, goal, "Goal workflow start was interrupted before an execution checkpoint; inspect it before continuing.")
-            elif current.next_node in {"blocked", "rejected"} or current.current_node == "rejected" or current.blockers:
-                goal = _block(store, goal, "The bound workflow failed, was rejected or is blocked. Resolve its evidence before a new Goal.")
-            else:
-                if work["status"] == "dispatching":
-                    goal = store.mark_running(goal_id, expected_revision=goal["revision"],
-                                              idempotency_key=f"running:{goal_id}:{work['id']}", work_id=work["id"], run_id=work["run_id"])
-                if current.current_node == "complete":
-                    try:
-                        evidence = run_evidence(workspace, current, project_root=root)
-                        failures = work.get("assessment_failures", [])
-                        digest = evidence_digest(evidence)
-                        if failures and digest != failures[0]["evidence_digest"]:
-                            raise ValueError("The original assessment evidence changed; retry is blocked.")
-                        attempt = len(failures) + 1
-                        if attempt > work.get("assessment_retry_limit", goal.get("max_assessment_attempts", 1)):
-                            raise ValueError("Assessment retry allowance exhausted.")
-                        if failures:
-                            verify_completed_assessment(root, goal, work, failures[-1]["attempt"], failures[-1]["job_id"], evidence)
-                        assessment = assessor(workspace=workspace, project_config=config, project_root=root,
-                                              goal=goal, work=work, state=current, evidence=evidence, attempt=attempt)
-                        # Only the validated assessment adapter returns criterion indices and refs;
-                        # every ref is rechecked here against the current immutable evidence packet.
-                        if not assessment.get("evidence_refs") or not set(assessment["evidence_refs"]).issubset(evidence):
-                            raise ValueError("Goal assessment returned evidence outside the bound completed run.")
-                        goal = store.complete_work(goal_id, expected_revision=goal["revision"],
-                            idempotency_key=f"complete:{goal_id}:{work['id']}", work_id=work["id"], **assessment)
-                    except ManagerResourceBusy:
-                        goal = store.get_goal(goal_id)
-                    except CompletedAssessmentProtocolError as exc:
-                        try:
-                            verify_completed_assessment(root, goal, work, attempt, exc.job_id, evidence)
-                            goal = store.record_assessment_failure(goal_id, work_id=work["id"], job_id=exc.job_id,
-                                code=exc.code, evidence_digest=digest, expected_revision=goal["revision"],
-                                idempotency_key=f"assessment-failure:{goal_id}:{work['id']}:{attempt}")
-                        except Exception as proof_error:
-                            goal = _block(store, store.get_goal(goal_id), f"Assessment retry could not be admitted: {proof_error}")
-                    except Exception as exc:
-                        goal = _block(store, store.get_goal(goal_id), f"Goal assessment stopped: {exc}")
-            store.sync_tasks(goal_id, tasks)
-            return _sync_execution_projection(workspace, goal, tasks)
-        return goal
+        try:
+            goal = _tick_task_goal(workspace, key, root, config, store, goal, tasks, assessor)
+        except (ManagerResourceBusy, ProjectBatchResourceBusy, WorkflowBusyError, DocumentLockBusy):
+            # No new execution was admitted; retain the exact work for the
+            # next scan rather than turning capacity contention into failure.
+            goal = store.get_goal(goal_id)
+        except Exception as exc:
+            goal = store.get_goal(goal_id)
+            if goal["status"] == "active":
+                goal = _block(store, goal, f"Goal task continuation stopped: {exc}")
+        store.sync_tasks(goal_id, tasks)
+        return goal_view(workspace, goal)
 
 
 class GoalServiceStop(threading.Event):
@@ -628,11 +532,7 @@ def start_goal_service(workspace):
             try:
                 # External inputs share this service, not a separate scheduler or Worker pool.
                 from goodteam_os.operator_manager_intake import consume_manager_inputs
-                from goodteam_os.operator_queue import DurableOperatorQueue
-                from goodteam_os.service import service_state_dir
-
-                if not stop.is_set() and DurableOperatorQueue(service_state_dir()).summary()["desired_state"] == "running":
-                    consume_manager_inputs(workspace, stop=stop)
+                consume_manager_inputs(workspace, stop=stop)
             except Exception:
                 _LOG.exception("Manager input scan failed")
     stop.thread = threading.Thread(target=run, name="goodteam-goal-continuation", daemon=True)

@@ -1,16 +1,13 @@
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal, flushSync } from 'react-dom';
+import { createPortal } from 'react-dom';
 import { focusWorkContext } from './workspace/currentWorkContext.js';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
-import { canConfirmApproval, requiresInformedApproval, usableApprovalTarget } from '../../lib/reviews/approvalConfirmation';
 import Button from '../../components/ui/Button';
 import ProductError from '../../components/ui/ProductError';
 import StatusBadge from '../../components/ui/StatusBadge';
-import { useToast } from '../../components/ui/ToastProvider';
 import { routes } from '../../lib/routing/routes';
 import { statusLabel, stepTitle } from '../../utils/workflowHelpers';
-import { reviewApi } from '../reviews/reviewApi';
 import { runApi } from './runApi';
 import useProjectState from './useProjectState';
 import ProjectAttentionFocus from '../projects/ProjectAttentionFocus';
@@ -64,17 +61,6 @@ function formattedRunUpdate(value, language) {
   }).format(new Date(timestamp));
 }
 
-function approvalTargetForReview(review, runId = '') {
-  if (!review) return null;
-  return {
-    run_id: runId,
-    target_type: 'review',
-    target_id: review.approval || '',
-    artifact_key: review.artifact || '',
-    artifact_version: review.artifact_version || '',
-  };
-}
-
 function WorkSkeleton({ t }) {
   return (
     <div className="product-workspace-skeleton" aria-label={t('product.states.loading')} role="status">
@@ -109,30 +95,18 @@ export default function WorkPage() {
   const navigate = useNavigate();
   const attentionQuery = search.toString();
   const attentionSelection = useMemo(() => readAttentionSelection(new URLSearchParams(attentionQuery)), [attentionQuery]);
-  const { data: latestData, error, refresh, status } = useProjectState(projectKey);
-  const retryScope = JSON.stringify([projectKey, runId]);
-  const retryRequest = useRef(null);
-  const [retrySnapshot, setRetrySnapshot] = useState(null);
-  if (retrySnapshot && retrySnapshot.scope !== retryScope) setRetrySnapshot(null);
-  const scopedRetry = retrySnapshot?.scope === retryScope ? retrySnapshot : null;
-  // Keep the evidence that was actually submitted, including while polling
-  // discovers another run/attempt. Only an explicit successful refresh releases
-  // failed/uncertain requests; polling never silently rearms Retry.
-  const data = scopedRetry?.data || latestData;
-  const retrying = scopedRetry?.phase === 'pending';
-  const retryConflict = scopedRetry?.phase === 'failed';
-  const interactionsPaused = status !== 'ready' || Boolean(scopedRetry);
-  useLayoutEffect(() => () => { retryRequest.current = null; }, [retryScope]);
+  const { data, error, refresh, status } = useProjectState(projectKey);
+  const selectionScope = JSON.stringify([projectKey, runId]);
+  const interactionsPaused = status !== 'ready';
   const [mutationError, setMutationError] = useState(null);
   const [panel, setPanel] = useState(null);
   const [attemptSelection, setAttemptSelection] = useState(null);
-  if (attemptSelection && attemptSelection.scope !== retryScope) setAttemptSelection(null);
+  if (attemptSelection && attemptSelection.scope !== selectionScope) setAttemptSelection(null);
   const workspaceRef = useRef(null);
   const [workToolbarHost, setWorkToolbarHost] = useState(null);
   const [taskManagementProject, setTaskManagementProject] = useState('');
   const taskManagementOpen = taskManagementProject === projectKey;
-  const [mutationBusy, setBusy] = useState('');
-  const busy = retrying ? 'retry' : mutationBusy;
+  const [busy, setBusy] = useState('');
   const [historyState, setHistoryState] = useState({ projectKey: '', runs: [], status: 'loading', error: null });
   const runHistory = historyState.projectKey === projectKey ? historyState.runs : [];
   const historyStatus = historyState.projectKey === projectKey ? historyState.status : 'loading';
@@ -177,8 +151,8 @@ export default function WorkPage() {
     && (!contextMission.project_key || contextMission.project_key === projectKey)
     && contextMission.run_id && (!runId || contextMission.run_id === runId)
     ? contextMission.run_id : '';
-  const contextFreshness = retryConflict ? 'stale' : status !== 'ready' ? status : contextIsLoading ? 'loading' : 'ready';
-  const inspection = attemptSelection?.scope === retryScope ? resolveAttemptInspection({
+  const contextFreshness = status !== 'ready' ? status : contextIsLoading ? 'loading' : 'ready';
+  const inspection = attemptSelection?.scope === selectionScope ? resolveAttemptInspection({
     data: contextIsLoading ? null : isHistorical ? historicalDetail : data,
     projectKey,
     runId: attemptSelection.runId,
@@ -189,27 +163,6 @@ export default function WorkPage() {
   const visibleTaskTitle = isHistorical ? contextTitle
     : projectedWorkspace?.proposed_task?.run_id ? currentRunTitle
       : projectedWorkspace?.proposed_task?.exact_request || (hasProjectedMission && !isTaskAssistantConversation ? currentRunTitle : '');
-  const candidateRetryTarget = data?.retry_target;
-  const retryTarget = candidateRetryTarget?.schema_version === 'workflow-retry-target.v1'
-    && candidateRetryTarget.project_key === projectKey
-    && candidateRetryTarget.run_id && candidateRetryTarget.run_id === currentRunId
-    && candidateRetryTarget.run_id === data?.state?.run_id
-    && /^sha256:[a-f0-9]{64}$/.test(candidateRetryTarget.version || '')
-    && ['resume_transition', 'retry_revision', 'retry_fix', 'retry_staging', 'retry_implementation', 'unavailable'].includes(candidateRetryTarget.mode)
-    && Array.isArray(candidateRetryTarget.attempts) && Array.isArray(candidateRetryTarget.active_attempt_ids)
-    && projectedMission?.source === 'workflow' && !projectedMission.read_only
-    && (!projectedMission.project_key || projectedMission.project_key === projectKey)
-    && !isHistorical && !contextIsLoading
-    ? candidateRetryTarget : null;
-  const retry = {
-    target: retryTarget,
-    disabled: interactionsPaused || retryTarget?.available !== true || retryTarget.mode === 'unavailable'
-      || Boolean(retryTarget.reason) || retryTarget.active_attempt_ids.length > 0,
-    reason: retryConflict ? 'refreshRequired' : !retryTarget ? 'bindingMissing'
-      : retryTarget.reason === 'active_attempt' || retryTarget.active_attempt_ids.length ? 'activeAttempt'
-        : retryTarget.reason === 'attempt_unknown' ? 'attemptUnknown'
-          : retryTarget.available !== true || retryTarget.mode === 'unavailable' ? 'unavailable' : '',
-  };
   const contextStep = currentWorkflowStep(workflowSteps);
   const completedStepCount = workflowSteps.filter((step) => (
     ['done', 'complete', 'completed'].includes(step.status)
@@ -277,7 +230,6 @@ export default function WorkPage() {
 
 
   const projectName = data?.start_context?.project_name || projectKey;
-  const toast = useToast();
 
   const mutate = async (name, operation) => {
     setBusy(name); setMutationError(null);
@@ -299,129 +251,16 @@ export default function WorkPage() {
     }
   };
 
-  const handleRetry = async () => {
-    if (retry.disabled || busy || retryRequest.current) return;
-    const request = { scope: retryScope, data, phase: 'pending', error: null };
-    retryRequest.current = request;
-    setRetrySnapshot(request);
-    setMutationError(null);
-    try {
-      await runApi.retryRun(projectKey, retryTarget);
-      if (retryRequest.current !== request) return;
-      const refreshed = await refresh();
-      if (retryRequest.current !== request) return;
-      if (!refreshed) throw { code: 'retry_refresh_required' };
-      await loadRuns();
-      if (retryRequest.current !== request) return;
-      retryRequest.current = null;
-      setRetrySnapshot(null);
-    } catch (caught) {
-      if (retryRequest.current !== request) return;
-      const failed = { ...request, phase: 'failed', error: caught };
-      retryRequest.current = failed;
-      setRetrySnapshot(failed);
-    }
-  };
-
   const handleRefreshContext = async () => {
-    if (retrying) return;
-    const snapshot = scopedRetry;
-    const payload = await refresh();
-    if (payload && snapshot && retryRequest.current === snapshot) {
-      retryRequest.current = null;
-      setRetrySnapshot(null);
-    }
+    await refresh();
     await loadRuns();
     setHistoryRefresh((value) => value + 1);
   };
 
-  const handleDecide = async (approval, decision, note = '', approvalTarget = null) => {
-    const currentReview = (data?.approval_reviews || []).find(
-      (review) => review.approval === approval && review.is_actionable,
-    );
-    const expectedApproval = approvalTarget
-      || approvalTargetForReview(currentReview, data?.state?.run_id || '');
-    if (decision === 'approved' && !canConfirmApproval({
-      disabled: !currentReview || !usableApprovalTarget(expectedApproval),
-      requiresReason: requiresInformedApproval(currentReview?.recommendation),
-      note,
-    })) {
-      navigate(routes.projectReviewItem(projectKey, approval));
-      return false;
-    }
-    try {
-      const result = await mutate('decision', () => (
-        decision === 'approved'
-          ? reviewApi.decideReview(projectKey, approval, decision, note, { expectedApproval })
-          : reviewApi.decideReview(projectKey, approval, decision, note)
-      ));
-      toast.success(t('toast.decisionSubmitted'));
-      return result;
-    } catch (caught) {
-      if (['stale_approval', 'approval_reason_required'].includes(caught?.code)) {
-        await Promise.allSettled([refresh(), loadRuns()]);
-      }
-      toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));
-      throw caught;
-    }
-  };
-
-  const refreshStaleIntent = async (caught) => {
-    if (caught?.code === 'stale_intent_target') {
-      await Promise.allSettled([refresh(), loadRuns()]);
-    }
-    toast.error(t('toast.decisionError', { error: caught.message || String(caught) }));
-    throw caught;
-  };
-
-  const handleStartChangeIntent = async (approval, approvalTarget = null, initialText) => {
-    const currentReview = (data?.approval_reviews || []).find(
-      (review) => review.approval === approval && review.is_actionable,
-    );
-    const expectedTarget = approvalTarget
-      || approvalTargetForReview(currentReview, data?.state?.run_id || '');
-    try {
-      return await mutate('intent-start', () => (
-        initialText === undefined
-          ? runApi.startChangeIntent(projectKey, approval, expectedTarget)
-          : runApi.startChangeIntent(projectKey, approval, expectedTarget, { initialText })
-      ));
-    } catch (caught) {
-      return refreshStaleIntent(caught);
-    }
-  };
 
   const conversation = useProjectConversation({ projectKey, contextRunId: runId,
     refresh: async () => { await refresh(); await loadRuns(); },
   });
-  const deliverConversation = conversation.deliver;
-
-  const handleDiscussChangeIntent = (intentId, text) => deliverConversation(
-    'intent-discuss', text,
-    () => runApi.discussChangeIntent(projectKey, intentId, text), intentId,
-  );
-
-  const handleKeepDiscussingChangeIntent = async (intentId) => {
-    try {
-      return await mutate('intent-discuss', () => (
-        runApi.keepDiscussingChangeIntent(projectKey, intentId)
-      ));
-    } catch (caught) {
-      return refreshStaleIntent(caught);
-    }
-  };
-
-  const handleConfirmChangeIntent = async (intentId) => {
-    try {
-      const result = await mutate('intent-confirm', () => (
-        runApi.confirmChangeIntent(projectKey, intentId)
-      ));
-      toast.success(t('toast.decisionSubmitted'));
-      return result;
-    } catch (caught) {
-      return refreshStaleIntent(caught);
-    }
-  };
 
   const sendTaskAssistantMessage = conversation.send;
   const handleAssistantAction = async (request) => {
@@ -444,7 +283,7 @@ export default function WorkPage() {
   const pendingContext = contextIsLoading && !historicalDetail;
   const surfaceReady = Boolean(projectedWorkspace && selectedKnown && !pendingContext);
   const retryContext = () => { void handleRefreshContext(); };
-  const continuation = latestData?.task_assistant_session?.project_continuation;
+  const continuation = data?.task_assistant_session?.project_continuation;
   const stopContinuation = (interactionsPaused || !surfaceReady) && continuation?.status === 'active' ? (
     <Button variant="secondary" onClick={() => handleAssistantAction({
       action: 'stop_project_continuation', continuation_id: continuation.id,
@@ -453,7 +292,7 @@ export default function WorkPage() {
 
   const attentionFocus = attentionSelection ? <ProjectAttentionFocus
     key={JSON.stringify([projectKey, runId, attentionQuery])}
-    selection={attentionSelection} projectKey={projectKey} runId={runId} data={latestData}
+    selection={attentionSelection} projectKey={projectKey} runId={runId} data={data}
     freshness={status} refresh={refresh} reducedMotion={reducedMotion}
     surfaceReady={status === 'ready' && surfaceReady} t={t} /> : null;
 
@@ -506,7 +345,7 @@ export default function WorkPage() {
     onQueueTask: conversation.queue,
     onAssistantAction: handleAssistantAction,
     onAnswerQuestion: conversation.answer,
-    questionBoard: latestData?.task_assistant_session?.question_board,
+    questionBoard: data?.task_assistant_session?.question_board,
     contextTitle: runId ? contextTitle : '',
     onClearContext: () => selectTask(''),
     taskManagementOpen,
@@ -611,12 +450,6 @@ export default function WorkPage() {
       {status === 'stale' ? <ProductError error={error} onRetry={retryContext} t={t} /> : null}
       {status === 'stale' ? <p role="status">{t('work.context.staleActions')}</p> : null}
       {historyStatus === 'error' || historyStatus === 'stale' ? <ProductError error={historyError} onRetry={retryContext} t={t} /> : null}
-      {retryConflict ? <section className="task-blocker" role="alert">
-        <p>{t(['retry_target_changed', 'run_binding_mismatch', 'retry_attempt_active', 'retry_attempt_unknown', 'retry_not_available', 'retry_refresh_required'].includes(scopedRetry.error?.code)
-          ? `work.retry.conflict.${scopedRetry.error.code}` : 'work.retry.uncertain')}</p>
-        <p>{t('work.retry.refreshRequired')}</p>
-        <Button variant="secondary" onClick={() => { void handleRefreshContext(); }}>{t('work.retry.refresh')}</Button>
-      </section> : null}
       {stopContinuation}
       <fieldset className="work-interaction-scope" disabled={interactionsPaused}>
         <TeamWorkspace
@@ -625,7 +458,7 @@ export default function WorkPage() {
           executionContext={executionContext}
           historyContext={historyContext}
           onInspectAttempt={inputContextRunId ? actor => setAttemptSelection({
-            scope: retryScope, runId: inputContextRunId, actorId: actor.id, attemptId: actor.current_attempt_id,
+            scope: selectionScope, runId: inputContextRunId, actorId: actor.id, attemptId: actor.current_attempt_id,
           }) : undefined}
           onConfigureRuntime={() => setPanel({ type: 'runtime' })}
           onOpenReview={!isHistorical ? (approval) => setPanel({ type: 'review', approval, runId: currentRunId }) : undefined}
@@ -635,15 +468,8 @@ export default function WorkPage() {
           error={mutationError}
           interactionsDisabled={interactionsPaused}
           language={language}
-          onConfirmChangeIntent={handleConfirmChangeIntent}
-          onDecide={handleDecide}
-          onDiscussChangeIntent={handleDiscussChangeIntent}
-          onKeepDiscussingChangeIntent={handleKeepDiscussingChangeIntent}
-          onRetry={handleRetry}
-          retry={retry}
           onConfirmTask={confirmTaskAssistantProposal}
           onContinuePreparation={continueProjectPreparation}
-          onStartChangeIntent={handleStartChangeIntent}
           onTerminate={() => mutate('terminate', () => runApi.terminateRun(projectKey, currentRunId)).catch(() => {})}
           projectKey={projectKey}
           reducedMotion={reducedMotion}
@@ -654,16 +480,7 @@ export default function WorkPage() {
             data={data} projectKey={projectKey} onClose={() => setPanel(null)} refresh={refresh} t={t} /> : null}
           {status === 'ready' && panel?.type === 'review' && !isHistorical ? <ReviewPage embedded
             selectedReviewId={panel.approval} expectedRunId={panel.runId}
-            onClose={() => setPanel(null)} onUpdated={refresh}
-            onChangeDiscussion={async () => {
-              const workspace = workspaceRef.current;
-              await refresh();
-              if (!workspace?.isConnected || workspace !== workspaceRef.current
-                  || workspace.dataset.contextScope !== `${projectKey}:${runId}`) return;
-              // Finish native dialog teardown and its focus restoration before handing focus to the composer.
-              flushSync(() => setPanel(null));
-              focusWorkContext(workspace, 'composer', { reducedMotion });
-            }} /> : null}
+            onClose={() => setPanel(null)} /> : null}
         </Suspense>
       </fieldset>
       {inspection ? <AttemptInspector

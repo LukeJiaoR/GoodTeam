@@ -1,28 +1,26 @@
 # goodteam_os/
 > L2 | Parent: [AGENTS.md](../AGENTS.md)
 
-项目服务沿用任务账、Workflow 和各自的持久化边界。
+Manager 与 Goal 共用任务队列和隔离 Worker 池。
 
 AGENTS.md: 本目录的成员与职责边界。
 execution/: 执行身份、证据、审批与 Reviewer 服务。
 memory_core/: 角色记忆的纯投影与上下文规则。
-nodes/: Workflow 节点实现。
 skills/: Skill 包、绑定、快照与运行时。
 __init__.py: GoodTeam Python 包入口。
 _repository_content_policy.py: 仓库内容的敏感路径拒绝与观察值脱敏。
 _trusted_system_executable.py: 校验系统可执行文件的身份与可信路径。
-approval_rationale.py: Validate a new approval before any durable decision or execution begins.
-artifact_revisions.py: Revision authority for editable workflow artifacts and their derived evidence.
+artifact_revisions.py: 读取当前作业的产物文本。
 artifacts.py: Workflow 产物存储。
 assistant_conversation.py: Keep pending and running work conversational without reopening its draft.
-assistant_drafts.py: Exact-text draft changes and explicit preparation gates for Assistant chat.
+assistant_drafts.py: 编辑草稿并提交已确认任务批次。
 assistant_intake.py: Bound task discovery to the user's messages for the current, unstarted task.
-assistant_queue.py: Explicit, exact-text future work intake. Selecting a draft never starts it.
+assistant_queue.py: 重新校验并保存待确认任务。
 assistant_requests.py: 会话请求接收、停止与中断恢复。
 assistant_runtime.py: Manager 运行时快照、状态与安全失败信息。
 assistant_workspace.py: Project conversation identity and model activity, independent of task lifecycle.
 attempt_memory.py: Bounded, read-only ordinary Worker memory observations for one exact attempt.
-cli.py: GoodTeam 命令行参数与入口。
+cli.py: 启动服务、接收 Issue 并调用批次质量和执行命令。
 codex_app_server.py: Codex app-server 的 JSONL 双向传输；回调交给 Manager 服务。
 context.py: 项目上下文条目与代码骨架。
 context_continuity.py: Bounded, deterministic context projections, never a second task authority.
@@ -34,7 +32,7 @@ database_migration.py: Explicit offline import of existing task, conversation, W
 debate.py: 审批门的 Reviewer 讨论与调度。
 delivery_changes.py: Retain a small explicit delivery set from the workflow's immutable Git result.
 delivery_outcomes.py: Read-only, run-bound reports. A report or successful process is not acceptance.
-dispatch.py: Worker 批次派发与结果核验。
+dispatch.py: 隔离派工、并发限制和结果报告。
 dispatch_capacity.py: Shared project Worker capacity; original jobs remain the execution ledger.
 dispatch_methods.py: Per-track method capture for new mixed batches, using original Skill stores.
 dispatch_workspace.py: 捕获项目 Git 工作树并排除运行时目录，为派工保留隔离工作区。
@@ -43,10 +41,10 @@ frontend_assets.py: 本地 Web 前端构建目录定位。
 full_smoke.py: 隔离工作区的完整 smoke 命令入口。
 gate_report_projection.py: Read-only, attributed reports for an exact artifact's advisory reviewers.
 goal_assessment.py: Read-only Manager assessment of a completed, exactly bound workflow.
-goal_continuation.py: Goal intent over the existing task queue and batch execution.
+goal_continuation.py: 推进已绑定批次并评估交付。
 goal_review_evidence.py: Original advisory Reviewer reports for an exactly bound completed Goal run.
 goals.py: Transactional authority for explicitly confirmed, bounded delivery goals.
-graph.py: Workflow 图、节点路由与项目上下文。
+graph.py: 项目上下文与产物文本。
 http_transport.py: Finite resource boundaries for GoodTeam's local dashboard HTTP transport.
 intent_commit.py: 任务变更意图的持久化与确定性解释。
 legacy_reviewer_reports.py: Read-only legacy Reviewer prose, separate from structured Skill receipts.
@@ -70,12 +68,8 @@ models.py: 模型配置、角色覆盖与路由解析。
 multi_reviewer_projection.py: 多 Reviewer 状态与审批证据只读投影。
 native_picker.py: 本机可执行文件与运行路径选择。
 native_worker_events.py: Live observations and owned-process cancellation for native Codex Workers.
-operator.py: 既有 Operator 服务、操作与执行状态。
-operator_candidate_review.py: Trusted startup wiring for the original Operator Builder candidate.
-operator_github.py: Operator 的 GitHub Issue 解析与 CLI 读取。
-operator_manager_intake.py: Source receipts consumed by the existing Manager service, never a dispatcher.
-operator_queue.py: Operator 持久队列与状态转换。
-operator_startup.py: Private, explicit CLI configuration for the existing Operator service.
+operator_github.py: 校验仓库身份并读取 Issue 快照。
+operator_manager_intake.py: 按来源版本写入输入并交给 Manager。
 parallel_capacity.py: One bounded default for real simultaneous Worker execution.
 pi_read_only.mjs: Pi Worker 的只读工具策略。
 pi_read_only.py: Explicit Pi tool-level read-only policy, NOT an OS sandbox admission.
@@ -93,7 +87,7 @@ project_import.py: 项目导入、模式确认与 readiness 绑定。
 project_investigation_feedback.py: Observe settled investigation output without accepting it as delivery.
 project_iteration.py: Read-only, evidence-grounded starting point for project iteration planning.
 project_iteration_continuation.py: Bounded project continuation through the existing Assistant queue and dispatch.
-project_iteration_execution.py: 将已确认的任务队列、执行阶段和任务范围交给既有隔离 Worker 池。
+project_iteration_execution.py: 冻结批次输入并调用隔离 Worker 池。
 project_iteration_planner.py: 从项目任务与授权上下文生成只读迭代建议。
 project_iteration_quality.py: Bind an existing project batch to the existing candidate quality services.
 project_iteration_recovery.py: Explicit recovery of the existing confirmed batch, never fresh task intake.
@@ -124,24 +118,23 @@ reviewer_profiles.py: Reviewer 配置档案与标识校验。
 reviewer_retry_inputs.py: Replay persisted Reviewer requests without inventing a new review task.
 role_prompts.json: 内置角色提示词。
 roles.py: 角色定义、提示词与 Workflow 产物契约。
-service.py: 本地服务状态、停止与重启。
+service.py: 查询、启动和停止 Supervisor。
 service_timeouts.py: Nested shutdown deadlines: outer supervisors must outlive the web drain.
 session_runtimes.py: Persistent worker-session contract and Pi RPC implementation.
-smoke.py: 隔离 smoke 项目、执行与结果分类。
+smoke.py: 报告实际执行阶段和产物。
 source_preview.py: Host-generated bounded source evidence from an already verified capture.
 staging.py: 交付及 staging 后端配置与执行。
 state.py: Workflow 状态与审批决定持久化。
 state_documents.py: PG JSONB storage behind the existing state schemas and service contracts.
-supervisor.py: 后台服务组件与存活状态监督。
+supervisor.py: 监督已配置的子进程及其心跳。
 task_assistant.py: 项目助手会话、团队操作与执行上下文。
-task_assistant_session.py: 项目助手会话状态与事件存储。
+task_assistant_session.py: 持久化消息、草稿和任务确认。
 task_delegation.py: One task input contract shared by role dispatch entry points.
 task_input_context.py: Task-facing, bounded input metadata; no private prompts or Runtime authority.
-tasks.py: 项目任务账、任务意图与任务板。
+tasks.py: 保存任务身份、状态、证据和依赖。
 team_control_plane.py: 保存项目角色、Worker 和 Manager 运行配置，记录团队变更。
-team_workspace.py: Team 工作区只读聚合。
-telegram.py: Telegram 交互、审核会话与消息格式。
-telegram_approval_binding.py: Bind workflow decisions to the material actually displayed by Telegram.
+team_workspace.py: 生成 Team 工作区视图。
+telegram.py: 接收项目 Issue、消息和已授权运行控制。
 telegram_runtime_controls.py: Telegram 对既有运行时会话的控制。
 web.py: 本地 Web 与项目 API 请求入口，校验 HTTP 请求。
 web_search.py: Opt-in hosted search for an existing Pi job, never a new worker runtime.
@@ -149,10 +142,8 @@ worker_capabilities.py: 定义 Manager 请求档位、持久化档位与 Worker 
 worker_output_context.py: Bounded, invocation-bound Worker output. Never a control/reply join.
 worker_setup.py: Read optional project setup context for ordinary Planner/Worker tasks.
 workers.py: Worker 作业、运行时与结果持久化。
-workflow_mutations.py: Serialize workflow authority and retain interrupted human decisions.
-workflow_retry.py: A workflow retry acts on the exact observed run, stage and attempt set.
-workflow_revisions.py: Resume recorded decisions and route requested changes back through evidence.
-workflow_table.py: Workflow 节点、门与执行路径定义。
+workflow_mutations.py: 跨线程和进程串行化项目状态变更。
+workflow_table.py: 读取阶段标签及顾问角色。
 workflow_workspace.py: One retained raw Git baseline and execution directory per workflow task.
 
 [PROTOCOL]: Update this header on change, then check AGENTS.md

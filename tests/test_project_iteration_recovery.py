@@ -21,7 +21,6 @@ from goodteam_os.project_iteration import project_iteration_backlog
 from goodteam_os.project_iteration_planner import plan_next_iteration
 from goodteam_os.project_iteration_quality import prepare_project_batch_quality
 from goodteam_os.project_registry import ProjectRegistry
-from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.team_control_plane import ensure_team_state
@@ -255,19 +254,6 @@ def test_failed_task_retry_preserves_success_then_delivers_continues_and_abandon
     retry = {"action": "retry_project_batch", "run_id": run_id, "expected_recovery_version": ready["version"],
              "idempotency_key": "retry-only-b", "retry_task_ids": [failed["id"]], "confirmed": True,
              "billing_acknowledged": True, "resume_continuation": True, "continuation_id": authorized["id"]}
-    # Genuine failed-task evidence is not a bypass for an unresolved Workflow.
-    workflow = create_initial_state("other-workflow", "DEMO", "Separate authorized work")
-    workflow.current_node, workflow.next_node = "implementation", "blocked"
-    workflow.blockers = ["Waiting for its own resolution"]
-    states = StateStore(tmp_path)
-    states.write_project_current(workflow)
-    with pytest.raises(web.ProjectApiError, match="active project execution"):
-        action(retry, expected=202)
-    assert not session.read()["project_task_batches"][run_id].get("current_recovery_attempt")
-    assert len(calls()) == 2 and ledger.get_task(failed["id"])["status"] == "blocked"
-    workflow.current_node = workflow.next_node = "rejected"
-    states.write_project_current(workflow)
-
     interrupt_projection(retry, failed["id"], "in_progress", lambda batch: bool(batch.get("current_recovery_attempt")), expected=202)
     saved_batch = session.read()["project_task_batches"][run_id]
     saved_attempt = saved_batch["recovery_commands"][saved_batch["current_recovery_attempt"]]["attempt_id"]

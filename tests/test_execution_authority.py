@@ -59,7 +59,8 @@ def test_display_edits_preserve_grant_but_execution_changes_do_not(tmp_path, mon
     def starter(**kwargs):
         starts.append(kwargs)
         raise RuntimeError("No live execution in this test")
-    tick_goal(tmp_path, "DEMO", goal["id"], starter=starter)
+    monkeypatch.setattr("goodteam_os.project_iteration_execution.run_queued_iteration_batch", starter)
+    tick_goal(tmp_path, "DEMO", goal["id"])
     assert len(starts) == 1
 
     for key, replacement in [("base_url", "https://other.invalid/v1"), ("model", "second"), ("api_key", "rotated")]:

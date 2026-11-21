@@ -35,7 +35,7 @@ def test_restart_supervises_telegram_only_when_configured(tmp_path, monkeypatch,
         status = capsys.readouterr().out
         assert "Supervisor: healthy" in status
         assert "Web: running (ready=true, restarts=0)" in status
-        assert "Operator: running (ready=true, restarts=0)" in status
+        assert "operator" not in service_status()["components"]
         if enabled:
             assert "Telegram: running (ready=true, restarts=0)" in status
         else:

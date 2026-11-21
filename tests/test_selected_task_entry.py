@@ -28,14 +28,10 @@ def test_selected_role_draft_keeps_task_and_uses_same_batch_once(tmp_path, monke
     service = TaskAssistantService(tmp_path, project_config=config)
     monkeypatch.setattr(service, '_readiness_state', lambda *_: {'lifecycle': 'ready', 'project_mode': 'existing_project'})
     monkeypatch.setattr(service, 'session', lambda *_: store.read())
-    readiness_complete = [not prepare_first]
-    monkeypatch.setattr('goodteam_os.project_readiness.build_capabilities',
-                        lambda _: {'start_workflow': readiness_complete[0]})
     monkeypatch.setattr(service.readiness, 'submit_input', lambda *_, **__: {})
     monkeypatch.setattr(web, 'TaskAssistantService', lambda *_, **__: service)
     monkeypatch.setattr(web, '_project_target_and_root', lambda *_: ('DEMO', {}, root))
     monkeypatch.setattr(web, '_project_config_for_key', lambda *_: config)
-    monkeypatch.setattr(web, 'start_workflow', lambda **_: pytest.fail('A Role task must not start greenfield.'))
     handle_queue_action(service, project_key='DEMO', root=root, request={
         'action': 'select_queued_task', 'proposal_id': proposal['id'], 'expected_revision': 1})
     assert store.read()['proposed_task']['project_task_id'] == task['id']
@@ -54,11 +50,10 @@ def test_selected_role_draft_keeps_task_and_uses_same_batch_once(tmp_path, monke
             web.handle_project_api_post(tmp_path, path, {**request, 'expected_team_revision': 1})
         assert not store.read()['proposed_task'].get('confirmed')
     if prepare_first:
-        preparing = web.handle_project_api_post(tmp_path, path, request)[1]
-        assert preparing['status'] == 'preparing_project' and not observed
-        assert store.read()['proposed_task']['confirmed'] is True
-        assert not store.read()['proposed_task']['task_skill_context']
-        readiness_complete[0] = True
+        # Resume a draft whose Team confirmation was already persisted.
+        store.confirm_task(proposal['id'], expected_revision=1)
+        store._mutate(lambda session: {**session, 'proposed_task': {
+            **session['proposed_task'], 'selected_team_revision': None}})
         status, result = web.handle_project_api_post(tmp_path, path,
             {'action': 'continue_preparation', 'step_id': 'worker_preflight', 'values': {}})
     else:
@@ -77,54 +72,7 @@ def test_selected_role_draft_keeps_task_and_uses_same_batch_once(tmp_path, monke
     assert repeated['run_id'] == run_id
     bulk = web.handle_project_api_post(tmp_path, path, {'action': 'start_queued_task_batch',
         'proposal_ids': [proposal['id']], 'expected_revisions': {proposal['id']: 1}, 'confirmed': True})[1]
-    assert bulk['run_id'] == run_id and len(store.read()['project_task_batches']) == 1
-    # Ordinary unbound human drafts retain the existing explicit Workflow path.
-    store._mutate(lambda value: {**value, 'proposed_task': None})
-    store.append_message('human', 'user', 'Build the whole project')
-    human = store.propose_task(['human'], 'Build the whole project')['proposed_task']
-    from goodteam_os.assistant_drafts import start_selected_project_task
-    assert start_selected_project_task(service, project_key='DEMO', root=root,
-        request={'action': 'confirm_task', 'proposal_id': human['id'], 'expected_revision': 1}) is None
-
-
-def test_selected_then_human_edited_draft_uses_workflow_confirmation(tmp_path, monkeypatch):
-    from goodteam_os.assistant_drafts import edit_draft
-
-    root = tmp_path / 'source'
-    root.mkdir()
-    task = LocalTaskStore(root, 'DEMO').create_task(title='Original task', description='Original scope', role='developer')
-    store = TaskAssistantSessionStore(tmp_path, 'DEMO')
-    proposal = {'id': 'selected-edit', 'revision': 1, 'exact_request': 'Original task',
-        'project_task_id': task['id'], 'project_task_digest': task_evidence_digest(task),
-        'source_message_ids': [], 'status': 'queued', 'confirmed': False, 'run_id': ''}
-    store._mutate(lambda value: {**value, 'queued_task_proposals': [proposal]})
-    service = TaskAssistantService(tmp_path)
-    monkeypatch.setattr(service, 'session', lambda *_: store.read())
-    handle_queue_action(service, project_key='DEMO', root=root, request={
-        'action': 'select_queued_task', 'proposal_id': proposal['id'], 'expected_revision': 1})
-    edit_draft(store, {'proposal_id': proposal['id'], 'expected_revision': 1,
-                      'message_id': 'human-edit', 'text': 'Build a different whole project'})
-    assert store.read()['proposed_task']['revision'] == 2
-    assert not store.read()['proposed_task'].get('project_task_id')
-    assert store.read()['queued_task_proposals'][0]['revision'] == 1
-    monkeypatch.setattr(web, 'TaskAssistantService', lambda *_, **__: service)
-    monkeypatch.setattr(web, '_project_target_and_root', lambda *_: ('DEMO', {}, root))
-    monkeypatch.setattr(web, '_project_config_for_key', lambda *_: tmp_path / 'project.yaml')
-
-    class WorkflowConfirmationReached(Exception):
-        pass
-
-    def confirm(*_, **kwargs):
-        assert kwargs['request']['expected_revision'] == 2
-        raise WorkflowConfirmationReached
-
-    monkeypatch.setattr(web, 'confirm_and_prepare', confirm)
-    # The edited revision must reach ordinary Workflow confirmation, not be
-    # rejected against the original queue revision or silently run that task.
-    with pytest.raises(WorkflowConfirmationReached):
-        web.handle_project_api_post(tmp_path, '/api/projects/DEMO/task-assistant/actions',
-            {'action': 'confirm_task', 'proposal_id': proposal['id'], 'expected_revision': 2})
-    assert not store.read().get('project_task_batches')
+    assert bulk["run_id"] == run_id and len(store.read()["project_task_batches"]) == 1
 
 
 def test_incomplete_selected_confirmation_cannot_drop_team_guard(tmp_path):

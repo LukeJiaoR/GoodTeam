@@ -16,7 +16,7 @@ import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
 from goodteam_os.http_transport import (
@@ -36,25 +36,9 @@ from goodteam_os.database import provider_environment
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.execution import ExecutionAPI
 from goodteam_os.frontend_assets import FrontendAssetsNotFound, resolve_frontend_dist
-from goodteam_os.graph import (
-    accept_refinement,
-    advance_approved_workflow,
-    artifact_mirror_root,
-    discard_refinement,
-    extract_open_questions,
-    generate_rfc,
-    generate_prd,
-    refine_artifact,
-    render_downstream_artifact_markdown,
-    run_architecture_until_gate,
-    run_adoption_until_next_gate,
-    run_until_next_gate,
-    should_generate_artifact_with_worker,
-    sync_project_stage_tasks,
-)
-from goodteam_os.artifacts import ArtifactStore
-from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
-from goodteam_os.manager_execution import ManagerExecutionError, run_manager_interpretation
+from goodteam_os.graph import extract_open_questions
+from goodteam_os.intent_commit import IntentCommitStore
+from goodteam_os.manager_execution import ManagerExecutionError
 from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.assistant_drafts import handle_draft_action
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
@@ -63,14 +47,13 @@ from goodteam_os.team_control_plane import (
     TeamControlPlaneStore,
     execute_team_commands,
 )
-from goodteam_os.models import list_model_profiles, resolve_project_model_profile
+from goodteam_os.models import list_model_profiles
 from goodteam_os.multi_reviewer_projection import (
     build_multi_reviewer_projection,
     projection_supports_approval,
     reviewer_statuses_for_artifact,
 )
 from goodteam_os.native_picker import choose_native_path
-from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.project_runtime import resolve_project_runtime_root
 from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
@@ -94,7 +77,6 @@ from goodteam_os._trusted_system_executable import (
     open_verified_executable,
     resolve_trusted_system_git,
 )
-from goodteam_os.artifact_revisions import invalidate_artifact
 from goodteam_os.reviewer_dispatch import (
     artifact_version_for_path,
     retry_failed_reviewer_jobs_for_gate,
@@ -106,7 +88,6 @@ from goodteam_os.resources import (
     ResourceCapability,
     ResourceKind,
     ResourceScope,
-    register_markdown_artifact,
     resource_to_dict,
 )
 from goodteam_os.service import service_state_dir
@@ -128,7 +109,6 @@ from goodteam_os.messages import read_messages
 from goodteam_os.staging import (
     deployment_backend_config,
     delivery_contract_report,
-    run_staging_backend,
 )
 from goodteam_os import state_documents
 from goodteam_os.database import database_configured
@@ -142,19 +122,13 @@ from goodteam_os.tasks import (
 from goodteam_os.team_workspace import build_team_workspace
 from goodteam_os.assistant_workspace import build_project_assistant
 from goodteam_os.assistant_queue import QUEUE_ACTIONS, handle_queue_action
-from goodteam_os.telegram import send_approval_notification
 from goodteam_os.workflow_table import (
     advisors_for_gate,
-    approved_next_for_gate,
     resolve_profile,
 )
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, WorkerJobStore, discover_installed_agents
-from goodteam_os.worker_routing import resolve_role_adapter
 from goodteam_os.cross_project_memory import retrieve_report as retrieve_cross_project_memory
-from goodteam_os.workflow_mutations import (
-    WorkflowBusyError, begin_transition, finish_transition, interrupt_transition,
-    persist_transition, recover_transition, replay_approval, serialized_workflow, workflow_guard,
-)
+from goodteam_os.workflow_mutations import WorkflowBusyError, workflow_guard
 
 if TYPE_CHECKING:
     from goodteam_os.skills.codex_runtime import CodexReviewAdmission
@@ -324,41 +298,9 @@ def append_action(
         handle.write(json.dumps(event) + "\n")
 
 
-_DEFAULT_TG_NOTIFY_GATES: frozenset[str] = frozenset(
-    {"prd", "rfc", "security", "staging", "release", "fix_plan", "code_review", "qa"}
-)
-
 def _approval_artifact_for_gate(gate: str) -> str:
     """Resolve the artifact key for a gate, overlaying the fix-profile gates."""
     return approval_artifact_for_gate(gate)
-
-
-def _tg_notify_gate_set() -> frozenset[str]:
-    """Return the set of gates that trigger a Telegram notification card."""
-    env = os.getenv("GOODTEAM_TG_NOTIFY_GATES", "")
-    if env.strip():
-        return frozenset(g.strip() for g in env.split(",") if g.strip())
-    return _DEFAULT_TG_NOTIFY_GATES
-
-
-def notify_current_approval_gate(state: AgileDevState | None, workspace: Path = Path(".")) -> dict[str, object]:
-    gate = current_approval_gate(state)
-    if state is None or not gate:
-        return {"status": "skipped", "reason": "no approval gate"}
-    if gate not in _tg_notify_gate_set():
-        return {"status": "skipped", "reason": "gate_not_in_notify_set"}
-    artifact_key = _approval_artifact_for_gate(gate)
-    try:
-        return send_approval_notification(
-            project_key=state.project_key,
-            run_id=state.run_id,
-            gate=gate,
-            artifact_path=state.artifacts.get(artifact_key, ""),
-            summary=f"GoodTeam is waiting for {gate.upper()} approval on {state.project_key}.",
-            workspace=workspace,
-        )
-    except Exception as exc:
-        return {"status": "failed", "error": exc.__class__.__name__}
 
 
 def current_approval_gate(state: AgileDevState | None) -> str:
@@ -392,8 +334,7 @@ def run_queued_reviewer_jobs_action(
 def _run_queued_reviewer_jobs_for_current_run(
     workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
 ) -> tuple[int, dict[str, object]]:
-    # The caller owns the guard through execution. Recover without reacquiring it.
-    state = interrupt_transition(workspace, project_key)
+    state = StateStore(workspace).read_project_current(project_key)
     if state is None:
         return 404, {"error": f"Unknown project or no active run: {project_key}"}
 
@@ -401,6 +342,8 @@ def _run_queued_reviewer_jobs_for_current_run(
     if requested_run_id and requested_run_id != state.run_id:
         return 409, {"error": "run_id does not match the active project run"}
 
+    if state.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
+        return 409, {"error": "This run has an unresolved historical decision."}
     current_gate = current_approval_gate(state)
     requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
     if not current_gate or requested_gate != current_gate:
@@ -513,8 +456,7 @@ def retry_failed_reviewer_jobs_action(
 def _retry_failed_reviewer_jobs_for_current_run(
     workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
 ) -> tuple[int, dict[str, object]]:
-    # The caller owns the guard through retry creation. No nested dashboard recovery.
-    state = interrupt_transition(workspace, project_key)
+    state = StateStore(workspace).read_project_current(project_key)
     if state is None:
         return 404, {"error": f"Unknown project or no active run: {project_key}"}
 
@@ -522,6 +464,8 @@ def _retry_failed_reviewer_jobs_for_current_run(
     if requested_run_id and requested_run_id != state.run_id:
         return 409, {"error": "run_id does not match the active project run"}
 
+    if state.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
+        return 409, {"error": "This run has an unresolved historical decision."}
     current_gate = current_approval_gate(state)
     requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
     if not current_gate or requested_gate != current_gate:
@@ -2214,8 +2158,7 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
 
     project_config = _project_config_for_key(workspace, project_key)
     start_context = build_start_console_context(workspace, project_config=project_config)
-    retry_state = resolve_dashboard_state(workspace, project_key=project_key, include_display_hints=False)
-    state = _dashboard_state_view(retry_state)
+    state = resolve_dashboard_state(workspace, project_key=project_key)
     project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
     task_assistant_session = (
         TaskAssistantService(workspace, project_config=project_config).session(project_key, project_root, **({"goal_limit": goal_limit} if goal_limit is not None else {}))
@@ -2236,7 +2179,6 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
         for task in (column if isinstance(column, list) else [])
         if isinstance(task, dict)
     ]
-    active_run = is_active_run(state)
     intent_commits = IntentCommitStore(workspace, project_key).list_intents()
     team_payload = None
     try:
@@ -2245,10 +2187,9 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
         team_payload = None
     team_workspace = build_team_workspace(
         state=state,
-        workflow_active=active_run,
+        workflow_active=False,
         project_root=project_root,
         project_key=project_key,
-        operator_state_dir=service_state_dir(),
         tasks=task_rows,
         worker_jobs=worker_job_records,
         approval_reviews=approval_reviews,
@@ -2262,7 +2203,7 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
         "resources": resources,
         "start_context": start_context,
         "team": team_payload,
-        "active_run": active_run,
+        "active_run": False,
         "task_assistant_session": task_assistant_session,
         "role_observations": build_role_observations(state),
         "workflow_steps": build_workflow_steps(state),
@@ -2272,14 +2213,11 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
         "iteration_backlog": iteration_backlog,
         "iteration_choice": latest_iteration_choice(task_assistant_session, iteration_backlog),
         "worker_jobs": worker_jobs,
-        # Team projection can migrate configuration; version its final config
-        # against the same persisted state, not the display-only revision hint.
-        "retry_target": workflow_retry_target(workspace, retry_state),
         "delivery_summary": build_delivery_summary(workspace, state=state, jobs=worker_job_records, worker_root=project_root),
         "team_workspace": team_workspace,
         "project_assistant": build_project_assistant(
             task_assistant_session, team_workspace, project_key=project_key,
-            workflow_active=active_run, jobs=worker_job_records, intent_commits=intent_commits,
+            jobs=worker_job_records, intent_commits=intent_commits,
         ),
     }
 
@@ -3028,20 +2966,10 @@ def workflow_steps_for_state(state: AgileDevState | None) -> list[dict[str, str]
     return workflow_steps_for_source(source_type)
 
 
-def _dashboard_state_view(state):
-    if state is not None and state.next_node.startswith("revise_") and not state.blockers:
-        return replace(state, blockers=["Changes requested; retry to apply the recorded revision."])
-    return state
-
-
-def resolve_dashboard_state(workspace: Path, project_key: str = "", *, include_display_hints: bool = True) -> AgileDevState | None:
+def resolve_dashboard_state(workspace: Path, project_key: str = "") -> AgileDevState | None:
     store = StateStore(workspace)
-    if project_key:
-        state = store.read_project_current(project_key)
-        if state is not None and state.pending_transition.get("status") in {"recording", "executing"}:
-            return recover_transition(workspace, project_key)
-        return _dashboard_state_view(state) if include_display_hints else state
-    return store.read_current()
+    return store.read_project_current(project_key) if project_key else store.read_current()
+
 
 
 def is_active_run(state: AgileDevState | None) -> bool:
@@ -3099,7 +3027,7 @@ def build_project_run_history(workspace: Path, project_key: str) -> dict[str, ob
         runs.append(
             _run_projection(
                 current,
-                status="active" if is_active_run(current) else "complete",
+                status="archived" if is_active_run(current) else "complete",
                 updated_at=datetime.fromtimestamp(
                     state_documents.modified_time(current_path),
                     tz=UTC,
@@ -3131,7 +3059,7 @@ def build_project_run_detail(
     current = store.read_project_current(key)
     if current is not None and current.run_id == run_id:
         current_path = store.project_state_dir(key) / "current.json"
-        status = "active" if is_active_run(current) else "complete"
+        status = "archived" if is_active_run(current) else "complete"
         state = current
         summary = _run_projection(
             state,
@@ -3233,38 +3161,17 @@ def resolve_runtime_model_config(model_config: Path) -> Path:
     return repository_default.resolve() if repository_default.is_file() else candidate
 
 
-def start_workflow(
+def start_planning_batch(
     *, workspace: Path, idea: str, project_key: str, model_config: Path,
     model_profile: str, delivery_mode: str = "", delivery_standards: list[str] | str = "",
     source_type: str = "new_project", project_config: Path | None = None,
     role_model_overrides: list[str] | None = None, load_profile: str = "greenfield",
-    dry_run: bool = False, run_id: str = "", expected_team_revision: int | None = None,
-    task_skill_context: dict[str, object] | None = None,
-    task_write_domains: list[str] | None = None,
-    background: bool = True,
+    run_id: str = "",
 ) -> dict[str, object]:
-    """Compatibility API name; new requests use ordinary task/batch execution.
-
-    A free-form request starts Planner work, not an implicit PRD/adoption/fix
-    state machine. Historical Workflow records remain readable and resumable
-    through their existing controls; this function never creates a new one.
-    """
     if not idea.strip():
         raise ValueError("A project request is required.")
     key = normalize_project_key(project_key)
     request_id = str(run_id).strip() or str(uuid4())
-    if run_id:
-        previous = StateStore(workspace).read_project_current(key)
-        if previous and previous.run_id == run_id:
-            if previous.idea != idea.strip():
-                raise ValueError("The original Workflow request has different input.")
-            return {**asdict(previous), "historical_workflow": True, "execution_started": False}
-    if task_skill_context:
-        raise ValueError("An original Workflow method capture must be recovered through its original run, not a new task.")
-    if dry_run:
-        return {"dry_run": True, "project_key": key, "request_id": request_id, "phase": "planning",
-                "role": "planner", "exact_request": idea.strip(),
-                "execution_started": False, "workflow_started": False}
     config = Path(project_config).expanduser() if project_config is not None else _project_config_for_key(workspace, key)
     target = load_project_target(config)
     root = resolve_project_runtime_root(dict(target.get("repos", {})))
@@ -3272,7 +3179,7 @@ def start_workflow(
         raise ValueError("Select this project's actual repository before starting its task.")
     criteria = _normalize_start_delivery_standards(delivery_standards) if delivery_standards else []
     metadata = {"source_type": source_type, "delivery_mode": delivery_mode or target.get("delivery_mode", ""),
-                "load_profile": load_profile, "requested_write_domains": task_write_domains or []}
+                "load_profile": load_profile, "requested_write_domains": []}
     runtime = {"model_config": str(resolve_runtime_model_config(model_config)),
                "model_profile": model_profile, "role_model_overrides": role_model_overrides or []}
     from goodteam_os.assistant_queue import queue_project_request
@@ -3283,7 +3190,7 @@ def start_workflow(
         runtime_request=runtime, metadata=metadata)
     result = run_queued_iteration_batch(workspace=workspace, project_key=key, root=root,
         project_config=config, proposal_ids=[proposal["id"]], expected_revisions={proposal["id"]: proposal["revision"]},
-        confirmed=True, background=background, expected_team_revision=expected_team_revision)
+        confirmed=True, background=True)
     return {**result, "project_key": key, "request_id": request_id,
             "task_id": proposal["project_task_id"], "phase": "planning", "dry_run": False}
 
@@ -3318,7 +3225,7 @@ def report_bug(
     heading = f"[BUG][{severity}] {title}".strip() if title else f"[BUG][{severity}]"
     idea = f"{heading}\n\n{description}".strip()
 
-    result = start_workflow(
+    result = start_planning_batch(
         workspace=workspace,
         idea=idea,
         project_key=project_key,
@@ -3332,1128 +3239,6 @@ def report_bug(
     result["severity"] = severity
     result["title"] = title
     return result
-
-
-@serialized_workflow
-def decide_approval(
-    *,
-    workspace: Path,
-    approval: str,
-    decision: str,
-    project_key: str = "",
-    debate_ref: str = "",
-    note: str = "",
-    decision_origin: str = "web",
-    actor_ref: str = "",
-    review_mode: str = "",
-    review_session_id: str = "",
-    client_context: dict[str, object] | None = None,
-    review_items: list[dict[str, object]] | None = None,
-    expected_run_id: str = "",
-    expected_target_type: str = "",
-    expected_target_id: str = "",
-    expected_artifact_key: str = "",
-    expected_artifact_version: str = "",
-) -> dict[str, object]:
-    try:
-        approval_decision = ApprovalDecision(decision)
-    except ValueError as exc:
-        raise ValueError(f"Unknown approval decision: {decision}") from exc
-
-    if not isinstance(note, str):
-        raise ProjectApiError("invalid_approval_note", "Approval note must be text.", 400)
-
-    if approval_decision in (ApprovalDecision.CHANGES_REQUESTED, ApprovalDecision.REJECTED):
-        if not note.strip():
-            raise ValueError(f"Approval decision reason is required for {approval_decision.value}")
-
-    state_store = StateStore(workspace)
-    state = state_store.read_project_current(project_key) if project_key else state_store.read_current()
-    if state is None:
-        raise ValueError("No active run to approve.")
-    key = normalize_project_key(project_key or state.project_key)
-
-    # Resolve the approved-next target through the run's load profile. Greenfield
-    # keeps the historical module-function call path (so monkeypatch-based tests
-    # that spy on web.approved_next_for_gate stay valid, including its
-    # "Unknown approval gate" raise ordering); other profiles (e.g. fix) resolve
-    # against their own captured gate-transition table.
-    profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
-    if profile.name == "greenfield":
-        approved_next = approved_next_for_gate(approval)
-    else:
-        approved_next = profile.approved_next_for_gate(approval)
-
-    if approval not in state.approvals:
-        raise ValueError(f"Approval gate is not present in current state: {approval}")
-    if state.next_node != f"await_{approval}_approval":
-        if replay_approval(state, approval=approval, decision=decision, expected={
-            "run_id": expected_run_id, "target_type": expected_target_type,
-            "target_id": expected_target_id, "artifact_key": expected_artifact_key,
-            "artifact_version": expected_artifact_version,
-        }):
-            return {**asdict(state), "decision": decision, "replayed": True}
-        raise ValueError(f"Approval gate is not currently actionable: {approval}")
-
-    approval_target = _validate_approval_target(
-        state=state,
-        workspace=workspace,
-        approval=approval,
-        expected_run_id=expected_run_id,
-        expected_target_type=expected_target_type,
-        expected_target_id=expected_target_id,
-        expected_artifact_key=expected_artifact_key,
-        expected_artifact_version=expected_artifact_version,
-    )
-
-    resolved_actor_ref = actor_ref
-    if not resolved_actor_ref and decision_origin == "web":
-        resolved_actor_ref = os.getenv("GOODTEAM_OPERATOR_REF") or "web:local"
-    evidence_snapshot = build_approval_evidence_snapshot(
-        state=state,
-        workspace=workspace,
-        project_key=key,
-        debate_ref=debate_ref,
-    )
-    reviewer_evidence_snapshot = _safe_reviewer_evidence_snapshot_for_decision(
-        state=state,
-        workspace=workspace,
-        project_key=key,
-        approval=approval,
-    )
-    before_node = state.next_node
-    state.approvals[approval] = approval_decision
-    state.current_node = f"{approval}_review_gate"
-    state.next_node = gate_next_node(state, gate=approval, approved_next=approved_next)
-    if approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        state.change_requests[approval] = note if decision_origin == "manager_intent_commit" else note.strip()
-    begin_transition(workspace, state, dict(
-        run_id=state.run_id,
-        actor="human",
-        action="approval_decided",
-        project_key=key,
-        gate=approval,
-        decision=str(approval_decision),
-        before_node=before_node,
-        after_node=state.next_node,
-        artifact=_approval_artifact_for_gate(approval),
-        artifact_path=state.artifacts.get(_approval_artifact_for_gate(approval), ""),
-        artifact_version=str(approval_target["artifact_version"]),
-        debate_ref=debate_ref,
-        note=note if decision_origin == "manager_intent_commit" else note.strip(),
-        decision_origin=decision_origin,
-        actor_ref=resolved_actor_ref,
-        review_mode=review_mode,
-        review_session_id=review_session_id,
-        client_context=client_context,
-        evidence_snapshot=evidence_snapshot,
-        reviewer_evidence_snapshot=reviewer_evidence_snapshot,
-        review_items=review_items,
-    ))
-    if approval == "takeover" and approval_decision == ApprovalDecision.APPROVED:
-        regenerate_before_node = state.next_node
-        state_store.write_project_current(state, key)
-        state_store.write_project_checkpoint(state, key)
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        if state.current_node == "prd_review_gate":
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="system",
-                action="prd_generated",
-                project_key=key,
-                gate="prd",
-                before_node=regenerate_before_node,
-                after_node=state.next_node,
-                artifact="prd",
-                artifact_path=state.artifacts.get("prd", ""),
-            )
-    elif approval_decision == ApprovalDecision.APPROVED:
-        generated_before = set(state.artifacts)
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        if project_config is None and project_key:
-            try:
-                project_config = _project_config_for_key(workspace, project_key)
-            except ValueError:
-                project_config = None
-        state = advance_approved_workflow(state=state, workspace=workspace, project_config=project_config)
-        for artifact in sorted(set(state.artifacts) - generated_before):
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="system",
-                action=f"{artifact}_generated",
-                project_key=key,
-                gate=approval,
-                before_node=before_node,
-                after_node=state.next_node,
-                artifact=artifact,
-                artifact_path=state.artifacts.get(artifact, ""),
-            )
-    elif approval in {"prd", "rfc"} and approval_decision == ApprovalDecision.REJECTED:
-        regenerate_before_node = state.next_node
-        state.approvals[approval] = ApprovalDecision.PENDING
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        if project_config is None and project_key:
-            try:
-                project_config = _project_config_for_key(workspace, project_key)
-            except ValueError:
-                project_config = None
-        if approval == "prd":
-            state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        else:
-            state = regenerate_rfc_review_gate(state=state, workspace=workspace, project_config=project_config)
-        if approval != "prd" or state.current_node == "prd_review_gate":
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="system",
-                action=f"{approval}_regenerated",
-                project_key=key,
-                gate=approval,
-                before_node=regenerate_before_node,
-                after_node=state.next_node,
-                artifact=approval_artifact_map().get(approval, approval),
-                artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
-            )
-    elif approval == "takeover" and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        revision_note = note if decision_origin == "manager_intent_commit" else note.strip()
-        regenerate_before_node = state.next_node
-        state.change_requests[approval] = revision_note
-        state.approvals[approval] = ApprovalDecision.PENDING
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        if project_config is None and project_key:
-            try:
-                project_config = _project_config_for_key(workspace, project_key)
-            except ValueError:
-                project_config = None
-        state = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        append_action(
-            workspace,
-            run_id=state.run_id,
-            actor="system",
-            action="takeover_revised",
-            project_key=key,
-            gate=approval,
-            before_node=regenerate_before_node,
-            after_node=state.next_node,
-            artifact="takeover",
-            artifact_path=state.artifacts.get("takeover", ""),
-            note=revision_note,
-        )
-    elif approval in {"prd", "rfc"} and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        revision_note = note if decision_origin == "manager_intent_commit" else note.strip()
-        regenerate_before_node = state.next_node
-        state.change_requests[approval] = revision_note
-        state.approvals[approval] = ApprovalDecision.PENDING
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        if project_config is None and project_key:
-            try:
-                project_config = _project_config_for_key(workspace, project_key)
-            except ValueError:
-                project_config = None
-        revision_role = "product_requirement" if approval == "prd" else "architect"
-        uses_worker_revision = should_generate_artifact_with_worker(project_config, revision_role)
-        if approval == "prd":
-            state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        else:
-            state = regenerate_rfc_review_gate(state=state, workspace=workspace, project_config=project_config)
-        if not uses_worker_revision:
-            state.change_requests.pop(approval, None)
-        if approval != "prd" or state.current_node == "prd_review_gate":
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="system",
-                action=f"{approval}_revised",
-                project_key=key,
-                gate=approval,
-                before_node=regenerate_before_node,
-                after_node=state.next_node,
-                artifact=approval_artifact_map().get(approval, approval),
-                artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
-                note=revision_note,
-            )
-    elif approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        from goodteam_os.workflow_revisions import revise_workflow_gate
-
-        state = revise_workflow_gate(state, workspace, approval=approval)
-    finish_transition(state)
-    project_config_for_sync = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-    if project_config_for_sync is None or not project_config_for_sync.is_file():
-        try:
-            project_config_for_sync = _project_config_for_key(workspace, key)
-        except ValueError:
-            project_config_for_sync = None
-    sync_project_stage_tasks(state, project_config_for_sync)
-    persist_transition(workspace, state)
-    notify_current_approval_gate(state, workspace=workspace)
-
-    try:
-        from goodteam_os.telegram import update_active_tg_review_on_web_decision
-        update_active_tg_review_on_web_decision(
-            workspace=workspace,
-            project_key=key,
-            gate=approval,
-            decision=decision,
-        )
-    except Exception:
-        pass
-
-    payload = asdict(state)
-    payload["decision"] = str(approval_decision)
-    return payload
-
-
-def _validate_approval_target(
-    *,
-    state: AgileDevState,
-    workspace: Path,
-    approval: str,
-    expected_run_id: str = "",
-    expected_target_type: str = "",
-    expected_target_id: str = "",
-    expected_artifact_key: str = "",
-    expected_artifact_version: str = "",
-) -> dict[str, str]:
-    """Resolve the current actionable review and reject stale UI bindings."""
-
-    actionable = next(
-        (
-            review
-            for review in build_approval_reviews(state, workspace=workspace)
-            if str(review.get("approval", "")) == approval and bool(review.get("is_actionable"))
-        ),
-        None,
-    )
-    current = {
-        "run_id": str(state.run_id),
-        "target_type": "review",
-        "target_id": approval,
-        "artifact_key": str(actionable.get("artifact", "")) if actionable else "",
-        "artifact_version": str(actionable.get("artifact_version", "")) if actionable else "",
-    }
-    expected = {
-        "run_id": expected_run_id.strip(),
-        "target_type": expected_target_type.strip(),
-        "target_id": expected_target_id.strip(),
-        "artifact_key": expected_artifact_key.strip(),
-        "artifact_version": expected_artifact_version.strip(),
-    }
-    mismatches = [
-        field
-        for field, expected_value in expected.items()
-        if expected_value and expected_value != current[field]
-    ]
-    if actionable is None:
-        mismatches.append("actionable_review")
-    if mismatches:
-        raise ProjectApiError(
-            "stale_approval",
-            "This approval changed after the brief was loaded. Refresh the brief and review the current version before approving.",
-            409,
-            details={
-                "mismatches": list(dict.fromkeys(mismatches)),
-                "expected": expected,
-                "current": current,
-            },
-            recovery=["refresh_approval_brief"],
-        )
-    return current
-
-
-def start_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    approval: str,
-    expected_run_id: str,
-    expected_target_type: str,
-    expected_target_id: str,
-    expected_artifact_key: str,
-    expected_artifact_version: str,
-    expected_task_id: str = "",
-    expected_head_sha: str = "",
-    initial_text: str = "",
-) -> dict[str, object]:
-    """Open a durable Manager discussion without deciding the approval."""
-
-    key = normalize_project_key(project_key)
-    state = StateStore(workspace).read_project_current(key)
-    if state is None:
-        raise ProjectApiError(
-            "intent_mission_not_found",
-            "This Task Assistant mission is no longer active.",
-            409,
-            recovery=["refresh_approval_brief"],
-        )
-    target = _validate_intent_binding(
-        state=state,
-        workspace=workspace,
-        approval=approval,
-        expected_run_id=expected_run_id,
-        expected_target_type=expected_target_type,
-        expected_target_id=expected_target_id,
-        expected_artifact_key=expected_artifact_key,
-        expected_artifact_version=expected_artifact_version,
-        expected_task_id=expected_task_id,
-        expected_head_sha=expected_head_sha,
-    )
-    try:
-        intent, created = IntentCommitStore(workspace, key).open_request_changes(
-            mission={
-                "id": state.run_id,
-                "run_id": state.run_id,
-                "execution_id": "",
-                "source": "workflow",
-            },
-            target=target,
-            initial_text=initial_text,
-        )
-    except IntentCommitError as exc:
-        raise ProjectApiError("intent_commit_invalid", str(exc), 409) from exc
-    return {"intent_commit": intent, "created": created}
-
-
-def discuss_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    intent_id: str,
-    text: str,
-) -> dict[str, object]:
-    store, intent = _load_current_request_changes_intent(
-        workspace=workspace,
-        project_key=project_key,
-        intent_id=intent_id,
-    )
-    _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
-    state = StateStore(workspace).read_project_current(normalize_project_key(project_key))
-    project_config = (
-        Path(state.source_ref)
-        if state is not None and state.source_ref and state.source_ref != "manual"
-        else None
-    )
-    interpretation = None
-    if (project_config is not None and project_config.is_file()
-            and resolve_role_adapter(load_project_target(project_config), "orchestrator") not in BUILTIN_WORKER_MODES):
-        target = dict(intent.get("target") or {})
-        try:
-            interpretation = run_manager_interpretation(
-                project_config=project_config,
-                run_id=str(dict(intent.get("mission") or {}).get("run_id", "")),
-                project_key=normalize_project_key(project_key),
-                intent_id=intent_id,
-                logical_intent_id=next((str(event["id"]) for event in reversed(intent.get("events", []))
-                                        if event.get("event") in {"change_discussion_started", "change_discussion_continued"}), intent_id),
-                change_request=text,
-                context=(
-                    f"Approval: {target.get('approval', '')}\n"
-                    f"Artifact: {target.get('artifact_key', '')}\n"
-                    f"Target: {target.get('target_type', '')}:{target.get('target_id', '')}"
-                ),
-            )
-        except ManagerExecutionError as exc:
-            raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
-    try:
-        updated = store.discuss(intent_id, text, interpretation=interpretation)
-    except IntentCommitError as exc:
-        raise ProjectApiError("intent_discussion_invalid", str(exc), 400) from exc
-    return {"intent_commit": updated}
-
-
-def keep_discussing_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    intent_id: str,
-) -> dict[str, object]:
-    store, intent = _load_current_request_changes_intent(
-        workspace=workspace,
-        project_key=project_key,
-        intent_id=intent_id,
-    )
-    _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
-    try:
-        updated = store.keep_discussing(intent_id)
-    except IntentCommitError as exc:
-        raise ProjectApiError("intent_transition_invalid", str(exc), 409) from exc
-    return {"intent_commit": updated}
-
-
-def confirm_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    intent_id: str,
-) -> dict[str, object]:
-    """Commit the confirmed interpretation through the existing authority."""
-
-    store, _ = _load_current_request_changes_intent(
-        workspace=workspace,
-        project_key=project_key,
-        intent_id=intent_id,
-    )
-    key = normalize_project_key(project_key)
-    # Holding the shared per-path lock across authority mutation prevents a
-    # concurrent request from mistaking live work for a restart. After a real
-    # process restart no holder remains, so the persisted state can reconcile.
-    with store.confirmation_guard():
-        intent = store.get(intent_id)
-        if intent is None:
-            raise ProjectApiError(
-                "intent_commit_not_found",
-                "This change discussion no longer exists.",
-                404,
-            )
-        if intent.get("status") == "committed":
-            return _committed_intent_response(intent, idempotent=True)
-
-        if intent.get("status") in {"committing", "ambiguous"}:
-            evidence_state, decision_action, evidence_details = _intent_decision_evidence(
-                workspace,
-                key,
-                intent,
-            )
-            if evidence_state == "matched" and decision_action is not None:
-                return _complete_intent_from_decision_action(
-                    store,
-                    intent_id,
-                    decision_action,
-                    idempotent=True,
-                )
-            if evidence_state == "ambiguous":
-                store.mark_ambiguous(intent_id, reason="decision_evidence_mismatch")
-                raise _ambiguous_intent_commit_error(evidence_details)
-            if intent.get("status") == "ambiguous":
-                raise _ambiguous_intent_commit_error(
-                    {"reason": str(intent.get("ambiguity_reason", "authority_state_unresolved"))}
-                )
-            try:
-                _assert_stored_intent_target(
-                    workspace=workspace,
-                    store=store,
-                    intent=intent,
-                )
-            except ProjectApiError as exc:
-                store.mark_ambiguous(intent_id, reason="authority_state_unresolved")
-                raise _ambiguous_intent_commit_error(
-                    {
-                        "reason": "target_changed_without_decision_evidence",
-                        "target_error": exc.code,
-                    }
-                ) from exc
-            # No decision evidence exists and the exact authority target is
-            # still pending. The previous process stopped before mutation, so
-            # it is safe to restore the confirmed draft and try once now.
-            intent = store.recover_unrecorded_confirmation(intent_id)
-
-        _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
-        try:
-            confirming, already_committed = store.begin_confirm(intent_id)
-        except IntentCommitError as exc:
-            raise ProjectApiError("intent_confirmation_invalid", str(exc), 409) from exc
-        if already_committed:
-            return _committed_intent_response(confirming, idempotent=True)
-
-        interpretation = dict(confirming.get("confirmed_interpretation") or {})
-        instruction = str(confirming.get("draft_text", "") or "")
-        target = dict(confirming.get("target") or {})
-        manager_execution = dict(interpretation.get("manager_execution") or {})
-        try:
-            decision_result = decide_approval(
-                workspace=workspace,
-                project_key=key,
-                approval=str(target.get("approval", "")),
-                decision="changes_requested",
-                note=instruction,
-                decision_origin="manager_intent_commit",
-                review_mode="intent_commit",
-                review_session_id=intent_id,
-                client_context={
-                    "intent_commit_id": intent_id,
-                    "interpretation_schema_version": str(
-                        interpretation.get("schema_version", "")
-                    ),
-                    **(
-                        {
-                            "manager_job_id": str(manager_execution.get("job_id", "")),
-                            "manager_adapter": str(manager_execution.get("adapter", "")),
-                            "manager_model": str(manager_execution.get("model", "")),
-                            "manager_reasoning_depth": str(
-                                manager_execution.get("reasoning_depth", "")
-                            ),
-                        }
-                        if manager_execution
-                        else {}
-                    ),
-                },
-                expected_run_id=str(
-                    target.get("run_id", "")
-                    or dict(confirming.get("mission") or {}).get("run_id", "")
-                ),
-                expected_target_type=str(target.get("target_type", "")),
-                expected_target_id=str(target.get("target_id", "")),
-                expected_artifact_key=str(target.get("artifact_key", "")),
-                expected_artifact_version=str(target.get("artifact_version", "")),
-            )
-        except (ProjectApiError, ValueError) as exc:
-            recovered = _reconcile_intent_decision_after_error(
-                workspace=workspace,
-                project_key=key,
-                store=store,
-                intent=confirming,
-            )
-            if recovered is not None:
-                return recovered
-            is_stale = isinstance(exc, ProjectApiError) and exc.code == "stale_approval"
-            store.fail_confirm(intent_id, stale=is_stale or isinstance(exc, ValueError))
-            if is_stale:
-                raise _stale_intent_error(exc.details) from exc
-            raise
-        except Exception:
-            recovered = _reconcile_intent_decision_after_error(
-                workspace=workspace,
-                project_key=key,
-                store=store,
-                intent=confirming,
-            )
-            if recovered is not None:
-                return recovered
-            store.fail_confirm(intent_id)
-            raise
-
-        committed = store.complete_commit(
-            intent_id,
-            decision="changes_requested",
-            result={
-                "run_id": str(decision_result.get("run_id", "")),
-                "approval": str(target.get("approval", "")),
-                "next_node": str(decision_result.get("next_node", "")),
-            },
-        )
-        return _committed_intent_response(committed, idempotent=False)
-
-
-def _validate_intent_binding(
-    *,
-    state: AgileDevState,
-    workspace: Path,
-    approval: str,
-    expected_run_id: str,
-    expected_target_type: str,
-    expected_target_id: str,
-    expected_artifact_key: str,
-    expected_artifact_version: str,
-    expected_task_id: str = "",
-    expected_head_sha: str = "",
-) -> dict[str, str]:
-    expected = {
-        "run_id": expected_run_id.strip(),
-        "target_type": expected_target_type.strip(),
-        "target_id": expected_target_id.strip(),
-        "artifact_key": expected_artifact_key.strip(),
-        "artifact_version": expected_artifact_version.strip(),
-    }
-    missing = [field for field, value in expected.items() if not value]
-    if missing:
-        raise ProjectApiError(
-            "intent_binding_required",
-            "Request changes requires the exact run, review target, artifact key, and artifact version from the current brief.",
-            409,
-            details={"missing": missing},
-            recovery=["refresh_approval_brief"],
-        )
-    try:
-        current = _validate_approval_target(
-            state=state,
-            workspace=workspace,
-            approval=approval,
-            expected_run_id=expected["run_id"],
-            expected_target_type=expected["target_type"],
-            expected_target_id=expected["target_id"],
-            expected_artifact_key=expected["artifact_key"],
-            expected_artifact_version=expected["artifact_version"],
-        )
-    except ProjectApiError as exc:
-        if exc.code == "stale_approval":
-            raise _stale_intent_error(exc.details) from exc
-        raise
-    return {
-        "approval": approval.strip(),
-        **current,
-        "task_id": expected_task_id.strip(),
-        "head_sha": expected_head_sha.strip(),
-    }
-
-
-def _load_current_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    intent_id: str,
-) -> tuple[IntentCommitStore, dict[str, object]]:
-    key = normalize_project_key(project_key)
-    store = IntentCommitStore(workspace, key)
-    try:
-        intent = store.get(intent_id)
-    except IntentCommitError as exc:
-        raise ProjectApiError("intent_commit_invalid", str(exc), 409) from exc
-    if intent is None or intent.get("kind") != "request_changes":
-        raise ProjectApiError("intent_commit_not_found", "This change discussion no longer exists.", 404)
-    return store, intent
-
-
-def _validate_stored_intent_target(
-    *,
-    workspace: Path,
-    store: IntentCommitStore,
-    intent: Mapping[str, object],
-) -> None:
-    try:
-        _assert_stored_intent_target(
-            workspace=workspace,
-            store=store,
-            intent=intent,
-        )
-    except ProjectApiError:
-        store.mark_stale(str(intent.get("id", "")))
-        raise
-
-
-def _assert_stored_intent_target(
-    *,
-    workspace: Path,
-    store: IntentCommitStore,
-    intent: Mapping[str, object],
-) -> None:
-    """Check the stored binding without changing the Intent Commit status."""
-
-    mission = dict(intent.get("mission") or {})
-    target = dict(intent.get("target") or {})
-    state = StateStore(workspace).read_project_current(store.project_key)
-    if state is None or state.run_id != str(mission.get("run_id", "")):
-        raise _stale_intent_error({"reason": "mission_changed"})
-    try:
-        _validate_approval_target(
-            state=state,
-            workspace=workspace,
-            approval=str(target.get("approval", "")),
-            expected_run_id=str(mission.get("run_id", "")),
-            expected_target_type=str(target.get("target_type", "")),
-            expected_target_id=str(target.get("target_id", "")),
-            expected_artifact_key=str(target.get("artifact_key", "")),
-            expected_artifact_version=str(target.get("artifact_version", "")),
-        )
-    except (ProjectApiError, ValueError) as exc:
-        details = exc.details if isinstance(exc, ProjectApiError) else {"reason": str(exc)}
-        raise _stale_intent_error(details) from exc
-
-
-def _stale_intent_error(details: Mapping[str, object] | None = None) -> ProjectApiError:
-    return ProjectApiError(
-        "stale_intent_target",
-        "The approval target changed during this discussion. Review the current brief and restart the change discussion.",
-        409,
-        details=dict(details or {}),
-        recovery=["refresh_approval_brief", "restart_change_discussion"],
-    )
-
-
-def _committed_intent_response(
-    intent: Mapping[str, object],
-    *,
-    idempotent: bool,
-    reconciled: bool = False,
-) -> dict[str, object]:
-    response = {
-        "intent_commit": dict(intent),
-        "decision": "changes_requested",
-        "committed": True,
-        "idempotent": idempotent,
-        **dict(intent.get("commit_result") or {}),
-    }
-    if reconciled:
-        response["reconciled"] = True
-    return response
-
-
-def _complete_intent_from_decision_action(
-    store: IntentCommitStore,
-    intent_id: str,
-    action: Mapping[str, object],
-    *,
-    idempotent: bool,
-) -> dict[str, object]:
-    committed = store.complete_commit(
-        intent_id,
-        decision="changes_requested",
-        result={
-            "run_id": str(action.get("run_id", "")),
-            "approval": str(action.get("gate", "")),
-            "next_node": str(action.get("after_node", "")),
-        },
-    )
-    return _committed_intent_response(
-        committed,
-        idempotent=idempotent,
-        reconciled=True,
-    )
-
-
-def _reconcile_intent_decision_after_error(
-    *,
-    workspace: Path,
-    project_key: str,
-    store: IntentCommitStore,
-    intent: Mapping[str, object],
-) -> dict[str, object] | None:
-    evidence_state, action, details = _intent_decision_evidence(
-        workspace,
-        project_key,
-        intent,
-    )
-    intent_id = str(intent.get("id", ""))
-    if evidence_state == "matched" and action is not None:
-        return _complete_intent_from_decision_action(
-            store,
-            intent_id,
-            action,
-            idempotent=False,
-        )
-    if evidence_state == "ambiguous":
-        store.mark_ambiguous(intent_id, reason="decision_evidence_mismatch")
-        raise _ambiguous_intent_commit_error(details)
-    return None
-
-
-def _intent_decision_evidence(
-    workspace: Path,
-    project_key: str,
-    intent: Mapping[str, object],
-) -> tuple[str, dict[str, object] | None, dict[str, object]]:
-    """Classify durable authority evidence for one interrupted confirmation."""
-
-    intent_id = str(intent.get("id", ""))
-    candidates = [
-        item
-        for item in build_action_items(workspace, project_key=project_key)
-        if item.get("action") == "approval_decided"
-        and item.get("review_mode") == "intent_commit"
-        and item.get("review_session_id") == intent_id
-    ]
-    if not candidates:
-        return "none", None, {"reason": "decision_evidence_missing"}
-
-    mission = dict(intent.get("mission") or {})
-    target = dict(intent.get("target") or {})
-    interpretation = dict(intent.get("confirmed_interpretation") or {})
-    summary = str(interpretation.get("summary", "") or "").strip()
-
-    def matches(action: Mapping[str, object]) -> bool:
-        client_context = action.get("client_context")
-        client_context = client_context if isinstance(client_context, Mapping) else {}
-        return all(
-            (
-                action.get("decision") == "changes_requested",
-                action.get("decision_origin") == "manager_intent_commit",
-                action.get("run_id") == str(target.get("run_id", "") or mission.get("run_id", "")),
-                action.get("gate") == str(target.get("approval", "")),
-                action.get("artifact") == str(target.get("artifact_key", "")),
-                action.get("artifact_version") == str(target.get("artifact_version", "")),
-                action.get("note") == summary,
-                client_context.get("intent_commit_id") == intent_id,
-                client_context.get("interpretation_schema_version")
-                == str(interpretation.get("schema_version", "")),
-            )
-        )
-
-    matched = [item for item in candidates if matches(item)]
-    if len(candidates) == 1 and len(matched) == 1:
-        return "matched", matched[0], {"reason": "decision_evidence_matched"}
-    return (
-        "ambiguous",
-        None,
-        {
-            "reason": "decision_evidence_mismatch",
-            "evidence_count": len(candidates),
-            "matching_evidence_count": len(matched),
-        },
-    )
-
-
-def _ambiguous_intent_commit_error(
-    details: Mapping[str, object] | None = None,
-) -> ProjectApiError:
-    return ProjectApiError(
-        "intent_commit_ambiguous",
-        "GoodTeam could not prove whether this Intent Commit reached the approval authority. It will not replay the decision.",
-        409,
-        details=dict(details or {}),
-        recovery=["refresh_change_discussion"],
-    )
-
-
-def recover_legacy_takeover_review(
-    *,
-    workspace: Path,
-    project_key: str,
-    note: str = "",
-) -> dict[str, object]:
-    """Turn one persisted pre-brief Takeover revision into a normal review.
-
-    Old Takeover runs could persist a machine-oriented context packet as the
-    approval artifact after ``changes_requested``.  Recovery is deliberately
-    explicit and limited to that exact legacy state; reads never mutate it.
-    """
-
-    key = normalize_project_key(project_key)
-    state_store = StateStore(workspace)
-    state = state_store.read_project_current(key)
-    if state is None:
-        raise ValueError(f"No active run for project: {key}")
-    if not _is_legacy_takeover_change_request(state, "takeover"):
-        raise ValueError("The current Takeover review does not need recovery.")
-
-    revision_note = note.strip() or _latest_takeover_change_request_note(workspace, state)
-    if not revision_note:
-        raise ValueError("Describe the requested Takeover changes before regenerating the brief.")
-
-    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-    if project_config is None or not project_config.is_file():
-        try:
-            project_config = _project_config_for_key(workspace, key)
-        except ValueError:
-            project_config = None
-    if project_config is None or not project_config.is_file():
-        raise ValueError("The configured project source is unavailable, so GoodTeam cannot regenerate the Takeover Brief.")
-
-    before_node = state.next_node
-    state.change_requests["takeover"] = revision_note
-    state.approvals["takeover"] = ApprovalDecision.PENDING
-    state = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-    append_action(
-        workspace,
-        run_id=state.run_id,
-        actor="human",
-        action="takeover_recovery_reopened",
-        project_key=key,
-        gate="takeover",
-        before_node=before_node,
-        after_node=state.next_node,
-        artifact="takeover",
-        artifact_path=state.artifacts.get("takeover", ""),
-        note=revision_note,
-    )
-    state_store.write_project_current(state, key)
-    state_store.write_project_checkpoint(state, key)
-    notify_current_approval_gate(state, workspace=workspace)
-    payload = asdict(state)
-    payload["recovered"] = True
-    return payload
-
-
-def regenerate_rfc_review_gate(
-    *,
-    state: AgileDevState,
-    workspace: Path,
-    project_config: Path | None = None,
-) -> AgileDevState:
-    if should_generate_artifact_with_worker(project_config, "architect"):
-        return run_architecture_until_gate(state=state, workspace=workspace, project_config=project_config)
-    invalidate_artifact(state, "rfc")
-    rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
-                             revision_tokens=state.artifact_generations).write_markdown(
-        state.run_id,
-        "rfc",
-        "rfc.md",
-        render_downstream_artifact_markdown("rfc", state, project_config),
-    )
-    register_markdown_artifact(state, "rfc", rfc_path)
-    state.current_node = "rfc_review_gate"
-    state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
-    sync_project_stage_tasks(state, project_config)
-    return state
-
-
-def _workflow_retry_context(workspace, state):
-    from goodteam_os.workflow_revisions import project_config_for_state
-
-    config = project_config_for_state(state, workspace)
-    target = load_project_target(config) if config is not None else {}
-    root = resolve_project_runtime_root(dict(target.get("repos", {})))
-    jobs = WorkerJobStore(root).list_jobs() if root is not None else []
-    context = {"config": str(config) if config else "", "root": str(root) if root else "",
-               "config_digest": hashlib.sha256(config.read_bytes()).hexdigest() if config else ""}
-    return config, jobs, context
-
-
-def workflow_retry_target(workspace, state):
-    from goodteam_os.workflow_retry import build_retry_target
-
-    if state is None:
-        return None
-    _config, jobs, context = _workflow_retry_context(workspace, state)
-    return build_retry_target(state, jobs=jobs, actions=build_action_items(workspace, state.project_key),
-                              execution_context=context)
-
-
-def retry_blocked_workflow(*, workspace: Path, project_key: str,
-                           expected_run_id: str | None = None,
-                           expected_retry_version: str | None = None) -> dict[str, object]:
-    from goodteam_os.workflow_retry import build_retry_target
-
-    key = normalize_project_key(project_key)
-    if not isinstance(expected_run_id, str) or not expected_run_id.strip() or not isinstance(expected_retry_version, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_retry_version):
-        raise ProjectApiError("retry_binding_required", "Refresh and select the exact task attempt to retry.", 400,
-                              recovery=["refresh"])
-    with workflow_guard(workspace, key):
-        state = StateStore(workspace).read_project_current(key)
-        # Binding failures must not enter the recovery exception handler: it
-        # would interrupt the replacement run's still-active transition.
-        if state is None or state.run_id != expected_run_id or state.project_key != key:
-            raise ProjectApiError("run_binding_mismatch", "The active task changed. Refresh before retrying.", 409,
-                                  recovery=["refresh"])
-        config, jobs, context = _workflow_retry_context(workspace, state)
-        target = build_retry_target(state, jobs=jobs, actions=build_action_items(workspace, key),
-                                    execution_context=context)
-        if target["version"] != expected_retry_version:
-            raise ProjectApiError("retry_target_changed", "The task stage or attempt changed. Refresh before retrying.", 409,
-                                  recovery=["refresh"])
-        if not target["available"]:
-            code = {"active_attempt": "retry_attempt_active", "attempt_unknown": "retry_attempt_unknown"}.get(target["reason"], "retry_not_available")
-            raise ProjectApiError(code, "This task cannot be retried from the displayed attempt. Refresh to inspect its current state.", 409,
-                                  recovery=["refresh"])
-        from goodteam_os.project_iteration_execution import active_project_batch
-
-        if active_project_batch(workspace, key):
-            raise ProjectApiError("project_batch_active", "Settle the active project batch before retrying the Workflow.", 409)
-        append_action(workspace, run_id=state.run_id, project_key=key, actor="human",
-                      action="blocked_workflow_retry_started", before_node=state.next_node,
-                      workflow_operation_id=uuid4().hex,
-                      client_context={"expected_retry_version": expected_retry_version, "retry_mode": target["mode"]})
-        try:
-            return _retry_bound_workflow(workspace=workspace, key=key, state=state, project_config=config)
-        except Exception:
-            interrupt_transition(workspace, key)
-            raise
-
-
-def _retry_bound_workflow(*, workspace, key, state, project_config):
-    state_store = StateStore(workspace)
-    if state.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
-        from goodteam_os.workflow_revisions import resume_transition
-
-        return resume_transition(state, workspace)
-    if state.next_node.startswith("revise_"):
-        from goodteam_os.workflow_revisions import retry_legacy_revision
-
-        return retry_legacy_revision(state, workspace)
-    if state.load_profile == "fix" and state.next_node == "blocked":
-        from goodteam_os.workflow_revisions import retry_fix_workflow
-
-        return retry_fix_workflow(state, workspace)
-    retryable_implementation = state.next_node == "blocked" or (
-        state.next_node == "failure_triage" and bool(state.blockers)
-    )
-    if state.current_node != "implementation" or not retryable_implementation:
-        raise ValueError(f"Current run is not blocked at implementation: {key}")
-
-    before_node = state.next_node
-    state.role_models = refresh_state_role_models(state, project_config)
-    state_store.write_project_current(state, key)
-    state_store.write_project_checkpoint(state, key)
-
-    generated_before = set(state.artifacts)
-    staging_retry = any(blocker.startswith("staging ") for blocker in state.blockers)
-    state.blockers = []
-    if staging_retry:
-        from goodteam_os.workflow_workspace import collect_workflow_workspace, workspace_for_workflow
-
-        execution_root = None
-        repository_candidate = {}
-        if state.repository_baseline:
-            source = Path(str(state.repository_baseline.get("source_root", "")))
-            execution_root = workspace_for_workflow(source, state.repository_baseline,
-                                                     project_key=state.project_key, run_id=state.run_id)
-            repository_candidate = collect_workflow_workspace(source, state.repository_baseline,
-                                                               project_key=state.project_key, run_id=state.run_id)
-        staging_result = run_staging_backend(project_config=project_config, execution_root=execution_root,
-                                             repository_candidate=repository_candidate)
-        from goodteam_os.graph import render_staging_report_markdown
-        from goodteam_os.artifacts import ArtifactStore
-
-        invalidate_artifact(state, "staging_report")
-        store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
-                              revision_tokens=state.artifact_generations)
-        staging_path = store.write_markdown(
-            state.run_id,
-            "staging_report",
-            "staging-report.md",
-            render_staging_report_markdown(state, project_config, staging_result),
-        )
-        register_markdown_artifact(state, "staging_report", staging_path, reviewable=True)
-        if str(staging_result.get("status", "")) != "passed":
-            failed_step = str(staging_result.get("failed_step", "") or "deploy")
-            state.current_node = "implementation"
-            state.next_node = "blocked"
-            evidence_gap = str(staging_result.get("evidence_gap", "") or "")
-            if failed_step == "acceptance" and evidence_gap:
-                state.blockers = [f"staging acceptance failed: {evidence_gap}"]
-            else:
-                state.blockers = [f"staging {failed_step} failed"]
-        else:
-            state.current_node = "staging_review_gate"
-            state.next_node = "await_staging_approval"
-    else:
-        state.current_node = "rfc_review_gate"
-        state.next_node = "planner"
-        state = advance_approved_workflow(state=state, workspace=workspace, project_config=project_config)
-    sync_project_stage_tasks(state, project_config)
-    state_store.write_project_current(state, key)
-    state_store.write_project_checkpoint(state, key)
-
-    append_action(
-        workspace,
-        run_id=state.run_id,
-        actor="human",
-        action="blocked_workflow_retried",
-        project_key=key,
-        before_node=before_node,
-        after_node=state.next_node,
-    )
-    for artifact in sorted(set(state.artifacts) - generated_before):
-        append_action(
-            workspace,
-            run_id=state.run_id,
-            actor="system",
-            action=f"{artifact}_generated",
-            project_key=key,
-            before_node=before_node,
-            after_node=state.next_node,
-            artifact=artifact,
-            artifact_path=state.artifacts.get(artifact, ""),
-        )
-
-    notify_current_approval_gate(state, workspace=workspace)
-    payload = asdict(state)
-    payload["retried"] = True
-    return payload
-
-
-def refresh_state_role_models(state: AgileDevState, project_config: Path | None) -> dict[str, dict[str, str]]:
-    target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
-    try:
-        _profile, role_models = resolve_project_model_profile(
-            Path("models.yaml"),
-            target,
-            explicit_profile=state.model_profile,
-            role_overrides=[],
-        )
-    except Exception:
-        return state.role_models
-    return role_models
 
 
 def terminate_project_run(
@@ -4476,20 +3261,16 @@ def terminate_project_run(
         if state is None:
             raise ValueError(f"No active run for project: {key}")
         before_node = state.next_node
-        try:
-            archive_path = state_store.archive_project_current(key, reason="cancelled")
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="human",
-                action="run_terminated",
-                project_key=key,
-                before_node=before_node,
-                after_node="cancelled",
-            )
-        except Exception:
-            interrupt_transition(workspace, key)
-            raise
+        archive_path = state_store.archive_project_current(key, reason="cancelled")
+        append_action(
+            workspace,
+            run_id=state.run_id,
+            actor="human",
+            action="run_terminated",
+            project_key=key,
+            before_node=before_node,
+            after_node="cancelled",
+        )
         return {
             "terminated": True,
             "project_key": key,
@@ -4738,105 +3519,6 @@ def read_open_questions(*, workspace: Path, artifact_key: str, project_key: str 
     }
 
 
-def answer_open_questions(
-    *,
-    workspace: Path,
-    project_key: str,
-    artifact_key: str,
-    answers: list[object],
-    expected_run_id: str = "", expected_artifact_version: str = "",
-) -> dict[str, object]:
-    artifact = read_artifact(workspace=workspace, artifact_key=artifact_key, project_key=project_key)
-    if (not expected_run_id or not expected_artifact_version or expected_run_id != artifact["run_id"]
-            or expected_artifact_version != artifact["artifact_version"]):
-        raise ProjectApiError("stale_artifact", "Reload the artifact before answering its questions.", 409)
-    guidance_parts: list[str] = []
-    for raw_answer in answers:
-        if not isinstance(raw_answer, dict):
-            continue
-        answer = str(raw_answer.get("answer", "")).strip()
-        if not answer:
-            continue
-        question = str(raw_answer.get("question", "")).strip()
-        guidance_parts.append(f"Q: {question}\nA: {answer}\n\n")
-    return refine_artifact(
-        workspace=workspace,
-        project_key=project_key,
-        artifact_key=artifact_key,
-        content=artifact["content"],
-        guidance="".join(guidance_parts),
-        expected_run_id=artifact["run_id"],
-        expected_artifact_version=artifact["artifact_version"],
-    )
-
-
-@serialized_workflow
-def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_key: str = "",
-                  expected_run_id: str = "", expected_artifact_version: str = "") -> dict[str, object]:
-    # Enforce this for older persisted registries that still advertise EDIT too.
-    if artifact_key == "source_preview":
-        raise ProjectApiError("read_only_artifact", "Retained source evidence is read-only.", 403)
-    state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
-    if (expected_run_id and expected_run_id != state.run_id) or (
-        expected_artifact_version and expected_artifact_version != artifact_version_for_path(str(path))
-    ):
-        raise ProjectApiError("stale_artifact", "This artifact changed. Reload it before saving your edits.", 409)
-    if path.read_text(encoding="utf-8") != content:
-        from goodteam_os.artifacts import ArtifactStore
-        from goodteam_os.graph import _register_written_markdown
-
-        invalidate_artifact(state, artifact_key, rewind=True)
-        path = ArtifactStore(workspace, revision_tokens=state.artifact_generations).write_markdown(
-            state.run_id, artifact_key, path.name, content)
-        _register_written_markdown(state, artifact_key, path)
-        store = StateStore(workspace)
-        if project_key:
-            store.write_project_current(state)
-            store.write_project_checkpoint(state)
-        else:
-            store.write_current(state)
-            store.write_checkpoint(state)
-
-    key = normalize_project_key(project_key or state.project_key)
-    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-    if project_config is None or not project_config.is_file():
-        try:
-            project_config = _project_config_for_key(workspace, key)
-        except ValueError:
-            project_config = None
-    sync_project_stage_tasks(state, project_config)
-    edit_log = StateStore(workspace).project_state_dir(key) / "edit-log.jsonl" if project_key else workspace / "state" / "edit-log.jsonl"
-    edit_log.parent.mkdir(parents=True, exist_ok=True)
-    edit_event = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "run_id": state.run_id,
-        "artifact": artifact_key,
-        "path": str(path),
-        "bytes": len(content.encode("utf-8")),
-    }
-    with edit_log.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(edit_event) + "\n")
-
-    append_action(
-        workspace,
-        run_id=state.run_id,
-        actor="human",
-        action="artifact_saved",
-        project_key=key if project_key else "",
-        before_node=state.next_node,
-        after_node=state.next_node,
-        artifact=artifact_key,
-        artifact_path=str(path),
-    )
-
-    return {
-        "artifact": artifact_key,
-        "path": str(path),
-        "bytes": edit_event["bytes"],
-        "saved": True,
-    }
-
-
 def _approval_review_title(state: AgileDevState, artifact: str) -> str:
     resource = state.resources.get(artifact)
     if isinstance(resource, Mapping):
@@ -4859,18 +3541,6 @@ def _is_legacy_takeover_change_request(state: AgileDevState, approval: str) -> b
         and state.current_node == "takeover_review_gate"
         and state.next_node == "revise_takeover"
     )
-
-
-def _latest_takeover_change_request_note(workspace: Path, state: AgileDevState) -> str:
-    for action in build_action_items(workspace, project_key=state.project_key):
-        if (
-            action.get("run_id") == state.run_id
-            and action.get("action") == "approval_decided"
-            and action.get("gate") == "takeover"
-            and action.get("decision") == ApprovalDecision.CHANGES_REQUESTED
-        ):
-            return str(action.get("note", "") or "").strip()
-    return ""
 
 
 def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Path(".")) -> list[dict[str, object]]:
@@ -4898,7 +3568,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             "title": _approval_review_title(state, artifact),
             "decision": str(decision),
             "is_pending": str(decision) == ApprovalDecision.PENDING,
-            "is_actionable": str(decision) == ApprovalDecision.PENDING and state.next_node == f"await_{approval}_approval",
+            "is_actionable": False,
             "is_current": state.current_node == f"{approval}_review_gate",
             "artifact": artifact,
             "artifact_path": artifact_path,
@@ -4906,11 +3576,6 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
             "content": "" if legacy_takeover_recovery else preview,
             "content_truncated": truncated and not legacy_takeover_recovery,
             "presentation": "legacy_takeover_context" if legacy_takeover_recovery else "review_artifact",
-            "recovery": {
-                "available": legacy_takeover_recovery,
-                "action": "regenerate_takeover_brief" if legacy_takeover_recovery else "",
-                "note": _latest_takeover_change_request_note(workspace, state) if legacy_takeover_recovery else "",
-            },
             "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
         }
         current_reviewer_statuses = reviewer_statuses_for_artifact(
@@ -4980,7 +3645,7 @@ def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Pat
                 "convened": bool(messages),
                 "messages": messages,
             }
-        if review["is_actionable"]:
+        if review["is_pending"] and review["is_current"]:
             evidence_snapshot = build_approval_evidence_snapshot(
                 state=state,
                 workspace=workspace,
@@ -5421,25 +4086,7 @@ def _project_attention_snapshot(workspace, key, root, readiness, state):
     session = TaskAssistantSessionStore(workspace, key).read()
     if session.get("project_key") != key or (state is not None and state.project_key != key):
         raise ValueError("Attention source belongs to another project")
-    workflow = None
-    if state is not None and not isinstance(state.pending_transition, Mapping):
-        raise ValueError("Workflow transition is invalid")
-    if state is not None and state.pending_transition.get("status") in {"recording", "executing"}:
-        # Work may reconcile this transition when entered. The overview cannot
-        # trigger recovery or claim its pre-transition gate is still current.
-        raise ValueError("Workflow transition is still in progress")
-    if is_active_run(state):
-        state = _dashboard_state_view(state)
-        board = build_agile_board(state)
-        tasks = [task for column in board.get("columns", {}).values() for task in column]
-        workflow = build_team_workspace(
-            state=state, workflow_active=True, project_root=root, project_key=key,
-            tasks=tasks,
-            worker_jobs=WorkerJobStore(root).list_jobs() if root is not None else [],
-            approval_reviews=build_approval_reviews(state, workspace=workspace),
-            intent_commits=IntentCommitStore(workspace, key).list_intents(),
-        )
-    return build_project_attention(project_key=key, readiness=readiness, workflow=workflow, session=session)
+    return build_project_attention(project_key=key, readiness=readiness, workflow=None, session=session)
 
 
 def build_project_list(workspace: Path) -> dict[str, object]:
@@ -5978,9 +4625,7 @@ def handle_project_api_post(
                 400,
                 recovery=["retry_request"],
             )
-        store = TaskAssistantSessionStore(workspace, key)
         executor = ProjectReadinessExecutor(workspace)
-        proposal_id = str(request.get("proposal_id", ""))
         from goodteam_os.assistant_drafts import start_selected_project_task
 
         service = TaskAssistantService(workspace, readiness_executor=executor,
@@ -5989,22 +4634,7 @@ def handle_project_api_post(
             selected_result = start_selected_project_task(service, project_key=key, root=root, request=request)
         except ValueError as exc:
             raise ProjectApiError("task_draft_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
-        if selected_result is not None:
-            return 202, selected_result
-        # Only an already-started legacy Workflow can reach this branch.
-        # New free-form and assigned drafts are consumed by the task adapter.
-        proposal = store.read().get("proposed_task") or {}
-        original_run = proposal.get("run_id") or proposal.get("start_run_id")
-        current = StateStore(workspace).read_project_current(key)
-        if original_run and current and current.run_id == original_run:
-            if current.idea != str(proposal.get("exact_request", "")).strip():
-                raise ProjectApiError("workflow_start_indeterminate", "The original Workflow input differs.", 409)
-            session = store.reconcile_workflow(str(proposal["id"]), original_run)
-            return 200, {"task_assistant_session": session, "workflow_started": False,
-                         "historical_workflow": True, "status": "workflow_reconciled", "run_id": original_run}
-        raise ProjectApiError("workflow_start_indeterminate",
-            "This retained Workflow attempt has no matching execution record; inspect its original attempt rather than launching a replacement.",
-            409, recovery=["inspect_workflow_state"])
+        return 202, selected_result
     team_commands_match = re.fullmatch(r"/api/projects/([^/]+)/team/commands", path)
     if team_commands_match:
         key = _decode_project_api_key(team_commands_match.group(1))
@@ -7554,12 +6184,7 @@ def serve(
 
             if not is_project_path and not is_skill_path and not is_execution_path and normalized_path not in {
                 "/report-bug", "/context-estimate", "/context-generate",
-                "/intent-commit/start", "/intent-commit/discuss",
-                "/intent-commit/keep-discussing", "/intent-commit/confirm",
-                "/approve", "/recover-takeover-brief", "/artifact", "/project-config",
-                "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc",
-                "/refine-artifact", "/answer-open-questions", "/accept-refinement",
-                "/discard-refinement", "/open-path",
+                "/project-config", "/terminate", "/project-delete", "/open-path",
                 "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose",
                 "/fs/mkdir", "/server-actions/run", "/git-init",
             }:
@@ -7705,78 +6330,6 @@ def serve(
                     result = context_estimate_for_request(workspace, request)
                 elif normalized_path == "/context-generate":
                     result = context_generate_for_request(workspace, request)
-                elif normalized_path == "/intent-commit/start":
-                    result = start_request_changes_intent(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        approval=str(request.get("approval", "")),
-                        expected_run_id=str(request.get("expected_run_id", "") or ""),
-                        expected_target_type=str(request.get("expected_target_type", "") or ""),
-                        expected_target_id=str(request.get("expected_target_id", "") or ""),
-                        expected_artifact_key=str(request.get("expected_artifact_key", "") or ""),
-                        expected_artifact_version=str(request.get("expected_artifact_version", "") or ""),
-                        expected_task_id=str(request.get("expected_task_id", "") or ""),
-                        expected_head_sha=str(request.get("expected_head_sha", "") or ""),
-                        initial_text=request.get("initial_text", ""),
-                    )
-                elif normalized_path == "/intent-commit/discuss":
-                    result = discuss_request_changes_intent(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        intent_id=str(request.get("intent_id", "")),
-                        text=str(request.get("text", "")),
-                    )
-                elif normalized_path == "/intent-commit/keep-discussing":
-                    result = keep_discussing_request_changes_intent(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        intent_id=str(request.get("intent_id", "")),
-                    )
-                elif normalized_path == "/intent-commit/confirm":
-                    result = confirm_request_changes_intent(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        intent_id=str(request.get("intent_id", "")),
-                    )
-                elif normalized_path == "/approve":
-                    approval_binding = {
-                        "expected_run_id": str(request.get("expected_run_id", "") or "").strip(),
-                        "expected_target_type": str(request.get("expected_target_type", "") or "").strip(),
-                        "expected_target_id": str(request.get("expected_target_id", "") or "").strip(),
-                        "expected_artifact_key": str(request.get("expected_artifact_key", "") or "").strip(),
-                        "expected_artifact_version": str(
-                            request.get("expected_artifact_version", "") or ""
-                        ).strip(),
-                    }
-                    if str(request.get("decision", "")) == "approved":
-                        missing_binding = [
-                            field
-                            for field, value in approval_binding.items()
-                            if not value
-                        ]
-                        if missing_binding:
-                            raise ProjectApiError(
-                                "approval_binding_required",
-                                "Approve requires the exact run, review target, artifact key, and artifact version from the current brief.",
-                                409,
-                                details={"missing": missing_binding},
-                                recovery=["refresh_approval_brief"],
-                            )
-                    result = decide_approval(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        approval=str(request.get("approval", "")),
-                        decision=str(request.get("decision", "")),
-                        debate_ref=str(request.get("debate_ref", "")),
-                        note=request.get("note", ""),
-                        **approval_binding,
-                    )
-                elif normalized_path == "/recover-takeover-brief":
-                    result = recover_legacy_takeover_review(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        note=str(request.get("note", "")),
-                    )
                 elif normalized_path == "/reviewer-jobs/run":
                     status, result = run_queued_reviewer_jobs_action(workspace, request, **runtime_kwargs)
                     self._send_json(status, result)
@@ -7785,15 +6338,6 @@ def serve(
                     status, result = retry_failed_reviewer_jobs_action(workspace, request, **runtime_kwargs)
                     self._send_json(status, result)
                     return
-                elif normalized_path == "/artifact":
-                    result = save_artifact(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        content=str(request.get("content", "")),
-                        expected_run_id=str(request.get("expected_run_id", "")),
-                        expected_artifact_version=str(request.get("expected_artifact_version", "")),
-                    )
                 elif normalized_path == "/terminate":
                     expected_run_id = request.get("expected_run_id")
                     if not isinstance(expected_run_id, str) or not expected_run_id.strip():
@@ -7807,64 +6351,6 @@ def serve(
                     result = delete_project(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
-                    )
-                elif normalized_path == "/retry":
-                    result = retry_blocked_workflow(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        expected_run_id=request.get("expected_run_id"),
-                        expected_retry_version=request.get("expected_retry_version"),
-                    )
-                elif normalized_path == "/generate-prd":
-                    result = generate_prd(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                    )
-                elif normalized_path == "/generate-rfc":
-                    result = generate_rfc(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                    )
-                elif normalized_path == "/refine-artifact":
-                    result = refine_artifact(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        content=str(request.get("content", "")),
-                        expected_run_id=str(request.get("expected_run_id", "")),
-                        expected_artifact_version=str(request.get("expected_artifact_version", "")),
-                    )
-                elif normalized_path == "/answer-open-questions":
-                    raw_answers = request.get("answers", [])
-                    result = answer_open_questions(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        answers=raw_answers if isinstance(raw_answers, list) else [],
-                        expected_run_id=request.get("expected_run_id", ""),
-                        expected_artifact_version=request.get("expected_artifact_version", ""),
-                    )
-                elif normalized_path == "/accept-refinement":
-                    result = accept_refinement(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        expected_run_id=request.get("expected_run_id", ""),
-                        expected_artifact_key=request.get("expected_artifact_key", ""),
-                        expected_artifact_version=request.get("expected_artifact_version", ""),
-                        expected_proposal_id=request.get("expected_proposal_id", ""),
-                        expected_proposal_version=request.get("expected_proposal_version", ""),
-                    )
-                elif normalized_path == "/discard-refinement":
-                    result = discard_refinement(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        expected_run_id=request.get("expected_run_id", ""),
-                        expected_artifact_key=request.get("expected_artifact_key", ""),
-                        expected_artifact_version=request.get("expected_artifact_version", ""),
-                        expected_proposal_id=request.get("expected_proposal_id", ""),
-                        expected_proposal_version=request.get("expected_proposal_version", ""),
                     )
                 elif normalized_path == "/open-path":
                     result = open_path_in_file_manager(
@@ -8047,4 +6533,3 @@ def serve(
         finally:
             for signum, previous in previous_signals.items():
                 signal.signal(signum, previous)
-

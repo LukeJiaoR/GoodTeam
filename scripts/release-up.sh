@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # release-up.sh — bring up a pinned, stable GoodTeam release instance outside
-# the dev repo. This instance runs serve/dispatch against dev worktrees.
+# the dev repo. This instance serves the project workspace.
 #
 # Usage:
 #   scripts/release-up.sh
@@ -173,11 +173,6 @@ echo "  repo    : $RELEASE_DIR"
 echo "  ref     : $REF ($TARGET_COMMIT)"
 echo "  serve   : http://localhost:$PORT/"
 echo "  demo    : http://localhost:$PORT/?project=DEMO"
-echo ""
-echo "[release-up] dispatch example (from release instance to dev worktree):"
-echo "  env PYTHONPATH=\"$RELEASE_DIR/src\" \"$PY\" -m goodteam_os.cli dispatch \\"
-echo "    --project-root /abs/path/to/dev-worktree \\"
-echo "    --track backend:codex:\"implement change\" --verify backend:\"PYTHONPATH=src .venv/bin/python -m pytest tests -q\""
 echo ""
 
 env PYTHONPATH="$RELEASE_DIR/src" "$PY" -m goodteam_os.cli serve --workspace "$WS" --port "$PORT"

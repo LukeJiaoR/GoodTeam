@@ -1,4 +1,8 @@
-"""Exact-text draft changes and explicit preparation gates for Assistant chat."""
+"""[INPUT]: 助手会话、原始任务卡和 Team 版本。
+[OUTPUT]: 编辑草稿并提交已确认任务批次。
+[POS]: 选中任务的确认与准备。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 import re
 from datetime import UTC, datetime
@@ -191,7 +195,7 @@ def start_selected_project_task(service, *, project_key, root, request):
     """A selected Role task uses the queue's existing batch, even when alone.
 
     Free-form requests enter as ordinary Planner tasks until a role assignment
-    exists. Previously started Workflow identities retain their original route.
+    exists. Previously started Workflow identities remain historical.
     """
     from goodteam_os.assistant_queue import require_queued_project_task
     from goodteam_os.project_iteration_execution import run_queued_iteration_batch
@@ -210,7 +214,7 @@ def start_selected_project_task(service, *, project_key, root, request):
                        if item.get("id") == proposal_id), None)
         if (proposal.get("id") == proposal_id
                 and (proposal.get("run_id") or proposal.get("start_claim_id") or proposal.get("start_run_id"))):
-            return None  # Retain the legacy Workflow's original ownership.
+            raise ValueError("This historical task already has a recorded start.")
         revision = request.get("expected_revision")
         if request.get("action") == "continue_preparation":
             revision = proposal.get("revision")
@@ -300,7 +304,9 @@ def start_selected_project_task(service, *, project_key, root, request):
                     or proposal.get("status") == "cancelled" or proposal.get("pending_change")
                     or proposal.get("needs_clarification") or queued.get("status") != "selected"):
                 raise ValueError("Confirm the current selected task with no unresolved changes.")
-            if proposal.get("confirmed") and "selected_team_revision" in proposal:
+            if proposal.get("confirmed"):
+                if "selected_team_revision" not in proposal:
+                    raise ValueError("The selected task confirmation is incomplete. Review its original Team revision.")
                 saved_revision = proposal.get("selected_team_revision")
                 if expected_team_revision is not None and expected_team_revision != saved_revision:
                     raise ValueError("The selected task owns a different Team confirmation.")
@@ -318,7 +324,7 @@ def start_selected_project_task(service, *, project_key, root, request):
                         raise SkillError("team_unavailable", "The confirmed project Team is unavailable.")
                     if team["revision"] != expected_team_revision:
                         raise SkillConflict("team_revision_changed", "Team changed after confirmation; review it before starting.")
-            require_queued_project_task(root, project_key, proposal, workflow=False)
+            require_queued_project_task(root, project_key, proposal)
             if request.get("action") == "confirm_task":
                 store.confirm_task(proposal_id, expected_revision=revision)
                 store._mutate(lambda value: {**value, "proposed_task": {**value["proposed_task"],
@@ -329,11 +335,10 @@ def start_selected_project_task(service, *, project_key, root, request):
                 values = request.get("values", {})
                 if not isinstance(values, dict):
                     raise ValueError("Project preparation values must be a JSON object.")
-                state = service.readiness.submit_input(project_key, root, str(request.get("step_id", "")),
+                service.readiness.submit_input(project_key, root, str(request.get("step_id", "")),
                                                        values, background=False)
     # Admission rechecks the exact selected task, ledger and execution slot
     # under its own locks, then atomically consumes the draft into the batch.
     return run_queued_iteration_batch(workspace=service.workspace, project_key=project_key, root=root,
         project_config=service.project_config, proposal_ids=[proposal_id], expected_revisions={proposal_id: revision},
         confirmed=True, background=True, selected_proposal_id=proposal_id, expected_team_revision=expected_team_revision)
-

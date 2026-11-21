@@ -1,3 +1,8 @@
+"""[INPUT]: 隔离项目、规划请求和批次账本。
+[OUTPUT]: 报告实际执行阶段和产物。
+[POS]: 本地 smoke 命令。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 import json
 import os
 import shlex
@@ -11,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from goodteam_os.tasks import LocalTaskStore
-from goodteam_os.web import ProjectApiError, start_workflow
+from goodteam_os.web import ProjectApiError, start_planning_batch
 
 
 CommandRunner = Callable[[str, Path], dict[str, object]]
@@ -150,7 +155,7 @@ def _execute_project_cycle(
     smoke_task_id = _ensure_smoke_task(project, cycle)
     run["task_id"] = smoke_task_id
     try:
-        result = start_workflow(
+        result = start_planning_batch(
             workspace=workspace,
             idea=project.idea,
             project_key=project.project_key,
@@ -161,14 +166,6 @@ def _execute_project_cycle(
             project_config=project.project_config,
             run_id="smoke-" + sha256(f"{project.project_key}:{smoke_task_id}:{cycle}".encode()).hexdigest(),
         )
-        if result.get("historical_workflow"):
-            # Replay returned an original Workflow, not the new Planner batch.
-            # Retain its identity but never auto-approve it as smoke execution.
-            run.update(run_id=result["run_id"], status="incomplete", classification="product",
-                       historical_workflow=True,
-                       reason="The request refers to a historical Workflow; no new batch was started.",
-                       next_task="Inspect the original Workflow with its existing controls.")
-            return run
         from goodteam_os.task_assistant_session import TaskAssistantSessionStore
         from goodteam_os.project_iteration_execution import iteration_batch_report
         from goodteam_os.dispatch_workspace import dispatch_artifact_root

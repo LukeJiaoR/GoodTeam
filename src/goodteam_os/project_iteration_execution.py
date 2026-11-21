@@ -22,7 +22,6 @@ from goodteam_os.assistant_requests import conversation_lock
 from goodteam_os.dispatch import dispatch_tracks
 from goodteam_os.dispatch_workspace import dispatch_artifact_root, prepare_dispatch_workspace
 from goodteam_os.project_iteration import _internal, _validate_parallel_group, rank_project_backlog
-from goodteam_os.state import StateStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore, project_task_intent, task_evidence_digest
 from goodteam_os.tasks import TASK_INTENT_FIELDS as TASK_INTENT_FIELDS
@@ -61,14 +60,6 @@ class ProjectBatchResourceBusy(ValueError):
 
 
 def _require_execution_slot(workspace, project_key, run_id, *, task_ids=None):
-    current = StateStore(workspace).read_project_current(project_key)
-    if current is not None:
-        # A terminal node published during an unresolved transition does not free the slot.
-        transition_pending = current.pending_transition.get("status") in {"recording", "executing", "interrupted"}
-        rejected = "rejected" in (current.current_node, current.next_node)
-        complete = current.current_node == "complete" and not current.blockers
-        if transition_pending or not (rejected or complete):
-            raise ValueError("Resolve the active project execution before starting a batch.")
     others = [b for b in active_project_batches(workspace, project_key) if b["run_id"] != run_id]
     if not others:
         return
@@ -165,7 +156,8 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
     from goodteam_os.project_runtime import resolve_project_runtime_root
     from goodteam_os.projects import load_project_target
     from goodteam_os.state import create_initial_state
-    from goodteam_os.web import resolve_project_model_profile, resolve_runtime_model_config
+    from goodteam_os.models import resolve_project_model_profile
+    from goodteam_os.web import resolve_runtime_model_config
     from goodteam_os.worker_routing import _worker_job_fields
 
     target = load_project_target(Path(project_config))
@@ -619,4 +611,3 @@ def run_queued_iteration_batch(*, workspace, project_key, root, project_config, 
         expected_authority=expected_authority, expected_continuation_id=expected_continuation_id,
                     selected_proposal_id=selected_proposal_id, expected_team_revision=expected_team_revision)
     return _execute_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)
-

@@ -3,7 +3,6 @@ from datetime import datetime, UTC, timedelta
 from goodteam_os.telegram import (
     TelegramReviewSessionStore,
     mask_sensitive_data,
-    process_telegram_update,
 )
 
 
@@ -119,86 +118,3 @@ def test_mask_sensitive_data():
     raw_srv_dir = "Deployed to /srv/agentsmesh/deploy"
     assert "/srv/agentsmesh" not in mask_sensitive_data(raw_srv_dir)
     assert "deployment-dir" in mask_sensitive_data(raw_srv_dir)
-
-
-def test_interactive_review_callbacks(tmp_path, monkeypatch):
-    tg_calls = []
-
-    def fake_tg_request(token, method, params):
-        tg_calls.append({"method": method, "params": params})
-        if method == "sendMessage":
-            return {"ok": True, "result": {"message_id": 8888}}
-        return {"ok": True, "result": {"message_id": 9999}}
-
-    monkeypatch.setattr("goodteam_os.telegram._telegram_request", fake_tg_request)
-    monkeypatch.setenv("GOODTEAM_TG_BOT_TOKEN", "fake-token")
-
-    store = TelegramReviewSessionStore(tmp_path)
-    session_id = "sesabc"
-    session_data = {
-        "session_id": session_id,
-        "run_id": "run-xyz",
-        "project_key": "CONTENTOPS",
-        "gate": "staging",
-        "chat_id": 12345,
-        "message_id": 9999,
-        "cursor": 0,
-        "items": [
-            {"id": "acceptance", "title": "验收", "body": "OK", "state": "pending", "note": None},
-            {"id": "health", "title": "健康", "body": "OK", "state": "pending", "note": None},
-        ],
-        "decided": False,
-        "created_at": datetime.now(UTC).isoformat(),
-        "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-    }
-    store.save(session_id, session_data)
-
-    seen = set()
-
-    # 1. Action R (Review starts)
-    update = {
-        "callback_query": {
-            "id": "cb_1",
-            "from": {"id": 111},
-            "message": {"chat": {"id": 12345}, "message_id": 9999},
-            "data": f"v1:R:{session_id}",
-        }
-    }
-    res = process_telegram_update(update, workspace=tmp_path, allowed_users=["111"], processed_callbacks=seen)
-    assert res["status"] == "processed"
-    assert tg_calls[-1]["method"] == "editMessageText"
-    assert "第 1/2 项" in tg_calls[-1]["params"]["text"]
-
-    # 2. Action O (OK current item)
-    update = {
-        "callback_query": {
-            "id": "cb_2",
-            "from": {"id": 111},
-            "message": {"chat": {"id": 12345}, "message_id": 9999},
-            "data": f"v1:O:{session_id}:0",
-        }
-    }
-    res = process_telegram_update(update, workspace=tmp_path, allowed_users=["111"], processed_callbacks=seen)
-    assert res["status"] == "processed"
-    session = store.get(session_id)
-    assert session["items"][0]["state"] == "ok"
-    assert session["cursor"] == 1  # Moved to next item
-
-    # 3. Action F (Flag current item)
-    update = {
-        "callback_query": {
-            "id": "cb_3",
-            "from": {"id": 111},
-            "message": {"chat": {"id": 12345}, "message_id": 9999},
-            "data": f"v1:F:{session_id}:1",
-        }
-    }
-    res = process_telegram_update(update, workspace=tmp_path, allowed_users=["111"], processed_callbacks=seen)
-    assert res["status"] == "processed"
-    assert tg_calls[-1]["method"] == "sendMessage"
-    assert tg_calls[-1]["params"]["reply_markup"]["force_reply"] is True
-    session = store.get(session_id)
-    assert session["awaiting_note_for"] == 1
-    assert session["awaiting_note_message_id"] == 8888
-    assert session["awaiting_note_card_message_id"] == 9999
-

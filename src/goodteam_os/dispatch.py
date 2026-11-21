@@ -1,3 +1,8 @@
+"""[INPUT]: 已确认的轨道、项目快照和 WorkerJobStore。
+[OUTPUT]: 隔离派工、并发限制和结果报告。
+[POS]: 批次执行与独立审查共享的 Worker 池。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import os
@@ -17,42 +22,6 @@ from goodteam_os.workers import WorkerJobStore
 
 if TYPE_CHECKING:
     from goodteam_os.skills.codex_runtime import CodexReviewAdmission
-
-
-def parse_dispatch_track_spec(spec: str, *, base_dir: Path | None = None) -> dict[str, object]:
-    parts = spec.split(":", 2)
-    if len(parts) != 3:
-        raise ValueError("Track spec must use role:adapter:task-file-or-inline-task.")
-    role, adapter, task_ref = (part.strip() for part in parts)
-    if not role or not adapter or not task_ref:
-        raise ValueError("Track spec requires non-empty role, adapter, and task.")
-
-    task_path = Path(task_ref)
-    if not task_path.is_absolute() and base_dir is not None:
-        task_path = base_dir / task_path
-    if task_path.is_file():
-        return {
-            "role": role,
-            "adapter": adapter,
-            "task": task_path.read_text(encoding="utf-8"),
-            "task_source": str(task_path),
-        }
-    return {
-        "role": role,
-        "adapter": adapter,
-        "task": task_ref,
-        "task_source": "inline",
-    }
-
-
-def parse_dispatch_verify_spec(spec: str) -> tuple[str, str]:
-    parts = spec.split(":", 1)
-    if len(parts) != 2:
-        raise ValueError("Verify spec must use role:shell-command.")
-    role, command = (part.strip() for part in parts)
-    if not role or not command:
-        raise ValueError("Verify spec requires non-empty role and shell command.")
-    return role, command
 
 
 def ensure_dispatch_project_root_is_safe(
@@ -776,4 +745,3 @@ def _constraints_from_file(path: Path | None) -> list[str]:
 def _output_tail(text: str, *, max_lines: int = 20) -> str:
     lines = text.splitlines()
     return "\n".join(lines[-max_lines:])
-

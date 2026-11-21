@@ -22,7 +22,6 @@ from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.project_readiness import ProjectReadinessStore
 from goodteam_os.project_registry import ProjectRegistry
 from goodteam_os.team_control_plane import TeamControlPlaneStore
-from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.execution import ExecutionLedger
 from goodteam_os.execution.idempotency import execution_id_from_task
 from test_dispatch_isolation import repository
@@ -67,10 +66,6 @@ def test_legacy_import_preserves_authority_identity_and_rejects_overwrite(tmp_pa
     team.load_or_migrate(legacy_target={})
     registry = ProjectRegistry()
     registry.register_project(tmp_path / "projects" / "demo.local.yaml", root=source, key="DEMO")
-    queue = DurableOperatorQueue(tmp_path / "state")
-    queue.enqueue(idempotency_key="original", source_url="local:original", source_revision="original-sha",
-                  project_key="DEMO", repository_identity="original-repository")
-    queue.set_desired_state("stopped")
     ledger = ExecutionLedger(source)
     execution_id = execution_id_from_task(_task().task_id)
     execution_paths = [ledger.create_task(_task()), ledger.create_run(_run(execution_id)),
@@ -78,14 +73,14 @@ def test_legacy_import_preserves_authority_identity_and_rejects_overwrite(tmp_pa
 
     def extra_state():
         return (readiness.read("DEMO"), team.read(), team.read_events(), registry.list_registered_projects(),
-                queue.list_items(), queue.summary(), ledger.replay(execution_id))
+                ledger.replay(execution_id))
 
     before = (session.read(), tasks.list_tasks(), goal_store.get_goal(goal["id"]),
               asdict(state_store.read_project_current("DEMO")), extra_state())
     source_bytes = {path: path.read_bytes() for path in (
         session.path, tasks.path, goal_store.path, state_store.project_state_dir("DEMO") / "current.json",
         readiness._path("DEMO"), team.state_path, team.events_path, registry.registry_path,
-        queue.state_path, queue.events_path, *execution_paths)}
+        *execution_paths)}
     postgres()
     with pytest.raises(ValueError, match="explicit PostgreSQL import"):
         session.read()
@@ -226,13 +221,6 @@ def test_stop_while_waiting_invalidates_old_confirmation(tmp_path, monkeypatch, 
     grant = session.read()["project_continuation"]
     assert grant["status"] == "stopped" and grant["manager_calls"] == 1
     assert "状态已经变化" in session.read()["timeline"][-1]["content"]
-
-
-def test_pg_goal_ledger_runs_existing_workflow_and_derives_followup(tmp_path, monkeypatch, postgres):
-    from test_goal_continuation import setup, test_actual_worker_result_drives_manager_and_two_real_workflow_runs
-
-    postgres()
-    test_actual_worker_result_drives_manager_and_two_real_workflow_runs(setup.__wrapped__(tmp_path), monkeypatch)
 
 
 def test_pg_model_failure_retries_existing_message_identity(tmp_path, monkeypatch, postgres):
@@ -378,13 +366,6 @@ def test_pg_conversation_delivers_reviewed_correction(tmp_path, monkeypatch, pos
         tmp_path, monkeypatch, delivery_handoff=delivery_handoff)
 
 
-def test_pg_terminal_transition_reconciles_original_project_task(tmp_path, monkeypatch, postgres):
-    from test_project_iteration_planner import test_parallel_selection_is_persisted_and_reused_without_new_model_call
-
-    postgres()
-    test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_path, monkeypatch)
-
-
 def test_pg_idle_goal_cache_revalidates_changed_row_values(tmp_path, postgres):
     from goodteam_os.goals import GoalCorruptState
 
@@ -402,29 +383,3 @@ def test_pg_idle_goal_cache_revalidates_changed_row_values(tmp_path, postgres):
     with pytest.raises(GoalCorruptState):
         store.list_continuation_goals(validated_idle=cache)
     assert cache == {}
-
-
-def test_pg_failed_event_append_releases_nested_lock_and_rolls_back(tmp_path, postgres):
-    from hashlib import sha256
-    import psycopg
-    from psycopg import sql
-    from goodteam_os import state_documents
-
-    postgres()
-    queue = DurableOperatorQueue(tmp_path / "state")
-    path = state_documents.document_key(queue.events_path)
-    with database().connection() as conn:
-        conn.execute(sql.SQL("ALTER TABLE state_documents ADD CONSTRAINT reject_event CHECK (path <> {})").format(sql.Literal(path)))
-    request = dict(idempotency_key="original", source_url="local:original", source_revision="original-sha",
-                   project_key="DEMO", repository_identity="original-repository")
-    with pytest.raises(psycopg.Error):
-        queue.enqueue(**request)
-    assert state_documents._CONNECTION.get() is None
-    key = int.from_bytes(sha256(path.encode()).digest()[:8], signed=True)
-    with psycopg.connect(os.environ["GOODTEAM_DATABASE_URL"], autocommit=True) as observer:
-        assert observer.execute("SELECT pg_try_advisory_lock(%s)", (key,)).fetchone()[0]
-    with database().connection() as conn:
-        conn.execute("ALTER TABLE state_documents DROP CONSTRAINT reject_event")
-    assert queue.list_items() == []
-    assert queue.enqueue(**request)[1] is True
-    assert len(queue.list_items()) == len(state_documents.read_events(queue.events_path)) == 1

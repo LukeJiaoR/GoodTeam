@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from goodteam_os import graph, worker_routing
+from goodteam_os import worker_routing
 from goodteam_os.goal_continuation import authority_snapshot
 from goodteam_os.manager_execution import _parse_team_commands
 from goodteam_os.team_control_plane import (
@@ -125,17 +125,7 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     with monkeypatch.context() as patch:
         patch.setattr('goodteam_os.team_control_plane.worker_backend_doctor',
                       lambda provider: {'ready': True})
-        patch.setattr(graph, 'load_project_target', lambda path: {TEAM_STATE_TARGET_KEY: routing})
         assert worker_routing.resolve_role_adapter({TEAM_STATE_TARGET_KEY: routing}, 'architect') == 'codex'
-        assert graph.should_generate_artifact_with_worker(config, 'architect') is True
-        source['runtime']['provider'] = 'fake'
-        for member in routing['workers']:
-            if member['role'] == 'architect':
-                member['runtime']['provider'] = 'codex'
-        assert graph.should_generate_artifact_with_worker(config, 'architect') is False
-        source['lifecycle'] = 'inactive'
-        with pytest.raises(TeamDispatchBlocked, match='no fallback'):
-            graph.should_generate_artifact_with_worker(config, 'architect')
     def capability(current):
         return next(row for row in build_team_capability_view(current)['roles'] if row['role'] == 'planner')['capability']
     assert capability(team) == 'ready'

@@ -140,30 +140,6 @@ event('end')
     assert len((signals / "calls.jsonl").read_text().splitlines()) == 22
     assert iteration_batch_report(workspace=tmp_path, project_key="DEMO", root=source,
                                   run_id=first["run_id"]) == report
-    # An interrupted outer publication does not authorize replay over a later
-    # Workflow. Existing Worker receipts remain, but no new execution starts.
-    from goodteam_os.dispatch_workspace import dispatch_artifact_root
-    from goodteam_os.state import StateStore, create_initial_state
-
-    report_path = dispatch_artifact_root(source, first["dispatch_run_id"]) / "report.json"
-    retained_report = report_path.read_bytes()
-    report_path.unlink()
-    session = TaskAssistantSessionStore(tmp_path, "DEMO")
-    retired_link = {"run_id": "later-workflow", "version": "old-candidate", "review_reports": {}}
-    def interrupted(value):
-        value["project_task_batches"][first["run_id"]].update(status="blocked", workflow_recovery=retired_link)
-        return value
-    session._mutate(interrupted)
-    later = create_initial_state("later-workflow", "DEMO", "Separate owner-authorized task")
-    later.current_node, later.next_node = "implementation", "blocked"
-    later.blockers = ["Unresolved QA failure"]
-    StateStore(tmp_path).write_project_current(later)
-    with pytest.raises(ValueError, match="active project execution"):
-        run_queued_iteration_batch(**request, confirmed=True)
-    assert len((signals / "calls.jsonl").read_text().splitlines()) == 22
-    # The removed authorization is inert, but the old batch metadata remains.
-    assert session.read()["project_task_batches"][first["run_id"]]["workflow_recovery"] == retired_link
-    report_path.write_bytes(retained_report)
 
 
 def test_batch_captured_write_scope_violation_blocks_candidate_and_preserves_source(tmp_path, monkeypatch):

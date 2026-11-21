@@ -1,7 +1,6 @@
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { translate } from '../../i18n';
 import ReviewPage from './ReviewPage';
 
@@ -105,136 +104,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('ReviewPage workflow and navigation', () => {
-  test('guards navigation away from unsaved review edits with a dialog', async () => {
-    const user = userEvent.setup();
-    const router = renderReview();
-
-    await user.click(await screen.findByRole('button', { name: t('review.artifact.edit') }));
-    const editor = screen.getByRole('textbox', { name: t('review.artifact.content') });
-    await user.type(editor, ' + extra edit');
-
-    expect(screen.getByRole('link', { name: /PRD/ })).toHaveAttribute('aria-current', 'true');
-
-    await user.click(screen.getByRole('link', { name: /RFC/ }));
-    expect(await screen.findByRole('dialog')).toBeVisible();
-    expect(screen.getByText(t('review.dirty.title'))).toBeVisible();
-
-    await user.click(screen.getByRole('button', { name: t('review.dirty.stay') }));
-    expect(router.state.location.pathname).toBe('/projects/DEMO/review/prd');
-    expect(screen.getByRole('textbox', { name: t('review.artifact.content') })).toHaveValue('# PRD\nInitial plan. + extra edit');
-
-    await user.click(screen.getByRole('link', { name: /RFC/ }));
-    await user.click(await screen.findByRole('button', { name: t('review.dirty.leave') }));
-    expect(router.state.location.pathname).toBe('/projects/DEMO/review/rfc');
-  });
-
-  test('submits approval against the loaded run and artifact version', async () => {
-    const user = userEvent.setup();
-    mocks.decideReview.mockResolvedValue({ ok: true });
-    renderReview();
-
-    await user.click(await screen.findByRole('button', { name: t('review.decision.approve') }));
-
-    expect(mocks.decideReview).toHaveBeenCalledWith(
-      'DEMO',
-      'prd',
-      'approved',
-      '',
-      {
-        expectedApproval: {
-          run_id: 'run-1',
-          target_type: 'review',
-          target_id: 'prd',
-          artifact_key: 'prd',
-          artifact_version: 'sha256:prd-v1',
-        },
-      },
-    );
-  });
-
-  test('routes Request changes into Manager Intent Commit without a direct decision', async () => {
-    const user = userEvent.setup();
-    mocks.startChangeIntent.mockResolvedValue({
-      intent_commit: { id: 'intent-prd-1', status: 'discussing' },
-    });
-    const router = renderReview();
-
-    await user.click(await screen.findByRole('button', { name: t('review.decision.changes') }));
-
-    expect(mocks.startChangeIntent).toHaveBeenCalledWith(
-      'DEMO',
-      'prd',
-      {
-        run_id: 'run-1',
-        target_type: 'review',
-        target_id: 'prd',
-        artifact_key: 'prd',
-        artifact_version: 'sha256:prd-v1',
-      },
-      { initialText: '' },
-    );
-    expect(mocks.decideReview).not.toHaveBeenCalled();
-    expect(router.state.location.pathname).toBe('/projects/DEMO/work/runs/run-1');
-    expect(await screen.findByText('Manager Intent Commit')).toBeVisible();
-  });
-
-  test('carries the exact review note to the version-bound draft before navigating', async () => {
-    const user = userEvent.setup();
-    const note = '  Keep Markdown breaks.  \n\n    keep_indentation()\n';
-    mocks.startChangeIntent.mockResolvedValue({ intent_commit: { id: 'intent-feedback' } });
-    const router = renderReview();
-    await user.type(await screen.findByRole('textbox', { name: t('review.decision.rationale') }), note);
-    await user.click(screen.getByRole('button', { name: t('review.decision.changes') }));
-
-    expect(mocks.startChangeIntent).toHaveBeenCalledWith(
-      'DEMO', 'prd', expect.objectContaining({ artifact_version: 'sha256:prd-v1' }),
-      { initialText: note },
-    );
-    expect(router.state.location.pathname).toBe('/projects/DEMO/work/runs/run-1');
-    expect(mocks.decideReview).not.toHaveBeenCalled();
-  });
-
-  test('keeps feedback and stays in Review when draft creation conflicts', async () => {
-    const user = userEvent.setup();
-    const note = 'Do not overwrite the existing change draft.';
-    mocks.startChangeIntent.mockRejectedValue(new Error('A different change draft already exists.'));
-    const router = renderReview();
-    const editor = await screen.findByRole('textbox', { name: t('review.decision.rationale') });
-    await user.type(editor, note);
-    await user.click(screen.getByRole('button', { name: t('review.decision.changes') }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('A different change draft already exists.');
-    expect(editor).toHaveValue(note);
-    expect(router.state.location.pathname).toBe('/projects/DEMO/review/prd');
-    expect(mocks.decideReview).not.toHaveBeenCalled();
-  });
-
-  test('clears submitted question answers and confirms the count', async () => {
-    const user = userEvent.setup();
-    mocks.getReviewState.mockResolvedValue(state);
-    mocks.getOpenQuestions.mockResolvedValue({
-      questions: ['Should the CLI be the only surface?'],
-    });
-    mocks.refresh.mockResolvedValue(state);
-    mocks.answerOpenQuestions.mockResolvedValue({ ok: true });
-    const router = routerFor('/projects/DEMO/review/prd');
-    render(<RouterProvider router={router} />);
-
-    const answerBox = await screen.findByRole('textbox', { name: 'Should the CLI be the only surface?' });
-    await user.type(answerBox, 'yes');
-    await user.click(screen.getByRole('button', { name: t('review.questions.apply') }));
-
-    expect(await screen.findByText('Submitted 1 answer')).toBeVisible();
-    expect(mocks.answerOpenQuestions).toHaveBeenCalledWith('DEMO', 'prd', [
-      { question: 'Should the CLI be the only surface?', answer: 'yes' },
-    ]);
-    expect(screen.getByRole('textbox', { name: 'Should the CLI be the only surface?' })).toHaveValue('');
-  });
-
-});
-
-
 test('embedded review refuses to substitute a different run or missing approval', async () => {
   const view = renderReview('/projects/DEMO/work/runs/run-old', {
     embedded: true, selectedReviewId: 'prd', expectedRunId: 'run-old', onClose: vi.fn(),
@@ -244,27 +113,4 @@ test('embedded review refuses to substitute a different run or missing approval'
   expect(screen.queryByRole('button', { name: 'Approve', exact: true })).not.toBeInTheDocument();
   expect(view.state.location.pathname).toBe('/projects/DEMO/work/runs/run-old');
   expect(mocks.decideReview).not.toHaveBeenCalled();
-});
-
-test('embedded review protects edits on close without leaving the task', async () => {
-  const onClose = vi.fn();
-  const user = userEvent.setup();
-  const router = renderReview('/projects/DEMO/work/runs/run-1', {
-    embedded: true, selectedReviewId: 'prd', expectedRunId: 'run-1', onClose,
-  });
-  await screen.findByRole('button', { name: 'Edit Source' });
-  expect(screen.queryByRole('heading', { name: t('review.title'), level: 1 })).not.toBeInTheDocument();
-  expect(screen.getByLabelText(t('review.workspace.summary'))).toBeVisible();
-  await user.click(await screen.findByRole('button', { name: 'Edit Source' }));
-  const editor = screen.getByRole('textbox', { name: t('review.artifact.content') });
-  await user.type(editor, ' Keep this edit.');
-  await user.click(screen.getByRole('button', { name: 'Back to task' }));
-  expect(await screen.findByRole('dialog', { name: t('review.dirty.title') })).toBeVisible();
-  expect(onClose).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Keep editing' }));
-  expect(editor).toHaveValue('# PRD\nInitial plan. Keep this edit.');
-  expect(router.state.location.pathname).toBe('/projects/DEMO/work/runs/run-1');
-  await user.click(screen.getByRole('button', { name: 'Back to task' }));
-  await user.click(screen.getByRole('button', { name: 'Discard and leave' }));
-  expect(onClose).toHaveBeenCalledOnce();
 });

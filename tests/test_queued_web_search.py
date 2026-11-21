@@ -37,8 +37,6 @@ def test_explicit_search_task_queue_binding_dispatch_receipt_and_replay(tmp_path
     proposal = queued['task_assistant_session']['queued_task_proposals'][0]
     assert 'Explicit Web Search allowance' in proposal['exact_request']
     assert 'provider-test' in proposal['exact_request']
-    with pytest.raises(ValueError, match='search contract'):
-        require_queued_project_task(root, 'DEMO', proposal, workflow=True)
     request = dict(workspace=tmp_path, project_key='DEMO', root=root, project_config=config,
         proposal_ids=queued['queued_proposal_ids'], expected_revisions={proposal['id']: 1}, confirmed=True)
     # A policy edit invalidates the original queue evidence before any claim.
@@ -132,7 +130,7 @@ def test_explicit_search_configuration_rebinds_only_unconfirmed_queue(tmp_path, 
     proposal = store.read()['queued_task_proposals'][0]
     assert proposal['revision'] == 2 and proposal['web_search'] == POLICY
     assert proposal['exact_request'] == 'x' * 7900
-    assert require_queued_project_task(root, 'DEMO', proposal, workflow=False)['web_search'] == POLICY
+    assert require_queued_project_task(root, 'DEMO', proposal)['web_search'] == POLICY
     assert not proposal['confirmed'] and 'run_id' not in proposal
     assert store.read()['timeline'][-1]['details']['execution_started'] is False
     with pytest.raises(ValueError, match='unconfirmed'):
@@ -155,7 +153,7 @@ def test_explicit_search_configuration_rebinds_only_unconfirmed_queue(tmp_path, 
     configure_queued_search(store, root, 'DEMO', {**request, 'expected_revision': 3})
     selected = store.read()['queued_task_proposals'][0]
     assert not selected['confirmed'] and selected['revision'] == 4
-    readonly = require_queued_project_task(root, 'DEMO', selected, workflow=False)
+    readonly = require_queued_project_task(root, 'DEMO', selected)
     assert readonly['execution_policy'] == 'read_only' and readonly['web_search'] == POLICY
     config = tmp_path / 'projects/demo.local.yaml'
     config.parent.mkdir()
