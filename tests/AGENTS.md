@@ -19,9 +19,7 @@ test_builtin_role_methods.py: Actual first-party content through existing snapsh
 test_ci_change_classifier.py: One smoke check for focused CI classifier paths after test consolidation.
 test_cli_doctor.py: 验证 cli doctor 的行为。
 test_codex_app_server.py: Protocol subprocess evidence; these tests do not invoke a model provider.
-test_codex_bridge.py: Real local HTTP transport, durable quota and cancellation contract evidence.
 test_codex_local_engine.py: 验证 codex local engine 的行为。
-test_codex_relay.py: Model-free real relay child/pipe/HTTP evidence; no Docker admission claim.
 test_context_freshness.py: Project iterations must not reuse understanding of changed source files.
 test_conversation_attachments.py: 验证 conversation attachments 的行为。
 test_database_subprocess.py: 验证数据库配置隔离与连接池退出清理。

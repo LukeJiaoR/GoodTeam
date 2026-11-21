@@ -56,7 +56,7 @@ deployment require their own explicitly scoped authorization and evidence.
 | Execution state and safe paths | `tests/test_execution_idempotency.py`, `test_execution_path_claims.py` |
 | Independent review and delivery | `tests/test_review_policy.py`, `test_delivery_review_truth.py` |
 | Project memory | `tests/test_memory_core.py` |
-| Existing Skill, provider and Telegram bridges | `tests/test_skill_library.py`, `test_codex_bridge.py`, `test_telegram_review.py` |
+| Skill installation, provider connections and Telegram review | `tests/test_skill_library.py`, `test_providers.py`, `test_telegram_review.py` |
 | Frontend project and Work surfaces | `frontend/src/features/projects/ProjectsPage.search.test.jsx` and retained Work/Review tests |
 | Real browser business path | `frontend/e2e/business-loop.spec.js`, `project-manager.spec.js` |
 
