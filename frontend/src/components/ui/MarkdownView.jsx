@@ -32,8 +32,8 @@ function isProductLink(url) {
   if (!url.startsWith('/') || parts.some((part) => (
     part === '.' || part === '..' || /[\\/%]/.test(part) || [...part].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
   ))) return false;
-  return /^\/(?:legacy|projects|inbox|activity|settings)?$/.test(path)
-    || /^\/projects\/[^/]+\/(?:home|team|work|review|knowledge|settings)$/.test(path)
+  return /^\/(?:legacy|projects|inbox|activity|settings|chat|delivery|team)?$/.test(path)
+    || /^\/projects\/[^/]+\/(?:home|team|work|review|knowledge|settings|chat|delivery)$/.test(path)
     || /^\/projects\/[^/]+\/(?:work\/runs|review|settings)\/[^/]+$/.test(path);
 }
 
