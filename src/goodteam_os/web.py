@@ -34,14 +34,7 @@ from uuid import uuid4
 from goodteam_os import context as project_context
 from goodteam_os.database import provider_environment
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
-from goodteam_os.dispatch import (
-    dispatch_tracks,
-    ensure_dispatch_project_root_is_safe,
-    parse_dispatch_track_spec,
-    parse_dispatch_verify_spec,
-)
 from goodteam_os.execution import ExecutionAPI
-from goodteam_os.execution.review_workbench_browser import render_review_workbench_html
 from goodteam_os.frontend_assets import FrontendAssetsNotFound, resolve_frontend_dist
 from goodteam_os.graph import (
     accept_refinement,
@@ -210,7 +203,6 @@ SERVER_ACTION_TIMEOUT_SECONDS = 600
 FS_LIST_MAX_ENTRIES = 500
 ARTIFACT_PREVIEW_MAX_CHARS = 8000
 FS_LIST_IGNORED_NAMES = {".git", ".github", ".venv", "__pycache__", "node_modules", ".next", "dist", "build"}
-DISPATCH_TRACK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 IMPORT_ERROR_STATUS = {
     "project_root_not_absolute": 400,
@@ -415,20 +407,11 @@ def _run_queued_reviewer_jobs_for_current_run(
         return 409, {"error": "run_id does not match the active project run"}
 
     current_gate = current_approval_gate(state)
-    recovery_review = not current_gate and request.get("artifact_key") == "workflow_recovery"
-    if recovery_review:
-        from goodteam_os.workflow_recovery import candidate
-
-        try:
-            candidate(workspace, state)
-        except ValueError as exc:
-            return 409, {"error": str(exc)}
-        current_gate = "release"
     requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
     if not current_gate or requested_gate != current_gate:
         return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
 
-    artifact_key = "workflow_recovery" if recovery_review else _approval_artifact_for_gate(current_gate)
+    artifact_key = _approval_artifact_for_gate(current_gate)
     requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
     if requested_artifact_key and requested_artifact_key != artifact_key:
         return 409, {"error": "artifact_key does not match the current approval gate"}
@@ -545,20 +528,11 @@ def _retry_failed_reviewer_jobs_for_current_run(
         return 409, {"error": "run_id does not match the active project run"}
 
     current_gate = current_approval_gate(state)
-    recovery_review = not current_gate and request.get("artifact_key") == "workflow_recovery"
-    if recovery_review:
-        from goodteam_os.workflow_recovery import candidate
-
-        try:
-            candidate(workspace, state)
-        except ValueError as exc:
-            return 409, {"error": str(exc)}
-        current_gate = "release"
     requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
     if not current_gate or requested_gate != current_gate:
         return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
 
-    artifact_key = "workflow_recovery" if recovery_review else _approval_artifact_for_gate(current_gate)
+    artifact_key = _approval_artifact_for_gate(current_gate)
     requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
     if requested_artifact_key and requested_artifact_key != artifact_key:
         return 409, {"error": "artifact_key does not match the current approval gate"}
@@ -953,21 +927,17 @@ def build_approval_recommendation(
     return recommendation
 
 
-def _latest_smoke_report(workspace: Path) -> tuple[Path, dict[str, object], dict[str, object]] | None:
+def _latest_smoke_report(workspace: Path) -> tuple[Path, dict[str, object]] | None:
     root = workspace / "state" / "smoke-runs"
     if not root.is_dir():
         return None
     for path in sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
         try:
-            wrapper = json.loads(path.read_text(encoding="utf-8"))
+            report = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
-        if not isinstance(wrapper, dict):
-            continue
-        nested = wrapper.get("report")
-        report = nested if isinstance(nested, dict) and nested else wrapper
-        if isinstance(report.get("runs", []), list):
-            return path, report, wrapper
+        if isinstance(report, dict) and isinstance(report.get("runs"), list):
+            return path, report
     return None
 
 
@@ -993,8 +963,8 @@ def _build_smoke_refs(workspace: Path, project_key: str) -> list[dict[str, objec
     latest = _latest_smoke_report(workspace)
     if latest is None:
         return []
-    report_path, report, wrapper = latest
-    report_status = str(report.get("status", wrapper.get("status", "")) or "")
+    report_path, report = latest
+    report_status = str(report.get("status", "") or "")
     refs: list[dict[str, object]] = []
     for raw in report.get("runs", []):
         if not isinstance(raw, dict):
@@ -1256,26 +1226,6 @@ def build_action_items(workspace: Path, project_key: str = "") -> list[dict[str,
     return list(reversed(items))
 
 
-def build_smoke_run_items(workspace: Path) -> list[dict[str, str]]:
-    root = workspace / "state" / "smoke-runs"
-    if not root.is_dir():
-        return []
-    items: list[dict[str, str]] = []
-    for path in sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        try:
-            report = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-        nested_report = report.get("report")
-        display_report = dict(nested_report) if isinstance(nested_report, dict) and nested_report else report
-        for run in display_report.get("runs", []):
-            raw = dict(run)
-            raw["report_path"] = str(path)
-            raw["report_status"] = str(display_report.get("status", report.get("status", "")))
-            items.append({key: str(value) for key, value in raw.items()})
-    return items[:12]
-
-
 def _run_readonly_command(command: list[str], workspace: Path, warnings: list[str]) -> subprocess.CompletedProcess[str] | None:
     try:
         return subprocess.run(
@@ -1467,361 +1417,6 @@ def _native_picker_origin_is_trusted(*, origin: str, request_host: str, port: in
     if parsed.netloc.lower() == request_host.lower():
         return True
     return origin_port == 8790 and port != 8790
-
-
-def _dispatch_worktree_path(workspace: Path, name: str) -> Path:
-    return workspace.resolve().parent / f"goodteam-dev-{name}"
-
-
-def _ensure_dispatch_worktree(workspace: Path, *, name: str, branch: str) -> Path:
-    worktree = _dispatch_worktree_path(workspace, name)
-    workspace_root = workspace.resolve()
-    resolved_worktree = worktree.resolve() if worktree.exists() else worktree.absolute().resolve(strict=False)
-    if resolved_worktree == workspace_root or workspace_root in resolved_worktree.parents:
-        raise ValueError("dispatch worktree must be outside the live repo")
-    if not worktree.exists():
-        subprocess.run(
-            ["git", "worktree", "add", str(worktree), "-b", branch, "main"],
-            cwd=workspace,
-            env=provider_environment(),
-            check=True,
-        )
-    _link_dispatch_worktree_venv(workspace, worktree)
-    return worktree
-
-
-def _link_dispatch_worktree_venv(workspace: Path, worktree: Path) -> None:
-    workspace_root = workspace.resolve()
-    worktree_root = worktree.resolve() if worktree.exists() else worktree.absolute().resolve(strict=False)
-    source_bin = workspace_root / ".venv" / "bin"
-    if not source_bin.exists():
-        return
-    venv_dir = worktree_root / ".venv"
-    bin_link = venv_dir / "bin"
-    if venv_dir.exists() or venv_dir.is_symlink():
-        return
-    venv_dir.mkdir(parents=True, exist_ok=True)
-    bin_link.symlink_to(source_bin)
-
-
-def _prepare_dispatch_track_inputs(
-    worktree: Path,
-    *,
-    run_id: str,
-    task: str,
-    constraints: str,
-) -> tuple[Path, Path | None]:
-    input_dir = worktree / ".goodteam" / "dispatch-inputs" / run_id
-    input_dir.mkdir(parents=True, exist_ok=True)
-    task_file = input_dir / "task.md"
-    task_file.write_text(task, encoding="utf-8")
-    constraints_file = None
-    if constraints.strip():
-        constraints_file = input_dir / "constraints.md"
-        constraints_file.write_text(constraints, encoding="utf-8")
-    return task_file, constraints_file
-
-
-def _dispatch_track_status_path(workspace: Path, run_id: str) -> Path:
-    return workspace / "state" / "dispatch-tracks" / f"dispatch-track-{run_id}.json"
-
-
-def _smoke_run_status_path(workspace: Path, run_id: str) -> Path:
-    return workspace / "state" / "smoke-runs" / f"smoke-run-{run_id}.json"
-
-
-def _write_dispatch_track_status(
-    workspace: Path,
-    *,
-    run_id: str,
-    name: str,
-    worktree: Path,
-    status: str,
-    error: str = "",
-    report: dict[str, object] | None = None,
-) -> None:
-    status_path = _dispatch_track_status_path(workspace, run_id)
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "run_id": run_id,
-        "name": name,
-        "worktree": str(worktree),
-        "status": status,
-        "error": error,
-        **({"report": report} if report is not None else {}),
-        "updated_at": datetime.now(UTC).isoformat(),
-    }
-    status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _write_smoke_run_status(
-    workspace: Path,
-    *,
-    run_id: str,
-    suites: list[str],
-    cycles: int,
-    dry_run: bool,
-    worker_mode: str,
-    status: str,
-    report: dict[str, object] | None = None,
-    error: str = "",
-) -> None:
-    status_path = _smoke_run_status_path(workspace, run_id)
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "run_id": run_id,
-        "suites": suites,
-        "cycles": cycles,
-        "dry_run": dry_run,
-        "worker_mode": worker_mode,
-        "status": status,
-        "report": report or {},
-        "error": error,
-        "updated_at": datetime.now(UTC).isoformat(),
-    }
-    status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _start_dispatch_track_background(
-    *,
-    workspace: Path,
-    run_id: str,
-    name: str,
-    worktree: Path,
-    tracks: list[dict[str, object]],
-    verify_commands: dict[str, str],
-    constraints_file: Path | None,
-    response_written: threading.Event | None = None,
-) -> None:
-    projects_dir = workspace / "projects"
-
-    def run_dispatch_track() -> None:
-        if response_written is not None:
-            response_written.wait()
-        _write_dispatch_track_status(
-            workspace,
-            run_id=run_id,
-            name=name,
-            worktree=worktree,
-            status="started",
-        )
-        try:
-            report = dispatch_tracks(
-                project_root=worktree,
-                tracks=tracks,
-                verify_commands=verify_commands,
-                constraints_file=constraints_file,
-                projects_dir=projects_dir,
-                logical_task_id=run_id,
-            )
-        except Exception as exc:
-            _write_dispatch_track_status(
-                workspace,
-                run_id=run_id,
-                name=name,
-                worktree=worktree,
-                status="failed",
-                error=str(exc),
-            )
-            return
-        _write_dispatch_track_status(
-            workspace,
-            run_id=run_id,
-            name=name,
-            worktree=worktree,
-            status="completed" if report.get("all_ok") else "failed",
-            report=report,
-            error="" if report.get("all_ok") else "Dispatch requires attention; inspect the retained report and candidate.",
-        )
-
-    thread = threading.Thread(
-        target=run_dispatch_track,
-        daemon=True,
-    )
-    thread.start()
-
-
-def run_smoke_suite(**kwargs) -> dict[str, object]:
-    from goodteam_os.smoke import run_smoke_suite as _run_smoke_suite
-
-    return _run_smoke_suite(**kwargs)
-
-
-def _start_smoke_run_background(
-    *,
-    workspace: Path,
-    run_id: str,
-    suites: list[str],
-    cycles: int,
-    dry_run: bool,
-    worker_mode: str,
-) -> None:
-    def run_smoke() -> None:
-        _write_smoke_run_status(
-            workspace,
-            run_id=run_id,
-            suites=suites,
-            cycles=cycles,
-            dry_run=dry_run,
-            worker_mode=worker_mode,
-            status="started",
-        )
-        try:
-            report = run_smoke_suite(
-                workspace=workspace,
-                suites=suites,
-                cycles=cycles,
-                autonomy="full",
-                dry_run=dry_run,
-                worker_mode=worker_mode,
-            )
-        except Exception as exc:
-            _write_smoke_run_status(
-                workspace,
-                run_id=run_id,
-                suites=suites,
-                cycles=cycles,
-                dry_run=dry_run,
-                worker_mode=worker_mode,
-                status="failed",
-                error=str(exc),
-            )
-            return
-        status = "completed" if report.get("status") in {"passed", "planned"} else str(report.get("status") or "incomplete")
-        _write_smoke_run_status(
-            workspace,
-            run_id=run_id,
-            suites=suites,
-            cycles=cycles,
-            dry_run=dry_run,
-            worker_mode=worker_mode,
-            status=status,
-            report=report,
-        )
-
-    threading.Thread(target=run_smoke, daemon=True).start()
-
-
-def start_smoke_run(workspace: Path, request: dict[str, object]) -> dict[str, object]:
-    raw_suite = request.get("suite", request.get("suites", "self"))
-    if isinstance(raw_suite, list):
-        suites = [str(value).strip() for value in raw_suite if str(value).strip()]
-    else:
-        suites = [part.strip() for part in str(raw_suite or "self").split(",") if part.strip()]
-    suites = suites or ["self"]
-    invalid_suites = [suite for suite in suites if suite not in {"contentops", "self"}]
-    if invalid_suites:
-        raise ValueError(f"Unknown smoke suite: {', '.join(invalid_suites)}")
-    cycles = int(request.get("cycles", 1) or 1)
-    if cycles < 1 or cycles > 5:
-        raise ValueError("cycles must be between 1 and 5")
-    worker_mode = str(request.get("worker_mode", "fake") or "fake").strip()
-    if worker_mode not in {"fake", "noop", "codex"}:
-        raise ValueError("worker_mode must be one of: fake, noop, codex")
-    # The web control plane starts in dry-run mode by default. Real smoke can be
-    # enabled explicitly once the operator wants the workflow-mutating path.
-    dry_run = bool(request.get("dry_run", True))
-    run_id = f"smoke-{uuid4()}"
-    _start_smoke_run_background(
-        workspace=workspace,
-        run_id=run_id,
-        suites=suites,
-        cycles=cycles,
-        dry_run=dry_run,
-        worker_mode=worker_mode,
-    )
-    return {
-        "run_id": run_id,
-        "suites": suites,
-        "cycles": cycles,
-        "dry_run": dry_run,
-        "worker_mode": worker_mode,
-        "status": "started",
-    }
-
-
-def start_dispatch_track(
-    workspace: Path,
-    request: dict[str, object],
-    *,
-    response_written: threading.Event | None = None,
-) -> dict[str, object]:
-    from goodteam_os.skills.models import SkillError
-    from goodteam_os.skills.worker_requests import has_skill_fields, subject_for_role
-
-    if has_skill_fields(request):
-        raise SkillError("skill_dispatch_track_not_connected", "Worktree dispatch does not accept Skill task references; no fallback was started.")
-    selected_key = str(request.get("project_key", "") or "")
-    if selected_key:
-        from goodteam_os.skills.task_start import workflow_job_fields
-        from goodteam_os.team_control_plane import TeamControlPlaneStore
-
-        existing = StateStore(workspace).read_project_current(selected_key)
-        if existing is not None:
-            workflow_job_fields(existing, role=str(request.get("role", "")), command_key="worktree-dispatch-reference-check")
-            if existing.task_skill_context:
-                raise SkillError("skill_dispatch_track_not_connected", "A method-bound task cannot enter the legacy worktree dispatcher.")
-        # This helper creates a NEW dispatch, not a retry of the existing run.
-        # An old legacy run must not hide the selected Role's current methods.
-        team = TeamControlPlaneStore(workspace, selected_key).read()
-        if team and team.get("skill_bindings", {}).get(subject_for_role(str(request.get("role", ""))), {}).get("mode") == "custom":
-            raise SkillError("skill_dispatch_track_not_connected", "Custom-method worktree dispatch requires a supported bounded task start.")
-    else:
-        from goodteam_os.service import service_state_dir
-
-        if (Path(service_state_dir()).expanduser().resolve() / "skills" / "task-locks").exists():
-            raise SkillError("project_scope_unknown", "Skill-aware worktree dispatch requires explicit project scope before creating a branch.")
-    name = str(request.get("name", "")).strip()
-    role = str(request.get("role", "")).strip()
-    adapter = str(request.get("adapter", "")).strip()
-    task = str(request.get("task", ""))
-    constraints = str(request.get("constraints", ""))
-    verify = str(request.get("verify", "")).strip()
-    if not DISPATCH_TRACK_NAME_RE.fullmatch(name):
-        raise ValueError("name must be a slug using lowercase letters, numbers, and hyphens")
-    if not role:
-        raise ValueError("role is required")
-    if not adapter:
-        raise ValueError("adapter is required")
-    if not task.strip():
-        raise ValueError("task is required")
-
-    branch = f"feat/{name}"
-    worktree = _dispatch_worktree_path(workspace, name)
-    safety = ensure_dispatch_project_root_is_safe(worktree, projects_dir=workspace / "projects")
-    if not safety.get("safe"):
-        raise ValueError(str(safety.get("reason", "unsafe dispatch target")))
-    worktree = _ensure_dispatch_worktree(workspace, name=name, branch=branch)
-
-    run_id = f"dispatch-{uuid4()}"
-    task_file, constraints_file = _prepare_dispatch_track_inputs(
-        worktree,
-        run_id=run_id,
-        task=task,
-        constraints=constraints,
-    )
-    tracks = [parse_dispatch_track_spec(f"{role}:{adapter}:{task_file}", base_dir=worktree)]
-    verify_commands = {}
-    if verify:
-        verify_commands = dict([parse_dispatch_verify_spec(f"{role}:{verify}")])
-
-    _start_dispatch_track_background(
-        workspace=workspace,
-        run_id=run_id,
-        name=name,
-        worktree=worktree,
-        tracks=tracks,
-        verify_commands=verify_commands,
-        constraints_file=constraints_file,
-        response_written=response_written,
-    )
-    return {
-        "run_id": run_id,
-        "name": name,
-        "branch": branch,
-        "worktree": str(worktree),
-        "status": "started",
-    }
 
 
 def _parse_gh_pull_requests(output: str, warnings: list[str]) -> list[dict[str, object]]:
@@ -2678,7 +2273,6 @@ def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: 
         "workflow_steps": build_workflow_steps(state),
         "approval_reviews": approval_reviews,
         "action_items": action_items,
-        "smoke_run_items": build_smoke_run_items(workspace),
         "agile_board": agile_board,
         "iteration_backlog": iteration_backlog,
         "iteration_choice": latest_iteration_choice(task_assistant_session, iteration_backlog),
@@ -4838,14 +4432,10 @@ def retry_blocked_workflow(*, workspace: Path, project_key: str,
             code = {"active_attempt": "retry_attempt_active", "attempt_unknown": "retry_attempt_unknown"}.get(target["reason"], "retry_not_available")
             raise ProjectApiError(code, "This task cannot be retried from the displayed attempt. Refresh to inspect its current state.", 409,
                                   recovery=["refresh"])
-        from goodteam_os.project_iteration_continuation import pending_project_batch
+        from goodteam_os.project_iteration_execution import active_project_batch
 
-        session = TaskAssistantSessionStore(workspace, key).read()
-        continuation = session.get("project_continuation") or {}
-        if ((continuation.get("workflow_recovery") or {}).get("run_id") == state.run_id
-                and (continuation.get("status") == "active"
-                     or pending_project_batch(session, Path(context["root"]), key))):
-            raise ProjectApiError("workflow_recovery_pending", "Stop future recovery work and settle its admitted batch before retrying the parent.", 409)
+        if active_project_batch(workspace, key):
+            raise ProjectApiError("project_batch_active", "Settle the active project batch before retrying the Workflow.", 409)
         append_action(workspace, run_id=state.run_id, project_key=key, actor="human",
                       action="blocked_workflow_retry_started", before_node=state.next_node,
                       workflow_operation_id=uuid4().hex,
@@ -6299,15 +5889,6 @@ def handle_project_api_post(
                 result["projection_unavailable"] = True
             return 200, result
         key, target, root = _project_target_and_root(workspace, key)
-        if action == "prepare_workflow_recovery":
-            from goodteam_os.workflow_recovery import prepare
-
-            if set(request) - {"action", "expected_run_id", "expected_retry_version"}:
-                raise ProjectApiError("workflow_recovery_input_invalid", "Select only the displayed failed task attempt.", 409)
-            try:
-                return 200, prepare(workspace, key, request)
-            except (ValueError, OSError) as exc:
-                raise ProjectApiError("workflow_recovery_unavailable", str(exc), 409) from exc
         if action in {"retry_project_batch", "abandon_project_batch"}:
             from goodteam_os.project_iteration_recovery import recover_project_batch
 
@@ -6355,6 +5936,8 @@ def handle_project_api_post(
                         workspace=workspace, project_key=key, root=root,
                         project_config=_project_config_for_key(workspace, key), request=request)}
                 elif action == "start_project_continuation":
+                    if "workflow_recovery" in request:
+                        raise ValueError("Start a project continuation without a Workflow recovery reference.")
                     result = {"project_continuation": configure_project_continuation(
                         workspace=workspace, project_key=key, root=root,
                         project_config=_project_config_for_key(workspace, key), request=request,
@@ -7107,19 +6690,6 @@ def handle_execution_get(path: str, query: dict[str, list[str]]) -> tuple[int, d
         return _execution_error_response(exc)
 
 
-def handle_review_workbench_page_get(path: str, query: dict[str, list[str]]) -> tuple[int, str] | None:
-    match = re.fullmatch(r"/review-workbench/([^/]+)", path)
-    if match is None:
-        return None
-    execution_id = match.group(1)
-    try:
-        review = ExecutionAPI(_execution_project_root_from_query(query)).get_review_workbench(execution_id)
-        return 200, render_review_workbench_html(review, decision_actions_enabled=True)
-    except ValueError as exc:
-        status, payload = _execution_error_response(exc)
-        return status, f"<h1>Review Workbench unavailable</h1><p>{escape(str(payload['error']))}</p>"
-
-
 def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, dict[str, object]] | None:
     try:
         correction_match = re.fullmatch(r"/executions/([^/]+)/correction/(start|stop|prepare-worker)", path)
@@ -7765,11 +7335,6 @@ def serve(
             if parsed.path in {"/", "/index.html"} and frontend_error is not None:
                 self._send_html(503, render_frontend_assets_diagnostic(workspace, frontend_error))
                 return
-            review_workbench_page = handle_review_workbench_page_get(parsed.path, query)
-            if review_workbench_page is not None:
-                status, body = review_workbench_page
-                self._send_html(status, body)
-                return
             execution_response = handle_execution_get(parsed.path, query)
             if execution_response is not None:
                 status, payload = execution_response
@@ -8107,8 +7672,8 @@ def serve(
                 "/approve", "/recover-takeover-brief", "/artifact", "/project-config",
                 "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc",
                 "/refine-artifact", "/answer-open-questions", "/accept-refinement",
-                "/discard-refinement", "/open-path", "/dispatch-track",
-                "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose",
+                "/discard-refinement", "/open-path",
+                "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose",
                 "/fs/mkdir", "/server-actions/run", "/git-init",
             }:
                 self.send_error(404)
@@ -8437,18 +8002,6 @@ def serve(
                     )
                 elif normalized_path == "/git-init":
                     result = initialize_project_git_for_request(workspace, request)
-                elif normalized_path == "/dispatch-track":
-                    response_written = threading.Event()
-                    result = start_dispatch_track(workspace, request, response_written=response_written)
-                    try:
-                        self._send_json(202, result)
-                    finally:
-                        response_written.set()
-                    return
-                elif normalized_path == "/smoke-run":
-                    result = start_smoke_run(workspace, request)
-                    self._send_json(202, result)
-                    return
                 elif normalized_path == "/server-actions/run":
                     project_root = resolve_project_root_for_request(workspace, request)
                     result = run_gated_server_action(

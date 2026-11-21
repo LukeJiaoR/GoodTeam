@@ -14,9 +14,6 @@ from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.pr import PullRequestBindingService
 from goodteam_os.execution.pr_diff import PullRequestDiffArtifactService
 from goodteam_os.execution.review_workbench import ReviewWorkbenchService
-from goodteam_os.execution.review_workbench_browser import (
-    export_review_workbench_html_artifacts,
-)
 from goodteam_os.execution.sandbox import SandboxGitAdapter, SandboxService
 from goodteam_os.workers import WorkerJobStore
 
@@ -258,10 +255,6 @@ class ExecutionAPI:
             self.project_root,
             clock=self.clock,
         ).get_review(execution_id)
-
-    def export_review_workbench_html(self, execution_id: str) -> dict[str, str]:
-        workbench = self.get_review_workbench(execution_id)
-        return export_review_workbench_html_artifacts(self.project_root, workbench)
 
     def persist_pr_diff(self, execution_id: str) -> dict[str, Any]:
         return PullRequestDiffArtifactService(

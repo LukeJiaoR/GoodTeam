@@ -327,9 +327,6 @@ def build_parser() -> argparse.ArgumentParser:
     stop_review = execution_subparsers.add_parser("stop-automatic-review", help="Stop subsequent automatic review and correction admissions")
     stop_review.add_argument("--execution-id", required=True)
     stop_review.add_argument("--project-root", type=Path, required=True)
-    export_review_workbench = execution_subparsers.add_parser("export-review-workbench")
-    export_review_workbench.add_argument("--execution-id", required=True)
-    export_review_workbench.add_argument("--project-root", type=Path, required=True)
     return parser
 
 
@@ -833,8 +830,6 @@ def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=N
             args.reviewer,
             args.reason,
         )
-    if args.execution_command == "export-review-workbench":
-        return api.export_review_workbench_html(args.execution_id)
     raise ValueError(f"Unknown execution command: {args.execution_command}")
 
 

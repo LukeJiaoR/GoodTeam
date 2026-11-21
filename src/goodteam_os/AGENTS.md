@@ -150,7 +150,6 @@ worker_output_context.py: Bounded, invocation-bound Worker output. Never a contr
 worker_setup.py: Read optional project setup context for ordinary Planner/Worker tasks.
 workers.py: Worker 作业、运行时与结果持久化。
 workflow_mutations.py: Serialize workflow authority and retain interrupted human decisions.
-workflow_recovery.py: Exact failed-Workflow evidence, reused by the existing review and batch paths.
 workflow_retry.py: A workflow retry acts on the exact observed run, stage and attempt set.
 workflow_revisions.py: Resume recorded decisions and route requested changes back through evidence.
 workflow_table.py: Workflow 节点、门与执行路径定义。

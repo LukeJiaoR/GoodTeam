@@ -11,7 +11,7 @@ export default function ContinuationScopeAddition({ value, snapshot, onAction, d
   const input = { action: 'add_project_continuation_tasks', continuation_id: value.id,
     expected_backlog_version: snapshot?.version, task_ids: ids, confirmed: true, billing_acknowledged: true };
   const identity = JSON.stringify(input);
-  const ready = ids.length > 0 && ids.length + (value.task_ids || []).length <= 128 && snapshot?.version && !value.workflow_recovery
+  const ready = ids.length > 0 && ids.length + (value.task_ids || []).length <= 128 && snapshot?.version
     && !value.planning_backlog_version && !value.discovery_pending
     && (value.max_batches == null || value.batches_started < value.max_batches)
     && (value.max_manager_calls == null || value.manager_calls < value.max_manager_calls);

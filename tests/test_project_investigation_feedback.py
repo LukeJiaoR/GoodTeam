@@ -17,7 +17,7 @@ from goodteam_os import project_outcome_discovery as discovery
 from goodteam_os import project_iteration_planner as planner
 from goodteam_os import assistant_queue, dispatch_workspace, goal_continuation, memory, memory_storage
 from goodteam_os import project_iteration_recovery as recovery
-from goodteam_os import task_assistant_session, tasks, team_control_plane, workflow_recovery
+from goodteam_os import task_assistant_session, tasks, team_control_plane
 
 
 @pytest.mark.parametrize("observation_role, permission, task_type", [("research", "allow_investigation", "investigation"), ("planner", "allow_planning", "planning")])
@@ -106,7 +106,6 @@ def test_investigation_report_reenters_original_loop_once_without_delivery_promo
         monkeypatch.setattr(module, "authority_snapshot", lambda *_: deepcopy(authority))
     from contextlib import nullcontext
     monkeypatch.setattr(continuation, "goal_guard", lambda *_: nullcontext())
-    monkeypatch.setattr(workflow_recovery, "linked_parent", lambda *_, **__: None)
     monkeypatch.setattr(planner, "_project_evidence", lambda *_, **__: {"status": "unavailable"})
     monkeypatch.setattr(discovery, "_head", lambda *_: head)
     monkeypatch.setattr(continuation, "_require_clean_checkout", lambda *_: None)

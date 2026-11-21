@@ -73,8 +73,6 @@ currentWorkContext.js: 当前任务上下文投影。
 currentWorkContext.vitest.js: 当前任务上下文检查。
 deliveryLinks.js: 限定交付报告链接的来源。
 deliverySummary.css: 交付摘要样式。
-executionEvidence.js: 执行证据链接投影。
-executionEvidence.vitest.js: 执行证据链接检查。
 goalContinuation.css: Goal 持续执行面板样式。
 presentationUtils.js: 工作台状态展示工具。
 projectConversation.css: 项目会话样式。

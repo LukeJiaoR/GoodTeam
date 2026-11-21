@@ -1,5 +1,8 @@
 # Browser Review Workbench MVP
 
+Historical design record. The standalone HTML page and CLI HTML export were
+retired; the execution review JSON and shared evidence services remain.
+
 ## Purpose
 
 The Browser Review Workbench opens a GoodTeam execution in a browser-readable

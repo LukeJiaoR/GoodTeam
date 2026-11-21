@@ -12,7 +12,6 @@ import { createPortal } from 'react-dom';
 import {
   ChevronRight,
   FileCheck2,
-  ExternalLink,
   PanelRightClose,
   PanelRightOpen,
   Wrench,
@@ -28,7 +27,6 @@ import WorkTaskDetailDialog from './WorkTaskDetailDialog';
 import { conversationTimeline } from './conversationFeedback';
 import DeliverySummary from './DeliverySummary';
 import SkillReviewExecutions from './SkillReviewExecutions';
-import { executionEvidenceHref } from './executionEvidence';
 
 const MOBILE_TEAM_TABS = ['execution', 'manager', 'outcomes'];
 const MOBILE_TEAM_QUERY = '(max-width: 1199px)';
@@ -121,7 +119,6 @@ function OutcomesPane({
   actorsCount,
   historyContext,
   approval,
-  mission,
   reviews,
   historical,
   deliverySummary,
@@ -136,7 +133,6 @@ function OutcomesPane({
   sectionProps,
   t,
 }) {
-  const evidenceHref = executionEvidenceHref(mission);
   return (
     <section className="team-pane team-pane--outcomes" aria-label={t('work.team.outcomes')} {...sectionProps}>
       <header className="team-pane__header">
@@ -161,13 +157,6 @@ function OutcomesPane({
       {navigation}
       {historyContext}
       {approval}
-      <section className="team-execution-evidence" aria-label={t('work.evidence.title')}>
-        <h3>{t('work.evidence.title')}</h3>
-        {evidenceHref ? <>
-          <a href={evidenceHref}>{t('work.evidence.open')}<ExternalLink size={14} aria-hidden="true" /></a>
-          <p>{t('work.evidence.readOnly')}</p>
-        </> : <p>{t('work.evidence.unavailable')}</p>}
-      </section>
       <DeliverySummary summary={deliverySummary} historical={historical} language={language} t={t} />
       {outcomes.length ? (
         <ol className="team-outcome-list">
@@ -622,7 +611,6 @@ function TeamWorkspace({
           actorsCount={(workspace.execution_actors || []).filter((actor) => actor.role !== 'orchestrator').length}
           navigation={taskNavigation}
           historyContext={historyContext}
-          mission={mission}
           reviews={<SkillReviewExecutions projectKey={projectKey} runId={mission?.run_id} language={language} />}
           approval={attention?.kind === 'approval' ? <TaskAttention
             attention={attention} busy={busy} onConfirmChangeIntent={onConfirmChangeIntent}
