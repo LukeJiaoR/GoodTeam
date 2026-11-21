@@ -70,7 +70,6 @@ def build_smoke_project_registry(workspace: Path, repo_root: Path) -> dict[str, 
             target_root=self_root,
             verification_commands=[
                 {"name": "pytest", "command": f"PYTHONPATH=src {python_command} -m pytest tests -q", "cwd": str(self_root)},
-                {"name": "cli-dry-run", "command": f"PYTHONPATH=src {python_command} -m goodteam_os.cli start 'Smoke GoodTeam self' --dry-run", "cwd": str(self_root)},
             ],
             cleanup_policy="temporary_worktree",
         ),

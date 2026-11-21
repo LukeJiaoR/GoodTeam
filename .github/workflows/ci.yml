@@ -188,11 +188,11 @@ jobs:
 
       - run: pip install -e ".[dev]"
 
-      - name: Verify HTTP crash and timeout recovery
+      - name: Verify failed project batch recovery
         run: |
-          evidence="$RUNNER_TEMP/goodteam-http-recovery"
+          evidence="$RUNNER_TEMP/goodteam-batch-recovery"
           mkdir -p "$evidence"
-          PYTHONPATH=src python -m pytest tests/test_workflow_http_recovery.py -q \
+          PYTHONPATH=src python -m pytest tests/test_project_iteration_recovery.py -q \
             --basetemp="$evidence/workspaces" \
             --junitxml="$evidence/results.xml"
 
@@ -263,7 +263,7 @@ jobs:
           PYTHONPATH=src python -m pytest "${targets[@]}" -q
       - name: Run full backend tests
         if: needs.classify.outputs.backend == 'full'
-        run: PYTHONPATH=src python -m pytest tests --ignore=tests/test_workflow_http_recovery.py -q
+        run: PYTHONPATH=src python -m pytest tests --ignore=tests/test_project_iteration_recovery.py -q
       - run: ruff check src/goodteam_os/ tests/ scripts/ci/
 
   gate:

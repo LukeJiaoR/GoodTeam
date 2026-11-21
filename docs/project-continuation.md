@@ -126,4 +126,3 @@ commits, with an offline provider executable and synthetic Manager choices.
 It is evidence of the execution/continuation wiring, not real-model quality or
 whole-project autonomy acceptance. That product record remains in #419.
 Automatic GitHub CI remains paused.
-

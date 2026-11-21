@@ -29,6 +29,9 @@ def test_old_wait_does_not_hide_an_uncommitted_new_attempt(tmp_path, monkeypatch
            'discovery_last': {'status': 'no_followup', 'packet_digest': 'old-packet', 'trigger_ref': 'old-trigger'},
            'discovery_consumed': ['old-trigger']}
     store._mutate(lambda s: {**s, 'project_continuation': old})
+    monkeypatch.setattr(discovery, '_discovery_packet', lambda **_: (
+        None, {'backlog_judgment_source': {'receipt_id': 'new-trigger'}},
+    ))
     def unavailable(**kwargs):
         raise OSError('fixture: failure before any new result was committed')
     monkeypatch.setattr(discovery, '_discover_next_iteration', unavailable)

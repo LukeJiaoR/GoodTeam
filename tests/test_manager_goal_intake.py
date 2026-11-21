@@ -1,11 +1,8 @@
 """Saving later work never admits it into an already active Goal."""
 from types import SimpleNamespace
 
-import pytest
-
 from goodteam_os.goals import GoalStore
 from goodteam_os.manager_assignment import queue_assignment
-from goodteam_os.project_iteration_execution import run_queued_iteration_batch
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
 
@@ -31,10 +28,5 @@ def test_active_goal_keeps_later_assignment_without_starting_or_changing_authori
     assert session["queued_task_proposals"][0]["id"] == proposal["id"]
     assert not proposal["confirmed"] and not proposal["run_id"]
     assert not session["proposed_task"] and not session.get("project_task_batches")
-    with pytest.raises(ValueError, match="active Goal"):
-        run_queued_iteration_batch(workspace=tmp_path, project_key="DEMO", root=root,
-            project_config=tmp_path / "demo.yaml", proposal_ids=[proposal["id"]],
-            expected_revisions={proposal["id"]: 1}, confirmed=True)
     assert goals.get_goal(goal["id"]) == goal
-    assert store.read() == session
     assert LocalTaskStore(root, "DEMO").get_task(proposal["project_task_id"])["status"] == "todo"

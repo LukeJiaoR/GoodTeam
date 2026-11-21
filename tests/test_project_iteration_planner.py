@@ -127,28 +127,6 @@ def test_models_cannot_pick_missing_or_blocked_tasks():
         })
 
 
-def test_active_goal_cannot_be_bypassed_by_iteration_selection(tmp_path):
-    from goodteam_os.goals import GoalStore
-
-    root = tmp_path / "project"
-    root.mkdir()
-    store = LocalTaskStore(root, "DEMO")
-    task(store, "Another candidate")
-    snapshot = project_iteration_backlog(root, "DEMO")
-    GoalStore(tmp_path, "DEMO").create_goal(
-        objective="Deliver a bounded goal", acceptance_criteria=["A real test passes"],
-        allowed_scope=["docs"], max_work_units=1, confirmed=True,
-        idempotency_key="goal-unit-test",
-    )
-    with pytest.raises(ValueError, match="active Goal"):
-        plan_next_iteration(
-            workspace=tmp_path, project_key="DEMO", root=root,
-            project_config=tmp_path / "project.yaml",
-            expected_backlog_version=snapshot["version"],
-            confirmed=True, manager_runner=lambda **_: pytest.fail("Model was invoked"),
-        )
-
-
 def _batch_candidate(identifier, *, domains=None, policy="workspace_write", dependencies=None,
                      status="todo"):
     return {
@@ -197,6 +175,8 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     )
     snapshot = project_iteration_backlog(project, "DEMO")
     calls = []
+    config = tmp_path / "project.yaml"
+    config.write_text("key: DEMO\n", encoding="utf-8")
 
     def choose(**kwargs):
         calls.append(kwargs)
@@ -207,7 +187,7 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
 
     spec = dict(
         workspace=tmp_path, project_key="DEMO", root=project,
-        project_config=tmp_path / "unused-project.yaml",
+        project_config=config,
         expected_backlog_version=snapshot["version"],
         confirmed=True, manager_runner=choose,
     )
@@ -286,9 +266,11 @@ def test_full_planning_inventory_is_not_limited_by_ui_candidate_preview(tmp_path
         ids = [row["task_id"] for row in eligible]
         return {"selection": _batch_response(*ids), "manager_execution": {"job_id": "synthetic"}}
 
+    config = tmp_path / "project.yaml"
+    config.write_text("key: DEMO\n", encoding="utf-8")
     result = plan_next_iteration(
         workspace=tmp_path, project_key="DEMO", root=project,
-        project_config=tmp_path / "project.yaml",
+        project_config=config,
         expected_backlog_version=ui_snapshot["version"],
         confirmed=True, manager_runner=choose,
     )

@@ -11,7 +11,7 @@ import pytest
 
 from goodteam_os import dispatch_workspace
 from goodteam_os.dispatch import dispatch_tracks
-from goodteam_os.dispatch_workspace import DispatchWorkspaceError, prepare_dispatch_workspace
+from goodteam_os.dispatch_workspace import DispatchWorkspaceError, dispatch_artifact_root, prepare_dispatch_workspace
 from goodteam_os.project_registry import ProjectRegistry
 from goodteam_os.repository_snapshot import SnapshotLimits
 from goodteam_os.skills.models import SkillConflict
@@ -51,7 +51,7 @@ prompt = sys.stdin.read()
 assert prompt
 cwd = Path.cwd()
 assert Path(sys.argv[sys.argv.index('--cd') + 1]) == cwd
-assert (cwd / '.git').is_dir()
+assert (cwd / '.git').exists()
 config = Path(os.environ['CODEX_HOME']) / 'config.toml'
 if config.is_file():
     catalog = tomllib.loads(config.read_text()).get('model_catalog_json')
@@ -195,7 +195,7 @@ def test_public_dispatch_replays_exact_result_without_worker_or_verify_reexecuti
     assert len(WorkerJobStore(source).list_jobs()) == 1
     # A crash after worker/verification settlement but before outer publication
     # must recover those receipts, rather than repeat either side effect.
-    report = Path(job["workspace_path"]).parent.parent / "report.json"
+    report = dispatch_artifact_root(source, first["run_id"]) / "report.json"
     report.unlink()
     recovered = dispatch_tracks(**request)
     assert recovered["all_ok"] is True, recovered

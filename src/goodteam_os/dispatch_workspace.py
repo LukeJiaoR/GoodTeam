@@ -410,7 +410,7 @@ class DispatchWorkspace:
                   retained_results: list[dict] | None = None) -> dict:
         if len(set(job_ids)) != len(job_ids):
             raise DispatchWorkspaceError("Integration job identities must be unique.")
-        baseline_capture = self._baseline_capture()
+        self._baseline_capture()
         results = [self.collect(job_id) for job_id in job_ids]
         if expected_results is not None and any(
             expected_results.get(result["job_id"]) != result["result_commit"] for result in results

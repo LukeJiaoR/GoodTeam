@@ -1,15 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { test, expect, importProject } from './fixtures.js';
-import { clickMutation, getJson, sendTask } from './business-loop-helpers.js';
+import { getJson } from './business-loop-helpers.js';
 
 test('compact projects retain import, browsing, exact attention targets and honest unavailable states', async ({ page, fixture }, testInfo) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await importProject(page, fixture);
-  await sendTask(page, fixture, 'Implement a searchable project list.');
-  await clickMutation(page, page.getByRole('button', { name: 'Start this task', exact: true }),
-    `/api/projects/${fixture.key}/task-assistant/actions`);
-  await expect(page.getByRole('heading', { name: 'Which project commands should the team use for verification?' })).toBeVisible();
+  const projectApi = `/api/projects/${fixture.key}`;
+  const mode = await page.request.post(`${projectApi}/mode`, { data: { mode: 'existing_project' } });
+  expect(mode.ok(), await mode.text()).toBe(true);
+  const ready = await page.request.post(`${projectApi}/readiness/start`, { data: { inputs: {} } });
+  expect(ready.status(), await ready.text()).toBe(202);
+  await expect.poll(async () => (await getJson(page, `${projectApi}/home`)).readiness.execution?.current_step_id)
+    .toBe('command_verification');
 
   // Real imports into the fixture-owned workspace; no production projects or providers.
   for (const name of ['atlas-interface', 'release-notes', 'customer-portal-with-a-long-project-name-and-local-directory']) {

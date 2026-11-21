@@ -1,4 +1,8 @@
-"""Read-only, exact-candidate report details for the execution Workbench."""
+"""[INPUT]: 候选验证收据、Worker 作业与 Reviewer 报告。
+[OUTPUT]: 提供 Review Workbench 的报告投影与文本。
+[POS]: 将已保存的审查结果绑定到当前候选提交。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 from goodteam_os.memory_storage import role_lock
 from goodteam_os.skills.review_results import ReviewResultStore
@@ -90,4 +94,3 @@ def report_lines(value):
                       item["observation"], item["quote"], "Source digest: " + item["source_digest"],
                       "Reference status: " + item["reference_status"]])
     return lines
-

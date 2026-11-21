@@ -42,7 +42,9 @@ def test_new_role_method_dispatch_uses_original_isolated_workspace_and_replay(tm
     source, _ = configured(tmp_path)
     fake = tmp_path / 'pi'
     script = (Path(__file__).parent / 'fixtures/fake_pi_rpc.py').read_text()
-    script = script.replace('    global streaming\n', '    global streaming\n    Path("method-proof.json").write_text(json.dumps({"cwd":str(Path.cwd()), "input":json.loads(message)}))\n', 1)
+    script = script.replace('    global streaming\n',
+        '    global streaming\n    Path("method-proof.json").write_text(json.dumps({"cwd": str(Path.cwd()), "prompt": message}))\n',
+        1)
     fake.write_text(script)
     fake.chmod(0o755)
     monkeypatch.setenv('GOODTEAM_PI_PATH', str(fake))
@@ -51,7 +53,7 @@ def test_new_role_method_dispatch_uses_original_isolated_workspace_and_replay(tm
     from goodteam_os.skills.pi_resources import PiResourceChannel
     monkeypatch.setattr(PiResourceChannel, 'start', lambda channel: (channel._check_context() or {}))
     request = dict(project_root=source, logical_task_id='role-method-dispatch', require_isolation=True,
-                   tracks=[{'role':'implementation', 'adapter':'pi', 'task':'Return the assigned result.',
+                   tracks=[{'role':'implementation', 'adapter':'pi', 'model':'fixture', 'task':'Return the assigned result.',
                             'context':'PRIVATE INVOCATION', 'execution_policy':'standard'}])
     from goodteam_os.repository_snapshot import RepositorySnapshotError
     try:
@@ -66,8 +68,8 @@ def test_new_role_method_dispatch_uses_original_isolated_workspace_and_replay(tm
     assert target != source
     proof = json.loads((target/'method-proof.json').read_text())
     assert proof['cwd'] == str(target) == row['invocation_evidence']['runtime_cwd']
-    assert proof['input']['context'] == 'PRIVATE INVOCATION'
-    assert 'ORIGINAL ROLE METHOD' in proof['input']['required_methods'][0]['text']
+    assert 'PRIVATE INVOCATION' in proof['prompt']
+    assert 'ORIGINAL ROLE METHOD' in proof['prompt']
     assert not (source/'method-proof.json').exists()
     assert row['changed_files'] == ['method-proof.json']
     assert dispatch_tracks(**request) == report
@@ -75,7 +77,7 @@ def test_new_role_method_dispatch_uses_original_isolated_workspace_and_replay(tm
     method = PiMethodInput(workers, row['job_id'])
     with pytest.raises(SkillError, match='original dispatch workspace'):
         method.bind_workspace(None)
-    with pytest.raises(SkillError):
+    with pytest.raises(ValueError, match='dispatch_workspace_mismatch'):
         method.bind_workspace({'available': True, 'mode': 'dispatch_isolated',
              'workspace_path':str(source), 'execution_id':report['run_id'], 'sandbox_id':row['job_id']})
 
@@ -134,7 +136,7 @@ def test_method_workspace_mapping_receipt_and_runtime_entry_are_exact(invocation
     selected = [target]
     def mapping(root, run_id, job_ids):
         assert root == workers.project_root and run_id == job['run_id'] and job_ids is None
-        return SimpleNamespace(workspace=lambda job_id: selected[0] if job_id == job['id'] else None)
+        return SimpleNamespace(workspace=lambda job_id: selected[0] if job_id == job['id'] else None, metadata={})
     monkeypatch.setattr(workspaces, 'prepare_dispatch_workspace', mapping)
     method = PiMethodInput(workers, job['id'])
     context = {'available':True, 'mode':'dispatch_isolated', 'workspace_path':str(target),

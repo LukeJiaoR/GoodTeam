@@ -28,7 +28,7 @@ test_delivery_feedback_drain.py: Real grant/ledger/source/discovery; Git verific
 test_delivery_review_truth.py: 验证 delivery review truth 的行为。
 test_discovery_context_refresh.py: Real discovery/grant/ledger path; original Git verifier and Manager are fixtures.
 test_dispatch_capacity.py: Ten is a real direct-dispatch concurrency bound, not a planning limit.
-test_dispatch_isolation.py: Public direct dispatch uses retained Git copies and never the source checkout.
+test_dispatch_isolation.py: 共享派工池通过 Git worktree 验证隔离、确认重放与失败证据。
 test_dispatch_shared_capacity.py: Actual shared locking/threads/process exit; Worker terminal bytes are fixtures.
 test_execution_authority.py: Semantic authority checks use isolated storage and no provider execution.
 test_execution_cli.py: 验证 execution cli 的行为。

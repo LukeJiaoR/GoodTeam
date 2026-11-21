@@ -123,8 +123,8 @@ describe('ConversationTimeline', () => {
     const chipText = container.querySelector('.team-manager-system-chip__text');
     expect(chipText).toHaveAttribute('title');
     expect(chipText.getAttribute('title')).toContain('APP-101, APP-102, APP-103');
-    expect(chipText.getAttribute('title')).toContain('5 batches');
-    expect(chipText.getAttribute('title')).toContain('10 Manager calls');
+    expect(chipText.getAttribute('title')).toContain('Batch limit: 5');
+    expect(chipText.getAttribute('title')).toContain('Manager call limit: 10');
 
     // The expanded card body renders the complete summary text and budget parameters
     expect(container.querySelector('.team-system-card__summary-text')).toHaveTextContent('APP-101, APP-102, APP-103');

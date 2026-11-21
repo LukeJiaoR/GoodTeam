@@ -59,6 +59,9 @@ deployment require their own explicitly scoped authorization and evidence.
 | Frontend project and Work surfaces | `frontend/src/features/projects/ProjectsPage.search.test.jsx` and retained Work/Review tests |
 | Real browser business path | `frontend/e2e/business-loop.spec.js`, `project-manager.spec.js` |
 
+The browser loop confirms two queued tasks and reads each batch's isolated
+Worker result. Candidate CI exercises failed batch recovery before browser tests.
+
 Test helper modules and fixtures referenced by these representative cases
 remain available. The change classifier routes focused targets to files that
 still exist. Historical design documents may refer to removed test paths;

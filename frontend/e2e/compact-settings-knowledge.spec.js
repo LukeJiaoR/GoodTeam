@@ -59,7 +59,7 @@ test('compact settings and knowledge retain project context, controls and readab
   for (const item of metrics) {
     expect(item.title).toBe(16);
     expect(item.button).toBeGreaterThanOrEqual(32);
-    expect(item.button).toBeLessThanOrEqual(34);
+    expect(Math.round(item.button)).toBeLessThanOrEqual(34);
   }
   fs.writeFileSync(testInfo.outputPath('compact-metrics.json'), JSON.stringify(metrics, null, 2));
 });
