@@ -32,19 +32,9 @@ export function normalizeProjectsPayload(payload) {
       || typeof lifecycle !== 'string'
       || !Number.isInteger(attentionCount)
       || attentionCount < 0
+      || typeof item.has_active_batch !== 'boolean'
     ) {
       throw invalidPayload();
-    }
-    if (item.active_run !== null) {
-      if (
-        !isRecord(item.active_run)
-        || typeof item.active_run.run_id !== 'string'
-        || !item.active_run.run_id
-        || typeof item.active_run.next_node !== 'string'
-        || !item.active_run.next_node
-      ) {
-        throw invalidPayload();
-      }
     }
     if (seenKeys.has(projectKey)) continue;
     seenKeys.add(projectKey);
@@ -63,8 +53,7 @@ export function normalizeProjectsPayload(payload) {
         lifecycle: KNOWN_LIFECYCLES.has(lifecycle) ? lifecycle : 'legacy',
       },
       attention_count: attentionCount,
-      attention: normalizeProjectAttention(item.attention, item.active_run, projectKey),
-      active_run: item.active_run,
+      attention: normalizeProjectAttention(item.attention, projectKey),
     });
   }
   return projects;

@@ -6,7 +6,6 @@
 import ipaddress
 import json
 import hmac
-import hashlib
 import logging
 import os
 import re
@@ -16,7 +15,6 @@ import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
-from dataclasses import asdict
 from datetime import datetime, UTC
 from html import escape
 from goodteam_os.http_transport import (
@@ -36,8 +34,6 @@ from goodteam_os.database import provider_environment
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
 from goodteam_os.execution import ExecutionAPI
 from goodteam_os.frontend_assets import FrontendAssetsNotFound, resolve_frontend_dist
-from goodteam_os.graph import extract_open_questions
-from goodteam_os.intent_commit import IntentCommitStore
 from goodteam_os.manager_execution import ManagerExecutionError
 from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.assistant_drafts import handle_draft_action
@@ -48,15 +44,9 @@ from goodteam_os.team_control_plane import (
     execute_team_commands,
 )
 from goodteam_os.models import list_model_profiles
-from goodteam_os.multi_reviewer_projection import (
-    build_multi_reviewer_projection,
-    projection_supports_approval,
-    reviewer_statuses_for_artifact,
-)
 from goodteam_os.native_picker import choose_native_path
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
 from goodteam_os.project_runtime import resolve_project_runtime_root
-from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
 from goodteam_os.project_import import (
     ProjectImportError,
     confirm_project_mode,
@@ -69,7 +59,6 @@ from goodteam_os.project_readiness_executor import (
     ProjectReadinessExecutor,
     ReadinessExecutionError,
 )
-from goodteam_os.reviewer_evidence_snapshot import build_reviewer_evidence_snapshot
 from goodteam_os.repository_access import AnchoredRepository, canonical_relative_path
 from goodteam_os.repository_snapshot import RepositorySnapshotError, inspect_repository_git
 from goodteam_os._trusted_system_executable import (
@@ -77,58 +66,23 @@ from goodteam_os._trusted_system_executable import (
     open_verified_executable,
     resolve_trusted_system_git,
 )
-from goodteam_os.reviewer_dispatch import (
-    artifact_version_for_path,
-    retry_failed_reviewer_jobs_for_gate,
-    run_queued_reviewer_jobs_for_gate,
-    select_failed_reviewer_jobs_for_gate,
-    select_queued_reviewer_jobs_for_gate,
-)
-from goodteam_os.resources import (
-    ResourceCapability,
-    ResourceKind,
-    ResourceScope,
-    resource_to_dict,
-)
 from goodteam_os.service import service_state_dir
 from goodteam_os.skills.library import SkillLibraryService
 from goodteam_os.skills.models import SkillConflict, SkillError
-from goodteam_os.review_provenance import (
-    build_reviewer_provenance,
-    latest_reviewer_status_for_approval,
-    reviewer_phase_for_approval,
-    reviewer_profile_for_approval,
-)
-from goodteam_os.review_policy import evaluate_review_evidence_policy
-from goodteam_os.roles import (
-    artifact_contract, approval_artifact_for_gate, approval_artifact_map,
-    list_role_definitions, workflow_steps_for_source,
-)
 from goodteam_os.memory import RoleMemoryStore
-from goodteam_os.messages import read_messages
 from goodteam_os.staging import (
     deployment_backend_config,
     delivery_contract_report,
 )
-from goodteam_os import state_documents
-from goodteam_os.database import database_configured
-from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os.tasks import (
     LocalTaskStore,
-    build_stage_task_snapshot,
-    build_task_board,
-    serialize_task_board,
 )
 from goodteam_os.team_workspace import build_team_workspace
 from goodteam_os.assistant_workspace import build_project_assistant
 from goodteam_os.assistant_queue import QUEUE_ACTIONS, handle_queue_action
-from goodteam_os.workflow_table import (
-    advisors_for_gate,
-    resolve_profile,
-)
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.cross_project_memory import retrieve_report as retrieve_cross_project_memory
-from goodteam_os.workflow_mutations import WorkflowBusyError, workflow_guard
 
 if TYPE_CHECKING:
     from goodteam_os.skills.codex_runtime import CodexReviewAdmission
@@ -229,940 +183,8 @@ class ProjectApiError(ValueError):
         self.recovery = recovery or []
 
 
-def append_action(
-    workspace: Path,
-    *,
-    run_id: str,
-    actor: str,
-    action: str,
-    project_key: str = "",
-    gate: str = "",
-    decision: str = "",
-    before_node: str = "",
-    after_node: str = "",
-    artifact: str = "",
-    artifact_path: str = "",
-    artifact_version: str = "",
-    debate_ref: str = "",
-    note: str = "",
-    decision_origin: str = "",
-    actor_ref: str = "",
-    review_mode: str = "",
-    review_session_id: str = "",
-    client_context: dict[str, object] | None = None,
-    evidence_snapshot: dict[str, object] | None = None,
-    reviewer_evidence_snapshot: dict[str, object] | None = None,
-    review_items: list[dict[str, object]] | None = None,
-    workflow_operation_id: str = "",
-) -> None:
-    action_log = _action_log_path(workspace, project_key)
-    action_log.parent.mkdir(parents=True, exist_ok=True)
-    event = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "project_key": normalize_project_key(project_key) if project_key else "",
-        "run_id": run_id,
-        "actor": actor,
-        "action": action,
-        "gate": gate,
-        "decision": decision,
-        "before_node": before_node,
-        "after_node": after_node,
-        "artifact": artifact,
-        "artifact_path": artifact_path,
-    }
-    if artifact_version:
-        event["artifact_version"] = artifact_version
-    if workflow_operation_id:
-        event["workflow_operation_id"] = workflow_operation_id
-    if debate_ref:
-        event["debate_ref"] = debate_ref
-    if note:
-        event["note"] = note
-    if decision_origin:
-        event["decision_origin"] = decision_origin
-    if actor_ref:
-        event["actor_ref"] = actor_ref
-    if review_mode:
-        event["review_mode"] = review_mode
-    if review_session_id:
-        event["review_session_id"] = review_session_id
-    if client_context:
-        event["client_context"] = client_context
-    if evidence_snapshot:
-        event["evidence_snapshot"] = evidence_snapshot
-    if reviewer_evidence_snapshot:
-        event["reviewer_evidence_snapshot"] = reviewer_evidence_snapshot
-    if review_items:
-        event["review_items"] = review_items
-    with action_log.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event) + "\n")
-
-
-def _approval_artifact_for_gate(gate: str) -> str:
-    """Resolve the artifact key for a gate, overlaying the fix-profile gates."""
-    return approval_artifact_for_gate(gate)
-
-
-def current_approval_gate(state: AgileDevState | None) -> str:
-    if state is None:
-        return ""
-    match = re.fullmatch(r"await_(.+)_approval", state.next_node)
-    if not match:
-        return ""
-    gate = match.group(1)
-    if str(state.approvals.get(gate, "")) != ApprovalDecision.PENDING:
-        return ""
-    return gate
-
-
-def run_queued_reviewer_jobs_action(
-    workspace: Path, request: Mapping[str, object], *, codex_review_admission: "CodexReviewAdmission | None" = None,
-) -> tuple[int, dict[str, object]]:
-    from goodteam_os.skills.codex_runtime import review_worker_kwargs
-
-    runtime_kwargs = review_worker_kwargs(codex_review_admission)
-    project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
-    if not project_key:
-        return 400, {"error": "project_key is required"}
-    try:
-        with workflow_guard(workspace, project_key):
-            return _run_queued_reviewer_jobs_for_current_run(workspace, request, project_key, runtime_kwargs)
-    except WorkflowBusyError as exc:
-        return 409, {"error": str(exc), "code": "workflow_busy"}
-
-
-def _run_queued_reviewer_jobs_for_current_run(
-    workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
-) -> tuple[int, dict[str, object]]:
-    state = StateStore(workspace).read_project_current(project_key)
-    if state is None:
-        return 404, {"error": f"Unknown project or no active run: {project_key}"}
-
-    requested_run_id = str(request.get("run_id", "") or "").strip()
-    if requested_run_id and requested_run_id != state.run_id:
-        return 409, {"error": "run_id does not match the active project run"}
-
-    if state.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
-        return 409, {"error": "This run has an unresolved historical decision."}
-    current_gate = current_approval_gate(state)
-    requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
-    if not current_gate or requested_gate != current_gate:
-        return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
-
-    artifact_key = _approval_artifact_for_gate(current_gate)
-    requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
-    if requested_artifact_key and requested_artifact_key != artifact_key:
-        return 409, {"error": "artifact_key does not match the current approval gate"}
-    artifact_path = str(state.artifacts.get(artifact_key, "") or "")
-    profile_id = str(request.get("profile_id", "") or "").strip()
-    current_artifact_version = artifact_version_for_path(artifact_path)
-    artifact_version = str(request.get("artifact_version", "") or "").strip() or current_artifact_version
-    if artifact_version != current_artifact_version:
-        return 409, {"error": "artifact_version does not match the current approval artifact"}
-    requested_job_id = str(request.get("job_id", "") or "").strip()
-    target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
-    profile_order = _reviewer_profile_order_for_gate(target, current_gate)
-
-    aggregate = {
-        "selected_count": 0,
-        "ran_count": 0,
-        "skipped_count": 0,
-        "results": [],
-        "errors": [],
-    }
-    roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-    for root in roots:
-        store = WorkerJobStore(root, **runtime_kwargs)
-        jobs = store.list_jobs()
-        from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
-
-        admission = runtime_kwargs.get("codex_review_admission")
-        if isinstance(admission, TrustedCodexReviewAdmission) and not state.task_skill_context and not requested_job_id:
-            # Default workflows have no Skill lock. At the explicit guarded Run
-            # action, produce a separate task-bound review using the actual Team
-            # Worker/profile and artifact, leaving other workflow roles intact.
-            from goodteam_os.graph import worker_context
-            from goodteam_os.reviewer_dispatch import dispatch_prepared_reviewer_jobs, reviewer_job_specs_for_gate, reviewer_phase_for_approval
-            from goodteam_os.skills.models import SkillError
-            from goodteam_os.workers import _codex_model_name
-
-            if reviewer_phase_for_approval(current_gate) != "implementation":
-                return 409, {"error": "trusted_codex_task_mismatch", "message": "Native self-use is limited to Code Review."}
-            try:
-                specs = reviewer_job_specs_for_gate(state=state, target=target, approval=current_gate,
-                    artifact_key=artifact_key, artifact_path=artifact_path,
-                    context=worker_context(state, recipient_role="code_review", workspace=workspace))
-                if len(specs) == 1 and specs[0].get("adapter") == "codex" and specs[0].get("model"):
-                    # Skill publication preserves the request verbatim. Validate
-                    # and publish the same canonical model, not a prefix alias.
-                    specs[0]["model"] = _codex_model_name(str(specs[0]["model"]))
-                if (len(specs) != 1 or specs[0].get("adapter") != "codex" or not specs[0].get("model")
-                        or specs[0]["model"] != admission.policy["model"]):
-                    return 409, {"error": "trusted_codex_reviewer_selection",
-                                 "message": "Choose one Codex Reviewer profile with the privately authorized model."}
-                review_context = admission.capture_workflow_review(store, workspace=workspace, state=state)
-                jobs = dispatch_prepared_reviewer_jobs(store=store, state=state, specs=specs,
-                                                       code_review_context=review_context)
-            except (SkillError, OSError) as exc:
-                return 409, {"error": exc.code if isinstance(exc, SkillError) else "review_start_unavailable",
-                             "message": "The current task could not start its authorized native review."}
-        result = run_queued_reviewer_jobs_for_gate(
-            store=store,
-            jobs=[job for job in jobs if not requested_job_id or job.get("id") == requested_job_id],
-            run_id=state.run_id,
-            approval=current_gate,
-            artifact_key=artifact_key,
-            artifact_path=artifact_path,
-            artifact_version=artifact_version,
-            profile_id=profile_id,
-            profile_order=profile_order,
-        )
-        aggregate["selected_count"] = int(aggregate["selected_count"]) + int(result.get("selected_count", 0) or 0)
-        aggregate["ran_count"] = int(aggregate["ran_count"]) + int(result.get("ran_count", 0) or 0)
-        aggregate["skipped_count"] = int(aggregate["skipped_count"]) + int(result.get("skipped_count", 0) or 0)
-        aggregate["results"] = [*list(aggregate["results"]), *list(result.get("results", []))]
-        aggregate["errors"] = [*list(aggregate["errors"]), *list(result.get("errors", []))]
-
-    return 200, {
-        **aggregate,
-        "project_key": project_key,
-        "run_id": state.run_id,
-        "approval": current_gate,
-        "artifact_key": artifact_key,
-        "artifact_path": artifact_path,
-        "artifact_version": artifact_version,
-        "advisory_only": True,
-        "approval_unchanged": True,
-        "operator_message": "Reviewer evidence remains advisory. Human operator decides.",
-    }
-
-
-def retry_failed_reviewer_jobs_action(
-    workspace: Path, request: Mapping[str, object], *, codex_review_admission: "CodexReviewAdmission | None" = None,
-) -> tuple[int, dict[str, object]]:
-    from goodteam_os.skills.codex_runtime import review_worker_kwargs
-
-    runtime_kwargs = review_worker_kwargs(codex_review_admission)
-    project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
-    if not project_key:
-        return 400, {"error": "project_key is required"}
-    try:
-        with workflow_guard(workspace, project_key):
-            return _retry_failed_reviewer_jobs_for_current_run(workspace, request, project_key, runtime_kwargs)
-    except WorkflowBusyError as exc:
-        return 409, {"error": str(exc), "code": "workflow_busy"}
-
-
-def _retry_failed_reviewer_jobs_for_current_run(
-    workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
-) -> tuple[int, dict[str, object]]:
-    state = StateStore(workspace).read_project_current(project_key)
-    if state is None:
-        return 404, {"error": f"Unknown project or no active run: {project_key}"}
-
-    requested_run_id = str(request.get("run_id", "") or "").strip()
-    if requested_run_id and requested_run_id != state.run_id:
-        return 409, {"error": "run_id does not match the active project run"}
-
-    if state.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
-        return 409, {"error": "This run has an unresolved historical decision."}
-    current_gate = current_approval_gate(state)
-    requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
-    if not current_gate or requested_gate != current_gate:
-        return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
-
-    artifact_key = _approval_artifact_for_gate(current_gate)
-    requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
-    if requested_artifact_key and requested_artifact_key != artifact_key:
-        return 409, {"error": "artifact_key does not match the current approval gate"}
-    artifact_path = str(state.artifacts.get(artifact_key, "") or "")
-    current_artifact_version = artifact_version_for_path(artifact_path)
-    requested_artifact_version = str(request.get("artifact_version", "") or "").strip()
-    if requested_artifact_version and requested_artifact_version != current_artifact_version:
-        return 409, {"error": "artifact_version does not match the current approval artifact"}
-
-    profile_id = str(request.get("profile_id", "") or "").strip()
-    target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
-    profile_order = _reviewer_profile_order_for_gate(target, current_gate)
-    aggregate = {
-        "selected_count": 0,
-        "retried_count": 0,
-        "skipped_count": 0,
-        "results": [],
-        "errors": [],
-    }
-    roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-    for root in roots:
-        store = WorkerJobStore(root, **runtime_kwargs)
-        result = retry_failed_reviewer_jobs_for_gate(
-            store=store,
-            jobs=store.list_jobs(),
-            run_id=state.run_id,
-            approval=current_gate,
-            artifact_key=artifact_key,
-            artifact_path=artifact_path,
-            artifact_version=current_artifact_version,
-            profile_id=profile_id,
-            profile_order=profile_order,
-        )
-        aggregate["selected_count"] = int(aggregate["selected_count"]) + int(result.get("selected_count", 0) or 0)
-        aggregate["retried_count"] = int(aggregate["retried_count"]) + int(result.get("retried_count", 0) or 0)
-        aggregate["skipped_count"] = int(aggregate["skipped_count"]) + int(result.get("skipped_count", 0) or 0)
-        aggregate["results"] = [*list(aggregate["results"]), *list(result.get("results", []))]
-        aggregate["errors"] = [*list(aggregate["errors"]), *list(result.get("errors", []))]
-
-    return 200, {
-        **aggregate,
-        "project_key": project_key,
-        "run_id": state.run_id,
-        "approval": current_gate,
-        "artifact_key": artifact_key,
-        "artifact_path": artifact_path,
-        "artifact_version": current_artifact_version,
-        "advisory_only": True,
-        "approval_unchanged": True,
-        "operator_message": "Retry queued reviewer-dispatch jobs only. Approval remains human-operated.",
-    }
-
-
-def _reviewer_profile_order_for_gate(target: Mapping[str, object], gate: str) -> list[str]:
-    phase = reviewer_phase_for_approval(gate)
-    if phase is None:
-        return []
-    try:
-        configured = normalize_reviewer_profile_config(target)
-    except ValueError:
-        return []
-    return list(configured.get(phase, ()))
-
-
-def _mask_advisory_text(text: object) -> str:
-    try:
-        from goodteam_os.telegram import mask_sensitive_data
-
-        return mask_sensitive_data(str(text))
-    except Exception:
-        return str(text)
-
-
-def _project_runtime_roots_for_state(*, state: AgileDevState | object | None, workspace: Path, project_key: str) -> list[Path]:
-    project_roots: list[Path | None] = []
-    source_ref = str(getattr(state, "source_ref", "") or "") if state is not None else ""
-    if source_ref and source_ref != "manual":
-        source_path = Path(source_ref)
-        if source_path.is_file():
-            try:
-                target = load_project_target(source_path)
-                repos = target.get("repos", {})
-                if isinstance(repos, dict) and repos:
-                    project_roots.append(resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()}))
-                else:
-                    project_roots.append(source_path.parent)
-            except Exception:
-                project_roots.append(source_path.parent)
-    try:
-        config_path = _project_config_for_key(workspace, project_key)
-        target = load_project_target(config_path)
-        repos = target.get("repos", {})
-        if isinstance(repos, dict) and repos:
-            project_roots.append(resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()}))
-        else:
-            project_roots.append(config_path.parent)
-    except Exception:
-        project_roots.append(workspace)
-
-    roots: list[Path] = []
-    seen_roots: set[Path] = set()
-    for root in project_roots:
-        if root is None:
-            continue
-        try:
-            resolved = root.resolve()
-        except Exception:
-            resolved = root
-        if resolved in seen_roots:
-            continue
-        seen_roots.add(resolved)
-        roots.append(resolved)
-    return roots
-
-
 class ProjectConfigNotFoundError(ValueError):
     """No local project config exists; distinct from a broken configured project."""
-
-
-def _reviewer_target_for_state(*, workspace: Path, project_key: str) -> dict[str, object]:
-    try:
-        return dict(load_project_target(_project_config_for_key(workspace, project_key)))
-    except ProjectConfigNotFoundError:
-        return {}
-    except Exception:
-        return {"_reviewer_configuration_unavailable": True}
-
-
-def _review_evidence_policy_config(target: Mapping[str, object]) -> object:
-    return target.get("review_evidence_policy", {})
-
-
-def _reviewer_statuses_for_state(
-    *,
-    state: AgileDevState | object | None,
-    workspace: Path,
-    project_key: str,
-) -> list[dict[str, object]]:
-    run_id = str(getattr(state, "run_id", "") or "") if state is not None else ""
-    if not run_id:
-        return []
-    statuses: list[dict[str, object]] = []
-    try:
-        roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-        for root in roots:
-            for job in WorkerJobStore(root).list_jobs():
-                if str(job.get("run_id", "")) == run_id:
-                    statuses.append(dict(job))
-    except Exception:
-        return []
-    return statuses
-
-
-def _safe_reviewer_evidence_snapshot_for_decision(
-    *,
-    state: AgileDevState,
-    workspace: Path,
-    project_key: str,
-    approval: str,
-) -> dict[str, object]:
-    reviewer_statuses = _reviewer_statuses_for_state(state=state, workspace=workspace, project_key=project_key)
-    reviewer_target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
-    try:
-        return build_reviewer_evidence_snapshot(
-            state=state,
-            approval=approval,
-            workspace=workspace,
-            worker_jobs=reviewer_statuses,
-            reviewer_statuses=reviewer_statuses,
-            reviewer_target=reviewer_target,
-        )
-    except Exception as exc:
-        artifact = _approval_artifact_for_gate(approval)
-        artifact_path = state.artifacts.get(artifact, "")
-        return {
-            "schema": "reviewer_evidence_snapshot.v1",
-            "run_id": state.run_id,
-            "approval": approval,
-            "artifact": {
-                "key": artifact,
-                "path": artifact_path,
-                "version": artifact_version_for_path(artifact_path),
-            },
-            "reviewer_dispatch": {
-                "mode": "unknown",
-                "parallel_requested": False,
-                "parallel_enabled": False,
-                "advisory_only": True,
-            },
-            "reviewers": [],
-            "jobs": {
-                "queued_total": 0,
-                "failed_total": 0,
-                "queued_by_profile": {},
-                "failed_by_profile": {},
-            },
-            "aggregate": {
-                "reviewer_count": 0,
-                "completed": 0,
-                "failed": 0,
-                "queued": 0,
-                "missing": 0,
-                "policy_blockers": 0,
-                "policy_warnings": 0,
-            },
-            "operator_message": "Reviewer evidence is advisory. Human operator remains authoritative.",
-            "errors": [str(exc)],
-        }
-
-
-def build_provenance_refs(*, state: AgileDevState | object | None, workspace: Path, project_key: str) -> list[dict[str, str]]:
-    refs: list[dict[str, str]] = []
-    try:
-        roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-        seen_manifests: set[Path] = set()
-        for root in roots:
-            provenance_root = root / ".goodteam" / "provenance"
-            if not provenance_root.is_dir():
-                continue
-            for manifest_path in sorted(provenance_root.glob("pr-*/manifest.json")):
-                try:
-                    resolved_manifest = manifest_path.resolve()
-                except Exception:
-                    resolved_manifest = manifest_path
-                if resolved_manifest in seen_manifests:
-                    continue
-                seen_manifests.add(resolved_manifest)
-                try:
-                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                if not isinstance(manifest, dict):
-                    continue
-                archive_paths = manifest.get("archive_paths", {})
-                archive_paths = archive_paths if isinstance(archive_paths, dict) else {}
-                pr_ref = manifest.get("pr", manifest.get("pr_number", manifest.get("number", "")))
-                if not pr_ref:
-                    pr_ref = manifest_path.parent.name.removeprefix("pr-")
-                refs.append(
-                    {
-                        "pr": _mask_advisory_text(pr_ref),
-                        "branch": _mask_advisory_text(manifest.get("branch", "")),
-                        "ci_status": _mask_advisory_text(manifest.get("ci_status", "")),
-                        "merge_sha": _mask_advisory_text(
-                            manifest.get("merge_sha", manifest.get("squash_merge_sha", manifest.get("squash_sha", "")))
-                        ),
-                        "job_ref": _mask_advisory_text(manifest.get("job_ref", archive_paths.get("job", ""))),
-                        "contract_ref": _mask_advisory_text(
-                            manifest.get("contract_ref", archive_paths.get("contract", archive_paths.get("task_contract", "")))
-                        ),
-                        "pre_review_ref": _mask_advisory_text(
-                            manifest.get(
-                                "pre_review_ref",
-                                manifest.get("pre-review_ref", archive_paths.get("pre_review", archive_paths.get("pre-review", ""))),
-                            )
-                        ),
-                    }
-                )
-    except Exception:
-        return []
-    return refs
-
-
-def build_approval_recommendation(
-    *,
-    state: AgileDevState | object | None,
-    review: dict[str, object] | object,
-    evidence_snapshot: dict[str, object] | object,
-    workspace: Path,
-) -> dict[str, object]:
-    del workspace
-    recommendation: dict[str, object] = {
-        "verdict": "caution",
-        "confidence": "low",
-        "blocking_count": 0,
-        "reasons": [],
-    }
-    try:
-        review_dict = review if isinstance(review, dict) else {}
-        evidence = evidence_snapshot if isinstance(evidence_snapshot, dict) else {}
-        reasons: list[dict[str, str]] = []
-        blockers = getattr(state, "blockers", []) if state is not None else []
-        blockers = blockers if isinstance(blockers, list) else []
-        for blocker in blockers:
-            reasons.append({"kind": "blocker", "text": _mask_advisory_text(blocker)})
-
-        evidence_blocker_count = 0
-        try:
-            evidence_blocker_count = int(evidence.get("blocker_count", 0) or 0)
-        except Exception:
-            evidence_blocker_count = 0
-        approval = str(review_dict.get("approval", "") or "")
-        status_values = [
-            str(evidence.get("ci_status", "unknown") or "unknown"),
-            str(evidence.get("smoke_status", "unknown") or "unknown"),
-            str(evidence.get("qa_status", "unknown") or "unknown"),
-        ]
-        unknown_count = sum(1 for status in status_values if status == "unknown")
-        release_stage = approval in {"staging", "release"}
-        if evidence_blocker_count > 0 and not blockers:
-            reasons.append({"kind": "missing_evidence", "text": "Evidence snapshot reports blockers without blocker details."})
-        if release_stage and unknown_count:
-            reasons.append({"kind": "missing_evidence", "text": "Release-stage gate has unknown CI, smoke, or QA evidence."})
-
-        # Legacy callers may omit both fields. Missing metadata is unknown,
-        # never a successful review inferred from non-empty artifact content.
-        provenance = review_dict.get("reviewer_provenance")
-        provenance = provenance if isinstance(provenance, dict) else {}
-        derived_policy = evaluate_review_evidence_policy(provenance, gate=approval)
-        policy = review_dict.get("review_evidence_policy")
-        inconsistent_policy = "review_evidence_policy" in review_dict and (
-            not isinstance(policy, dict) or policy.get("state") != "ok"
-            or policy.get("gate", approval) != approval
-            or policy.get("evidence", derived_policy["evidence"]) != derived_policy["evidence"]
-        )
-        if derived_policy["state"] != "ok" or inconsistent_policy:
-            reasons.append({"kind": "missing_evidence", "text": "Reviewer evidence is missing, simulated or unsuccessful. Human review is required."})
-        if "multi_reviewer_projection" in review_dict and not projection_supports_approval(
-            review_dict["multi_reviewer_projection"], approval=approval,
-            run_id=str(getattr(state, "run_id", "") or ""),
-            artifact_key=str(review_dict.get("artifact", "") or ""),
-            artifact_path=str(review_dict.get("artifact_path", "") or ""),
-            artifact_version=str(review_dict.get("artifact_version", "") or ""),
-        ):
-            projection = review_dict["multi_reviewer_projection"]
-            configuration_error = projection.get("configuration_error") if isinstance(projection, Mapping) else None
-            text = (configuration_error if isinstance(configuration_error, str) and configuration_error else
-                    "Current reviewer evidence is incomplete or inconsistent across the review team. Human review is required.")
-            reasons.append({"kind": "missing_evidence", "text": _mask_advisory_text(text)})
-
-        messages = {}
-        raw_messages = {}
-        committee = review_dict.get("committee", {})
-        committee = committee if isinstance(committee, dict) else {}
-        message_list = committee.get("messages", [])
-        message_list = message_list if isinstance(message_list, list) else []
-        for index, raw_message in enumerate(message_list):
-            if not isinstance(raw_message, dict):
-                continue
-            message_id = str(raw_message.get("id", "") or "")
-            if not message_id:
-                continue
-            messages[message_id] = index
-            raw_messages[message_id] = raw_message
-        for message_id, raw_message in raw_messages.items():
-            if str(raw_message.get("kind", "")) not in {"ask", "reject"}:
-                continue
-            message_index = messages.get(message_id, -1)
-            has_owner_reply = False
-            for later in message_list[message_index + 1 :]:
-                if not isinstance(later, dict):
-                    continue
-                if str(later.get("in_reply_to", "")) == message_id and str(later.get("kind", "")) in {"assert", "propose"}:
-                    has_owner_reply = True
-                    break
-            if not has_owner_reply:
-                body = str(raw_message.get("body", "") or "Committee objection is still unresolved.")
-                reasons.append({"kind": "open_objection", "text": _mask_advisory_text(body)})
-
-        content = str(review_dict.get("content", "") or "")
-        blocking_count = len(blockers)
-        if blockers:
-            verdict = "request_changes"
-        elif any(reason["kind"] in {"missing_evidence", "open_objection"} for reason in reasons):
-            verdict = "caution"
-        elif content.strip():
-            verdict = "approve"
-            reasons.append({"kind": "clean", "text": "Artifact content is present and no blocking signals were found."})
-        else:
-            verdict = "caution"
-            reasons.append({"kind": "missing_evidence", "text": "No artifact content is available for review."})
-
-        if blockers:
-            confidence = "low"
-        elif len(reasons) > 1 and any(reason["kind"] != "clean" for reason in reasons):
-            confidence = "low"
-        elif any(reason["kind"] in {"missing_evidence", "open_objection"} for reason in reasons):
-            confidence = "medium"
-        elif unknown_count:
-            confidence = "medium"
-        else:
-            confidence = "high"
-
-        recommendation = {
-            "verdict": verdict,
-            "confidence": confidence,
-            "blocking_count": blocking_count,
-            "reasons": reasons,
-        }
-    except Exception:
-        return recommendation
-    return recommendation
-
-
-def _latest_smoke_report(workspace: Path) -> tuple[Path, dict[str, object]] | None:
-    root = workspace / "state" / "smoke-runs"
-    if not root.is_dir():
-        return None
-    for path in sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        try:
-            report = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if isinstance(report, dict) and isinstance(report.get("runs"), list):
-            return path, report
-    return None
-
-
-def _smoke_command_refs(commands: object) -> list[dict[str, object]]:
-    if not isinstance(commands, list):
-        return []
-    refs: list[dict[str, object]] = []
-    for raw in commands:
-        if not isinstance(raw, dict):
-            continue
-        refs.append(
-            {
-                "name": str(raw.get("name", "") or ""),
-                "command": str(raw.get("command", "") or ""),
-                "cwd": str(raw.get("cwd", "") or ""),
-                "exit_code": raw.get("exit_code", ""),
-            }
-        )
-    return refs
-
-
-def _build_smoke_refs(workspace: Path, project_key: str) -> list[dict[str, object]]:
-    latest = _latest_smoke_report(workspace)
-    if latest is None:
-        return []
-    report_path, report = latest
-    report_status = str(report.get("status", "") or "")
-    refs: list[dict[str, object]] = []
-    for raw in report.get("runs", []):
-        if not isinstance(raw, dict):
-            continue
-        run_project = str(raw.get("project_key", "") or "")
-        if project_key and run_project and run_project != project_key:
-            continue
-        evidence = raw.get("evidence", {})
-        evidence = evidence if isinstance(evidence, dict) else {}
-        smoke_report_path = str(evidence.get("smoke_report", "") or report_path)
-        refs.append(
-            {
-                "report_path": smoke_report_path,
-                "report_status": report_status,
-                "project_key": run_project,
-                "suite": str(raw.get("suite", "") or ""),
-                "cycle": raw.get("cycle", ""),
-                "status": str(raw.get("status", "") or ""),
-                "classification": str(raw.get("classification", "") or ""),
-                "run_id": str(raw.get("run_id", "") or ""),
-                "worker_job_ids": [str(item) for item in raw.get("worker_job_ids", []) if str(item)],
-                "worker_result_paths": [str(item) for item in evidence.get("worker_result_paths", []) if str(item)],
-                "commands": _smoke_command_refs(raw.get("commands", [])),
-            }
-        )
-    return refs
-
-
-def _derive_smoke_status_from_refs(smoke_refs: list[dict[str, object]]) -> str:
-    statuses: list[str] = []
-    for ref in smoke_refs:
-        statuses.append(str(ref.get("status", "") or "").lower())
-        statuses.append(str(ref.get("report_status", "") or "").lower())
-    if any(status == "failed" for status in statuses):
-        return "failed"
-    if any(status == "passed" for status in statuses):
-        return "passed"
-    return "unknown"
-
-
-def _derive_qa_status(state: AgileDevState | object | None) -> str:
-    """Map the run-scoped QA gate decision to a verdict; defaults to "unknown"."""
-    try:
-        approvals = getattr(state, "approvals", {}) if state is not None else {}
-        if not isinstance(approvals, dict):
-            return "unknown"
-        decision = str(approvals.get("qa", "") or "").lower()
-        if decision == "approved":
-            return "passed"
-        if decision == "rejected":
-            return "failed"
-        return "unknown"
-    except Exception:
-        return "unknown"
-
-
-def _map_manifest_ci_status(raw_status: object) -> str:
-    """Map a provenance manifest's ci_status string to passed/failed/unknown."""
-    status = str(raw_status or "").strip().lower()
-    if status in {"success", "passed", "pass", "succeeded"}:
-        return "passed"
-    if status in {"failure", "failed", "fail", "error"}:
-        return "failed"
-    return "unknown"
-
-
-def _derive_ci_status(
-    *,
-    state: AgileDevState | object | None,
-    workspace: Path,
-    project_key: str,
-) -> str:
-    """Read the run's provenance manifest ci_status from disk; defaults to "unknown"."""
-    try:
-        run_id = str(getattr(state, "run_id", "") or "") if state is not None else ""
-        roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-        seen_manifests: set[Path] = set()
-        candidates: list[tuple[float, str]] = []
-        run_match_status: str | None = None
-        for root in roots:
-            provenance_root = root / ".goodteam" / "provenance"
-            if not provenance_root.is_dir():
-                continue
-            for manifest_path in provenance_root.glob("pr-*/manifest.json"):
-                try:
-                    resolved_manifest = manifest_path.resolve()
-                except Exception:
-                    resolved_manifest = manifest_path
-                if resolved_manifest in seen_manifests:
-                    continue
-                seen_manifests.add(resolved_manifest)
-                try:
-                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                if not isinstance(manifest, dict):
-                    continue
-                ci_status = _map_manifest_ci_status(manifest.get("ci_status", ""))
-                manifest_run_id = str(manifest.get("run_id", "") or "")
-                if run_id and manifest_run_id and manifest_run_id == run_id:
-                    if ci_status != "unknown":
-                        return ci_status
-                    run_match_status = run_match_status or ci_status
-                try:
-                    mtime = manifest_path.stat().st_mtime
-                except Exception:
-                    mtime = 0.0
-                candidates.append((mtime, ci_status))
-        if run_match_status is not None:
-            return run_match_status
-        if not candidates:
-            return "unknown"
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        return candidates[0][1]
-    except Exception:
-        return "unknown"
-
-
-def build_approval_evidence_snapshot(
-    *,
-    state: AgileDevState | object | None,
-    workspace: Path,
-    project_key: str,
-    debate_ref: str = "",
-) -> dict[str, object]:
-    snapshot: dict[str, object] = {
-        "artifact_refs": [],
-        "worker_job_refs": [],
-        "ci_status": "unknown",
-        "smoke_status": "unknown",
-        "qa_status": "unknown",
-        "screenshot_refs": [],
-        "debate_refs": [debate_ref] if debate_ref else [],
-        "blocker_count": 0,
-        "provenance_refs": [],
-        "smoke_refs": [],
-    }
-    if getattr(state, "delivery_items", None):
-        from goodteam_os.delivery_outcomes import _artifact_item
-
-        snapshot["delivery_refs"] = [_artifact_item(workspace, state, key)
-                                     for key in getattr(state, "delivery_items", {})]
-    try:
-        artifacts = getattr(state, "artifacts", {}) if state is not None else {}
-        approvals = getattr(state, "approvals", {}) if state is not None else {}
-        artifact_refs: set[str] = set()
-        if isinstance(artifacts, dict):
-            artifact_refs.update(str(key) for key, value in artifacts.items() if str(key).strip() and str(value).strip())
-        if isinstance(approvals, dict):
-            approval_map = approval_artifact_map()
-            artifact_refs.update(
-                str(approval_map.get(str(gate), str(gate)))
-                for gate in approvals
-                if isinstance(artifacts, dict) and str(approval_map.get(str(gate), str(gate))) in artifacts
-            )
-        snapshot["artifact_refs"] = sorted(artifact_refs)
-    except Exception:
-        snapshot["artifact_refs"] = []
-
-    try:
-        blockers = getattr(state, "blockers", []) if state is not None else []
-        snapshot["blocker_count"] = len(blockers) if isinstance(blockers, list) else 0
-    except Exception:
-        snapshot["blocker_count"] = 0
-
-    try:
-        snapshot["provenance_refs"] = build_provenance_refs(state=state, workspace=workspace, project_key=project_key)
-    except Exception:
-        snapshot["provenance_refs"] = []
-
-    try:
-        snapshot["smoke_refs"] = _build_smoke_refs(workspace, project_key)
-        snapshot["smoke_status"] = _derive_smoke_status_from_refs(list(snapshot["smoke_refs"]))
-    except Exception:
-        snapshot["smoke_refs"] = []
-        snapshot["smoke_status"] = "unknown"
-
-    try:
-        snapshot["qa_status"] = _derive_qa_status(state)
-    except Exception:
-        snapshot["qa_status"] = "unknown"
-
-    try:
-        snapshot["ci_status"] = _derive_ci_status(state=state, workspace=workspace, project_key=project_key)
-    except Exception:
-        snapshot["ci_status"] = "unknown"
-
-    try:
-        run_id = str(getattr(state, "run_id", "") or "")
-        if not run_id:
-            return snapshot
-        project_roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-        worker_refs: set[str] = set()
-        for root in project_roots:
-            for job in WorkerJobStore(root).list_jobs():
-                if str(job.get("run_id", "")) != run_id:
-                    continue
-                job_id = str(job.get("id", "") or job.get("job_id", ""))
-                if job_id:
-                    worker_refs.add(job_id)
-        snapshot["worker_job_refs"] = sorted(worker_refs)
-    except Exception:
-        snapshot["worker_job_refs"] = []
-
-    return snapshot
-
-
-def _action_log_path(workspace: Path, project_key: str = "") -> Path:
-    if project_key:
-        return StateStore(workspace).project_state_dir(project_key) / "action-log.jsonl"
-    return workspace / "state" / "action-log.jsonl"
-
-
-def build_action_title(action: dict[str, str]) -> str:
-    actor = action.get("actor", "").title() or "System"
-    action_type = action.get("action", "")
-    artifact = action.get("artifact", "")
-    gate = action.get("gate", "")
-    decision = action.get("decision", "")
-    if action_type == "workflow_started":
-        return f"{actor} started workflow"
-    if action_type.endswith("_generated") and artifact:
-        return f"{actor} generated {artifact.upper()}"
-    if action_type.endswith("_regenerated") and gate:
-        return f"{actor} regenerated {gate.upper()}"
-    if action_type == "artifact_saved" and artifact:
-        return f"{actor} saved {artifact.upper()} artifact"
-    if action_type == "approval_decided" and gate and decision:
-        verb = {
-            "approved": "approved",
-            "changes_requested": "requested changes on",
-            "rejected": "rejected",
-        }.get(decision, decision.replace("_", " "))
-        return f"{actor} {verb} {gate.upper()}"
-    return f"{actor} {action_type.replace('_', ' ')}".strip()
-
-
-def build_action_items(workspace: Path, project_key: str = "") -> list[dict[str, object]]:
-    action_log = _action_log_path(workspace, project_key)
-    if not action_log.is_file():
-        return []
-    items = []
-    for line in action_log.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        action = {
-            key: value if key in {"client_context", "evidence_snapshot", "review_items"} else str(value)
-            for key, value in raw.items()
-        }
-        before_node = action.get("before_node", "")
-        after_node = action.get("after_node", "")
-        action["title"] = build_action_title(action)
-        action["node_transition"] = f"{before_node} -> {after_node}" if before_node or after_node else ""
-        items.append(action)
-    return list(reversed(items))
 
 
 def _run_readonly_command(command: list[str], workspace: Path, warnings: list[str]) -> subprocess.CompletedProcess[str] | None:
@@ -2068,14 +1090,6 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
     }
 
 
-def build_agile_board(state: AgileDevState | None) -> dict[str, object]:
-    ledger = _task_ledger_from_state(state)
-    if ledger is None:
-        return serialize_task_board(build_task_board([]))
-    project_key = str(getattr(state, "project_key", "") or "")
-    return serialize_task_board(build_task_board(LocalTaskStore(ledger.parents[2], project_key=project_key).list_tasks()))
-
-
 def build_team_view_payload(workspace: Path, project_key: str) -> dict[str, object]:
     """Current Team truth for the Team surface: capability view plus ledger metadata."""
     key = normalize_project_key(project_key)
@@ -2154,90 +1168,40 @@ def build_project_work_state(workspace: Path, project_key: str, *, goal_limit: i
 
 
 def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: int | None = None) -> dict[str, object]:
-    from goodteam_os.delivery_outcomes import build_delivery_summary
-
     project_config = _project_config_for_key(workspace, project_key)
     start_context = build_start_console_context(workspace, project_config=project_config)
-    state = resolve_dashboard_state(workspace, project_key=project_key)
     project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
     task_assistant_session = (
         TaskAssistantService(workspace, project_config=project_config).session(project_key, project_root, **({"goal_limit": goal_limit} if goal_limit is not None else {}))
         if project_root is not None
         else None
     )
-    resources = build_resource_items(state)
-    approval_reviews = build_approval_reviews(state, workspace=workspace)
-    action_items = build_action_items(workspace, project_key=project_key)
-    agile_board = build_agile_board(state)
     from goodteam_os.project_iteration import project_iteration_backlog, latest_iteration_choice
     iteration_backlog = project_iteration_backlog(project_root, project_key)
     worker_job_records = WorkerJobStore(project_root).list_jobs() if project_root is not None else []
     worker_jobs = _serialize_worker_job_items(worker_job_records)
-    task_rows = [
-        task
-        for column in dict(agile_board.get("columns", {})).values()
-        for task in (column if isinstance(column, list) else [])
-        if isinstance(task, dict)
-    ]
-    intent_commits = IntentCommitStore(workspace, project_key).list_intents()
     team_payload = None
     try:
         team_payload = build_team_view_payload(workspace, project_key)["team"]
     except (ProjectApiError, ValueError):
         team_payload = None
     team_workspace = build_team_workspace(
-        state=state,
-        workflow_active=False,
-        project_root=project_root,
-        project_key=project_key,
-        tasks=task_rows,
-        worker_jobs=worker_job_records,
-        approval_reviews=approval_reviews,
-        action_items=action_items,
-        intent_commits=intent_commits,
-        task_assistant_session=task_assistant_session,
+        task_assistant_session, project_root=project_root, project_key=project_key, worker_jobs=worker_job_records,
     )
     return {
         "type": "project",
-        "state": asdict(state) if state is not None else None,
-        "resources": resources,
         "start_context": start_context,
         "team": team_payload,
-        "active_run": False,
         "task_assistant_session": task_assistant_session,
-        "role_observations": build_role_observations(state),
-        "workflow_steps": build_workflow_steps(state),
-        "approval_reviews": approval_reviews,
-        "action_items": action_items,
-        "agile_board": agile_board,
         "iteration_backlog": iteration_backlog,
         "iteration_choice": latest_iteration_choice(task_assistant_session, iteration_backlog),
         "worker_jobs": worker_jobs,
-        "delivery_summary": build_delivery_summary(workspace, state=state, jobs=worker_job_records, worker_root=project_root),
         "team_workspace": team_workspace,
         "project_assistant": build_project_assistant(
             task_assistant_session, team_workspace, project_key=project_key,
-            jobs=worker_job_records, intent_commits=intent_commits,
+            jobs=worker_job_records,
         ),
     }
-
-
-def _task_ledger_from_state(state: AgileDevState | None) -> Path | None:
-    if state is None:
-        return None
-    path = ""
-    for resource in state.resources.values():
-        if ResourceCapability.BOARD_SOURCE in resource.capabilities and resource.path:
-            path = resource.path
-            break
-    if not path:
-        path = str(state.artifacts.get("task_ledger", "")).strip()
-    if not path:
-        return None
-    ledger = Path(path)
-    if ledger.name != "tasks.json" or not state_documents.exists(ledger):
-        return None
-    return ledger
 
 
 def maybe_send_favicon_response(handler: object, path: str) -> bool:
@@ -2961,190 +1925,6 @@ def _delivery_contract_lines(
     return lines
 
 
-def workflow_steps_for_state(state: AgileDevState | None) -> list[dict[str, str]]:
-    source_type = state.source_type if state is not None else "new_project"
-    return workflow_steps_for_source(source_type)
-
-
-def resolve_dashboard_state(workspace: Path, project_key: str = "") -> AgileDevState | None:
-    store = StateStore(workspace)
-    return store.read_project_current(project_key) if project_key else store.read_current()
-
-
-
-def is_active_run(state: AgileDevState | None) -> bool:
-    return state is not None and bool(state.next_node) and state.next_node != "rejected"
-
-
-def _latest_archived_run_summary(workspace: Path, project_key: str) -> dict[str, str]:
-    key = normalize_project_key(project_key)
-    archive_dir = StateStore(workspace).project_state_dir(key) / "archived"
-    if not database_configured() and not archive_dir.is_dir():
-        return {}
-    archived_paths = state_documents.paths(archive_dir, newest_first=True)
-    for path in archived_paths:
-        try:
-            data = state_documents.read_json(path)
-        except (OSError, json.JSONDecodeError):
-            continue
-        return {
-            "run_id": str(data.get("run_id", "") or ""),
-            "idea": str(data.get("idea", "") or ""),
-            "source_type": str(data.get("source_type", "") or ""),
-            "archive_path": str(path),
-        }
-    return {}
-
-
-def _run_projection(
-    state: AgileDevState,
-    *,
-    status: str,
-    updated_at: str,
-    reason: str = "",
-) -> dict[str, object]:
-    return {
-        "run_id": state.run_id,
-        "project_key": state.project_key,
-        "idea": state.idea,
-        "source_type": state.source_type,
-        "status": status,
-        "current_node": state.current_node,
-        "next_node": state.next_node,
-        "updated_at": updated_at,
-        "reason": reason,
-        "task_skill_context": state.task_skill_context,
-    }
-
-
-def build_project_run_history(workspace: Path, project_key: str) -> dict[str, object]:
-    key = normalize_project_key(project_key)
-    store = StateStore(workspace)
-    runs: list[dict[str, object]] = []
-    current = store.read_project_current(key)
-    current_path = store.project_state_dir(key) / "current.json"
-    if current is not None:
-        runs.append(
-            _run_projection(
-                current,
-                status="archived" if is_active_run(current) else "complete",
-                updated_at=datetime.fromtimestamp(
-                    state_documents.modified_time(current_path),
-                    tz=UTC,
-                ).isoformat(),
-            )
-        )
-    for path, state in store.list_project_archived(key):
-        reason = path.stem.removeprefix(f"{state.run_id}-")
-        runs.append(
-            _run_projection(
-                state,
-                status="archived",
-                updated_at=datetime.fromtimestamp(state_documents.modified_time(path), tz=UTC).isoformat(),
-                reason=reason,
-            )
-        )
-    return {"project_key": key, "runs": runs}
-
-
-def build_project_run_detail(
-    workspace: Path,
-    project_key: str,
-    run_id: str,
-) -> dict[str, object]:
-    from goodteam_os.delivery_outcomes import build_delivery_summary
-
-    key = normalize_project_key(project_key)
-    store = StateStore(workspace)
-    current = store.read_project_current(key)
-    if current is not None and current.run_id == run_id:
-        current_path = store.project_state_dir(key) / "current.json"
-        status = "archived" if is_active_run(current) else "complete"
-        state = current
-        summary = _run_projection(
-            state,
-            status=status,
-            updated_at=datetime.fromtimestamp(state_documents.modified_time(current_path), tz=UTC).isoformat(),
-        )
-    else:
-        archived = next(
-            (
-                (path, candidate)
-                for path, candidate in store.list_project_archived(key)
-                if candidate.run_id == run_id
-            ),
-            None,
-        )
-        if archived is None:
-            raise ProjectApiError(
-                "run_not_found",
-                f"Run not found for project {key}: {run_id}",
-                404,
-                details={"project_key": key, "run_id": run_id},
-                recovery=["return_to_project_work", "choose_another_run"],
-            )
-        path, state = archived
-        summary = _run_projection(
-            state,
-            status="archived",
-            updated_at=datetime.fromtimestamp(state_documents.modified_time(path), tz=UTC).isoformat(),
-            reason=path.stem.removeprefix(f"{state.run_id}-"),
-        )
-    project_config = _project_config_for_key(workspace, key)
-    project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
-    agile_board = build_agile_board(state)
-    task_rows = [
-        task
-        for column in dict(agile_board.get("columns", {})).values()
-        for task in (column if isinstance(column, list) else [])
-        if isinstance(task, dict)
-    ]
-    worker_jobs = WorkerJobStore(project_root).list_jobs() if project_root is not None else []
-    approval_reviews = build_approval_reviews(state, workspace=workspace)
-    run_tasks = [task for task in task_rows if str(task.get("run_id", "")) == state.run_id]
-    if not run_tasks:
-        run_tasks = build_stage_task_snapshot(
-            state,
-            updated_at=str(summary.get("updated_at", "")),
-        )
-    team_workspace = build_team_workspace(
-        state=state,
-        workflow_active=False,
-        project_root=project_root,
-        project_key=key,
-        # Prefer explicitly run-bound rows. Older runs predate that identity,
-        # so their canonical stage rows are reconstructed from the archived
-        # state rather than leaking the current shared board into history.
-        tasks=run_tasks,
-        worker_jobs=worker_jobs,
-        approval_reviews=approval_reviews,
-        action_items=build_action_items(workspace, project_key=key),
-        intent_commits=IntentCommitStore(workspace, key).list_intents(mission_id=state.run_id),
-        read_only=True,
-        historical_reason=str(summary.get("reason", "")),
-    )
-    return {
-        "project_key": key,
-        "run": summary,
-        "state": asdict(state),
-        "resources": build_resource_items(state),
-        "workflow_steps": build_workflow_steps(state),
-        "agile_board": agile_board,
-        "approval_reviews": approval_reviews,
-        "team_workspace": team_workspace,
-        "delivery_summary": build_delivery_summary(
-            workspace, state=state, jobs=worker_jobs, historical_reason=str(summary.get("reason", "")),
-            worker_root=project_root,
-        ),
-    }
-
-
-def _normalize_start_delivery_standards(value: list[str] | str) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [line.strip() for line in str(value).splitlines() if line.strip()]
-
-
 def resolve_runtime_model_config(model_config: Path) -> Path:
     """Resolve the default model catalog independently of the server cwd."""
     candidate = model_config.expanduser()
@@ -3177,7 +1957,8 @@ def start_planning_batch(
     root = resolve_project_runtime_root(dict(target.get("repos", {})))
     if root is None:
         raise ValueError("Select this project's actual repository before starting its task.")
-    criteria = _normalize_start_delivery_standards(delivery_standards) if delivery_standards else []
+    values = delivery_standards.splitlines() if isinstance(delivery_standards, str) else delivery_standards
+    criteria = [str(value).strip() for value in values if str(value).strip()]
     metadata = {"source_type": source_type, "delivery_mode": delivery_mode or target.get("delivery_mode", ""),
                 "load_profile": load_profile, "requested_write_domains": []}
     runtime = {"model_config": str(resolve_runtime_model_config(model_config)),
@@ -3241,44 +2022,6 @@ def report_bug(
     return result
 
 
-def terminate_project_run(
-    *, workspace: Path, project_key: str, expected_run_id: str | None = None,
-) -> dict[str, object]:
-    key = normalize_project_key(project_key)
-    if expected_run_id is not None and (not isinstance(expected_run_id, str) or not expected_run_id.strip()):
-        raise ProjectApiError("run_binding_required", "Refresh and select the task to archive.", 400)
-    with workflow_guard(workspace, key):
-        state_store = StateStore(workspace)
-        state = state_store.read_project_current(key)
-        # Reject before recovery or writes: an old tab has no authority over a
-        # replacement run, including its interrupted transition evidence.
-        if expected_run_id is not None and (state is None or state.run_id != expected_run_id):
-            raise ProjectApiError(
-                "run_binding_mismatch", "The active task changed. Refresh before archiving it.", 409,
-                details={"expected_run_id": expected_run_id, "current_run_id": state.run_id if state else ""},
-                recovery=["refresh"],
-            )
-        if state is None:
-            raise ValueError(f"No active run for project: {key}")
-        before_node = state.next_node
-        archive_path = state_store.archive_project_current(key, reason="cancelled")
-        append_action(
-            workspace,
-            run_id=state.run_id,
-            actor="human",
-            action="run_terminated",
-            project_key=key,
-            before_node=before_node,
-            after_node="cancelled",
-        )
-        return {
-            "terminated": True,
-            "project_key": key,
-            "run_id": state.run_id,
-            "archive_path": str(archive_path),
-        }
-
-
 def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
     key = normalize_project_key(project_key)
     config_path = _project_config_for_key(workspace, key)
@@ -3287,9 +2030,8 @@ def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
     if projects_dir not in resolved_config.parents or not resolved_config.name.endswith(".local.yaml"):
         raise ValueError("Project deletion is limited to local project configs under workspace/projects.")
 
-    state_store = StateStore(workspace)
     state_projects_dir = (workspace / "state" / "projects").resolve()
-    state_dir = state_store.project_state_dir(key).resolve()
+    state_dir = (state_projects_dir / key).resolve()
     if state_projects_dir not in state_dir.parents:
         raise ValueError("Project deletion is limited to project-scoped GoodTeam state.")
 
@@ -3301,7 +2043,7 @@ def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
         "deleted": True,
         "project_key": key,
         "project_config": str(config_path),
-        "state_dir": str(state_store.project_state_dir(key)),
+        "state_dir": str(state_dir),
     }
 
 
@@ -3331,336 +2073,6 @@ def open_path_in_file_manager(*, workspace: Path, relative_path: str) -> dict[st
     except Exception as exc:
         return {"opened": False, "error": str(exc)}
 
-
-
-def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]:
-    if state is None:
-        return []
-
-    observations = []
-    for role in list_role_definitions():
-        artifact = role["artifact"]
-        model_config = state.role_models.get(role["key"], {})
-        status = "No activity"
-        if artifact == "state":
-            status = "Active"
-        elif artifact in state.artifacts:
-            status = "Artifact ready"
-        if artifact in state.approvals and state.next_node == f"await_{artifact}_approval":
-            status = "Waiting for approval"
-        if role["key"] == state.current_node:
-            status = "Active"
-        if role["key"] == state.next_node:
-            status = "Ready"
-
-        observations.append(
-            {
-                "name": role["name"],
-                "artifact": artifact,
-                "status": status,
-                "description": role["description"],
-                "artifact_path": state.artifacts.get(artifact, ""),
-                "model": model_config.get("primary", "unassigned"),
-                "mode": model_config.get("mode", "default"),
-            }
-        )
-    return observations
-
-
-def build_workflow_steps(state: AgileDevState | None) -> list[dict[str, str]]:
-    steps = []
-    for index, step in enumerate(workflow_steps_for_state(state), start=1):
-        artifact = step.get("artifact", "")
-        approval = step.get("approval", "")
-        status = "not-started"
-        status_label = "Not started"
-        action_label = ""
-        feedback = "No work recorded yet."
-
-        if state is not None:
-            approval_value = str(state.approvals.get(str(approval), "")) if approval else ""
-            if artifact and artifact in state.artifacts:
-                status = "done"
-                status_label = "Done"
-                feedback = "Artifact is available."
-            if approval and approval_value == "pending" and state.next_node == f"await_{approval}_approval":
-                status = "review-needed"
-                status_label = "Needs review"
-                action_label = f"Review {approval.upper()}"
-                feedback = "Human review is required before the workflow can continue."
-            elif approval and approval_value == "approved":
-                status = "done"
-                status_label = "Approved"
-                feedback = "Approval completed."
-            elif approval and approval_value in {"changes_requested", "rejected"}:
-                status = "blocked"
-                status_label = approval_value.replace("_", " ").title()
-                feedback = "Workflow is blocked by this decision."
-            elif step.get("node") == state.current_node:
-                status = "active"
-                status_label = "Active"
-                feedback = "Worker is marked as active in current state."
-            elif step.get("node") == state.next_node:
-                status = "ready"
-                status_label = "Ready"
-                feedback = "Ready to run; no worker execution or artifact has been recorded yet."
-
-        steps.append(
-            {
-                "number": str(index),
-                "key": str(step["key"]),
-                "title": str(step["title"]),
-                "roles": str(step["roles"]),
-                "artifact": str(artifact),
-                "approval": str(approval),
-                "summary": str(step["summary"]),
-                "feedback": feedback,
-                "status": status,
-                "status_label": status_label,
-                "action_label": action_label,
-                "artifact_path": state.artifacts.get(str(artifact), "") if state is not None and artifact else "",
-            }
-        )
-    return steps
-
-
-def _review_artifact_snapshot(path: str, max_chars: int = ARTIFACT_PREVIEW_MAX_CHARS) -> tuple[str, str, bool]:
-    artifact = Path(path).expanduser() if path else None
-    if artifact is None or not artifact.is_file():
-        return "", "missing", False
-    try:
-        raw_content = artifact.read_bytes()
-    except OSError:
-        return "", "missing", False
-    content = raw_content.decode("utf-8")
-    truncated = len(content) > max_chars
-    preview = content[:max_chars] + "\n\n[Preview truncated]" if truncated else content
-    return preview, f"sha256:{hashlib.sha256(raw_content).hexdigest()}", truncated
-
-
-def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key: str = "") -> tuple[AgileDevState, Path]:
-    store = StateStore(workspace)
-    state = store.read_project_current(project_key) if project_key else store.read_current()
-    if state is None:
-        raise ValueError("No active run state found.")
-    resource = state.resources.get(artifact_key)
-    if resource is not None:
-        if resource.kind not in {ResourceKind.MARKDOWN_ARTIFACT, ResourceKind.PROPOSED_MARKDOWN_ARTIFACT}:
-            raise ValueError(f"Resource is not a markdown artifact: {artifact_key}")
-        if ResourceCapability.READ not in resource.capabilities:
-            raise ValueError(f"Resource does not allow read: {artifact_key}")
-        artifact_path = resource.path
-    else:
-        artifact_path = state.artifacts.get(artifact_key, "")
-    if not artifact_path:
-        raise ValueError(f"Artifact is not registered in current run: {artifact_key}")
-
-    path = Path(artifact_path)
-    run_root = (workspace / "artifacts" / "runs" / state.run_id).resolve()
-    if path.is_absolute():
-        path = path.resolve()
-    else:
-        candidates = [(workspace / path).resolve(), path.resolve()]
-        path = next(
-            (
-                candidate
-                for candidate in candidates
-                if run_root in [candidate, *candidate.parents]
-            ),
-            candidates[0],
-        )
-    if resource is None or resource.scope == ResourceScope.RUN:
-        if run_root not in [path, *path.parents]:
-            raise ValueError("Artifact path must stay inside the current run artifacts directory.")
-    elif resource.scope != ResourceScope.PROJECT_RUNTIME:
-        raise ValueError("Artifact path must stay inside the current run artifacts directory.")
-    if path.suffix.lower() not in {".md", ".markdown"}:
-        raise ValueError("Only markdown artifacts can be edited in the dashboard.")
-    if not path.is_file():
-        raise ValueError(f"Artifact file does not exist: {artifact_key}")
-    return state, path
-
-
-def build_resource_items(state: AgileDevState | None) -> list[dict[str, object]]:
-    if state is None:
-        return []
-    return [
-        resource_to_dict(resource)
-        for _key, resource in sorted(state.resources.items())
-    ]
-
-
-def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
-    if artifact_key == "source_preview":
-        from goodteam_os.delivery_outcomes import _artifact_bytes
-
-        raw_content = _artifact_bytes(workspace, state, artifact_key)
-    else:
-        raw_content = path.read_bytes()
-    content = raw_content.decode("utf-8")
-    return {
-        **({"proposal_binding": dict(state.artifact_proposals[artifact_key.removesuffix("_proposed")])}
-           if artifact_key.endswith("_proposed") and artifact_key.removesuffix("_proposed") in state.artifact_proposals else {}),
-        "artifact": artifact_key,
-        "path": str(path),
-        "content": content,
-        "run_id": state.run_id,
-        "artifact_version": f"sha256:{hashlib.sha256(raw_content).hexdigest()}",
-        "resource": resource_to_dict(state.resources[artifact_key]) if artifact_key in state.resources else {},
-    }
-
-
-def read_open_questions(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    artifact = read_artifact(workspace=workspace, artifact_key=artifact_key, project_key=project_key)
-    return {
-        "artifact": artifact_key,
-        "questions": extract_open_questions(artifact["content"]),
-    }
-
-
-def _approval_review_title(state: AgileDevState, artifact: str) -> str:
-    resource = state.resources.get(artifact)
-    if isinstance(resource, Mapping):
-        title = str(resource.get("title", "") or "").strip()
-    else:
-        title = str(getattr(resource, "title", "") or "").strip()
-    if title:
-        return title
-    try:
-        contract = artifact_contract(artifact)
-    except ValueError:
-        return artifact.replace("_", " ").title()
-    return str(contract.get("title", "") or "").strip() or artifact.replace("_", " ").title()
-
-
-def _is_legacy_takeover_change_request(state: AgileDevState, approval: str) -> bool:
-    return (
-        approval == "takeover"
-        and str(state.approvals.get("takeover", "")) == ApprovalDecision.CHANGES_REQUESTED
-        and state.current_node == "takeover_review_gate"
-        and state.next_node == "revise_takeover"
-    )
-
-
-def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Path(".")) -> list[dict[str, object]]:
-    if state is None:
-        return []
-
-    reviews = []
-    profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
-    relevant_gates = None if profile.name == "greenfield" else set(profile.gate_names())
-    reviewer_target = _reviewer_target_for_state(workspace=workspace, project_key=state.project_key)
-    reviewer_statuses = _reviewer_statuses_for_state(state=state, workspace=workspace, project_key=state.project_key)
-    from goodteam_os.legacy_reviewer_reports import build_legacy_reviewer_reports
-
-    reviewer_reports = build_legacy_reviewer_reports(state, _project_runtime_roots_for_state(
-        state=state, workspace=workspace, project_key=state.project_key))
-    for approval, decision in state.approvals.items():
-        if relevant_gates is not None and approval not in relevant_gates:
-            continue
-        artifact = _approval_artifact_for_gate(approval)
-        artifact_path = state.artifacts.get(artifact, "")
-        preview, artifact_version, truncated = _review_artifact_snapshot(artifact_path)
-        legacy_takeover_recovery = _is_legacy_takeover_change_request(state, approval)
-        review = {
-            "approval": approval,
-            "title": _approval_review_title(state, artifact),
-            "decision": str(decision),
-            "is_pending": str(decision) == ApprovalDecision.PENDING,
-            "is_actionable": False,
-            "is_current": state.current_node == f"{approval}_review_gate",
-            "artifact": artifact,
-            "artifact_path": artifact_path,
-            "artifact_version": artifact_version,
-            "content": "" if legacy_takeover_recovery else preview,
-            "content_truncated": truncated and not legacy_takeover_recovery,
-            "presentation": "legacy_takeover_context" if legacy_takeover_recovery else "review_artifact",
-            "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
-        }
-        current_reviewer_statuses = reviewer_statuses_for_artifact(
-            reviewer_statuses, artifact_key=artifact, artifact_path=artifact_path,
-            artifact_version=artifact_version, require_exact=True,
-        )
-        reviewer_profile = reviewer_profile_for_approval(reviewer_target, approval)
-        reviewer_status = latest_reviewer_status_for_approval(current_reviewer_statuses, approval)
-        review["reviewer_provenance"] = build_reviewer_provenance(reviewer_status, profile=reviewer_profile)
-        review["review_evidence_policy"] = evaluate_review_evidence_policy(
-            review["reviewer_provenance"],
-            gate=approval,
-            config=_review_evidence_policy_config(reviewer_target),
-        )
-        review["multi_reviewer_projection"] = build_multi_reviewer_projection(
-            approval=approval,
-            reviewer_target=reviewer_target,
-            reviewer_statuses=current_reviewer_statuses,
-            review_evidence_policy_config=_review_evidence_policy_config(reviewer_target),
-            artifact_key=artifact,
-            artifact_path=artifact_path,
-            artifact_version=artifact_version,
-        )
-        from goodteam_os.gate_report_projection import project_gate_reports
-
-        review["reviewer_reports"] = project_gate_reports(
-            [entry["status"] for entry in review["multi_reviewer_projection"]["reviewers"]
-             if isinstance(entry.get("status"), dict)],
-            roots=_project_runtime_roots_for_state(state=state, workspace=workspace, project_key=state.project_key),
-            run_id=state.run_id, project_key=state.project_key,
-        )
-        review["queued_reviewer_jobs"] = select_queued_reviewer_jobs_for_gate(
-            reviewer_statuses,
-            run_id=state.run_id,
-            approval=approval,
-            artifact_key=artifact,
-            artifact_path=artifact_path,
-            artifact_version=artifact_version,
-            profile_order=_reviewer_profile_order_for_gate(reviewer_target, approval),
-        )
-        review["legacy_reviewer_jobs"] = [item for item in reviewer_reports if item["approval"] == approval]
-        review["failed_reviewer_jobs"] = select_failed_reviewer_jobs_for_gate(
-            reviewer_statuses,
-            run_id=state.run_id,
-            approval=approval,
-            artifact_key=artifact,
-            artifact_path=artifact_path,
-            artifact_version=artifact_version,
-            profile_order=_reviewer_profile_order_for_gate(reviewer_target, approval),
-        )
-        advisors = advisors_for_gate(approval)
-        if advisors:
-            messages = [
-                {
-                    "id": str(message.get("id", "")),
-                    "from_role": str(message.get("from_role", "")),
-                    "to": list(message.get("to", [])) if isinstance(message.get("to", []), list) else [],
-                    "kind": str(message.get("kind", "")),
-                    "gate": str(message.get("gate", "")),
-                    "body": str(message.get("body", "")),
-                    "in_reply_to": str(message.get("in_reply_to", "")),
-                }
-                for message in read_messages(workspace, state.project_key, state.run_id, gate=approval)
-            ]
-            review["committee"] = {
-                "advisors": list(advisors),
-                "convened": bool(messages),
-                "messages": messages,
-            }
-        if review["is_pending"] and review["is_current"]:
-            evidence_snapshot = build_approval_evidence_snapshot(
-                state=state,
-                workspace=workspace,
-                project_key=state.project_key,
-            )
-            evidence_snapshot["reviewer_reports"] = review["reviewer_reports"]
-            review["evidence_snapshot"] = evidence_snapshot
-            review["recommendation"] = build_approval_recommendation(
-                state=state,
-                review=review,
-                evidence_snapshot=evidence_snapshot,
-                workspace=workspace,
-            )
-        reviews.append(review)
-    return reviews
 
 
 def build_start_console_context(
@@ -3698,7 +2110,6 @@ def build_start_console_context(
         "worker_roles": WORKER_ROLES,
         "deployment_backend": deployment_backend,
         "delivery_contract": delivery_contract,
-        "latest_archived_run": _latest_archived_run_summary(workspace, str(project.get("key", "GTO") or "GTO")),
         "project_base": str(directory_base),
         "candidate_dirs": discover_project_directories(directory_base),
     }
@@ -3759,7 +2170,6 @@ def build_workspace_product_settings(workspace: Path) -> dict[str, object]:
             "workspace": str(workspace.expanduser().resolve()),
             "settings_path": str(_workspace_product_settings_path(workspace)),
             "project_count": len(overview),
-            "active_run_count": sum(1 for item in overview if item.get("status") == "active"),
             "server_actions_enabled": os.getenv("GOODTEAM_SERVER_ACTIONS", "0") == "1",
         },
     }
@@ -3819,7 +2229,6 @@ def discover_project_configs(workspace: Path) -> list[Path]:
         paths.extend(ProjectRegistry().list_registered_configs())
     except Exception:
         pass
-    paths.extend(_project_configs_from_state_sources(workspace))
     unique = sorted({path.resolve(): path.resolve() for path in paths if path.is_file()}.values(), key=lambda item: item.name.lower())
     return unique
 
@@ -3848,60 +2257,12 @@ def _project_config_dirs(workspace: Path) -> list[Path]:
     return unique
 
 
-def _project_configs_from_state_sources(workspace: Path) -> list[Path]:
-    state_dirs = [
-        workspace / "state" / "projects",
-        workspace.parent / "state" / "projects",
-    ]
-    goodteam_home = os.getenv("GOODTEAM_HOME")
-    if goodteam_home:
-        state_dirs.append(Path(goodteam_home).expanduser() / "state" / "projects")
-    else:
-        state_dirs.append(Path.home() / ".goodteam" / "state" / "projects")
-    store = StateStore(workspace)
-    paths: list[Path] = []
-    seen_keys: set[str] = set()
-    for state_projects_dir in state_dirs:
-        if not state_projects_dir.is_dir() and not database_configured():
-            continue
-        for current_path in state_documents.paths(state_projects_dir, "*/current.json"):
-            project_name = current_path.parent.name
-            if project_name in seen_keys:
-                continue
-            seen_keys.add(project_name)
-            state = store.read_project_current(project_name)
-            if state is None:
-                continue
-            source_ref = str(state.source_ref or "").strip()
-            if not source_ref or source_ref == "manual":
-                continue
-            source_path = Path(source_ref).expanduser().resolve()
-            if source_path.is_file():
-                paths.append(source_path)
-    return paths
-
-
-def build_project_overview_items(workspace: Path, model_config: Path = Path("models.yaml")) -> list[dict[str, str]]:
+def build_project_overview_items(workspace: Path) -> list[dict[str, str]]:
     items = []
-    store = StateStore(workspace)
     for config_path in discover_project_configs(workspace):
         target = load_project_target(config_path)
         project_key = normalize_project_key(str(target.get("key", config_path.stem)))
-        state = store.read_project_current(project_key)
-        action_items = build_action_items(workspace, project_key=project_key)
-        items.append(
-            {
-                "project_name": str(target.get("name", project_key) or project_key),
-                "project_key": project_key,
-                "project_config": str(config_path),
-                "status": "active" if is_active_run(state) else "idle",
-                "run_id": state.run_id if state is not None else "",
-                "next_node": state.next_node if state is not None else "",
-                "model_profile": str(target.get("model_profile", "balanced") or "balanced"),
-                "delivery_mode": normalize_delivery_mode(str(target.get("delivery_mode", "init_project") or "init_project")),
-                "last_action": action_items[0].get("timestamp", "") if action_items else "",
-            }
-        )
+        items.append({"project_key": project_key, "project_config": str(config_path)})
     return items
 
 
@@ -3983,19 +2344,8 @@ def build_project_home(
                 details={"project_key": key},
                 recovery=["return_to_projects", "reload_project"],
             ) from exc
-    state = StateStore(workspace).read_project_current(key)
     worker_preflight = check_project_target(target).get("worker_backend_preflight", {})
     worker_preflight = dict(worker_preflight) if isinstance(worker_preflight, Mapping) else {}
-    active_run = (
-        {
-            "run_id": state.run_id,
-            "idea": state.idea,
-            "current_node": state.current_node,
-            "next_node": state.next_node,
-        }
-        if is_active_run(state)
-        else None
-    )
     pending = next(
         (
             step
@@ -4055,9 +2405,7 @@ def build_project_home(
         "facts": {
             "root": str(root),
             "detected_mode": readiness["project_mode"],
-            "active_run": active_run,
-            "project_goal": state.idea if state is not None else str(readiness.get("inputs", {}).get("goal", "")),
-            "blockers": list(state.blockers) if state is not None else [],
+            "project_goal": str(readiness.get("inputs", {}).get("goal", "")),
             "constraints": constraints,
             "constraints_confirmed": constraint_values.get("confirmed") is True,
             "confirmed_commands": confirmed_commands,
@@ -4070,23 +2418,25 @@ def build_project_home(
         "git_baseline": _project_git_baseline(root),
         "capabilities": {
             **build_capabilities(readiness),
-            "workflow_entry_url": f"/projects/{quote(key, safe='')}/work",
         },
         "next_action": pending
         or {"id": "shared_readiness_complete", "status": "complete"},
     }
 
 
-def _project_attention_snapshot(workspace, key, root, readiness, state):
+def _project_attention_snapshot(workspace, key, readiness):
     from goodteam_os.project_attention import build_project_attention
 
     # Do not call build_project_work_state or TaskAssistantService.session here:
     # those routes may initialize/migrate Team/session state. A cross-project
     # scan must never dispatch, reconcile or write another project's records.
     session = TaskAssistantSessionStore(workspace, key).read()
-    if session.get("project_key") != key or (state is not None and state.project_key != key):
+    if session.get("project_key") != key:
         raise ValueError("Attention source belongs to another project")
-    return build_project_attention(project_key=key, readiness=readiness, workflow=None, session=session)
+    active = any(batch.get("status") in {"claimed", "running"} and batch.get("confirmed") is True
+                 and batch.get("project_root") == readiness["canonical_root"]
+                 for batch in session.get("project_task_batches", {}).values())
+    return build_project_attention(project_key=key, readiness=readiness, session=session), active
 
 
 def build_project_list(workspace: Path) -> dict[str, object]:
@@ -4101,7 +2451,6 @@ def build_project_list(workspace: Path) -> dict[str, object]:
 
 def _build_project_list(workspace: Path) -> dict[str, object]:
     projects: list[dict[str, object]] = []
-    state_store = StateStore(workspace)
     for config_path in discover_project_configs(workspace):
         target = load_project_target(config_path)
         key = normalize_project_key(str(target.get("key", config_path.stem)))
@@ -4123,12 +2472,6 @@ def _build_project_list(workspace: Path) -> dict[str, object]:
                 "steps": [],
                 "updated_at": None,
             }
-        state = state_store.read_project_current(key)
-        active_run = (
-            {"run_id": state.run_id, "next_node": state.next_node}
-            if is_active_run(state)
-            else None
-        )
         steps = readiness.get("steps", [])
         attention_count = sum(
             1
@@ -4136,11 +2479,11 @@ def _build_project_list(workspace: Path) -> dict[str, object]:
             if isinstance(step, dict) and step.get("status") in {"needs_input", "failed"}
         )
         try:
-            attention = _project_attention_snapshot(workspace, key, root, readiness, state)
+            attention, has_active_batch = _project_attention_snapshot(workspace, key, readiness)
         except (ValueError, OSError, TypeError, KeyError):
             # Unknown is not an empty queue. Keep ordinary project navigation
             # available if an optional attention source cannot be read.
-            attention = None
+            attention, has_active_batch = None, False
         projects.append(
             {
                 "attention": attention,
@@ -4152,8 +2495,8 @@ def _build_project_list(workspace: Path) -> dict[str, object]:
                 "readiness": readiness,
                 "capabilities": build_capabilities(readiness),
                 "attention_count": attention_count,
-                "active_run": active_run,
-            }
+                "has_active_batch": has_active_batch,
+                }
         )
     return {"projects": projects}
 
@@ -4163,8 +2506,6 @@ def handle_project_api_get(
     path: str,
     *, codex_review_admission: "CodexReviewAdmission | None" = None,
 ) -> tuple[int, dict[str, object]] | None:
-    from goodteam_os.skills.review_api import handle_review_get
-    from goodteam_os.task_input_context import handle_task_input_get
 
     if path == "/api/providers":
         from goodteam_os.providers import ProviderStore
@@ -4173,13 +2514,6 @@ def handle_project_api_get(
         from goodteam_os.provider_usage import usage_summary
         return 200, usage_summary()
 
-    task_input_response = handle_task_input_get(workspace, path)
-    if task_input_response is not None:
-        return task_input_response
-    from goodteam_os.skills.codex_runtime import review_worker_kwargs
-    review_response = handle_review_get(workspace, path, **review_worker_kwargs(codex_review_admission))
-    if review_response is not None:
-        return review_response
     if path == "/api/skills":
         return 200, SkillLibraryService(service_state_dir(), worker_roots=(workspace,)).list_library()
     skill_proposal_match = re.fullmatch(r"/api/skills/proposals/(proposal-[0-9a-f]{32})", path)
@@ -4193,11 +2527,6 @@ def handle_project_api_get(
     if home_match:
         encoded_key = home_match.group(1)
         return 200, build_project_home(workspace, _decode_project_api_key(encoded_key))
-    runs_match = re.fullmatch(r"/api/projects/([^/]+)/runs", path)
-    if runs_match:
-        key = _decode_project_api_key(runs_match.group(1))
-        _project_config_for_key(workspace, key)
-        return 200, build_project_run_history(workspace, key)
     batch_match = re.fullmatch(r"/api/projects/([^/]+)/iteration-batches/(task-batch-[0-9a-f]{64})", path)
     if batch_match:
         from goodteam_os.project_iteration_execution import iteration_batch_report
@@ -4218,12 +2547,6 @@ def handle_project_api_get(
             return 200, {**report, "recovery": recovery, **({"quality": quality} if quality["required"] else {})}
         except (OSError, ValueError) as exc:
             raise ProjectApiError("iteration_batch_report_unavailable", str(exc), 409) from exc
-    run_match = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)", path)
-    if run_match:
-        key = _decode_project_api_key(run_match.group(1))
-        _project_config_for_key(workspace, key)
-        run_id = _decode_project_run_id(run_match.group(2))
-        return 200, build_project_run_detail(workspace, key, run_id)
     team_events_match = re.fullmatch(r"/api/projects/([^/]+)/team/events", path)
     if team_events_match:
         key = _decode_project_api_key(team_events_match.group(1))
@@ -4319,8 +2642,6 @@ def handle_project_api_post(
     codex_review_admission: "CodexReviewAdmission | None" = None,
     codex_correction_admission=None,
 ) -> tuple[int, dict[str, object]] | None:
-    from goodteam_os.skills.codex_runtime import review_worker_kwargs
-    from goodteam_os.skills.review_api import handle_review_post
 
     if path in {"/api/providers", "/api/providers/models"}:
         from goodteam_os.providers import ProviderStore, ProviderError
@@ -4330,9 +2651,6 @@ def handle_project_api_post(
         except ProviderError as exc:
             raise ProjectApiError(exc.code, str(exc), exc.status) from None
 
-    review_response = handle_review_post(workspace, path, request, **review_worker_kwargs(codex_review_admission))
-    if review_response is not None:
-        return review_response
     if path == "/api/settings":
         return 200, save_workspace_product_settings(workspace, request)
     if path == "/api/projects/import":
@@ -4476,8 +2794,6 @@ def handle_project_api_post(
                         workspace=workspace, project_key=key, root=root,
                         project_config=_project_config_for_key(workspace, key), request=request)}
                 elif action == "start_project_continuation":
-                    if "workflow_recovery" in request:
-                        raise ValueError("Start a project continuation without a Workflow recovery reference.")
                     result = {"project_continuation": configure_project_continuation(
                         workspace=workspace, project_key=key, root=root,
                         project_config=_project_config_for_key(workspace, key), request=request,
@@ -4727,7 +3043,6 @@ def handle_project_api_post(
         r"/api/projects/([^/]+)/readiness/(start|input|retry|cancel)",
         path,
     )
-    workflow_match = re.fullmatch(r"/api/projects/([^/]+)/workflow", path)
     if readiness_match:
         key = _decode_project_api_key(readiness_match.group(1))
         action = readiness_match.group(2)
@@ -4773,14 +3088,6 @@ def handle_project_api_post(
             key,
             readiness_override=executor.cancel(key, root),
         )
-    if workflow_match:
-        key = _decode_project_api_key(workflow_match.group(1))
-        key, _target, root = _project_target_and_root(workspace, key)
-        return 200, {
-            "project_key": key,
-            "workflow_url": f"/projects/{quote(key, safe='')}/work",
-            "bridge": "product_project_workflow",
-        }
     return None
 
 
@@ -4824,29 +3131,6 @@ def _decode_readiness_step_id(encoded_step_id: str) -> str:
     return decoded
 
 
-def _decode_project_run_id(encoded_run_id: str) -> str:
-    try:
-        if re.search(r"%(?![0-9A-Fa-f]{2})", encoded_run_id):
-            raise ValueError("malformed percent escape")
-        decoded = unquote_to_bytes(encoded_run_id).decode("utf-8", errors="strict")
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise ProjectApiError(
-            "invalid_run_id",
-            "Run ID must be one valid URL segment.",
-            400,
-            recovery=["return_to_project_work", "choose_another_run"],
-        ) from exc
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", decoded):
-        raise ProjectApiError(
-            "invalid_run_id",
-            "Run ID must be one valid URL segment.",
-            400,
-            details={"run_id": decoded},
-            recovery=["return_to_project_work", "choose_another_run"],
-        )
-    return decoded
-
-
 def _is_skill_api_post_path(path: str) -> bool:
     return path in {"/api/skills/local/preview", "/api/skills/local/install"}
 
@@ -4869,10 +3153,9 @@ def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path in {"/api/projects/import", "/api/settings", "/api/providers", "/api/providers/models"}
         or re.fullmatch(
-            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions|attachments)|team/commands)",
+            r"/api/projects/[^/]+/(mode|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions|attachments)|team/commands)",
             path,
         )
-        or re.fullmatch(r"/api/projects/[^/]+/runs/[^/]+/skill-reviews/job-skill-[0-9a-f]{64}/(?:retry|cancel)", path)
     )
 
 
@@ -4965,7 +3248,7 @@ def is_product_spa_path(path: str) -> bool:
     return bool(
         path in {"/", "/legacy", "/projects", "/inbox", "/activity", "/settings"}
         or re.fullmatch(
-            r"/projects/[^/]+/(?:home|work|work/runs/[^/]+|review|review/[^/]+|knowledge|team|settings(?:/[^/]+)?)",
+            r"/projects/[^/]+/(?:home|work|knowledge|team|settings(?:/[^/]+)?)",
             path,
         )
     )
@@ -5872,54 +4155,6 @@ def serve(
                 status, payload = project_response
                 self._send_json(status, payload)
                 return
-            if parsed.path == "/api/delivery-artifact":
-                from goodteam_os.delivery_outcomes import DeliveryArtifactError, read_delivery_artifact
-                try:
-                    payload = read_delivery_artifact(
-                        workspace, project_key=project_key,
-                        run_id=_decode_project_run_id(query.get("run", [""])[0]),
-                        artifact_key=query.get("key", [""])[0], version=query.get("version", [""])[0],
-                    )
-                    if query.get("view") == ["text"]:
-                        self._send_text(payload["content"])
-                    else:
-                        self._send_json(200, payload)
-                except DeliveryArtifactError as exc:
-                    self._send_json(exc.status, {"error": "delivery_artifact_unavailable", "message": str(exc)})
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path == "/api/reviewer-report":
-                from goodteam_os.delivery_outcomes import DeliveryArtifactError, delivery_state
-                from goodteam_os.legacy_reviewer_reports import read_legacy_reviewer_report
-
-                try:
-                    state = delivery_state(workspace, project_key=project_key,
-                        run_id=_decode_project_run_id(query.get("run", [""])[0]))
-                    roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=state.project_key)
-                    self._send_json(200, read_legacy_reviewer_report(state, roots,
-                        job_id=query.get("job", [""])[0], profile_id=query.get("profile", [""])[0],
-                        approval=query.get("approval", [""])[0], artifact_key=query.get("artifact", [""])[0],
-                        artifact_version=query.get("artifact_version", [""])[0], version=query.get("version", [""])[0]))
-                except DeliveryArtifactError as exc:
-                    self._send_json(exc.status, {"error": "reviewer_report_unavailable", "message": str(exc)})
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path in {"/artifact", "/api/artifact"}:
-                try:
-                    artifact_key = query.get("key", [""])[0]
-                    self._send_json(200, read_artifact(workspace=workspace, project_key=project_key, artifact_key=artifact_key))
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path == "/api/open-questions":
-                try:
-                    artifact_key = query.get("artifact", [""])[0]
-                    self._send_json(200, read_open_questions(workspace=workspace, project_key=project_key, artifact_key=artifact_key))
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
             if parsed.path == "/api/goal-history":
                 try:
                     self._send_json(200, build_goal_history(
@@ -5931,31 +4166,11 @@ def serve(
                 return
             if parsed.path == "/api/state":
                 try:
-                    if not project_key:
-                        legacy_state = StateStore(workspace).read_current()
-                        res_data = {
-                            "type": "overview",
-                            "project_items": build_project_overview_items(workspace),
-                            "legacy_state": asdict(legacy_state) if legacy_state is not None else None,
-                            "resources": build_resource_items(legacy_state),
-                        }
-                    else:
-                        res_data = build_project_work_state(workspace, project_key, **({"goal_limit": _goal_page_limit(query)} if "goal_limit" in query else {}))
-                    self._send_json(200, res_data)
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path == "/api/resources":
-                try:
-                    state = resolve_dashboard_state(workspace, project_key=project_key) if project_key else StateStore(workspace).read_current()
-                    self._send_json(
-                        200,
-                        {
-                            "project_key": normalize_project_key(project_key or state.project_key) if state is not None else "",
-                            "resources": build_resource_items(state),
-                            "legacy_artifacts": dict(state.artifacts) if state is not None else {},
-                        },
+                    res_data = build_project_work_state(
+                        workspace, project_key,
+                        **({"goal_limit": _goal_page_limit(query)} if "goal_limit" in query else {}),
                     )
+                    self._send_json(200, res_data)
                 except Exception as exc:
                     self._send_api_error(exc)
                 return
@@ -6106,27 +4321,6 @@ def serve(
                 except Exception as exc:
                     self._send_api_error(exc)
                 return
-            if parsed.path == "/api/messages":
-                try:
-                    run_id = query.get("run", [""])[0].strip()
-                    gate = query.get("gate", [None])[0]
-                    if not project_key or not run_id:
-                        raise ValueError("project and run are required.")
-                    self._send_json(
-                        200,
-                        {
-                            "messages": read_messages(
-                                workspace,
-                                project_key,
-                                run_id,
-                                gate=gate,
-                            )
-                        },
-                    )
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-
             if not parsed.path.startswith("/api/") and dist_dir is not None:
                 rel_path = parsed.path.lstrip("/")
                 if not rel_path or rel_path == "index.html":
@@ -6184,8 +4378,8 @@ def serve(
 
             if not is_project_path and not is_skill_path and not is_execution_path and normalized_path not in {
                 "/report-bug", "/context-estimate", "/context-generate",
-                "/project-config", "/terminate", "/project-delete", "/open-path",
-                "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose",
+                "/project-config", "/project-delete", "/open-path",
+                "/fs/choose",
                 "/fs/mkdir", "/server-actions/run", "/git-init",
             }:
                 self.send_error(404)
@@ -6278,11 +4472,6 @@ def serve(
                     self._send_json(status, result)
                     return
                 request = json.loads(raw_body.decode("utf-8") or "{}")
-                if normalized_path in {"/artifact", "/refine-artifact", "/answer-open-questions"}:
-                    if not all(isinstance(request.get(field), str) and request[field].strip()
-                               for field in ("expected_run_id", "expected_artifact_version")):
-                        raise ProjectApiError("artifact_binding_required",
-                            "Reload the current artifact before editing or refining it.", 400)
                 if is_execution_path:
                     execution_response = handle_execution_post(normalized_path, request)
                     if execution_response is None:
@@ -6330,23 +4519,6 @@ def serve(
                     result = context_estimate_for_request(workspace, request)
                 elif normalized_path == "/context-generate":
                     result = context_generate_for_request(workspace, request)
-                elif normalized_path == "/reviewer-jobs/run":
-                    status, result = run_queued_reviewer_jobs_action(workspace, request, **runtime_kwargs)
-                    self._send_json(status, result)
-                    return
-                elif normalized_path == "/reviewer-jobs/retry":
-                    status, result = retry_failed_reviewer_jobs_action(workspace, request, **runtime_kwargs)
-                    self._send_json(status, result)
-                    return
-                elif normalized_path == "/terminate":
-                    expected_run_id = request.get("expected_run_id")
-                    if not isinstance(expected_run_id, str) or not expected_run_id.strip():
-                        raise ProjectApiError("run_binding_required", "Refresh and select the task to archive.", 400)
-                    result = terminate_project_run(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        expected_run_id=expected_run_id,
-                    )
                 elif normalized_path == "/project-delete":
                     result = delete_project(
                         workspace=workspace,

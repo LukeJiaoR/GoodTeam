@@ -5,10 +5,9 @@ The synthetic assessor is deliberately separate from real model validation.
 
 import pytest
 
-from goodteam_os.goal_assessment import run_evidence, validate_assessment
+from goodteam_os.goal_assessment import validate_assessment
 from goodteam_os.goal_continuation import authority_snapshot, handle_goal_action, tick_goal
 from goodteam_os.goals import GoalStore
-from goodteam_os.state import create_initial_state
 from goodteam_os.team_control_plane import ensure_team_state
 
 
@@ -42,15 +41,7 @@ def test_changed_runtime_scope_or_stop_prevents_dispatch(setup):
     assert tick_goal(workspace, "DEMO", goal["id"])["status"] == "stopped"
 
 
-def test_current_run_refs_and_literal_quotes_required(tmp_path):
-    state = create_initial_state("bound", "DEMO", "task")
-    state.current_node = state.next_node = "complete"
-    foreign = tmp_path / "artifacts/runs/other/result.md"
-    foreign.parent.mkdir(parents=True)
-    foreign.write_text("Forged evidence")
-    state.artifacts = {"qa": str(foreign)}
-    with pytest.raises(ValueError, match="no readable"):
-        run_evidence(tmp_path, state)
+def test_assessment_requires_literal_quotes():
     goal = {"acceptance_criteria": ["criterion"]}
     result = {"requires_new_scope": False, "checks": [{"criterion": 0, "status": "met", "evidence_ref": "current", "quote": "Not the result"}]}
     with pytest.raises(ValueError, match="citation"):
@@ -60,12 +51,12 @@ def test_current_run_refs_and_literal_quotes_required(tmp_path):
         validate_assessment(result, goal, {})
 
 
-@pytest.mark.parametrize("source", ["workflow", "manager"])
+@pytest.mark.parametrize("source", ["batch", "manager"])
 def test_changed_effective_model_catalog_cannot_expand_confirmed_routing(setup, monkeypatch, source):
     from pathlib import Path
     workspace, _, _, _, create = setup
     catalog_text = (Path(__file__).resolve().parents[1] / "models.yaml").read_text()
-    if source == "workflow":
+    if source == "batch":
         # CWD models.yaml wins in the workflow resolver even with no project
         # or Team model change. Manager still uses its repository fallback.
         monkeypatch.chdir(workspace)

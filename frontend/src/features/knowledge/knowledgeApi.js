@@ -11,10 +11,6 @@ export const getRepositoryUnderstanding = (projectKey, { signal } = {}) => reque
   `/api/projects/${encodeURIComponent(projectKey)}/readiness/steps/repository_understanding/artifact`,
   { signal },
 );
-export const getKnowledgeArtifact = (projectKey, key, { signal } = {}) => requestJson(
-  `/api/artifact?project=${encodeURIComponent(projectKey)}&key=${encodeURIComponent(key)}`,
-  { signal },
-);
 export const getMemory = (projectKey, { signal } = {}) => requestJson(`/api/memory?project=${encodeURIComponent(projectKey)}`, { signal });
 export const getMemoryEvents = (projectKey, role, query = '', { signal, includeExecution = false } = {}) => {
   const params = new URLSearchParams({ project: projectKey, role, limit: '50' });
@@ -33,7 +29,7 @@ export const getCrossProjectMemory = (role, query, scope, { signal } = {}) => {
 export const getKnowledgeProjects = getProjects;
 
 export const knowledgeApi = {
-  getKnowledgeArtifact, getKnowledgeHome, getKnowledgeState, getMemory,
+  getKnowledgeHome, getKnowledgeState, getMemory,
   getMemoryEvent, getMemoryEvents, getCrossProjectMemory, getKnowledgeProjects,
   getRepositoryUnderstanding,
 };

@@ -8,7 +8,7 @@ import { normalizeProjectsPayload } from './projectList';
 import { resolveAttentionFocus, attentionReason, attentionTitle } from './projectAttention';
 import './projectAttention.css';
 
-export default function ProjectAttentionFocus({ selection, projectKey, runId, data, freshness, refresh, reducedMotion, surfaceReady = true, t }) {
+export default function ProjectAttentionFocus({ selection, projectKey, data, freshness, refresh, reducedMotion, surfaceReady = true, t }) {
   const [requestId, setRequestId] = useState(0);
   const [snapshot, setSnapshot] = useState(null);
   const refreshOnEntry = useRef(Boolean(data));
@@ -29,8 +29,8 @@ export default function ProjectAttentionFocus({ selection, projectKey, runId, da
         if (!controller.signal.aborted) setSnapshot({ requestId, projects: null });
       });
     return () => controller.abort();
-  }, [projectKey, runId, selection, refresh, requestId]);
-  const result = resolveAttentionFocus({ selection, projectKey, runId, data,
+  }, [projectKey, selection, refresh, requestId]);
+  const result = resolveAttentionFocus({ selection, projectKey, data,
     projects: snapshot?.projects || [],
     freshness: snapshot?.requestId !== requestId ? 'loading' : !snapshot.projects ? 'unavailable' : freshness });
   const focusKey = JSON.stringify([requestId, result.status, result.item?.id, result.target, surfaceReady]);
@@ -52,7 +52,7 @@ export default function ProjectAttentionFocus({ selection, projectKey, runId, da
           : result.item.source === 'readiness'
             ? result.target === 'projectMode' ? node.dataset.attentionId === 'project-mode'
               : `readiness:${node.dataset.attentionId?.slice('project-preparation:'.length)}` === result.item.id
-            : `workflow:${runId}:${node.dataset.attentionId}` === result.item.id,
+            : true,
       });
     } else {
       // Let the conversation composer finish its mount-time autofocus before
@@ -63,7 +63,7 @@ export default function ProjectAttentionFocus({ selection, projectKey, runId, da
       return () => cancelAnimationFrame(frame);
     }
   // Status and exact identity, not polling object references, own focus.
-  }, [focusKey, reducedMotion, runId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [focusKey, reducedMotion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <section ref={notice} className="project-attention-focus" tabIndex={-1}
     aria-label={t('projects.attention.focus.title')} data-status={result.status}>

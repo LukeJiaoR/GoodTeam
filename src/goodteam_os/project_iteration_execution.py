@@ -25,7 +25,7 @@ from goodteam_os.project_iteration import _internal, _validate_parallel_group, r
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore, project_task_intent, task_evidence_digest
 from goodteam_os.tasks import TASK_INTENT_FIELDS as TASK_INTENT_FIELDS
-from goodteam_os.workflow_mutations import workflow_guard, WorkflowBusyError
+from goodteam_os.project_batch_lock import project_batch_guard, ProjectBatchBusyError
 
 
 _BACKGROUND_THREADS = {}
@@ -155,7 +155,6 @@ def dispatch_policy(task):
 def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals):
     from goodteam_os.project_runtime import resolve_project_runtime_root
     from goodteam_os.projects import load_project_target
-    from goodteam_os.state import create_initial_state
     from goodteam_os.models import resolve_project_model_profile
     from goodteam_os.web import resolve_runtime_model_config
     from goodteam_os.worker_routing import _worker_job_fields
@@ -164,19 +163,16 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
     configured = resolve_project_runtime_root(dict(target.get("repos", {})))
     if configured is None or Path(configured).resolve() != Path(root).resolve():
         raise ValueError("Batch source differs from the configured project repository.")
-    state = create_initial_state(run_id="batch-runtime-preview", project_key=project_key, idea="Queued task batch")
     from goodteam_os.task_delegation import render_project_task
 
     def runtime_fields(task, proposal):
         requested = proposal.get("runtime_request") or {}
-        from copy import copy
-        runtime_state = copy(state)
-        _profile, runtime_state.role_models = resolve_project_model_profile(
+        _profile, role_models = resolve_project_model_profile(
             resolve_runtime_model_config(Path(requested.get("model_config") or "models.yaml")), target,
             explicit_profile=str(requested.get("model_profile") or target.get("model_profile") or "balanced"),
             role_overrides=requested.get("role_model_overrides") or [],
         )
-        return _worker_job_fields(target, str(task["role"]), runtime_state,
+        return _worker_job_fields(target, str(task["role"]), role_models,
                                  **({"worker_id": task["worker_id"]} if "worker_id" in task else {}))
 
     tracks = [{
@@ -247,7 +243,7 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
     if expected_team_revision is not None and (type(expected_team_revision) is not int or expected_team_revision < 0):
         raise SkillError("invalid_revision", "Task confirmation requires a valid Team revision.")
     team_store = TeamControlPlaneStore(workspace, project_key)
-    with workflow_guard(workspace, project_key), conversation_lock(session_store), (team_store._locked() if expected_team_revision is not None else nullcontext()):
+    with project_batch_guard(workspace, project_key), conversation_lock(session_store), (team_store._locked() if expected_team_revision is not None else nullcontext()):
         session = session_store.read()
         batch = session.get("project_task_batches", {}).get(run_id)
         if batch:
@@ -267,7 +263,7 @@ def _claim_batch(*, workspace, project_key, root, project_config, proposal_ids, 
             if batch.get("status") not in {"delivered", "abandoned"} and not report_path.exists():
                 # A blocked attempt may have released its slot before a report
                 # existed. Resuming is execution, so re-admit against current
-                # Workflow/Goal/batch authority, then reserve the same slot.
+                # Goal/batch authority, then reserve the same slot.
                 _require_goal_source(workspace, project_key, batch.get("goal_source"), run_id)
                 _require_execution_slot(workspace, project_key, run_id, task_ids=batch.get("task_ids"))
                 _require_authority(workspace, project_key, root, project_config, batch.get("expected_authority"))
@@ -445,7 +441,7 @@ def _settle_batch(workspace, project_key, root, batch, report=None, error=""):
     TaskAssistantSessionStore(workspace, project_key)._mutate(persist)
     _publish_batch_result(workspace, project_key, root, batch, report, status)
     return {"run_id": batch["run_id"], "dispatch_run_id": effective_dispatch_id(batch), "status": status,
-            "workflow_started": False, "execution_started": True, "report": report,
+            "execution_started": True, "report": report,
             "task_assistant_session": TaskAssistantSessionStore(workspace, project_key).read()}
 
 
@@ -523,13 +519,13 @@ def _execute_batch(*, workspace, project_key, root, batch):
                                                 run_id=batch["run_id"])
                 return _settle_batch(workspace, project_key, root, batch, report=report)
             try:
-                with workflow_guard(workspace, project_key):
+                with project_batch_guard(workspace, project_key):
                     _require_execution_slot(workspace, project_key, batch["run_id"], task_ids=batch.get("task_ids"))
                     _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
                     _require_continuation(TaskAssistantSessionStore(workspace, project_key).read(), batch.get("expected_continuation_id"))
                     _require_goal_source(workspace, project_key, batch.get("goal_source"), batch["run_id"])
                     _claim_tasks(root, project_key, batch)
-            except (WorkflowBusyError, ProjectBatchResourceBusy):
+            except (ProjectBatchBusyError, ProjectBatchResourceBusy):
                 # Only the short, not-yet-executed admission was busy.
                 return {"run_id": batch["run_id"], "status": batch["status"], "execution_started": False}
             def check_start(*_):
@@ -574,7 +570,7 @@ def run_queued_iteration_batch(*, workspace, project_key, root, project_config, 
             active = _BACKGROUND_THREADS.get(identity)
             if active is not None and active.is_alive():
                 # The same process still owns execution. Merely observe it;
-                # do not contend with its workflow_guard or create poll threads.
+                # do not contend with its project_batch_guard or create poll threads.
                 batch = TaskAssistantSessionStore(workspace, project_key).read()["project_task_batches"][identity[2]]
                 if (confirmed is not True or batch["project_root"] != str(root)
                         or batch["project_config"] != str(Path(project_config).resolve())
@@ -604,7 +600,6 @@ def run_queued_iteration_batch(*, workspace, project_key, root, project_config, 
                 thread.start()
             return {"run_id": batch["run_id"], "dispatch_run_id": batch.get("current_dispatch_run_id", batch["dispatch_run_id"]),
                     "status": batch["status"], "execution_started": batch.get("status") not in {"delivered", "abandoned"},
-                    "workflow_started": False,
                     "task_assistant_session": TaskAssistantSessionStore(workspace, project_key).read()}
     batch = _claim_batch(workspace=workspace, project_key=project_key, root=root, project_config=project_config,
         proposal_ids=proposal_ids, expected_revisions=expected_revisions, confirmed=confirmed,

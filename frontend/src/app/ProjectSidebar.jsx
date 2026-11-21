@@ -1,4 +1,4 @@
-import { BookOpen, ChevronRight, ClipboardCheck, Folder, FolderKanban, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, Search, Settings2, Sun, Users, Workflow } from 'lucide-react';
+import { BookOpen, ChevronRight, Folder, FolderKanban, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, Search, Settings2, Sun, Users, Workflow } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { projectApi } from '../features/projects/projectApi';
 import useProjectsSnapshot from '../features/projects/useProjectsSnapshot';
@@ -6,7 +6,6 @@ import { routes } from '../lib/routing/routes';
 
 const PAGES = [
   ['work', Workflow, 'product.workNavigation.workbench'],
-  ['review', ClipboardCheck, 'product.workNavigation.reviews'],
   ['team', Users, 'product.workNavigation.team'],
   ['knowledge', BookOpen, 'product.workNavigation.knowledge'],
 ];

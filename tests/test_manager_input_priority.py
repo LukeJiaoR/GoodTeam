@@ -1,7 +1,6 @@
 """Durable admission and native recovery do not block project conversation."""
 
 import threading
-import json
 from concurrent.futures import ThreadPoolExecutor
 
 from goodteam_os import assistant_requests, web
@@ -146,28 +145,3 @@ def test_background_admission_stream_and_stop_keep_one_attempt(tmp_path, monkeyp
         release.set()
     assert finished.wait(5)
     assert store.read()["assistant_requests"]["stream"]["status"] == "stopped"
-
-
-def test_native_first_launch_keeps_the_task_captured_at_acceptance(native_manager, monkeypatch):
-    from goodteam_os.state import StateStore, create_initial_state
-
-    workspace, root, config, response, calls = native_manager
-    response.write_text("The originally referenced task still needs review.")
-    states = StateStore(workspace)
-    states.write_project_current(create_initial_state("original-task", "DEMO", "Original task"))
-    service = TaskAssistantService(workspace, project_config=config)
-    monkeypatch.setattr(service, "_manager_runtime_is_builtin", lambda: False)
-    execute = assistant_requests._execute_accepted
-    def later_start(*args, **kwargs):
-        states.archive_project_current("DEMO")
-        states.write_project_current(create_initial_state("newer-task", "DEMO", "Newer independent task"))
-        return execute(*args, **kwargs)
-    monkeypatch.setattr(assistant_requests, "_execute_accepted", later_start)
-    result = service.send_message(project_key="DEMO", root=root, text="Explain the current task.", message_id="original")
-    assert result["session"]["assistant_requests"]["original"]["status"] == "succeeded"
-    assert result["session"]["assistant_requests"]["original"]["conversation_run_id"] == "original-task"
-    context = TaskAssistantSessionStore(workspace, "DEMO").read()["manager_app_server"]["requests"]["original"]["context"]
-    reference = json.loads(context.split("\nReferenced task context: ")[1].split("\nProject environment (host facts): ")[0])
-    assert reference["kind"] == "task_reference" and reference["run"]["run_id"] == "original-task"
-    assert states.read_project_current("DEMO").run_id == "newer-task"
-    assert len(calls.read_text().splitlines()) == 1

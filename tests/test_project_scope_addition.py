@@ -33,8 +33,8 @@ def test_human_addition_preserves_grant_and_enables_original_next_planning(tmp_p
     assert store.read() == before
     # The real Worker execution guard is held for the entire running batch.
     # Scope confirmation must not acquire that long-lived execution lock.
-    from goodteam_os.workflow_mutations import workflow_guard
-    with workflow_guard(tmp_path, 'APP'):
+    from goodteam_os.project_batch_lock import project_batch_guard
+    with project_batch_guard(tmp_path, 'APP'):
         result = add()
     assert result['task_ids'] == [a['id'], b['id']]
     assert result['manager_calls'] == result['batches_started'] == 0

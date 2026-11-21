@@ -82,6 +82,5 @@ def test_reference_files_reach_manager_with_exact_message_identity_and_retry(tmp
     result = web.handle_project_api_post(tmp_path, prefix + '/actions', retry)[1]
     web.handle_project_api_post(tmp_path, prefix + '/messages', request)
     assert len(calls) == 2
-    assert not result['workflow_started']
     assert not result['session'].get('proposed_task')
     assert calls[1]['text'] == request['text']

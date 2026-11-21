@@ -1,4 +1,4 @@
-import { BookOpen, ChevronRight, ClipboardCheck, Users, Workflow } from 'lucide-react';
+import { BookOpen, ChevronRight, Users, Workflow } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import ProjectSidebar from './ProjectSidebar';
 import { Outlet, useLocation } from 'react-router-dom';
@@ -8,7 +8,6 @@ import { projectNavigationDestinations, rememberProjectLocation } from '../lib/r
 
 const PROJECT_PAGES = [
   ['work', Workflow, 'product.workNavigation.workbench'],
-  ['review', ClipboardCheck, 'product.workNavigation.reviews'],
   ['team', Users, 'product.workNavigation.team'],
   ['knowledge', BookOpen, 'product.workNavigation.knowledge'],
 ];
@@ -26,7 +25,7 @@ export default function ProductLayout() {
     query?.addEventListener?.('change', closeOnNarrow);
     return () => query?.removeEventListener?.('change', closeOnNarrow);
   }, []);
-  const projectMatch = pathname.match(/^\/projects\/([^/]+)\/(?:home|team|work|review|knowledge|settings)(?:\/|$)/);
+  const projectMatch = pathname.match(/^\/projects\/([^/]+)\/(?:home|team|work|knowledge|settings)(?:\/|$)/);
   const projectKey = (() => {
     try { return projectMatch ? decodeURIComponent(projectMatch[1]) : ''; } catch { return ''; }
   })();
@@ -34,7 +33,7 @@ export default function ProductLayout() {
   const settingsDestination = projectKey ? `/projects/${encodeURIComponent(projectKey)}/settings` : '/settings';
   useEffect(() => { rememberProjectLocation(pathname, search); }, [pathname, search]);
   const isProjectsRoute = pathname === '/projects';
-  const currentSection = pathname.match(/^\/projects\/[^/]+\/(work|review|team|knowledge|settings)(?:\/|$)/)?.[1];
+  const currentSection = pathname.match(/^\/projects\/[^/]+\/(work|team|knowledge|settings)(?:\/|$)/)?.[1];
   const currentPage = PROJECT_PAGES.find(([key]) => key === currentSection);
   const isWorkRoute = Boolean(projectKey);
   const sectionTitle = (pathname === '/settings' || currentSection === 'settings') ? t('product.studio.settings') : currentPage ? t(currentPage[2]) : t('product.studio.projects');

@@ -8,9 +8,6 @@ import sys
 
 import pytest
 
-from goodteam_os.artifacts import ArtifactStore
-from goodteam_os.graph import render_downstream_artifact_markdown
-from goodteam_os.state import create_initial_state
 from goodteam_os.workers import CLI_BACKENDS, WorkerJobStore, classify_worker_failure
 
 
@@ -110,7 +107,7 @@ def test_terminal_provider_error_preserves_auth_and_status_semantics():
 
 
 @pytest.mark.parametrize("host_timeout", [False, True])
-def test_offline_cli_attempt_evidence_and_sanitized_artifact_copy(tmp_path, monkeypatch, host_timeout):
+def test_offline_cli_attempt_evidence(tmp_path, monkeypatch, host_timeout):
     monkeypatch.setenv("GOODTEAM_STATE_DIR", str(tmp_path / "operator"))
     monkeypatch.setenv("GOODTEAM_WORKER_MAX_ATTEMPTS", "2")
     monkeypatch.setattr("goodteam_os.workers.default_embedder", lambda: None)
@@ -171,13 +168,3 @@ print('Verification: isolated checks passed.')
     assert Path(archives[0]["stderr_path"]).read_text().endswith("ERROR: unexpected status 503 Service Unavailable")
     assert archives[1]["disposition"] == "completed"
     assert "failure_class" not in archives[1]
-    state = create_initial_state("run-synthetic", "SYNTHETIC", "Validate synthetic evidence")
-    for artifact_key in ("implementation_handoff", "qa_report"):
-        content = render_downstream_artifact_markdown(artifact_key, state, worker_results=[status])
-        saved = ArtifactStore(tmp_path / "workspace", mirror_root=project).write_markdown(
-            state.run_id, "delivery", f"{artifact_key}.md", content,
-        )
-        assert "SYNTHETIC_PROCESS_CREDENTIAL" not in saved.read_text()
-        assert "Changed src/example.py." in content
-        assert "Verification: isolated checks passed." in content
-        assert saved.read_text() == (project / "docs" / f"{artifact_key}.md").read_text()

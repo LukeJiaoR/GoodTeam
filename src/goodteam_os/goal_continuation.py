@@ -21,10 +21,9 @@ from goodteam_os.goal_assessment import (
 )
 from goodteam_os.manager_execution import ManagerResourceBusy
 from goodteam_os.goals import GoalStore
-from goodteam_os.state import StateStore, normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.service_timeouts import GOAL_DRAIN_TIMEOUT_SECONDS
-from goodteam_os.workflow_table import resolve_profile
 
 
 _LOG = logging.getLogger(__name__)
@@ -90,7 +89,7 @@ def authority_snapshot(workspace, project_key, config, root):
         return {"path": str(path), "profile": profile,
                 "sha256": digest(load_model_profile(path, profile)) if path.is_file() else None}
 
-    workflow_catalog = resolve_runtime_model_config(Path("models.yaml"))
+    batch_catalog = resolve_runtime_model_config(Path("models.yaml"))
     manager_catalog = os.getenv("GOODTEAM_MODEL_CONFIG", "").strip() or Path(__file__).resolve().parents[2] / "models.yaml"
     team = TeamControlPlaneStore(workspace, project_key).read()
     if team is not None:
@@ -115,7 +114,7 @@ def authority_snapshot(workspace, project_key, config, root):
     return {"schema_version": "execution_authority.v2",
             "project_root": str(Path(root).resolve()), "project_config": str(config.resolve()),
             "config_sha256": digest(target), "team_sha256": digest(team),
-            "model_catalogs": {"workflow": catalog(workflow_catalog), "manager": catalog(manager_catalog)},
+            "model_catalogs": {"batch": catalog(batch_catalog), "manager": catalog(manager_catalog)},
             "provider_sha256": digest(provider), "billing_acknowledged": True}
 
 
@@ -223,26 +222,18 @@ def goal_view(workspace, goal):
 
 
 def goal_views(workspace, goals):
-    """Project a batch with fresh, request-local workflow reads per project.
-
-    Archives stay lazy, and no snapshots survive this call. This is a read
-    projection, not an atomic snapshot across the ledger and workflow files.
-    """
-    states = StateStore(Path(workspace))
-    current_by_project, archived_by_project = {}, {}
-    return [_goal_view(goal, states, current_by_project, archived_by_project, workspace=workspace) for goal in goals]
-
-
-def _goal_view(goal, states, current_by_project, archived_by_project, *, workspace):
-    from goodteam_os.web import current_approval_gate
-
-    result = deepcopy(goal)
-    project_key = goal["project_key"]
-    if project_key not in current_by_project:
-        current_by_project[project_key] = states.read_project_current(project_key)
-    current = current_by_project[project_key]
+    """Read Goal progress from its own confirmed task batches."""
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
-    batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
+
+    batches_by_project = {
+        key: TaskAssistantSessionStore(workspace, key).read().get("project_task_batches", {})
+        for key in {goal["project_key"] for goal in goals}
+    }
+    return [_goal_view(goal, batches_by_project[goal["project_key"]]) for goal in goals]
+
+
+def _goal_view(goal, batches):
+    result = deepcopy(goal)
     for work in result["work_units"]:
         if work.get("execution"):
             batch = batches.get(work["execution"]["run_id"], {})
@@ -252,41 +243,6 @@ def _goal_view(goal, states, current_by_project, archived_by_project, *, workspa
             }.get(batch.get("status"), "queued" if work["status"] == "pending" else "unknown")
             work["observed_batch_run_id"] = work["execution"]["run_id"]
             work["observed_approval"] = "batch_review" if batch.get("status") == "review" else ""
-            continue
-        state = current if current and current.run_id == work["run_id"] else None
-        if state is None and work["status"] in {"dispatching", "running"}:
-            if project_key not in archived_by_project:
-                archived_by_project[project_key] = {
-                    item.run_id: item for _, item in states.list_project_archived(project_key)
-                }
-            state = archived_by_project[project_key].get(work["run_id"])
-        if state is None:
-            continue
-        work["observed_approval"] = ""
-        if state.idea != work["task"]:
-            work["observed_execution_status"] = "unknown"
-        elif state.current_node == "complete":
-            work["observed_execution_status"] = "done"
-        elif state.current_node == "rejected" or state.next_node == "rejected":
-            work["observed_execution_status"] = "canceled"
-        elif state.blockers or state.next_node == "blocked" or state.pending_transition.get("status") == "interrupted":
-            work["observed_execution_status"] = "blocked"
-        elif state.pending_transition.get("status") in {"recording", "executing"}:
-            work["observed_execution_status"] = "in_progress"
-        elif state.next_node.startswith("await_"):
-            gate = current_approval_gate(state)
-            try:
-                supported = gate in resolve_profile(state.load_profile or "greenfield").gate_names()
-            except ValueError:
-                supported = False
-            # Existing workflow facts determine waiting; this does not grant
-            # approval authority. The UI separately binds the current review.
-            work["observed_execution_status"] = "awaiting_approval" if supported else "blocked"
-            if supported:
-                work["observed_approval"] = gate
-        else:
-            work["observed_execution_status"] = "in_progress"
-        work["observed_next_node"] = state.next_node
     if result.get("active_work"):
         result["active_work"] = next(work for work in result["work_units"] if work["id"] == result["active_work"]["id"])
     return result
@@ -427,12 +383,12 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking
             store.sync_tasks(goal_id, tasks)
             return goal
         from goodteam_os.project_iteration_execution import ProjectBatchResourceBusy
-        from goodteam_os.workflow_mutations import WorkflowBusyError
+        from goodteam_os.project_batch_lock import ProjectBatchBusyError
         from goodteam_os.state_documents import DocumentLockBusy
 
         try:
             goal = _tick_task_goal(workspace, key, root, config, store, goal, tasks, assessor)
-        except (ManagerResourceBusy, ProjectBatchResourceBusy, WorkflowBusyError, DocumentLockBusy):
+        except (ManagerResourceBusy, ProjectBatchResourceBusy, ProjectBatchBusyError, DocumentLockBusy):
             # No new execution was admitted; retain the exact work for the
             # next scan rather than turning capacity contention into failure.
             goal = store.get_goal(goal_id)

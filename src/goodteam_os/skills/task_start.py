@@ -24,7 +24,7 @@ def capture_task_start(
 ) -> dict[str, Any]:
     """Capture only at an authorized bounded start; replay saved confirmation.
 
-    ``None`` subjects selects the workflow's complete non-Manager inventory.
+    ``None`` subjects selects the complete non-Manager inventory.
     Manager/direct producers supply their explicit subject set. This helper does
     not guess task kind from a run ID, grant permissions, or dispatch a Worker.
     A supplied confirmation revision is checked, not silently rebased.
@@ -106,7 +106,7 @@ def capture_task_start(
             "ref": bindings[subject]["role_contract_ref"], "subject": subject,
             "input_contract": "Use only the bounded task and its supplied evidence.",
             "output_contract": "Return the result required by the explicit job output contract.",
-            "authority_boundary": "Methods cannot grant permissions, advance workflow gates, or approve their own result.",
+            "authority_boundary": "Methods cannot grant permissions, approve their own result.",
         } for subject in selected}
     # New Code Review tasks capture a method-free versioned protocol. The
     # replay path above uses the original contract verbatim, including pre-S6.
@@ -124,21 +124,6 @@ def capture_task_start(
     return service.begin(task, command_key=command_key, confirmed_input=confirmed,
                          subjects=selected, role_contracts=contracts, expected_team_revision=revision,
                          default_items=defaults)
-
-
-def workflow_job_fields(state, *, role: str, command_key: str) -> dict[str, Any]:
-    """Carry an existing workflow capture, never consult current configuration."""
-    from .task_context import workflow_skill_context
-    from .worker_requests import WORKER_METADATA_LOADER, subject_for_role
-
-    context = workflow_skill_context(getattr(state, "task_skill_context", {}), run_id=state.run_id, project_key=getattr(state, "project_key", ""))
-    if not context:
-        if getattr(state, "project_key", ""):
-            reject_missing_task_context(TaskSkillIdentity("workflow_run", state.project_key, state.run_id))
-        return {}
-    return {"task_skill_context": context, "skill_subject": subject_for_role(role),
-            "skill_loader_version": WORKER_METADATA_LOADER, "project_key": state.project_key,
-            "idempotency_key": command_key}
 
 
 def manager_requires_skill_path(*, workspace: Path, project_key: str, worker_root: Path,
@@ -183,7 +168,7 @@ def registered_project_scope(worker_root: Path) -> tuple[Path, str] | None:
     from goodteam_os.project_registry import get_default_registry_path
     from goodteam_os.database import database_configured
     from goodteam_os import state_documents
-    from goodteam_os.state import normalize_project_key
+    from goodteam_os.project_runtime import normalize_project_key
     from .filesystem import directory, regular_file
     from .worker_requests import _json
 

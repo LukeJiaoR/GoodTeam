@@ -14,12 +14,10 @@ Explicit local batch-quality configuration reuses the existing candidate check,
 independent review and bounded correction services. Keep its protected input and
 final candidate receipts bound to the original batch. HTTP may advance configured
 work, but must never choose a command or mint Reviewer/correction authority.
-Goal continuation uses the same authorized task/batch path. Retire the old
-Workflow engine (including its approval and resume compatibility), historical
-Operator execution, and standalone direct-dispatch CLI. Do not migrate or
-delete historical data, or retain compatibility execution paths. Keep Manager
-Issue intake, shared Worker dispatch, project import/readiness/inventory and
-Git Skill import development. Do not restore fake-only parallel-plan projection.
+Goal continuation uses the same authorized task/batch path. Fresh workspaces
+use the task queue and batch state. Keep Manager Issue intake, shared Worker
+dispatch, project import, readiness, inventory and Git Skill import. Do not
+restore fake-only parallel-plan projection.
 
 The product target is **an autonomous, continuing AI engineering team for an
 entire project**, not just an issue executor. The only current two-class
@@ -36,7 +34,7 @@ a parallel work queue.
    observed outcomes. The project moves across *multiple distinct iterations*
    without the user manually supplying each next Issue. Preserve necessary
    scoped human gates, authorization, failure recovery and honest artifacts.
-2. **Not essential**: do not expand optional Telegram, external Planner/MCP,
+2. **Not essential**: do not expand external Planner/MCP,
    complete Skill marketplaces/runtime/version flows, workspace-wide Team
    migrations, mobile extras, billing, broad multi-provider matrices or
    speculative control-plane frameworks unless a demonstrated dependency
@@ -181,7 +179,8 @@ scoped to that workflow.
 
 ## OpenWiki
 
-This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
+Start with `docs/status.md` and `docs/architecture.md`. OpenWiki generates its
+pages from the current source.
 
 The OpenWiki GitHub Actions workflow is manual-only. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting an authorized OpenWiki run regenerate them.
 

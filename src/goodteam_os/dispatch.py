@@ -290,7 +290,7 @@ def _dispatch_tracks(
                 "constraints_source": str(constraints_file) if constraints_file else "",
                 "research_report_source": str(research_report_file) if research_report_file else ""})
         if require_isolation and any(c and not m for c, m in per_track_methods):
-            raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
+            raise ValueError("Project batches require ordinary isolated Workers; protected Skill work uses its original execution contract.")
     elif scope is not None:
         workspace, key = scope
         task_identity = TaskSkillIdentity("direct_task", key, logical_id)
@@ -341,7 +341,7 @@ def _dispatch_tracks(
     if local_review and not context:
         raise ValueError("Local execution requires a registered project and its captured task protocol.")
     if require_isolation and (context and not ordinary_method_mode or any(track.get("review_target") is not None for track in tracks)):
-        raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
+        raise ValueError("Project batches require ordinary isolated Workers; protected Skill work uses its original execution contract.")
     if candidate_source is not None and (not require_isolation or recovery_source is not None):
         raise ValueError("A continuation candidate requires a new isolated project batch.")
     parent_report = None

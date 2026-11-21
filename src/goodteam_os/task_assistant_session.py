@@ -14,13 +14,12 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
-from goodteam_os.state import normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os.database import database_configured
 from goodteam_os import state_documents
 
 
 SCHEMA_VERSION = "task_assistant_session.v2"
-_LEGACY_SCHEMA_VERSIONS = {"task_assistant_session.v1"}
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
@@ -42,17 +41,8 @@ class TaskAssistantSessionStore:
         if not isinstance(payload, dict):
             raise ValueError("Task Assistant session is invalid")
         version = str(payload.get("schema_version", ""))
-        if version in _LEGACY_SCHEMA_VERSIONS:
-            return _upgrade_session_v1(payload)
         if version != SCHEMA_VERSION:
             raise ValueError("Task Assistant session is invalid")
-        payload.setdefault("archived_task_proposals", [])
-        from goodteam_os.skills.task_context import workflow_skill_context
-
-        for proposal in [payload.get("proposed_task"), *payload["archived_task_proposals"]]:
-            if isinstance(proposal, dict) and "task_skill_context" in proposal:
-                workflow_skill_context(proposal["task_skill_context"],
-                                       run_id=f"task-{proposal['id']}", project_key=self.project_key)
         return payload
 
     def append_message(
@@ -213,63 +203,12 @@ class TaskAssistantSessionStore:
                     "source_message_ids": [str(item) for item in source_message_ids],
                     "exact_request": request,
                     "revision": 1,
+                    "status": "draft",
                     "confirmed": False,
-                    "start_claim_id": "",
-                    "start_run_id": "",
-                    "start_owner_pid": 0,
-                    "start_claimed_at": "",
-                    "start_status": "",
-                    "start_error": "",
                     "run_id": "",
                 },
                 "status": "waiting_for_human",
             }
-
-        return self._mutate(mutate)
-
-    def archive_task_proposal(
-        self,
-        proposal_id: str,
-        run_id: str,
-        terminal_status: str,
-    ) -> dict[str, object]:
-        if terminal_status not in {"complete", "rejected", "archived"}:
-            raise ValueError("Task proposal can only be archived with terminal run evidence")
-        if not str(run_id).strip():
-            raise ValueError("Task proposal archive requires a run ID")
-
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != str(proposal_id) or proposal.get("run_id") != str(run_id):
-                return session
-
-            archived = {
-                **proposal,
-                "status": "archived",
-                "terminal_status": terminal_status,
-                "archived_at": _now(),
-            }
-            history = list(session.get("archived_task_proposals") or [])
-            if not any(item.get("id") == archived["id"] for item in history):
-                history.append(archived)
-            session["archived_task_proposals"] = history
-            session["proposed_task"] = None
-            session["status"] = "ready_for_request"
-            event_id = f"task-proposal-archived:{proposal_id}"
-            if not any(item.get("message_id") == event_id for item in session["timeline"]):
-                session["timeline"].append({
-                    "message_id": event_id,
-                    "actor": "system",
-                    "event": "task_proposal_archived",
-                    "content": "",
-                    "run_id": str(run_id),
-                    "created_at": _now(),
-                    "details": {
-                        "proposal_id": str(proposal_id),
-                        "terminal_status": terminal_status,
-                    },
-                })
-            return session
 
         return self._mutate(mutate)
 
@@ -280,7 +219,7 @@ class TaskAssistantSessionStore:
 
         def mutate(session: dict[str, object]) -> dict[str, object]:
             proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or proposal.get("run_id") or proposal.get("confirmed") or proposal.get("status") == "cancelled":
+            if proposal.get("id") != proposal_id or proposal.get("confirmed") or proposal.get("status") == "cancelled":
                 raise ValueError("Task proposal is unavailable")
             if expected_revision is not None and (type(expected_revision) is not int or proposal.get("revision") != expected_revision):
                 raise ValueError("Task proposal changed. Reload the latest draft.")
@@ -301,12 +240,7 @@ class TaskAssistantSessionStore:
 
         return self._mutate(mutate)
 
-    def confirm_task(self, proposal_id: str, *, expected_revision=None, task_skill_context=None) -> dict[str, object]:
-        from goodteam_os.skills.task_context import workflow_skill_context
-
-        context = None if task_skill_context is None else workflow_skill_context(
-            task_skill_context, run_id=f"task-{proposal_id}", project_key=self.project_key,
-        )
+    def confirm_task(self, proposal_id: str, *, expected_revision=None) -> dict[str, object]:
         def mutate(session: dict[str, object]) -> dict[str, object]:
             proposal = dict(session.get("proposed_task") or {})
             if proposal.get("id") != proposal_id or proposal.get("status") == "cancelled":
@@ -317,11 +251,8 @@ class TaskAssistantSessionStore:
                 raise ValueError("Resolve the pending draft change before confirming.")
             if proposal.get("needs_clarification"):
                 raise ValueError("Clarify the task scope and acceptance criteria or edit the draft before confirming.")
-            if proposal.get("run_id") or proposal.get("confirmed"):
-                if context is not None and proposal.get("task_skill_context", {}) != context:
-                    raise ValueError("Confirmed task methods cannot be replaced during retry.")
+            if proposal.get("confirmed"):
                 return session
-            proposal["task_skill_context"] = context if context is not None else {}
             proposal["confirmed"] = True
             session["proposed_task"] = proposal
             session["status"] = "preparing_to_start"
@@ -374,21 +305,10 @@ class TaskAssistantSessionStore:
             "timeline": [],
             "attention_request": None,
             "proposed_task": None,
-            "archived_task_proposals": [],
             "pending_team_decision": None,
             "project_mode_hint": None,
             "suggestions": [],
         }
-
-
-def _upgrade_session_v1(payload: dict[str, object]) -> dict[str, object]:
-    """Lazy in-memory upgrade: v1 sessions gain the team-decision slot."""
-    return {
-        **payload,
-        "schema_version": SCHEMA_VERSION,
-        "archived_task_proposals": list(payload.get("archived_task_proposals") or []),
-        "pending_team_decision": payload.get("pending_team_decision"),
-    }
 
 
 def _now() -> str:
@@ -438,7 +358,6 @@ def initial_task_assistant_session(
         ],
         "attention_request": None,
         "proposed_task": None,
-        "archived_task_proposals": [],
         "pending_team_decision": None,
         "project_mode_hint": dict(mode_hint),
         "suggestions": [{"id": item} for item in suggestions],

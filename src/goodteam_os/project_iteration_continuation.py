@@ -104,9 +104,9 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     workspace, root, project_config = Path(workspace), Path(root), Path(project_config)
     store = TaskAssistantSessionStore(workspace, project_key)
     identity = sha256(key.encode()).hexdigest()[:32]
-    from goodteam_os.workflow_mutations import workflow_guard
+    from goodteam_os.project_batch_lock import project_batch_guard
 
-    with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
+    with goal_guard(workspace, project_key), project_batch_guard(workspace, project_key):
         session = store.read()
         current = session.get(_FIELD) or {}
         original = current if current.get("id") == identity else (session.get("project_continuation_history") or {}).get(identity)

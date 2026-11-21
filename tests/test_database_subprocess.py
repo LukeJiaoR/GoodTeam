@@ -11,7 +11,6 @@ import subprocess
 import textwrap
 
 from goodteam_os.dispatch import run_track_verify
-from goodteam_os.staging import _run_ssh_command
 from goodteam_os.smoke import run_shell_command
 from goodteam_os.full_smoke import _run_text
 from goodteam_os.execution.sandbox_policy import command_env
@@ -29,7 +28,6 @@ def test_project_commands_do_not_inherit_control_plane_database_configuration(tm
     command = [sys.executable, str(probe)]
     outputs = [
         run_track_verify(shlex.join(command), cwd=tmp_path)["stdout"],
-        _run_ssh_command(command, cwd=tmp_path, timeout=10)["stdout"],
         run_shell_command(shlex.join(command), cwd=tmp_path)["stdout"],
         _run_text(command, cwd=tmp_path),
         _run_readonly_command(command, tmp_path, []).stdout,

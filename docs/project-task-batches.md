@@ -12,7 +12,7 @@ task has its own track and Worker job identity. Concurrent writers need
 explicit disjoint `write_domains`. Each Worker runs in a retained Git copy;
 captured changes are checked against the approved paths before fan-in. A
 read-only task retains the existing read-only runtime policy and must produce
-no repository changes. A batch cannot overlap a live Workflow or bounded Goal.
+no repository changes. Batch admission checks task claims, write-domain conflicts and Goal authority.
 
 The existing queue saves confirmation and runtime inputs before execution.
 The original project cards receive the batch/dispatch/job IDs. Retrying the
@@ -26,8 +26,6 @@ successful sibling outputs remain inspectable. The source checkout is never
 the Worker cwd or integration target. The candidate path and commit in the
 batch result identify the retained fan-in for independent review and explicit
 delivery confirmation. Worker success alone never marks project work done.
-New batches do not write a synthetic Workflow status to task cards. Existing
-Workflow runs still retain their own status and recovery records.
 
 Delivery revalidates every retained Worker result, reusing the opened workspace
 for results from the same dispatch. After an authorized retry, preserved Worker
@@ -45,9 +43,12 @@ metadata is a confirmation/result projection; the existing task ledger and
 dispatch receipts remain authoritative for work and execution respectively.
 
 Protected Skill execution keeps its existing protocol: a project batch refuses
-it when ordinary per-task Git isolation cannot be established. Legacy Workflow,
-Goal, Operator and Direct Dispatch history remains readable. GitHub automatic
-CI remains paused; batch execution does not enable or dispatch it.
+it when ordinary per-task Git isolation cannot be established. GitHub automatic
+CI remains paused.
+
+The Work page reads execution state from confirmed task batches and their
+Worker receipts. Selecting a queued task prepares the exact revision for
+confirmation. A chat draft uses the same batch admission on confirmation.
 
 ## Local verification
 

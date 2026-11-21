@@ -1,5 +1,4 @@
-from goodteam_os.state import create_initial_state
-from goodteam_os.tasks import LocalTaskStore, build_task_board, sync_stage_tasks
+from goodteam_os.tasks import LocalTaskStore
 
 
 def test_local_task_store_creates_project_task_ledger(tmp_path):
@@ -47,77 +46,6 @@ def test_local_task_store_rejects_unknown_status(tmp_path):
         assert "Unknown task status" in str(exc)
     else:
         raise AssertionError("Expected unknown status to fail")
-
-
-def test_sync_stage_tasks_is_idempotent_and_maps_workflow_progress(tmp_path):
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    store = LocalTaskStore(project_root)
-    state = create_initial_state("run-1", "CONTENTOPS", "Build content workflow")
-    state.current_node = "prd_review_gate"
-    state.next_node = "await_prd_approval"
-
-    sync_stage_tasks(state, store)
-    sync_stage_tasks(state, store)
-
-    tasks = store.list_tasks()
-    assert len(tasks) == 5
-    by_ref = {task["external_refs"][0]: task for task in tasks}
-    assert by_ref["stage:product_requirement"]["status"] == "in_progress"
-    assert by_ref["stage:architect"]["status"] == "todo"
-
-    state.artifacts["prd_proposed"] = "/tmp/prd.proposed.md"
-    sync_stage_tasks(state, store)
-    assert store.get_task(by_ref["stage:product_requirement"]["id"])["status"] == "review"
-
-    state.artifacts.pop("prd_proposed")
-    state.approvals["prd"] = "approved"
-    state.current_node = "rfc_review_gate"
-    state.next_node = "await_rfc_approval"
-    sync_stage_tasks(state, store)
-
-    board = build_task_board(store.list_tasks())
-    assert by_ref["stage:product_requirement"]["id"] in [task["id"] for task in board["done"]]
-    assert by_ref["stage:architect"]["id"] in [task["id"] for task in board["doing"]]
-    assert len(store.list_tasks()) == 5
-
-
-def test_sync_stage_tasks_seeds_future_stages_during_takeover(tmp_path):
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    store = LocalTaskStore(project_root)
-    state = create_initial_state("run-1", "CONTENTOPS", "Adopt existing project")
-    state.approvals["takeover"] = "pending"
-    state.current_node = "takeover_review_gate"
-    state.next_node = "await_takeover_approval"
-
-    sync_stage_tasks(state, store)
-
-    assert {task["status"] for task in store.list_tasks()} == {"todo"}
-
-
-def test_sync_stage_tasks_replaces_and_clears_stage_artifact_refs(tmp_path):
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    store = LocalTaskStore(project_root)
-    state = create_initial_state("run-1", "CONTENTOPS", "Build content workflow")
-    state.approvals["prd"] = "approved"
-    state.artifacts["prd"] = "/tmp/prd-v1.md"
-
-    sync_stage_tasks(state, store)
-    prd_task = next(task for task in store.list_tasks() if "stage:product_requirement" in task["external_refs"])
-
-    assert store.get_task(prd_task["id"])["artifact_refs"] == ["/tmp/prd-v1.md"]
-
-    state.artifacts["prd"] = "/tmp/prd-v2.md"
-    sync_stage_tasks(state, store)
-
-    assert store.get_task(prd_task["id"])["artifact_refs"] == ["/tmp/prd-v2.md"]
-
-    state.artifacts.pop("prd")
-    sync_stage_tasks(state, store)
-
-    assert store.get_task(prd_task["id"])["artifact_refs"] == []
 
 
 def test_task_id_migration_updates_dependencies_and_prevents_collision(tmp_path):

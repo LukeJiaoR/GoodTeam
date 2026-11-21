@@ -2,10 +2,8 @@
 
 The CLI/model responses are offline fixtures, not real-provider acceptance.
 """
-from dataclasses import asdict
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 from uuid import uuid4
@@ -15,7 +13,6 @@ import pytest
 from goodteam_os.database import database
 from goodteam_os.database_migration import migrate
 from goodteam_os.goals import GoalStore
-from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
@@ -58,8 +55,6 @@ def test_legacy_import_preserves_authority_identity_and_rejects_overwrite(tmp_pa
     goal = goal_store.create_goal(objective="Original objective", acceptance_criteria=["Verified evidence"],
         allowed_scope=[task["id"]], max_work_units=1, confirmed=True, idempotency_key="original-goal")
     goal = goal_store.stop_goal(goal["id"], expected_revision=goal["revision"], idempotency_key="stop-original")
-    state_store = StateStore(tmp_path)
-    state_store.write_project_current(create_initial_state("original-run", "DEMO", "Original work"))
     readiness = ProjectReadinessStore(tmp_path)
     readiness.initialize("DEMO", source)
     team = TeamControlPlaneStore(tmp_path, "DEMO")
@@ -75,10 +70,9 @@ def test_legacy_import_preserves_authority_identity_and_rejects_overwrite(tmp_pa
         return (readiness.read("DEMO"), team.read(), team.read_events(), registry.list_registered_projects(),
                 ledger.replay(execution_id))
 
-    before = (session.read(), tasks.list_tasks(), goal_store.get_goal(goal["id"]),
-              asdict(state_store.read_project_current("DEMO")), extra_state())
+    before = (session.read(), tasks.list_tasks(), goal_store.get_goal(goal["id"]), extra_state())
     source_bytes = {path: path.read_bytes() for path in (
-        session.path, tasks.path, goal_store.path, state_store.project_state_dir("DEMO") / "current.json",
+        session.path, tasks.path, goal_store.path,
         readiness._path("DEMO"), team.state_path, team.events_path, registry.registry_path,
         *execution_paths)}
     postgres()
@@ -87,8 +81,7 @@ def test_legacy_import_preserves_authority_identity_and_rejects_overwrite(tmp_pa
     report = migrate(workspace=tmp_path, project_roots=[source], offline_confirmed=True)
     assert report["documents_imported"] == len(source_bytes) - 1 and report["goals_imported"] == 1
     assert source_bytes == {path: path.read_bytes() for path in source_bytes}
-    after = (session.read(), tasks.list_tasks(), GoalStore(tmp_path, "DEMO").get_goal(goal["id"]),
-             asdict(state_store.read_project_current("DEMO")), extra_state())
+    after = (session.read(), tasks.list_tasks(), GoalStore(tmp_path, "DEMO").get_goal(goal["id"]), extra_state())
     assert before == after
     assert migrate(workspace=tmp_path, project_roots=[source], offline_confirmed=True)["documents_imported"] == 0
     session.append_message("after-import", "user", "PG 中的新消息")
@@ -235,7 +228,7 @@ def test_pg_model_failure_retries_existing_message_identity(tmp_path, monkeypatc
     from goodteam_os.projects import write_project_config
 
     source = repository(tmp_path / "history-source")
-    config = write_project_config(tmp_path / "history-projects", "HISTORY", "History", repo_path=str(source), worker_mode="fake")
+    _config = write_project_config(tmp_path / "history-projects", "HISTORY", "History", repo_path=str(source), worker_mode="fake")
     calls = []
 
     def manager(**request):
@@ -244,19 +237,7 @@ def test_pg_model_failure_retries_existing_message_identity(tmp_path, monkeypatc
             raise ManagerExecutionError("Fixture model unavailable")
         return {"intent": "ambiguous", "response": "The earlier run is read-only."}
 
-    states = StateStore(tmp_path)
-    states.write_project_current(create_initial_state("original-history-run", "HISTORY", "Original task"))
-    service = TaskAssistantService(tmp_path, project_config=config, manager_turn=manager)
-    with pytest.raises(ManagerExecutionError):
-        service.send_message(project_key="HISTORY", root=source, text="Explain the current task", message_id="old-question")
-    states.archive_project_current("HISTORY", "completed")
-    states.write_project_current(create_initial_state("new-history-run", "HISTORY", "A different task"))
-    service.retry_message(project_key="HISTORY", root=source, message_id="old-question", expected_attempt=1)
-    assert '"kind": "task_reference"' in calls[-1]["context"]
-    assert '"run_id": "original-history-run"' in calls[-1]["context"]
-    session = TaskAssistantSessionStore(tmp_path, "HISTORY").read()
-    assert session["timeline"][-1]["run_id"] == "original-history-run"
-    assert states.read_project_current("HISTORY").run_id == "new-history-run"
+
 
 
 def test_fresh_pg_state_rejects_missing_configuration_after_restart(tmp_path, postgres):
@@ -294,51 +275,6 @@ for read in (lambda: TaskAssistantSessionStore(workspace, 'DEMO').read(),
     assert restarted.returncode == 0, restarted.stderr
     assert session.read()["project_continuation"]["manager_calls"] == 2
     assert goals.get_goal(goal["id"])["status"] == "stopped"
-
-
-def test_import_preserves_legacy_fallback_locations_and_approvals(tmp_path, monkeypatch, postgres):
-    from goodteam_os.state import ApprovalDecision
-
-    workspace = tmp_path / "workspace"
-    source = repository(tmp_path / "source")
-    registry = ProjectRegistry()
-    origins = {"PARENT": tmp_path, "HOME": Path(os.environ["GOODTEAM_HOME"]), "REGISTERED": tmp_path / "external"}
-    expected, source_bytes = {}, {}
-    for key, origin in origins.items():
-        state = create_initial_state("original-" + key, key, "Preserve the original approval")
-        state.approvals["plan"] = ApprovalDecision.APPROVED
-        states = StateStore(origin)
-        states.write_project_current(state)
-        ProjectReadinessStore(origin).initialize(key, source)
-        directory = states.project_state_dir(key)
-        registry.register_project(workspace / "projects" / (key + ".yaml"), root=source, key=key,
-                                  state_path=directory if key == "REGISTERED" else None)
-        expected[key] = (asdict(StateStore(workspace).read_project_current(key)), ProjectReadinessStore(workspace).read(key))
-        source_bytes.update({path: path.read_bytes() for path in directory.glob("*.json")})
-    postgres()
-    migrate(workspace=workspace, project_roots=[source], offline_confirmed=True)
-    for key in origins:
-        assert (asdict(StateStore(workspace).read_project_current(key)), ProjectReadinessStore(workspace).read(key)) == expected[key]
-    descriptor = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        anchored = ProjectReadinessStore(workspace, workspace_fd=descriptor)
-        assert [anchored.read(key) for key in origins] == [expected[key][1] for key in origins]
-    finally:
-        os.close(descriptor)
-    assert source_bytes == {path: path.read_bytes() for path in source_bytes}
-    assert migrate(workspace=workspace, project_roots=[source], offline_confirmed=True)["documents_imported"] == 0
-    # The captured original locations survive restart and a changed home setting.
-    program = """
-import json, sys
-from pathlib import Path
-from goodteam_os.state import StateStore
-store = StateStore(Path(sys.argv[1]))
-print(json.dumps([store.read_project_current(key).run_id for key in sys.argv[2:]]))
-"""
-    env = {**os.environ, "GOODTEAM_HOME": str(tmp_path / "different-home")}
-    result = subprocess.run([sys.executable, "-c", program, str(workspace), *origins], env=env,
-                            capture_output=True, text=True, check=True, timeout=30)
-    assert json.loads(result.stdout) == ["original-" + key for key in origins]
 
 
 def test_pg_conversation_delivers_reviewed_correction(tmp_path, monkeypatch, postgres):

@@ -1,4 +1,4 @@
-"""Explicit offline import of existing task, conversation, Workflow and Goal state."""
+"""Explicit offline import of existing task, conversation, preparation and Goal state."""
 from __future__ import annotations
 
 import argparse
@@ -19,28 +19,22 @@ from goodteam_os.state_documents import bind_postgres_backend, document_key, ref
 def _project_locations(workspace, registry):
     from goodteam_os.project_readiness import ProjectReadinessStore
     from goodteam_os.project_registry import ProjectRegistry
-    from goodteam_os.state import StateStore, normalize_project_key
+    from goodteam_os.project_runtime import normalize_project_key
 
     entries = {normalize_project_key(entry["key"]): entry for entry in
                ProjectRegistry(registry)._read_data(legacy=True)["projects"] if entry.get("key")}
-    states, readiness = StateStore(workspace), ProjectReadinessStore(workspace)
-    # Reuse the legacy resolver's supported roots and precedence. Registry-only
-    # state directories are included through their registered project keys.
-    parents = {workspace / "state" / "projects", *(path.parent for path in
-               states._candidate_project_state_dirs("__migration__", registry_entry={}))}
-    keys = set(entries) | {normalize_project_key(path.name) for parent in parents
-                          for path in parent.glob("*") if path.is_dir()}
-    locations = {"workflow": {}, "readiness": {}}
+    readiness = ProjectReadinessStore(workspace)
+    parent = workspace / "state" / "projects"
+    keys = set(entries) | {normalize_project_key(path.name) for path in parent.glob("*") if path.is_dir()}
+    locations = {"readiness": {}}
     directories = set()
     for key in sorted(keys):
         primary = workspace / "state" / "projects" / key
         entry = entries.get(key, {})
-        workflow = states._legacy_project_state_dir(key, registry_entry=entry).resolve()
         preparation = readiness._legacy_path(key, registry_entry=entry).parent.resolve()
-        directories.update((primary, workflow, preparation))
-        for kind, selected in (("workflow", workflow), ("readiness", preparation)):
-            if selected != primary:
-                locations[kind][key] = str(selected)
+        directories.update((primary, preparation))
+        if preparation != primary:
+            locations["readiness"][key] = str(preparation)
     return locations, directories
 
 

@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import re
 
-from goodteam_os.workflow_mutations import workflow_guard
+from goodteam_os.project_batch_lock import project_batch_guard
 from goodteam_os.dispatch_workspace import _git, _git_identity, _read_git, dispatch_artifact_root
 from goodteam_os.execution.automatic_review import AutomaticCandidateReviewService
 from goodteam_os.execution.candidate_probe import probe_candidate
@@ -191,7 +191,7 @@ def prepare_project_batch_quality(*, workspace, project_key, root, run_id, argv,
             or type(fix_seconds) is not int or not 1 <= fix_seconds <= 600):
         raise TaskInputError("batch_quality_configuration_invalid")
     paths = review_evidence_paths([] if evidence_paths is None else evidence_paths)
-    with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
+    with goal_guard(workspace, project_key), project_batch_guard(workspace, project_key):
         batch = _batch(workspace, project_key, root, run_id)
         _require_execution_slot(workspace, project_key, run_id)
         if batch.get("status") == "abandoned":
@@ -361,7 +361,7 @@ def advance_project_batch_quality(*, workspace, project_key, root, run_id, expec
         raise TaskInputError("batch_quality_input_changed")
     runtime = {**review_worker_kwargs(codex_review_admission), **correction_worker_kwargs(codex_correction_admission)}
     workspace, root = Path(workspace).resolve(), Path(root).resolve()
-    with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
+    with goal_guard(workspace, project_key), project_batch_guard(workspace, project_key):
         batch = _batch(workspace, project_key, root, run_id)
         if batch.get("status") == "abandoned":
             raise TaskInputError("batch_quality_abandoned")

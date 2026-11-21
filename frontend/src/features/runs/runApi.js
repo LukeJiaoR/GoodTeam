@@ -17,21 +17,6 @@ export const getGoalHistory = (projectKey, before, { signal } = {}) => requestJs
   { signal, cache: 'no-store' },
 );
 
-export const getProjectRuns = (projectKey, { signal } = {}) => requestJson(
-  `/api/projects/${encodeURIComponent(projectKey)}/runs`,
-  { signal },
-);
-
-export const getProjectRun = (projectKey, runId, { signal } = {}) => requestJson(
-  `/api/projects/${encodeURIComponent(projectKey)}/runs/${encodeURIComponent(runId)}`,
-  { signal },
-);
-
-export const getTaskInputContext = (projectKey, runId, { signal } = {}) => requestJson(
-  `/api/projects/${encodeURIComponent(projectKey)}/runs/${encodeURIComponent(runId)}/input-context`,
-  { signal, cache: 'no-store' },
-);
-
 export const sendTaskAssistantMessage = (projectKey, body, options) => jsonPost(
   `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/messages`, body, options,
 );
@@ -41,11 +26,7 @@ export const uploadConversationAttachment = (projectKey, body, options) => jsonP
 export const taskAssistantAction = (projectKey, body, options) => jsonPost(
   `/api/projects/${encodeURIComponent(projectKey)}/task-assistant/actions`, body, options,
 );
-export const terminateRun = (projectKey, expectedRunId, options) => jsonPost('/api/terminate', {
-  project_key: projectKey, expected_run_id: expectedRunId,
-}, options);
-
 export const runApi = {
-  getProjectState, getGoalHistory, getProjectRuns, getProjectRun, getTaskInputContext,
-  sendTaskAssistantMessage, taskAssistantAction, terminateRun,
+  getProjectState, getGoalHistory,
+  sendTaskAssistantMessage, taskAssistantAction,
 };

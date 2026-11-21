@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from goodteam_os.state import normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os import state_documents
 from goodteam_os.database import database_configured
 
@@ -876,8 +876,6 @@ def build_capabilities(readiness: dict[str, object]) -> dict[str, object]:
         "inspect_project_facts": True,
         "edit_project_settings": True,
         "run_readiness_steps": True,
-        "start_workflow": True,
-        "start_workflow_reason": "",
     }
 
 

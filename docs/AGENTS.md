@@ -17,10 +17,8 @@ README.md: GoodTeam Documentation。
 acceptance-coverage-display.md: Original acceptance coverage in Review Workbench。
 active-goal-intake-composition.md: Compose existing running-project intake with Role/Loop work。
 agent-sandbox-v0.md: Agent Sandbox v0。
-approved-plan-binding.md: Approved intent in normal candidate delivery。
 architecture-commercialization-review.md: GoodTeam Architecture and Commercialization Review。
-architecture.md: GoodTeam Architecture。
-artifact-revision-authority.md: Artifact revisions and proposal authority。
+architecture.md: 项目、任务队列、Worker 和候选证据的职责。
 automatic-candidate-review.md: Automatic exact-candidate review。
 backlog-human-board.md: Backlog judgment through the existing Human board。
 backlog-wait-receipt.md: Recover a committed waiting decision after acknowledgement loss。
@@ -38,7 +36,6 @@ confirmed-scope-additions.md: Human-confirmed later work in the existing project
 context-continuity.md: Bounded conversation and task continuity。
 continuation-activity-visibility.md: Show the human the actual continuation situation。
 continuation-authority.md: Continuation authority semantics。
-conversation-change-status.md: Conversational change status。
 conversation-continuity.md: Conversation continuity。
 conversation-feedback.md: Conversation feedback (selective follow-up to #430 and #431)。
 correction-worker-attempts.md: Correction Worker host protocol。
@@ -79,7 +76,7 @@ mixed-runtime-methods.md: Mixed Runtime batches keep per-task Role methods。
 model-scorecard.md: Model / agent scorecard — bug attribution for task routing。
 multiple-investigation-feedback.md: Return multiple discovered investigations to the existing Manager loop。
 observation-recovery-human-board.md: Integrate existing observation recovery with Human board questions。
-operator-guide.md: GoodTeam Operator Guide。
+operator-guide.md: 启动项目、派发任务及验证交付。
 operator-manager-intake.md: Operator intake convergence (candidate)。
 operator-plan-review.md: Operator plan-compliance gate。
 ordinary-pi-method-input.md: Explicit ordinary Pi method input (#445)。
@@ -112,15 +109,13 @@ project-registry-recovery.md: Project registry read failures。
 project-running-observation.md: Running observation candidate on the original continuation。
 project-shared-worker-pool.md: Keep independent approved work moving across batches。
 project-sibling-feedback.md: Keep the original grant alive while sibling execution remains。
-project-task-batches.md: Running a project task batch。
+project-task-batches.md: 确认任务草稿、执行批次与读取结果。
 provenance-ledger.md: Provenance Ledger。
 readiness-executors.md: Project readiness executors。
 readonly-pi-role-methods.md: Read-only Researcher / Planner methods through the original Pi Runtime。
 readonly-pi-search.md: Authorized Web Search for read-only Researcher / Planner。
 ready-work-human-context.md: Let Manager judge ready work alongside pending Human questions。
 repository-context-provider.md: Repository Context Provider。
-review-and-approval-guide.md: Review And Approval Guide。
-reviewer-profiles.md: Reviewer Profiles。
 role-capability-discovery.md: Continuing Manager decisions use configured Role capability。
 role-capability-intake.md: Ordinary Manager intake follows the configured Role capability。
 role-capability-routing.md: Runtime source governs artifact routing。
@@ -136,7 +131,6 @@ self-hosted-ci-runner.md: Former self-hosted CI runner。
 status.md: GoodTeam Current Status。
 supervised-correction-loop.md: Supervised correction rounds。
 task-assistant-contract.md: Task Assistant Recovery And Draft Contract。
-task-attempt-inspector.md: Inspect a workflow attempt。
 task-delegation-contract.md: Bounded Role task delegation and entry consistency。
 task-input-context-view.md: Task input and method inspection。
 task-input-snapshots.md: Captured issue task inputs。
@@ -155,6 +149,5 @@ work-reading-position.md: Work reading position (#397)。
 worker-backends.md: Worker Backends Reference。
 worker-memory-observations.md: Ordinary Worker memory observations。
 worker-setup.md: Project setup for isolated Workers。
-workflow-retry-target.md: Retrying the displayed workflow attempt。
 
 [PROTOCOL]: Update this header on change, then check AGENTS.md

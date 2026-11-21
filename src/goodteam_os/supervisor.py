@@ -176,26 +176,6 @@ def run_supervisor(
             component.heartbeat_path.unlink(missing_ok=True)
 
 
-def run_telegram_component(
-    *,
-    workspace: Path,
-    ready_file: Path,
-    ready_token: str,
-    heartbeat_file: Path,
-    heartbeat_token: str,
-) -> int:
-    from goodteam_os.telegram import poll_telegram_approvals, telegram_config_from_env
-
-    _install_component_signal_handlers()
-    heartbeat = ComponentHeartbeat(heartbeat_file, heartbeat_token)
-    heartbeat.beat()
-    _write_ready(ready_file, ready_token)
-    if not telegram_config_from_env()["enabled"]:
-        return _idle_until_signal(heartbeat=heartbeat.beat)
-    poll_telegram_approvals(workspace=workspace, heartbeat=heartbeat.beat)
-    return 0
-
-
 def _component_specs(
     *,
     workspace: Path,
@@ -204,7 +184,6 @@ def _component_specs(
     frontend_dist: Path,
     state_dir: Path,
 ) -> list[Component]:
-    from goodteam_os.telegram import telegram_config_from_env
 
     runtime = state_dir / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
@@ -250,8 +229,6 @@ def _component_specs(
             ],
         ),
     ]
-    if telegram_config_from_env()["enabled"]:
-        components.append(component("telegram", ["_telegram-component", "--workspace", str(workspace)]))
     return components
 
 
@@ -444,10 +421,6 @@ def _write_projection(
         }
         for component in components
     }
-    # An unconfigured channel has no process, readiness or watchdog budget.
-    state["components"].setdefault("telegram", {
-        "status": "disabled", "ready": False, "pid": 0, "restart_count": 0,
-    })
     temporary = state_path.with_name(f"{state_path.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
     temporary.replace(state_path)

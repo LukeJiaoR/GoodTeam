@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
-from goodteam_os.assistant_drafts import archive_terminal_proposal
 from goodteam_os.assistant_requests import conversation_lock, response
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
@@ -32,7 +31,6 @@ def handle_queue_action(service, *, project_key, root, request):
             )
             if queued is not None and queued.get("status") == "queued":
                 require_queued_project_task(root, project_key, queued)
-            archive_terminal_proposal(store, workspace=service.workspace, root=root)
         store._mutate(lambda session: _apply(session, request))
         return response(service, project_key, root)
 
@@ -145,7 +143,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
                                    expected_choice_event_id=None, expected_task_ids=None):
     """One adapter: saved Manager picks become ordinary Task Assistant queue items.
 
-    It creates NO Worker, Workflow, Goal, or second project-task ledger. Queued
+    It writes the original task card and an unconfirmed queue entry. Queued
     work is not approved. Existing select -> confirm -> start handles authority.
     """
     from goodteam_os.project_iteration import (
@@ -179,7 +177,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
             known = {item["id"]: item for item in items}
             selected = [known[task_id] for task_id in validated["selected_task_ids"]]
             # Batch dispatch preserves read-only policy. The ordinary writing
-            # Workflow adapter still rejects it at selection/confirmation.
+            # Batch admission still rejects it at selection or confirmation.
             event_id = choice.get("source_event_id") or f"iteration-choice:{snapshot['version']}"
             if (expected_choice_event_id is not None and event_id != expected_choice_event_id
                     or expected_task_ids is not None and validated["selected_task_ids"] != expected_task_ids):
@@ -243,10 +241,9 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
 
             updated = store._mutate(append)
     return {
-        "status": "queued_for_existing_task_workflow",
+        "status": "queued_for_project_batch",
         "queued_task_ids": validated["selected_task_ids"],
         "queued_proposal_ids": [proposal["id"] for proposal in prepared],
-        "workflow_started": False,
         "task_assistant_session": updated,
     }
 

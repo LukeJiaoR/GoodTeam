@@ -115,9 +115,9 @@ def test_dispatch_selects_only_new_standard_role_tasks_and_retains_old_confirmat
         task=TaskSkillIdentity('direct_task','DEMO','old'), command_key='direct-start:DEMO:old',
         subjects=('role:implementation',), confirmed_input={'tracks':tracks,'constraints':[],
             'verify_commands':{},'constraints_source':'','research_report_source':''})
-    with pytest.raises(ValueError, match='protected Skill work keeps its original workflow'):
+    with pytest.raises(ValueError, match='protected Skill work uses its original execution contract'):
         dispatch_tracks(**{**request,'logical_task_id':'old'})
-    with pytest.raises(ValueError, match='protected Skill work keeps its original workflow'):
+    with pytest.raises(ValueError, match='protected Skill work uses its original execution contract'):
         dispatch_tracks(**{**request,'logical_task_id':'readonly',
             'tracks':[{**tracks[0],'execution_policy':'read_only'}]})
     assert len(calls) == 2 and len(workers.list_jobs()) == 1

@@ -12,7 +12,7 @@ from goodteam_os.goal_continuation import goal_guard
 from goodteam_os.memory_storage import read_bytes
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
-from goodteam_os.workflow_mutations import workflow_guard
+from goodteam_os.project_batch_lock import project_batch_guard
 
 
 def _digest(value):
@@ -61,13 +61,13 @@ def _quality_quiescent(root, batch):
             return False
     from goodteam_os.execution.automatic_review import AutomaticCandidateReviewService
     from goodteam_os.execution.correction_store import CorrectionAttemptStore
-    from goodteam_os.skills.review_api import _jobs
+    from goodteam_os.skills.worker_requests import registered_reviewer_jobs
     from goodteam_os.skills.review_results import ReviewResultStore
 
     service = AutomaticCandidateReviewService(root)
     if service.configuration(snapshot.execution_id) is not None:
         _start, context = service._load(snapshot)
-        for job_id, _snapshot, _reference in _jobs(service.workers, context):
+        for job_id, _snapshot, _reference in registered_reviewer_jobs(service.workers, context):
             detail = ReviewResultStore(service.workers, job_id).detail(expected_task_context=context)
             # A prepared Reviewer may already own an acquired route/container.
             # Only a matching protected terminal outcome proves retirement.
@@ -215,7 +215,7 @@ def retire_project_batch_worker(*, workspace, project_key, root, run_id, job_id,
         raise ValueError("Confirm the original Worker and all related processes have stopped after local inspection.")
     _identifier(job_id)
     store, _saved = _batch(workspace, project_key, root, run_id)
-    with goal_guard(workspace, project_key), workflow_guard(workspace, project_key), conversation_lock(store):
+    with goal_guard(workspace, project_key), project_batch_guard(workspace, project_key), conversation_lock(store):
         _store, batch = _batch(workspace, project_key, root, run_id)
         dispatch_id = effective_dispatch_id(batch)
         with dispatch_workspace_lock(Path(root), dispatch_id):
@@ -293,7 +293,7 @@ def reconcile_recovery_tasks(root, project_key, batch, command):
 def _resume_command(workspace, project_key, root, batch, command_id):
     """Resume only this admitted command; never reapply continuation consent."""
     from goodteam_os.project_iteration_execution import run_queued_iteration_batch
-    from goodteam_os.workflow_mutations import WorkflowBusyError
+    from goodteam_os.project_batch_lock import ProjectBatchBusyError
 
     command = batch["recovery_commands"][command_id]
     retry = command["request"]["action"] == "retry_project_batch"
@@ -306,10 +306,10 @@ def _resume_command(workspace, project_key, root, batch, command_id):
             run_queued_iteration_batch(workspace=workspace, project_key=project_key, root=root,
                 project_config=batch["project_config"], proposal_ids=batch["proposal_ids"],
                 expected_revisions=batch["expected_revisions"], confirmed=True, background=True)
-        except WorkflowBusyError:
+        except ProjectBatchBusyError:
             pass
     elif batch["status"] == "abandoned":
-        with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
+        with goal_guard(workspace, project_key), project_batch_guard(workspace, project_key):
             reconcile_recovery_tasks(root, project_key, batch, command)
 
 
@@ -339,7 +339,7 @@ def recover_project_batch(*, workspace, project_key, root, request):
             raise ValueError("Recovery command identity was already used with different inputs.")
         _resume_command(workspace, project_key, root, batch, command_id)
         return _response(workspace, project_key, root, store.read()["project_task_batches"][batch["run_id"]], previous)
-    with goal_guard(workspace, project_key), workflow_guard(workspace, project_key), conversation_lock(store):
+    with goal_guard(workspace, project_key), project_batch_guard(workspace, project_key), conversation_lock(store):
         _store, batch = _batch(workspace, project_key, root, batch["run_id"])
         previous = batch.get("recovery_commands", {}).get(command_id)
         if previous:

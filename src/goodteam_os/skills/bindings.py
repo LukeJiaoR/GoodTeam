@@ -28,10 +28,6 @@ def manager_subject(manager_role: str) -> str:
     return f"manager:{manager_role}"
 
 
-def workflow_role_subject(role: str) -> str:
-    return f"workflow_role:{role}"
-
-
 def contract_ref(subject: str) -> str:
     return f"{subject}@v{ROLE_CONTRACT_VERSION}"
 
@@ -49,10 +45,9 @@ def default_binding(subject: str, *, project_key: str = "") -> dict[str, Any]:
     }
 
 
-def allowed_subjects(role_keys, manager_role: str, workflow_role_keys=()) -> tuple[str, ...]:
+def allowed_subjects(role_keys, manager_role: str) -> tuple[str, ...]:
     return tuple([
         *(role_subject(role) for role in role_keys),
-        *(workflow_role_subject(role) for role in workflow_role_keys),
         manager_subject(manager_role),
     ])
 
@@ -153,10 +148,9 @@ def normalize_binding_map(
     role_keys,
     manager_role: str,
     project_key: str = "",
-    workflow_role_keys=(),
 ) -> dict[str, dict[str, Any]]:
     source = dict(raw) if isinstance(raw, dict) else {}
-    allowed = allowed_subjects(role_keys, manager_role, workflow_role_keys)
+    allowed = allowed_subjects(role_keys, manager_role)
     unknown = set(source) - set(allowed)
     if unknown:
         raise SkillError("binding_subject_unknown", "Role–Skill bindings contain an unknown subject.")

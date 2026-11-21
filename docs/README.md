@@ -14,7 +14,6 @@ For the short current-state summary, start with [`status.md`](status.md).
 | Understand what GoodTeam is | [`../README.md`](../README.md), [`explainer.md`](explainer.md) |
 | Understand the system architecture | [`architecture.md`](architecture.md) |
 | Run GoodTeam day to day | [`operator-guide.md`](operator-guide.md) |
-| Review approval gates | [`review-and-approval-guide.md`](review-and-approval-guide.md) |
 | Run live smoke safely | [`live-smoke-playbook.md`](live-smoke-playbook.md) |
 | Configure a project | [`config-reference.md`](config-reference.md) |
 | Understand worker dispatch | [`worker-backends.md`](worker-backends.md) |
@@ -51,12 +50,11 @@ A historical document can explain *why* a decision was made, but it must not sil
 ### Product and architecture
 
 - [`explainer.md`](explainer.md): concise visual introduction for new readers, contributors, and design partners.
-- [`architecture.md`](architecture.md): current system context, Task Assistant interaction layer, workflow/worker boundaries, approval/evidence model, memory/provenance, and current-vs-active-design boundary.
+- [`architecture.md`](architecture.md): current system context, Task Assistant interaction layer, batch and Worker boundaries, confirmation and delivery evidence, memory/provenance, and current-vs-active-design boundary.
 
 ### Operator manuals
 
 - [`operator-guide.md`](operator-guide.md): day-to-day GoodTeam operating loop.
-- [`review-and-approval-guide.md`](review-and-approval-guide.md): approval-gate semantics, evidence quality, and reviewer provenance.
 - [`live-smoke-playbook.md`](live-smoke-playbook.md): Tier 4 live-smoke scope, isolation, evidence, and failure handling.
 - [`project-continuation.md`](project-continuation.md): fixed-task authorization, automatic queue execution and verified landed delivery.
 - [`project-outcome-discovery.md`](project-outcome-discovery.md): optional bounded follow-ups from actual accepted outcomes and existing memory provenance.
@@ -67,7 +65,6 @@ A historical document can explain *why* a decision was made, but it must not sil
 
 - [`config-reference.md`](config-reference.md): currently implemented project config fields and safety rules.
 - [`worker-backends.md`](worker-backends.md): backend lifecycle, dispatch packet shape, readiness checks, result semantics, and failure handling.
-- [`reviewer-profiles.md`](reviewer-profiles.md): reviewer role contracts, provenance, dispatch, retry, and evidence projection.
 - [`repository-context-provider.md`](repository-context-provider.md) and [`project-onboarding-runner.md`](project-onboarding-runner.md): snapshot-bound repository retrieval and bounded onboarding execution.
 - [`execution-identity.md`](execution-identity.md): issue/attempt/execution/branch/PR/SHA/CI/ledger identity chain.
 - [`memory-model.md`](memory-model.md): local run-history memory model.

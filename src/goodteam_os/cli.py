@@ -25,9 +25,8 @@ from goodteam_os.projects import (
 from goodteam_os.smoke import run_smoke_suite
 from goodteam_os.operator_manager_intake import enqueue_github_issue
 from goodteam_os.service import DEFAULT_PORT, restart_service, service_status, stop_service
-from goodteam_os.supervisor import ComponentHeartbeat, run_supervisor, run_telegram_component
+from goodteam_os.supervisor import ComponentHeartbeat, run_supervisor
 from goodteam_os.tasks import LocalTaskStore, build_task_board, serialize_task_board
-from goodteam_os.telegram import poll_telegram_approvals
 from goodteam_os.web import serve
 from goodteam_os.workers import WorkerJobStore
 
@@ -121,13 +120,6 @@ def build_parser() -> argparse.ArgumentParser:
     supervise.add_argument("--ready-file", type=Path, required=True)
     supervise.add_argument("--ready-token", required=True)
 
-    telegram_component = subparsers.add_parser("_telegram-component", help=argparse.SUPPRESS)
-    telegram_component.add_argument("--workspace", type=Path, required=True)
-    telegram_component.add_argument("--ready-file", type=Path, required=True)
-    telegram_component.add_argument("--ready-token", required=True)
-    telegram_component.add_argument("--heartbeat-file", type=Path, required=True)
-    telegram_component.add_argument("--heartbeat-token", required=True)
-
     init = subparsers.add_parser("init", help="Scaffold a project config and run doctor")
     init.add_argument("--key", required=True, help="Short project key, e.g. MYAPP")
     init.add_argument("--name", default="", help="Human project name (defaults to --key)")
@@ -186,31 +178,9 @@ def build_parser() -> argparse.ArgumentParser:
     memory_append.add_argument("--source", default="")
     memory_append.add_argument("--supersedes", default="")
 
-    tg_poll = subparsers.add_parser("tg-poll")
-    tg_poll.add_argument("--workspace", type=Path, default=Path("."))
-    tg_poll.add_argument("--project-key", default="")
-    tg_poll.add_argument("--once", action="store_true")
-
     execution = subparsers.add_parser("execution")
     execution_subparsers = execution.add_subparsers(dest="execution_command", required=True)
 
-    bind_plan = execution_subparsers.add_parser("bind-plan", help="Bind a captured task to existing approved workflow intent")
-    bind_plan.add_argument("--execution-id", required=True)
-    bind_plan.add_argument("--project-root", type=Path, required=True)
-    bind_plan.add_argument("--workflow-run", required=True)
-    bind_plan.add_argument("--task-anchor", required=True, help="Exact unique task heading in the derived breakdown (fix plan for fix profile)")
-
-    run_execution = execution_subparsers.add_parser("run")
-    run_execution.add_argument("--execution-id", required=True)
-    run_execution.add_argument("--project-root", type=Path, required=True)
-    run_execution.add_argument("--review-base", default="", help="Original exact base for the frozen delivery plan.")
-    run_execution.add_argument("--criterion", type=int, action="append", help="Original acceptance criterion index.")
-    run_execution.add_argument("--seconds", type=int, default=30)
-    run_execution.add_argument("--acknowledge-external-cost", action="store_true",
-                              help="Acknowledge correction cost; does not grant runtime admission.")
-    run_execution.add_argument("--local-codex-policy", type=Path, help="Existing task-bound local Reviewer policy.")
-    run_execution.add_argument("--trusted-codex-review-policy", type=Path, help="Existing task-bound trusted Reviewer policy.")
-    run_execution.add_argument("argv", nargs=argparse.REMAINDER)
     for command in ("pr", "ci", "replay", "review"):
         execution_command = execution_subparsers.add_parser(command)
         execution_command.add_argument("--execution-id", required=True)
@@ -344,14 +314,6 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             ready_file=args.ready_file,
             ready_token=args.ready_token,
         )
-    if args.command == "_telegram-component":
-        return run_telegram_component(
-            workspace=args.workspace,
-            ready_file=args.ready_file,
-            ready_token=args.ready_token,
-            heartbeat_file=args.heartbeat_file,
-            heartbeat_token=args.heartbeat_token,
-        )
     if args.command == "restart":
         try:
             payload = restart_service(workspace=args.workspace, host=args.host, port=args.port)
@@ -482,10 +444,6 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
         }
         print(json.dumps(payload))
         return 0
-    if args.command == "tg-poll":
-        payload = poll_telegram_approvals(workspace=args.workspace, project_key=args.project_key, once=args.once)
-        print(json.dumps(payload, indent=2))
-        return 0
     if args.command == "batch-retire-worker":
         from goodteam_os.project_iteration_recovery import retire_project_batch_worker
         from goodteam_os.web import _project_target_and_root
@@ -531,11 +489,6 @@ def main(argv: list[str] | None = None, *, codex_review_admission: CodexReviewAd
             payload = _run_execution_command(args, **runtime_kwargs, **correction_runtime_kwargs)
         except ValueError as exc:
             print(f"execution: {exc}", file=sys.stderr)
-            if str(getattr(exc, "code", "")).startswith("approved_plan_"):
-                print("Use existing RFC/security (or fix-plan) reviews for current approved intent, then "
-                      "execution bind-plan with its workflow run and exact task heading before the first Builder run. "
-                      "Stale captured bindings cannot be silently retargeted; see docs/approved-plan-binding.md.",
-                      file=sys.stderr)
             return 2
         print(json.dumps(payload, indent=2))
         return 0
@@ -563,7 +516,7 @@ def _print_service_status(payload: dict[str, object]) -> None:
     components = payload.get("components", {})
     if isinstance(components, dict):
         print("\nComponents")
-        for name in ("web", "telegram"):
+        for name in ("web",):
             component = components.get(name, {})
             component = component if isinstance(component, dict) else {}
             print(
@@ -579,20 +532,6 @@ def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=N
 
     api = ExecutionAPI(args.project_root, **review_worker_kwargs(codex_review_admission),
                        **correction_worker_kwargs(codex_correction_admission))
-    if args.execution_command == "bind-plan":
-        from goodteam_os.execution.approved_plan import ApprovedPlanBinding
-        value = ApprovedPlanBinding(args.project_root).register(args.execution_id,
-            workflow_run_id=args.workflow_run, task_anchor=args.task_anchor)
-        return {"status": "bound", "execution_id": args.execution_id, "binding": value}
-    if args.execution_command == "run":
-        command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
-        plan = None
-        if command or args.review_base or args.criterion or args.seconds != 30:
-            if not command or not args.review_base or not args.criterion:
-                raise ValueError("The first delivery run requires --review-base, --criterion and an explicit check command")
-            plan = {"base_sha": args.review_base, "argv": command, "criteria": args.criterion, "seconds": args.seconds}
-        return api.run_execution(args.execution_id, candidate_review=plan, resume_candidate_review=True,
-                                 acknowledge_external_cost=args.acknowledge_external_cost)
     if args.execution_command == "pr":
         return api.create_or_reuse_pr(args.execution_id)
     if args.execution_command == "ci":

@@ -30,7 +30,7 @@ from goodteam_os.repository_snapshot import (
     RepositorySnapshotError,
     capture_repository_snapshot,
 )
-from goodteam_os.state import normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os.workers import worker_backend_local_preflight
 
 
@@ -43,7 +43,7 @@ def canonical_root(root: object) -> str:
     write execution and artifact records with the raw caller path, so binding
     comparisons between the two forms failed for symlinked roots
     (``readiness_artifact_mismatch`` on input submission and the
-    ``start_workflow`` capability gated off even after readiness completed).
+    confirmation separate from readiness).
 
     Only ancestor components are resolved: the final component is preserved so
     the executor's O_NOFOLLOW root guard still rejects a root that is itself a
@@ -1098,7 +1098,7 @@ class ProjectReadinessExecutor:
             "constraints": str(inputs.get("constraints", "")),
             "prohibited_operations": str(inputs.get("prohibited_operations", "")),
             "target_root_writes_authorized": False,
-            "next_steps": ["Review the project brief", "Start the existing GoodTeam workflow"],
+            "next_steps": ["Review the project brief", "Confirm the project’s task batch"],
         }
         key = str(state.get("project_key", ""))
         root = Path(str(state.get("canonical_root", "")))

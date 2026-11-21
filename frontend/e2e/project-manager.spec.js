@@ -14,7 +14,6 @@ test('project import waits for the user and research uses ordinary task intake',
   const before = await workState(page, fixture.key);
   expect(before.project_assistant.timeline).toHaveLength(1);
   expect(before.project_assistant.proposed_task).toBeFalsy();
-  expect(before.state).toBeNull();
   expect(automaticWork).toEqual([]);
 
   const text = 'Summarize this project’s architecture, key flows, and open work. Research only; do not modify code.';
@@ -23,7 +22,8 @@ test('project import waits for the user and research uses ordinary task intake',
   expect(after.project_assistant.proposed_task.id).toBe(proposal.id);
   expect(after.project_assistant.timeline.some(item => item.event?.startsWith('project_understanding')
     || item.event === 'project_inspection_started')).toBe(false);
-  expect(after.state).toBeNull();
+  expect(after.worker_jobs).toEqual([]);
+  expect(Object.keys(after.task_assistant_session.project_task_batches || {})).toEqual([]);
   expect(automaticWork).toEqual([`/api/projects/${fixture.key}/task-assistant/messages`]);
 });
 
@@ -82,7 +82,7 @@ test('the workbench keeps worker detail next to its owner at desktop and phone w
   await page.locator('.studio-sidebar-toggle').click();
   await expect(page.locator('.product-shell')).toHaveAttribute('data-sidebar', 'collapsed');
   expect((await page.locator('.studio-sidebar').boundingBox()).width).toBeCloseTo(48, 0);
-  for (const label of ['Workbench', 'Reviews', 'Team', 'Knowledge base']) {
+  for (const label of ['Workbench', 'Team', 'Knowledge base']) {
     await expect(page.getByRole('link', { name: label, exact: true })).toBeVisible();
   }
   await page.locator('.studio-sidebar-toggle').click();

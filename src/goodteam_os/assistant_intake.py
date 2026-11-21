@@ -1,11 +1,15 @@
-"""Bound task discovery to the user's messages for the current, unstarted task."""
+"""[INPUT]: 项目会话消息与草稿事件。
+[OUTPUT]: 提取当前草稿的原始用户请求。
+[POS]: 限制 Manager 任务输入引用的消息范围。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 from goodteam_os.manager_execution import ManagerExecutionError
 
 
 _INTAKE_BOUNDARIES = {
     "task_proposed", "task_revised", "task_draft_edited", "task_withdrawn",
-    "task_proposal_archived", "task_confirmed", "workflow_started",
+    "task_confirmed", "queued_task_batch_confirmed",
     "queued_task_selected",
 }
 
@@ -25,8 +29,6 @@ def intake_source_messages(session, *, current_message_id=""):
         messages.append({"message_id": item["message_id"], "content": content})
         size += len(content)
     messages.reverse()
-    # Terminal proposal archival happens after the current request is recorded.
-    # That boundary excludes the old task, but must not hide the new request.
     if current_message_id and not any(item["message_id"] == current_message_id for item in messages):
         current = next((item for item in session.get("timeline", []) if item.get("message_id") == current_message_id
                         and item.get("actor") == "user" and not item.get("run_id") and not item.get("event")), None)
@@ -56,7 +58,7 @@ def mark_draft_needs_clarification(store, intake):
 
     def mutate(session):
         proposal = dict(session.get("proposed_task") or {})
-        if not proposal or proposal.get("confirmed") or proposal.get("run_id") or proposal.get("status") == "cancelled":
+        if not proposal or proposal.get("confirmed") or proposal.get("status") == "cancelled":
             return session
         if not proposal.get("needs_clarification"):
             proposal.update(needs_clarification=True, revision=proposal["revision"] + 1)

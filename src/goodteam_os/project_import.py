@@ -14,7 +14,7 @@ from typing import Iterator
 
 from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities
 from goodteam_os.projects import build_registered_project_config, load_project_target
-from goodteam_os.state import normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 
 
 IMPORT_LOCK_NAME = ".project-import.lock"

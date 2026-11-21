@@ -35,7 +35,7 @@ def publish_role_methods(store, subjects):
     result = {}
     for subject in subjects:
         namespace, _, role = subject.partition(':')
-        if namespace not in {'role', 'workflow_role', 'manager'} or role not in ROLE_PACKAGES:
+        if namespace not in {'role', 'manager'} or role not in ROLE_PACKAGES:
             raise SkillError('default_method_unavailable', 'No reviewed default methods exist for ' + subject + '.')
         items = []
         for name in ROLE_PACKAGES[role]:

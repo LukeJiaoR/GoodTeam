@@ -65,7 +65,7 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     task = LocalTaskStore(root, 'DEMO').get_task(queued[0]['project_task_id'])
     assert task['role'] == 'planner' and task['execution_policy'] == 'read_only'
     assert task['delegation']['scope'] == action['delegation']['scope']
-    assert 'worker_id' not in task and not queued_result['workflow_started']
+    assert 'worker_id' not in task
     service.send_message(**request)
     assert len(calls) == 1
     # Continuing Manager decisions must see the same configured capability as

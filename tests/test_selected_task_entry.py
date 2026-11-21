@@ -58,7 +58,7 @@ def test_selected_role_draft_keeps_task_and_uses_same_batch_once(tmp_path, monke
             {'action': 'continue_preparation', 'step_id': 'worker_preflight', 'values': {}})
     else:
         status, result = web.handle_project_api_post(tmp_path, path, request)
-    assert status == 202 and result['workflow_started'] is False
+    assert status == 202 and result['execution_started'] is True
     run_id = result['run_id']
     batch = store.read()['project_task_batches'][run_id]
     assert batch['selected_proposal_id'] == proposal['id']

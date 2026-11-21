@@ -1,7 +1,7 @@
 """Read-only, evidence-grounded starting point for project iteration planning.
 
 This is a projection of the existing project task ledger, not a new scheduler.
-Workflow stages and work units managed by a confirmed Goal are deliberately
+Work units managed by a confirmed Goal are deliberately
 excluded: they are execution records, not independently prioritizable ideas.
 """
 from __future__ import annotations
@@ -98,7 +98,7 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
         raise ValueError("Project backlog must be a task list.")
     relevant = [task for task in tasks if isinstance(task, dict) and not _internal(task)]
     known = {str(task.get("id", "")): task for task in tasks if isinstance(task, dict)}
-    # Workflow-stage and Goal-owned cards are not project backlog decisions.
+    # Goal-owned cards are not project backlog decisions.
     # Only include their *status* when a genuine project task depends on them.
     dependency_ids = {dep for task in relevant for dep in _items(task.get("dependencies"), 64, 120)}
     fingerprint = {

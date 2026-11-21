@@ -3,7 +3,7 @@ import { runApi } from '../runApi';
 import Button from '../../../components/ui/Button';
 import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
-import { reviewGateName, statusText, tone } from './presentationUtils';
+import { statusText, tone } from './presentationUtils';
 import './goalContinuation.css';
 
 const TERMINAL = new Set(['complete', 'stopped', 'canceled']);
@@ -77,21 +77,14 @@ function GoalAssessmentRetry({ disabled, submitting, retryTarget, onRetry, t }) 
   </section>;
 }
 
-function GoalSnapshot({ goal, busy, readOnly, historical = false, currentRunId, approvalReviews, onOpenReview, onAction, t }) {
+function GoalSnapshot({ goal, busy, readOnly, historical = false, onAction, t }) {
   const pending = useRef(false);
   const requestKeys = useRef(new Map());
   const [submitting, setSubmitting] = useState('');
   const gate = goal.gate;
   const work = (goal.work_units || []).at(-1);
   const executionStatus = work?.observed_execution_status || work?.execution_status;
-  const awaitingWorkflowApproval = executionStatus === 'awaiting_approval';
   const terminal = TERMINAL.has(goal.status);
-  // Observed execution fields describe the work; only the current workflow's
-  // actionable review can offer navigation to the existing approval surface.
-  const canOpenReview = !readOnly && goal.status === 'active' && work?.status === 'running'
-    && work?.observed_execution_status === 'awaiting_approval'
-    && Boolean(currentRunId && work.run_id === currentRunId && work.observed_approval && onOpenReview)
-    && approvalReviews.some(review => review.approval === work.observed_approval && review.is_actionable === true);
   const bindingValid = Boolean(goal.id && Number.isInteger(goal.revision) && goal.revision >= 1);
   const act = async (request) => {
     if (!onAction || busy || readOnly || pending.current || !bindingValid) return;
@@ -124,12 +117,8 @@ function GoalSnapshot({ goal, busy, readOnly, historical = false, currentRunId, 
     {work ? <section className="goal-continuation-work" aria-label={t('work.goal.currentWork')}>
       <h3>{t('work.goal.currentWork')}</h3>
       <p>{work.task}</p>
-      {executionStatus ? <p>{t('work.goal.executionStatus', { status: awaitingWorkflowApproval ? t('work.goal.workflowApprovalStatus') : label(executionStatus, t) })}</p>
+      {executionStatus ? <p>{t('work.goal.executionStatus', { status: label(executionStatus, t) })}</p>
         : work.status ? <p>{label(work.status, t)}</p> : null}
-      {awaitingWorkflowApproval && work.observed_approval ? <p>{t('work.goal.workflowApprovalWait', { gate: reviewGateName(work.observed_approval, t) })}</p> : null}
-      {canOpenReview ? <div className="goal-continuation-actions">
-        <Button variant="secondary" disabled={Boolean(busy || submitting)} onClick={() => onOpenReview(work.observed_approval, work.run_id)}>{t('work.goal.openWorkflowApproval')}</Button>
-      </div> : null}
       {work.run_id ? <p className="goal-continuation-meta">{t('work.goal.run', { runId: work.run_id })}</p> : null}
       {work.rationale ? <p>{work.rationale}</p> : null}
       {work.dependencies?.length ? <p className="goal-continuation-meta">{t('work.goal.dependencies', { ids: work.dependencies.join(', ') })}</p> : null}
@@ -213,7 +202,7 @@ function GoalHistory({ projectKey, cursor, visibleIds, t }) {
   return <section aria-label={t('work.goal.history')}>
     {pages.flat().filter(goal => !visibleIds.has(goal.id)).map(goal => <details key={goal.id}>
       <summary>{goal.objective} · {label(goal.status, t)}</summary>
-      <GoalSnapshot goal={goal} readOnly historical busy={false} currentRunId="" approvalReviews={[]} t={t} />
+      <GoalSnapshot goal={goal} readOnly historical busy={false} t={t} />
       <details><summary>{t('work.goal.fullRecord')}</summary><pre className="goal-history-record">{JSON.stringify(goal, null, 2)}</pre></details>
     </details>)}
     {next ? <Button variant="secondary" busy={busy} disabled={busy} onClick={load}>{t('work.goal.loadOlder')}</Button> : null}
@@ -221,7 +210,7 @@ function GoalHistory({ projectKey, cursor, visibleIds, t }) {
   </section>;
 }
 
-export default function GoalContinuationPanel({ goals = [], projectKey = '', historyCursor = '', busy, readOnly = false, currentRunId = '', approvalReviews = [], onOpenReview, error, onAction, t }) {
+export default function GoalContinuationPanel({ goals = [], projectKey = '', historyCursor = '', busy, readOnly = false, error, onAction, t }) {
   const [creating, setCreating] = useState(false);
   const latest = goals.at(-1);
   const canonicalProjectKey = latest?.project_key || projectKey;
@@ -230,7 +219,7 @@ export default function GoalContinuationPanel({ goals = [], projectKey = '', his
     <header className="goal-continuation-heading"><h2>{t('work.goal.title')}</h2>
       {!readOnly && !creating ? <Button variant="secondary" disabled={Boolean(busy || !onAction)} onClick={() => setCreating(true)}>{t('work.goal.new')}</Button> : null}
     </header>
-    {goals.length ? [...goals].reverse().map(goal => <GoalSnapshot key={goal.id} goal={goal} busy={busy} readOnly={readOnly} currentRunId={currentRunId} approvalReviews={approvalReviews} onOpenReview={onOpenReview} onAction={onAction} t={t} />) : <p>{t('work.goal.optional')}</p>}
+    {goals.length ? [...goals].reverse().map(goal => <GoalSnapshot key={goal.id} goal={goal} busy={busy} readOnly={readOnly} onAction={onAction} t={t} />) : <p>{t('work.goal.optional')}</p>}
     {canonicalProjectKey && historyCursor ? <GoalHistory key={`${canonicalProjectKey}:${latest?.id || ''}`} projectKey={canonicalProjectKey} cursor={historyCursor} visibleIds={visibleIds} t={t} /> : null}
     {creating && !readOnly ? <GoalForm busy={busy} onAction={onAction} onClose={() => setCreating(false)} t={t} /> : null}
     {error ? <ProductError error={error} t={t} /> : null}

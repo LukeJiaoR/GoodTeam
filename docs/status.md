@@ -1,22 +1,21 @@
 # GoodTeam Current Status
 
-_Last updated: 2026-11-01._
+_Last updated: 2026-11-22._
 
 This file is the short-lived current-state entry point for contributors and agents. Its implementation statements describe the code revision containing this document; a PR branch is not a deployed release. Historical implementation footprints remain in [`current-progress.md`](current-progress.md); active work belongs in GitHub Issues and pull requests rather than a second backlog here.
 
 ## Current product surface
 
 ```text
-Projects → Work / Team / Review / Knowledge
+Projects → Work / Team / Knowledge
 ```
 
 - `/projects` imports or opens a local project.
 - `/projects/<PROJECT_KEY>/work` is the primary Task Assistant / 任务助手 conversation for understanding, work intake, clarification, progress and explicit recovery.
 - Work keeps project/task identity and one next step visible. The context action locates existing controls; it does not independently approve or execute work.
-- Ordinary questions and bound modification discussions share one composer. Exact text can be handed to an existing review's change draft; interpretation and confirmation remain separate.
+- The composer accepts project questions and task drafts. Confirm a draft to turn its exact revision into a batch.
 - Team exposes project-owned Roles and Worker configuration.
-- Review is the evidence-backed review and approval surface.
-- Knowledge exposes repository understanding, artifacts, and memory.
+- Knowledge exposes repository understanding and memory.
 - Legacy `/inbox`, `/activity`, `/settings`, and project Home routes are compatibility redirects only.
 
 ## Current control-plane model
@@ -25,7 +24,7 @@ Projects → Work / Team / Review / Knowledge
 Project import → Task Assistant conversation
 → read-only answer / proposed work
 → explicit, version-bound human confirmation
-→ workflow + bounded Worker execution
+→ task batch + isolated Worker execution
 → verification + review evidence
 → human decision → ledger + artifacts + provenance + memory
 ```
@@ -58,9 +57,7 @@ A catalog, installed CLI, Worker exit code, readable report or committed change 
 
 `orchestrator` remains the stable internal key; the UI uses **Task Assistant / 任务助手**. Historical documents may say Manager or Orchestrator.
 
-The M0 acceptance target is desktop Web, an explicitly configured local Git repository, a verified real provider/model configuration and bounded coding work. Project-level repeated iterations remain the product target in #381 and the real acceptance record in #419. The implemented discovery mode has finite preapproved scope and still stops for independent delivery decisions. Arbitrary mid-Worker changes, natural-language approval, workspace-shared Team migration ([#409](https://github.com/LukeJiaoR/GoodTeam/issues/409)), external Planner/MCP expansion and commercial packaging are not silently included. Existing optional adapters are not removed, but unsupported or unverified combinations must not be advertised as accepted.
-
-The minimum change-status contract is documented in [`conversation-change-status.md`](conversation-change-status.md). Prioritize further architecture only when a real task demonstrates the need.
+The M0 acceptance target is desktop Web, an explicitly configured local Git repository, a verified real provider/model configuration and bounded coding work. Project-level repeated iterations remain the product target in #381 and the real acceptance record in #419. The implemented discovery mode has finite preapproved scope and still stops for independent delivery decisions. Arbitrary mid-Worker changes, natural-language approval, workspace-shared Team migration ([#409](https://github.com/LukeJiaoR/GoodTeam/issues/409)), external Planner/MCP expansion and commercial packaging are not silently included. Use the supported runtime documented in the project’s verification records.
 
 ## Documentation source of truth
 

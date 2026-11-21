@@ -55,12 +55,12 @@ deployment require their own explicitly scoped authorization and evidence.
 | Execution state and safe paths | `tests/test_execution_idempotency.py`, `test_execution_path_claims.py` |
 | Independent review and delivery | `tests/test_review_policy.py`, `test_delivery_review_truth.py` |
 | Project memory | `tests/test_memory_core.py` |
-| Skill installation, provider connections and Telegram review | `tests/test_skill_library.py`, `test_providers.py`, `test_telegram_review.py` |
+| Skill installation and provider connections | `tests/test_skill_library.py`, `test_providers.py` |
 | Frontend project and Work surfaces | `frontend/src/features/projects/ProjectsPage.search.test.jsx` and retained Work/Review tests |
 | Real browser business path | `frontend/e2e/business-loop.spec.js`, `project-manager.spec.js` |
 
-The browser loop confirms two queued tasks and reads each batch's isolated
-Worker result. Candidate CI exercises failed batch recovery before browser tests.
+The browser loop confirms a queued task and a chat draft, then reads both
+batches’ isolated Worker results. Candidate CI exercises failed batch recovery before browser tests.
 
 Test helper modules and fixtures referenced by these representative cases
 remain available. The change classifier routes focused targets to files that

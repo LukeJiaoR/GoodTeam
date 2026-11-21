@@ -10,12 +10,12 @@ from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
 
-from goodteam_os.assistant_conversation import continue_conversation, conversation_scope
+from goodteam_os.assistant_conversation import continue_conversation
 from goodteam_os.assistant_runtime import record_runtime, runtime_snapshot, safe_failure
 from goodteam_os.manager_execution import ManagerExecutionError, run_manager_chat_turn
 from goodteam_os.project_readiness import assess_project_mode
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
-from goodteam_os.state import normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os import state_documents
 from goodteam_os.database import database_configured
 
@@ -208,7 +208,7 @@ def response(service, project_key, root, *, intent="ambiguous", recover_requests
     session = (service.session(project_key, root) if recover_requests
                else service.session(project_key, root, recover_requests=False))
     return {"session": session, "task_assistant_session": session,
-            "intent": intent, "workflow_started": False, "run_id": ""}
+            "intent": intent, "run_id": ""}
 
 
 def execute_message(service, *, project_key, root, text, message_id, expected_attempt=None,
@@ -233,8 +233,8 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
 
     attachment_ids = [] if attachments is None else attachments
     files = resolve_attachments(service.workspace, project_key, root, attachment_ids)
-    if not isinstance(context_run_id, str):
-        raise ValueError("Invalid conversation task context")
+    if context_run_id != "":
+        raise ValueError("Project conversation requires the project context.")
     message_id = message_id.strip()
     if not message_id or not text.strip():
         raise ValueError("Task Assistant message and message_id must not be blank")
@@ -245,23 +245,11 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
         previous = store.read().get("assistant_requests", {}).get(message_id)
         if previous and previous.get("attachments", []) != attachment_ids:
             raise ValueError("message_id is already used with different attachments")
-        if previous and previous.get("context_run_id", "") != context_run_id:
-            raise ValueError("message_id is already used with different task context")
-        try:
-            accepted_scope = conversation_scope(store, context_run_id)
-        except Exception as exc:
-            if context_run_id:
-                raise
-            raise ManagerExecutionError(safe_failure(exc)["message"]) from exc
         attempt = _next_attempt(previous, text, expected_attempt)
         if attempt is not None:
             store.initialize_context(assess_project_mode(root))
             store.append_message(message_id, "user", text, attachments=files if files else None)
-            captured_run = (previous or {}).get("conversation_run_id")
-            if captured_run is None:
-                captured_run = ((accepted_scope or {}).get("run") or {}).get("run_id", "")
-            update_request(store, message_id, text=text, context_run_id=context_run_id,
-                           attachments=attachment_ids, conversation_run_id=captured_run,
+            update_request(store, message_id, text=text, attachments=attachment_ids,
                            attempt=attempt, status="running", phase="model", error=None,
                            started_at=datetime.now(UTC).isoformat(), stop_requested=False,
                            owner_pid=os.getpid(), owner_process_start=_process_start(os.getpid()),
@@ -272,7 +260,7 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
         return {**response(service, project_key, root, intent=(previous or {}).get("intent", "ambiguous"),
                            recover_requests=False), "accepted": True}
     arguments = dict(project_key=project_key, root=root, text=text, message_id=message_id,
-                     attempt=attempt, context_run_id=context_run_id)
+                     attempt=attempt)
     if not background:
         return _execute_accepted(service, store=store, **arguments)
 
@@ -292,7 +280,7 @@ def execute_message(service, *, project_key, root, text, message_id, expected_at
     return {**response(service, project_key, root, recover_requests=False), "accepted": True}
 
 
-def _execute_accepted(service, *, store, project_key, root, text, message_id, attempt, context_run_id):
+def _execute_accepted(service, *, store, project_key, root, text, message_id, attempt):
     snapshot = None
     try:
         if store.read()["assistant_requests"][message_id].get("stop_requested"):
@@ -305,8 +293,8 @@ def _execute_accepted(service, *, store, project_key, root, text, message_id, at
             native = service.manager_turn is run_manager_chat_turn and not service._manager_runtime_is_builtin()
             if native:
                 result = service._send_native_message(project_key=project_key, root=root, text=text,
-                    message_id=message_id, attempt_id=attempt_id, context_run_id=context_run_id)
-            elif not context_run_id and database_configured():
+                    message_id=message_id, attempt_id=attempt_id)
+            elif database_configured():
                 from goodteam_os.manager_dialogue import run_dialogue
 
                 result = run_dialogue(service, store=store, project_key=project_key, root=root,
@@ -314,7 +302,7 @@ def _execute_accepted(service, *, store, project_key, root, text, message_id, at
             if result is None:
                 result = continue_conversation(
                     service, store=store, project_key=project_key, root=root,
-                    text=text, message_id=message_id, attempt_id=attempt_id, context_run_id=context_run_id,
+                    text=text, message_id=message_id, attempt_id=attempt_id,
                 )
             if result is None:
                 result = service._send_message(project_key=project_key, root=root, text=text,
@@ -330,10 +318,10 @@ def _execute_accepted(service, *, store, project_key, root, text, message_id, at
         stopped = finished["assistant_requests"][message_id].get("stop_requested")
         if not result.get("model_call_skipped"):
             record_runtime(store, snapshot, _verification_status(snapshot))
-        # The continuation adapter owns its existing Workflow/queue locks and
+        # The continuation adapter owns its existing batch and queue locks and
         # authority. A stopped request must never initiate follow-up work.
         advance = None if stopped else result.get("advance_continuation")
-        if advance and not context_run_id:
+        if advance:
             grant = store.read().get("project_continuation") or {}
             if grant.get("id") == advance and grant.get("status") == "active":
                 from goodteam_os.project_iteration_continuation import tick_project_continuation

@@ -58,14 +58,14 @@ The desktop Web experience stays centered on one project conversation:
 
 | Capability | What GoodTeam provides |
 | --- | --- |
-| **Durable conversation** | Project understanding, task clarification, progress, and recovery stay in one Task Assistant conversation, preserving the original request across workflow runs. |
+| **Durable conversation** | Project understanding, task clarification, progress, and recovery stay in one Task Assistant conversation, preserving the original request across task batches. |
 | **Configurable engineering team** | **Role → TeamRole → Worker** separates capabilities, project membership, and runtime identity. Codex, Claude/Anthropic, Pi, `fake`, `human`, and `noop` adapters serve different execution needs. |
 | **Native Manager and Workers** | Manager app-server threads provide streaming conversation, tool calls and independent background analysis. Pi Worker sessions retain resume, steering, follow-up and abort; Codex Workers expose streamed progress and owned-process Stop. |
 | **Traceable delivery** | Tasks, attempts, Workers, worktrees, PRs, commit SHAs, CI, artifacts, and reviewer evidence connect through execution identity and a durable ledger. |
 | **Project iteration** | Continue across approved batches, with optional outcome-based discovery inside an explicit objective and path scope. Task, batch and planning-call limits are optional; usage remains recorded and Stop remains available. Existing batch execution supports up to 10 concurrent Workers. |
 | **Candidate quality and recovery** | Explicit batch checks and independent review can request one authorized correction. Retry only proven failed tasks while retaining successful siblings, or explicitly abandon stopped, undelivered work. |
-| **Explicit human decisions** | Workflow starts, task changes, and approvals are bound to server-owned state. Model interpretation and Worker output provide advice and evidence, not authority. |
-| **Local-first records** | Conversations, workflow state, checkpoints, task ledgers, artifacts, and memory persist in local workspace/project storage, with optional external integrations. |
+| **Explicit human decisions** | Batch confirmations, task changes, and delivery decisions are bound to server-owned state. Model interpretation and Worker output provide advice and evidence, not authority. |
+| **Local-first records** | Conversations, confirmed batch records, task ledgers, Worker receipts, and memory persist in local workspace/project storage, with optional external integrations. |
 
 Explore [Worker backends and Pi controls](docs/worker-backends.md), [execution identity](docs/execution-identity.md), and the [review and approval guide](docs/review-and-approval-guide.md).
 
@@ -87,28 +87,28 @@ flowchart TB
     Human[Human operator] --> UI[Projects / Work / Team / Review / Knowledge]
     UI --> CP[GoodTeam control plane]
     CP --> Gate[Readiness + explicit human confirmation]
-    Gate --> Workflow[Durable workflow + bounded jobs]
-    Workflow --> Runtime[Worker runtime + worktree policy]
+    Gate --> Batch[Confirmed batch + isolated Workers]
+    Batch --> Runtime[Worker runtime + worktree policy]
     Runtime --> Pi[Pi RPC / persistent session / JSONL events]
     Runtime --> Other[Codex / Claude / fake / human / noop]
     Pi --> Evidence[Artifacts + tests + review evidence]
     Other --> Evidence
-    Workflow --> Adapters[GitHub / CI / optional integrations]
+    Batch --> Adapters[GitHub / CI / optional integrations]
     Adapters --> Evidence
     Evidence --> Review[Human review decision]
     Human --> Review
-    CP <--> Store[(Local state / ledger / provenance / memory)]
-    Workflow --> Store
+    CP <--> Store[(Local batch receipts / ledger / memory)]
+    Batch --> Store
     Evidence --> Store
     Review --> Store
 ```
 
 | Layer | Responsibility | Source |
 | --- | --- | --- |
-| Product UI | Project conversation and focused Team, Review, and Knowledge workbenches | [`frontend/`](frontend/) |
+| Product UI | Project conversation and focused Team and Knowledge workbenches | [`frontend/`](frontend/) |
 | Control plane | HTTP/API boundaries, Task Assistant, readiness, and Team decisions | [`src/goodteam_os/`](src/goodteam_os/) |
-| Workflow & runtime | Gates, bounded dispatch, Worker lifecycle, and persistent execution | [`graph.py`](src/goodteam_os/graph.py), [`workers.py`](src/goodteam_os/workers.py) |
-| Durable records | Workflow state, task ledger, artifacts, provenance, and memory | [Architecture reference](docs/architecture.md) |
+| Batch execution | Exact confirmation, bounded dispatch, Worker lifecycle, and recovery | [`project_iteration_execution.py`](src/goodteam_os/project_iteration_execution.py), [`workers.py`](src/goodteam_os/workers.py) |
+| Durable records | Batch receipts, task ledger, artifacts, provenance, and memory | [Architecture reference](docs/architecture.md) |
 
 See the [architecture guide](docs/architecture.md) for detailed component boundaries and sequence diagrams.
 
@@ -145,9 +145,7 @@ goodteam status
 
 Open **[localhost:21001/projects](http://localhost:21001/projects)**.
 
-The service defaults to `127.0.0.1:21001` and the current directory as its workspace (`--workspace` overrides it). If an installation is already running, use the [isolated live-smoke playbook](docs/live-smoke-playbook.md) rather than restarting its service for testing.
-
-Web and Operator start without Telegram. `goodteam restart` starts the Telegram poller only when both `GOODTEAM_TG_BOT_TOKEN` and `GOODTEAM_TG_CHAT_ID` are nonempty in the launch environment; otherwise `goodteam status` reports `Telegram: disabled`. Restart with both values to enable polling. Disabling Telegram does not approve, cancel, or reassign existing Operator work waiting for a Telegram decision. Restarting does not resend an approval card whose send result was already recorded.
+The service defaults to `127.0.0.1:21001` and the current directory as its workspace (`--workspace` overrides it). Use the [isolated live-smoke playbook](docs/live-smoke-playbook.md) for verification alongside an existing installation.
 
 To stop it:
 
@@ -160,9 +158,9 @@ goodteam stop
 1. In **Projects**, select an absolute local repository directory.
 2. Continue in **Work** to understand the repository and clarify the task.
 3. In **Team**, configure the intended Workers and verify the Task Assistant's provider/model connection before real execution. A connection check may invoke the configured provider.
-4. Review the bounded proposal and explicitly confirm it before starting work. Inspect the resulting evidence in **Review**.
+4. Review the bounded proposal and explicitly confirm it before starting work. Inspect the Worker results in **Work** and the [batch quality receipts](docs/project-batch-quality.md).
 
-Import records GoodTeam metadata; it does not treat the selected repository as disposable workspace state. Machine-specific configuration belongs in `projects/<key>.local.yaml`. Never commit credentials or private secrets.
+Import records GoodTeam metadata; it preserves the selected repository as the project source. Machine-specific configuration belongs in `projects/<key>.local.yaml`. Never commit credentials or private secrets.
 
 <details>
 <summary><strong>CLI setup and doctor checks</strong></summary>
@@ -209,7 +207,7 @@ When sources disagree: **code and tests → stable manuals → current status �
 
 ```text
 GoodTeam/
-├── src/goodteam_os/    # Python control plane, workflows, Workers, and local records
+├── src/goodteam_os/    # Python control plane, task batches, Workers, and local records
 ├── frontend/          # React desktop Web UI and browser tests
 ├── tests/             # Backend and contract coverage
 ├── docs/              # Canonical manuals, acceptance protocols, and history

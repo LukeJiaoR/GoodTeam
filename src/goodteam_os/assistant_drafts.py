@@ -8,7 +8,6 @@ import re
 from datetime import UTC, datetime
 
 from goodteam_os.assistant_requests import conversation_lock, response
-from goodteam_os.state import StateStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
@@ -24,47 +23,9 @@ def is_conversation_only(text):
     return bool(_CANCEL.search(text) or _DISCUSSION.search(text))
 
 
-def archive_terminal_proposal(store, *, workspace, root=None):
-    proposal = dict(store.read().get("proposed_task") or {})
-    run_id = str(proposal.get("run_id", "")).strip()
-    if not proposal or not run_id:
-        return False
-
-    terminal_status = _terminal_run_status(StateStore(workspace), store.project_key, run_id)
-    if not terminal_status:
-        return False
-    if proposal.get("project_task_id"):
-        if root is None:
-            raise ValueError("Cannot reconcile a Manager task without its original project root.")
-        from goodteam_os.tasks import LocalTaskStore
-
-        LocalTaskStore(root, store.project_key).settle_project_workflow(
-            str(proposal["project_task_id"]), run_id=run_id, terminal_status=terminal_status,
-        )
-    store.archive_task_proposal(proposal["id"], run_id, terminal_status)
-    return True
-
-
-def _terminal_run_status(state_store, project_key, run_id):
-    current = state_store.read_project_current(project_key)
-    if current is not None and current.run_id == run_id:
-        # A final node published before the approval transaction commits is
-        # not terminal evidence. Never archive or settle during that window.
-        if current.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
-            return ""
-        if current.current_node == "complete" and not current.blockers and current.next_node != "rejected":
-            return "complete"
-        if current.current_node == "rejected" or current.next_node == "rejected":
-            return "rejected"
-        return ""
-    if any(state.run_id == run_id for _path, state in state_store.list_project_archived(project_key)):
-        return "archived"
-    return ""
-
-
 def stage_draft(store, *, text, message_id, source_messages=None):
     proposal = dict(store.read().get("proposed_task") or {})
-    if proposal.get("confirmed") or proposal.get("run_id"):
+    if proposal.get("confirmed"):
         return "task_draft_locked"
     if _CANCEL.search(text):
         if proposal and proposal.get("status") != "cancelled":
@@ -108,7 +69,7 @@ def _editable(session, proposal_id, expected_revision):
         raise ValueError("Task proposal is unavailable")
     if type(expected_revision) is not int or expected_revision != proposal.get("revision"):
         raise ValueError("Task proposal changed. Reload the latest draft before confirming.")
-    if proposal.get("confirmed") or proposal.get("run_id"):
+    if proposal.get("confirmed"):
         raise ValueError("The confirmed task cannot be edited. Use the running task change controls.")
     return proposal
 
@@ -195,7 +156,7 @@ def start_selected_project_task(service, *, project_key, root, request):
     """A selected Role task uses the queue's existing batch, even when alone.
 
     Free-form requests enter as ordinary Planner tasks until a role assignment
-    exists. Previously started Workflow identities remain historical.
+    exists.
     """
     from goodteam_os.assistant_queue import require_queued_project_task
     from goodteam_os.project_iteration_execution import run_queued_iteration_batch
@@ -212,9 +173,6 @@ def start_selected_project_task(service, *, project_key, root, request):
             proposal_id = str(proposal.get("id", ""))
         queued = next((item for item in session.get("queued_task_proposals", [])
                        if item.get("id") == proposal_id), None)
-        if (proposal.get("id") == proposal_id
-                and (proposal.get("run_id") or proposal.get("start_claim_id") or proposal.get("start_run_id"))):
-            raise ValueError("This historical task already has a recorded start.")
         revision = request.get("expected_revision")
         if request.get("action") == "continue_preparation":
             revision = proposal.get("revision")
@@ -277,10 +235,6 @@ def start_selected_project_task(service, *, project_key, root, request):
             proposal = {**proposal, "project_task_id": task["id"],
                         "project_task_digest": task_evidence_digest(task)}
             queued = {**proposal, "status": "selected", "confirmed": False, "run_id": ""}
-            # Preserve the prior Workflow capture as historical evidence. Batch
-            # Workers capture their own task methods; this is not that context.
-            if proposal.get("task_skill_context"):
-                proposal["previous_workflow_skill_context"] = proposal["task_skill_context"]
             def bind(current):
                 current["proposed_task"] = proposal
                 current["queued_task_proposals"] = [item for item in current.get("queued_task_proposals", [])

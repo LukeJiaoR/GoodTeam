@@ -1,12 +1,12 @@
 // Presentation-only delivery state: it is not a task, approval, or execution status.
-export function createConversationDelivery({ projectKey, runId = '', text, intentId = '', contextKey = '', previous, attachments = [] }) {
-  const reusable = !intentId && previous?.status === 'unconfirmed'
-    && previous.projectKey === projectKey && previous.runId === runId
-    && (previous.contextKey || '') === contextKey && !previous.intentId && previous.text === text
+export function createConversationDelivery({ projectKey, text, contextKey = '', previous, attachments = [] }) {
+  const reusable = previous?.status === 'unconfirmed'
+    && previous.projectKey === projectKey
+    && (previous.contextKey || '') === contextKey && previous.text === text
     && JSON.stringify((previous.attachments || []).map(item => item.id)) === JSON.stringify(attachments.map(item => item.id));
   return {
     id: reusable ? previous.id : globalThis.crypto?.randomUUID?.() || `message-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    projectKey, runId, text, intentId, contextKey,
+    projectKey, text, contextKey,
     attachments,
     timestamp: new Date().toISOString(),
     status: 'sending',
@@ -21,11 +21,7 @@ export async function trackConversationDelivery({ delivery, operation, onUpdate 
       onUpdate({ ...delivery, status: 'unconfirmed' });
       return false;
     }
-    const events = result?.intent_commit?.events || [];
-    const recordedEvent = delivery.intentId
-      ? events.findLast((event) => event.actor === 'user' && event.event === 'change_request_shared')
-      : null;
-    onUpdate({ ...delivery, status: 'recorded', serverMessageId: recordedEvent?.id || delivery.id });
+    onUpdate({ ...delivery, status: 'recorded' });
     return result;
   } catch (error) {
     // A transport failure does not prove the server rejected the request.
@@ -35,20 +31,9 @@ export async function trackConversationDelivery({ delivery, operation, onUpdate 
   }
 }
 
-export function conversationTimeline(timeline, delivery, { projectKey, runId = '', readOnly = false }) {
-  if (!delivery || readOnly || delivery.projectKey !== projectKey || delivery.runId !== runId) return timeline;
-  const serverId = delivery.serverMessageId || delivery.id;
-  const found = timeline.some((item) => item.id === serverId || item.message_id === serverId);
-  if (found) {
-    // A delayed response or explicit server-side retry may record its reply
-    // after the transport already failed. Durable receipt wins over local UI.
-    const hasReply = !delivery.intentId && timeline.some((item) => (
-      item.actor !== 'user' && (item.id === `reply:${delivery.id}` || item.message_id === `reply:${delivery.id}`)
-    ));
-    if (delivery.status === 'recorded' || hasReply || !delivery.intentId) return timeline;
-    return timeline.map((item) => item.id === serverId || item.message_id === serverId
-      ? { ...item, delivery_status: delivery.status } : item);
-  }
+export function conversationTimeline(timeline, delivery, { projectKey }) {
+  if (!delivery || delivery.projectKey !== projectKey) return timeline;
+  if (timeline.some(item => item.id === delivery.id || item.message_id === delivery.id)) return timeline;
   return [...timeline, {
     id: delivery.id, actor: 'user', event: 'mission_requested', kind: 'intent',
     content: delivery.text, timestamp: delivery.timestamp, delivery_status: delivery.status,

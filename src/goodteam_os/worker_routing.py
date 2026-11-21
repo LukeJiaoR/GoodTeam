@@ -3,15 +3,7 @@
 from collections.abc import Callable
 
 from goodteam_os.session_runtimes import SESSION_BACKENDS
-from goodteam_os.state import AgileDevState
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
-
-
-def _team_execution_role(target: dict[str, object], role: str) -> str:
-    from goodteam_os.team_control_plane import attached_team_state
-
-    # Intake is a workflow stage, provided by the existing Research capability.
-    return "research" if role == "project_intake" and attached_team_state(target) is not None else role
 
 
 def resolve_role_adapter(target: dict[str, object], role: str) -> str:
@@ -27,7 +19,6 @@ def resolve_role_adapter(target: dict[str, object], role: str) -> str:
         active_workers_for_role, attached_team_state, normalize_provider, resolve_worker_from_state,
     )
 
-    role = _team_execution_role(target, role)
     state = attached_team_state(target)
     if state is not None and role != "orchestrator":
         if dict(dict(state.get("roles") or {}).get(role) or {}).get("runtime_source_worker_id"):
@@ -99,7 +90,7 @@ def _pi_thinking_level(adapter: str, reasoning_depth: str) -> str:
 def _worker_job_fields(
     target: dict[object, object],
     role: str,
-    state: AgileDevState,
+    role_models: dict[str, dict[str, str]],
     *,
     model_fallback: Callable[[], str] | None = None,
     worker_id: str | None = None,
@@ -113,12 +104,11 @@ def _worker_job_fields(
     """
     from goodteam_os.team_control_plane import resolve_worker_for_role
 
-    role = _team_execution_role(target, role)
 
     if model_fallback is not None:
         fallback_model = model_fallback()
     else:
-        fallback_model = worker_model_for_role(state, role)
+        fallback_model = worker_model_for_role(role_models, role)
     resolution = resolve_worker_for_role(target, role, worker_id=worker_id)
     if resolution is None:
         return {
@@ -141,8 +131,8 @@ def _worker_job_fields(
     }
 
 
-def worker_model_for_role(state: AgileDevState, role: str) -> str:
-    model = str(dict(state.role_models.get(role, {})).get("primary", "")).strip()
+def worker_model_for_role(role_models: dict[str, dict[str, str]], role: str) -> str:
+    model = str(dict(role_models.get(role, {})).get("primary", "")).strip()
     if ":" in model:
         return model.split(":", 1)[1].strip()
     return model

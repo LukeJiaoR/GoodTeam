@@ -1,7 +1,6 @@
 import { en } from './locales/en';
 import { zhCN } from './locales/zh-CN';
 import { runtimeEn, runtimeZhCN } from './locales/runtimeCatalog';
-import { informedApprovalEn, informedApprovalZhCN } from './locales/informedApprovalCatalog';
 import { continuationEn, continuationZhCN } from './locales/continuationCatalog';
 
 export const LANGUAGE_STORAGE_KEY = 'gt-language';
@@ -15,8 +14,8 @@ export const PRODUCT_I18N_PREFIXES = [
 ];
 
 const LOCALES = {
-  [LANGUAGE_EN]: { ...en, ...runtimeEn, ...informedApprovalEn, ...continuationEn },
-  [LANGUAGE_ZH_CN]: { ...zhCN, ...runtimeZhCN, ...informedApprovalZhCN, ...continuationZhCN },
+  [LANGUAGE_EN]: { ...en, ...runtimeEn, ...continuationEn },
+  [LANGUAGE_ZH_CN]: { ...zhCN, ...runtimeZhCN, ...continuationZhCN },
 };
 
 function isCatalogBranch(value) {

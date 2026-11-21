@@ -1,7 +1,7 @@
 import { routes } from '../../lib/routing/routes';
 
-export const ATTENTION_KINDS = ['blocked', 'approval', 'needs_input'];
-const SOURCES = ['workflow', 'readiness', 'assistant', 'continuation'];
+export const ATTENTION_KINDS = ['blocked', 'needs_input'];
+const SOURCES = ['readiness', 'assistant', 'continuation'];
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const identity = (value) => typeof value === 'string' && Boolean(value.trim())
   && value === value.trim() && ![...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) && !['.', '..'].includes(value);
@@ -9,31 +9,23 @@ const compare = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 
 // An unavailable projection must never turn into an all-clear or break the
 // ordinary project launcher. Legacy attention_count remains readiness-only.
-export function normalizeProjectAttention(value, activeRun = null, projectKey) {
+export function normalizeProjectAttention(value, projectKey) {
   if (projectKey !== undefined && !identity(projectKey)) return null;
   if (!isRecord(value) || value.schema_version !== 'project_attention.v1'
       || !Array.isArray(value.items) || !isRecord(value.counts)) return null;
-  const counts = { blocked: 0, approval: 0, needs_input: 0, total: 0 };
+  const counts = { blocked: 0, needs_input: 0, total: 0 };
   const seen = new Set();
   for (const item of value.items) {
     if (!isRecord(item) || !identity(item.id) || !identity(item.target_id)
         || !ATTENTION_KINDS.includes(item.kind) || !SOURCES.includes(item.source)
         || typeof item.title !== 'string' || !item.title.trim()
         || typeof item.reason !== 'string' || !item.reason.trim()
-        || typeof item.run_id !== 'string' || seen.has(item.id)) return null;
-    if (item.source === 'workflow') {
-      if (!identity(item.run_id) || item.run_id !== activeRun?.run_id
-          || !item.id.startsWith(`workflow:${item.run_id}:`)
-          || item.id === `workflow:${item.run_id}:`
-          || (item.kind === 'approval' && item.id !== `workflow:${item.run_id}:approval:${item.target_id}`)) return null;
-    } else if (item.run_id !== '') return null;
-    if (item.source === 'readiness' && (item.kind === 'approval'
-        || !item.id.startsWith('readiness:') || !item.id.endsWith(`:${item.target_id}`)
+        || seen.has(item.id)) return null;
+    if (item.source === 'readiness' && (!item.id.startsWith('readiness:') || !item.id.endsWith(`:${item.target_id}`)
         || item.id.length <= `readiness::${item.target_id}`.length)) return null;
     if (item.source === 'assistant' && (item.kind !== 'needs_input'
         || item.id !== `assistant:proposal:${item.target_id}`)) return null;
-    if (item.source === 'continuation' && (item.kind === 'approval'
-        || !item.id.startsWith(`continuation:${item.target_id}:`)
+    if (item.source === 'continuation' && (!item.id.startsWith(`continuation:${item.target_id}:`)
         || item.id === `continuation:${item.target_id}:`)) return null;
     seen.add(item.id);
     counts[item.kind] += 1;
@@ -42,13 +34,13 @@ export function normalizeProjectAttention(value, activeRun = null, projectKey) {
   if (Object.keys(counts).some((kind) => !Number.isSafeInteger(value.counts[kind])
       || value.counts[kind] !== counts[kind])) return null;
   return { schema_version: value.schema_version, counts, items: value.items.map(item => ({
-    id: item.id, kind: item.kind, source: item.source, run_id: item.run_id,
+    id: item.id, kind: item.kind, source: item.source,
     target_id: item.target_id, title: item.title, reason: item.reason,
   })) };
 }
 
 export function attentionOverview(projects) {
-  const counts = { blocked: 0, approval: 0, needs_input: 0, total: 0 };
+  const counts = { blocked: 0, needs_input: 0, total: 0 };
   const unavailable = [];
   const items = [];
   for (const project of projects) {
@@ -65,11 +57,9 @@ export function attentionOverview(projects) {
 }
 
 export function attentionHref(projectKey, item) {
-  const path = item.source === 'workflow'
-    ? routes.projectRun(projectKey, item.run_id) : routes.projectWork(projectKey);
   const query = new URLSearchParams({ attention: item.id, attention_source: item.source,
     attention_kind: item.kind, attention_target: item.target_id });
-  return `${path}?${query}`;
+  return `${routes.projectWork(projectKey)}?${query}`;
 }
 
 export function readAttentionSelection(search) {
@@ -84,43 +74,33 @@ export function readAttentionSelection(search) {
 
 // A verified list identity is necessary but insufficient: the Work surface must
 // still represent that exact run/gate, preparation execution/step, or proposal.
-export function resolveAttentionFocus({ selection, projectKey, runId = '', projects, data, freshness = 'ready' }) {
+export function resolveAttentionFocus({ selection, projectKey, projects, data, freshness = 'ready' }) {
   if (!selection || selection.invalid) return { status: 'unavailable' };
   if (freshness !== 'ready') return { status: freshness === 'loading' ? 'loading' : 'unavailable' };
   const project = projects.find(entry => entry.project.project_key === projectKey);
   if (!project?.attention) return { status: 'unavailable' };
   const item = project.attention.items.find(candidate => ['id', 'source', 'kind', 'target_id']
     .every(key => candidate[key] === selection[key]));
-  if (!item || (item.source === 'workflow' ? item.run_id !== runId : Boolean(runId))) return { status: 'changed' };
+  if (!item) return { status: 'changed' };
   const workspace = data?.team_workspace;
   const mission = workspace?.mission;
   if (!workspace || workspace.schema_version !== 'team_workspace.v1'
       || (mission?.project_key && mission.project_key !== projectKey)) return { status: 'unavailable' };
   const stateProject = mission?.project_key || data.project_assistant?.project_key
-    || data.task_assistant_session?.project_key || data.state?.project_key;
+    || data.task_assistant_session?.project_key;
   if (stateProject !== projectKey) return { status: 'unavailable' };
   if (workspace.execution_actors !== undefined && !Array.isArray(workspace.execution_actors)) return { status: 'unavailable' };
   const attention = workspace.attention_request;
-  if (item.source === 'workflow') {
-    const actualKind = ['discussing', 'ready_to_confirm', 'stale', 'ambiguous', 'committing'].includes(attention?.intent_commit?.status)
-      ? 'needs_input' : attention?.kind === 'blocker' ? 'blocked' : attention?.kind === 'approval' ? 'approval' : '';
-    if (!data.active_run || data.state?.run_id !== runId || data.state?.project_key !== projectKey
-        || mission?.source !== 'workflow' || mission.run_id !== runId || mission.read_only
-        || item.id !== `workflow:${runId}:${attention?.id}`
-        || (attention?.target_id || runId) !== item.target_id || actualKind !== item.kind
-        || (item.kind === 'blocked' && (workspace.execution_actors || []).some(actor => actor.role !== 'orchestrator' && actor.state === 'working'))) return { status: 'changed' };
-    return { status: 'current', item, target: attention.kind === 'blocker' ? 'blocker' : 'attention' };
-  }
   if (item.source === 'assistant') {
     const proposal = (data.project_assistant || workspace).proposed_task;
-    if (proposal?.id !== item.target_id || proposal.run_id || proposal.status === 'cancelled'
-        || !proposal.needs_clarification || mission?.read_only) return { status: 'changed' };
+    if (proposal?.id !== item.target_id || proposal.status === 'cancelled'
+        || !proposal.needs_clarification) return { status: 'changed' };
     return { status: 'current', item, target: 'draft' };
   }
   if (item.source === 'continuation') {
     const session = data.task_assistant_session;
     const notice = session?.project_continuation_notice;
-    if (session?.project_key !== projectKey || mission?.read_only || notice?.id !== item.id
+    if (session?.project_key !== projectKey || notice?.id !== item.id
         || notice.continuation_id !== item.target_id || notice.kind !== item.kind
         || session.project_continuation?.id !== item.target_id) return { status: 'changed' };
     return { status: 'current', item, target: 'continuation' };

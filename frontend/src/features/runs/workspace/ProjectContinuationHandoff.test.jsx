@@ -35,10 +35,9 @@ it('offers a current bilingual Manager handoff through existing controls without
   fireEvent.click(screen.getByRole('button', { name: '保留结果并结束' }));
   expect(onAction).toHaveBeenCalledExactlyOnceWith({ action: 'stop_project_continuation', continuation_id: 'grant' });
 
-  const attention = { id: notice.id, kind: notice.kind, source: 'continuation', run_id: '',
-    target_id: 'grant', title: 'Project iteration needs attention', reason: notice.reason };
+  const attention = { id: notice.id, kind: notice.kind, source: 'continuation', target_id: 'grant', title: 'Project iteration needs attention', reason: notice.reason };
   const projection = normalizeProjectAttention({ schema_version: 'project_attention.v1', items: [attention],
-    counts: { blocked: 0, approval: 0, needs_input: 1, total: 1 } });
+    counts: { blocked: 0, needs_input: 1, total: 1 } });
   expect(projection.items).toEqual([attention]);
   const selection = readAttentionSelection(new URL(attentionHref('APP', attention), 'https://local.test').searchParams);
   const data = { task_assistant_session: session,

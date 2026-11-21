@@ -3,8 +3,8 @@ import StatusBadge from '../../../components/ui/StatusBadge';
 import { currentWorkContext, focusWorkContext } from './currentWorkContext.js';
 import './currentWorkContext.css';
 
-export default function CurrentWorkContext({ projectKey, projectName, title, workspace, freshness, historical, onRefresh, reducedMotion, t }) {
-  const context = currentWorkContext({ workspace, projectKey, title, freshness, historical, t });
+export default function CurrentWorkContext({ projectKey, projectName, title, workspace, freshness, onRefresh, reducedMotion, t }) {
+  const context = currentWorkContext({ workspace, projectKey, title, freshness, t });
   const statusTone = context.status === 'blocked' ? 'danger'
     : ['needs_input', 'awaiting_review'].includes(context.status) ? 'active' : 'neutral';
   return (

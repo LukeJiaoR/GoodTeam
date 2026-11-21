@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { test, expect, importProject } from './fixtures.js';
-import { clickMutation, getJson, workState } from './business-loop-helpers.js';
+import { clickMutation, getJson, sendTask, workState } from './business-loop-helpers.js';
 
 function git(root, ...args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
@@ -24,7 +24,7 @@ async function confirmDraft(page, key, proposal) {
   const start = page.getByRole('button', { name: 'Start this task', exact: true });
   await expect(start).toBeEnabled();
   const result = await clickMutation(page, start, `/api/projects/${key}/task-assistant/actions`);
-  expect(result).toMatchObject({ execution_started: true, workflow_started: false });
+  expect(result).toMatchObject({ execution_started: true });
   const runId = result.run_id;
   const readBatch = async () => (await workState(page, key)).task_assistant_session.project_task_batches?.[runId];
   await expect.poll(async () => (await readBatch())?.status, { timeout: 30_000 }).toBe('review');
@@ -58,7 +58,7 @@ test('business loop: confirm two project tasks and inspect their isolated Worker
   expect(Object.keys(unconfirmed.task_assistant_session.project_task_batches || {})).toEqual([]);
   const original = await confirmDraft(page, fixture.key, first);
 
-  const second = await prepareTask(page, fixture.key, 'Build a task activity filter.');
+  const second = await sendTask(page, fixture, 'Build a task activity filter.');
   const next = await confirmDraft(page, fixture.key, second);
   expect(next.run_id).not.toBe(original.run_id);
   const final = await workState(page, fixture.key);

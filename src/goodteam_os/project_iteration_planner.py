@@ -16,7 +16,6 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
 
-from goodteam_os.assistant_drafts import archive_terminal_proposal
 from goodteam_os.assistant_requests import conversation_lock
 from goodteam_os.context_continuity import conversation_context
 from goodteam_os.project_iteration import (
@@ -523,7 +522,6 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
     workspace, root = Path(workspace), Path(root)
     store = TaskAssistantSessionStore(workspace, project_key)
     with conversation_lock(store):
-        archive_terminal_proposal(store, workspace=workspace, root=root)
         snapshot = project_iteration_backlog(root, project_key, limit=None)
         if snapshot["status"] not in ({"candidate_ready", "blocked"} if allow_wait else {"candidate_ready"}):
             raise ValueError("No eligible local project task exists for the Manager to rank.")
@@ -565,7 +563,7 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                      and completed_wait_attempt_id and previous.get("planning_attempt_id") == completed_wait_attempt_id)):
             if validate_authority is not None:
                 validate_authority()
-            return {"iteration_choice": previous, "workflow_started": False, "reused": True}
+            return {"iteration_choice": previous, "reused": True}
         proposed = session.get("proposed_task")
         if isinstance(proposed, dict) and proposed.get("status") != "cancelled":
             raise ValueError("Resolve the current task proposal before planning another iteration.")
@@ -612,7 +610,7 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             on_stale_result({"choice": {**choice, "status": "stale"}, "context": context,
                 "manager_execution": dict(result.get("manager_execution") or {}), "reason": stale_reason})
             return {"iteration_choice": {**choice, "status": "stale"},
-                    "workflow_started": False, "context_changed": True, "reused": False}
+                    "context_changed": True, "reused": False}
         if validate_authority is not None:
             validate_authority()
         store.append_event(
@@ -628,5 +626,5 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
                 "execution_started": False,
             },
         )
-        return {"iteration_choice": choice, "workflow_started": False, "reused": False}
+        return {"iteration_choice": choice, "reused": False}
 

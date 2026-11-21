@@ -73,12 +73,6 @@ def test_execution_cli_commands_emit_stable_json(tmp_path, monkeypatch, capsys):
     )
     execution_id = run.execution_id
 
-    # GitHub intake alone has no trusted task snapshot or delivery plan. The local
-    # delivery CLI must reject it, while the ordinary Builder-only API remains usable.
-    assert cli.main(["execution", "run", "--execution-id", execution_id,
-                     "--project-root", str(tmp_path)]) == 2
-    rejected = capsys.readouterr()
-    assert "validation_input_missing" in rejected.err and not rejected.out
     from goodteam_os.execution.api import ExecutionAPI
     built = ExecutionAPI(tmp_path, github_client=client).run_execution(execution_id)
     assert built["run"]["status"] == "succeeded" and "worker_job" in built
@@ -97,6 +91,6 @@ def test_execution_cli_commands_emit_stable_json(tmp_path, monkeypatch, capsys):
 
 def test_execution_cli_missing_required_args_returns_parser_error(tmp_path):
     with pytest.raises(SystemExit) as exc_info:
-        cli.main(["execution", "run", "--project-root", str(tmp_path)])
+        cli.main(["execution", "replay", "--project-root", str(tmp_path)])
 
     assert exc_info.value.code == 2

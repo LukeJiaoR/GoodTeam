@@ -8,7 +8,6 @@ from goodteam_os.project_iteration import (
 )
 from goodteam_os.project_iteration_planner import plan_next_iteration
 from goodteam_os.assistant_queue import queue_manager_iteration_choice, require_queued_project_task, _apply
-from goodteam_os.state import StateStore, create_initial_state
 from goodteam_os.tasks import LocalTaskStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
@@ -40,17 +39,6 @@ def test_manager_can_select_other_than_source_priority_and_persist(tmp_path):
     config.write_text("key: DEMO", encoding="utf-8")
     before = store.path.read_bytes()
     session_store = TaskAssistantSessionStore(tmp_path, "DEMO")
-    session_store.append_message("previous", "user", "Deliver the previous iteration.")
-    proposal = session_store.propose_task(["previous"], "Deliver the previous iteration.")["proposed_task"]
-    session_store.confirm_task(proposal["id"], expected_revision=1)
-    run_id = f"task-{proposal['id']}"
-    session_store._mutate(lambda data: {**data, "proposed_task": {**data["proposed_task"], "run_id": run_id}})
-    state_store = StateStore(tmp_path)
-    completed = create_initial_state(run_id, "DEMO", proposal["exact_request"])
-    completed.current_node = "complete"
-    completed.next_node = ""
-    completed.pending_transition = {"status": "executing"}
-    state_store.write_project_current(completed)
     snapshot = project_iteration_backlog(project, "DEMO")
     calls = []
 
@@ -63,28 +51,13 @@ def test_manager_can_select_other_than_source_priority_and_persist(tmp_path):
         calls.append(kwargs)
         return manager_response(kwargs["backlog"])
 
-    # A terminal-looking node is not evidence until its approval commits.
-    with pytest.raises(ValueError, match="current task proposal"):
-        plan_next_iteration(
-            workspace=tmp_path, project_key="DEMO", root=project,
-            project_config=config, expected_backlog_version=snapshot["version"],
-            confirmed=True, manager_runner=fake_manager,
-        )
-    assert not calls
-    assert session_store.read()["proposed_task"]["id"] == proposal["id"]
-
-    completed.pending_transition = {"status": "completed"}
-    state_store.write_project_current(completed)
-    completed_bytes = (state_store.project_state_dir("DEMO") / "current.json").read_bytes()
     first = plan_next_iteration(
         workspace=tmp_path, project_key="DEMO", root=project,
         project_config=config, expected_backlog_version=snapshot["version"],
         confirmed=True, manager_runner=fake_manager,
     )
-    assert (state_store.project_state_dir("DEMO") / "current.json").read_bytes() == completed_bytes
     assert first["iteration_choice"]["selected_task_id"] == low["id"]
     assert first["iteration_choice"]["selected_task_id"] != high["id"]
-    assert first["workflow_started"] is False
     assert first["iteration_choice"]["execution_authorized"] is False
     assert store.path.read_bytes() == before
     assert len(calls) == 1
@@ -92,8 +65,6 @@ def test_manager_can_select_other_than_source_priority_and_persist(tmp_path):
 
     persisted = TaskAssistantSessionStore(tmp_path, "DEMO").read()
     assert persisted["proposed_task"] is None
-    assert persisted["archived_task_proposals"][-1]["id"] == proposal["id"]
-    assert persisted["archived_task_proposals"][-1]["terminal_status"] == "complete"
     assert persisted["timeline"][-1]["event"] == "project_iteration_choice_recorded"
     assert latest_iteration_choice(persisted, snapshot)["selected_task_id"] == low["id"]
 
@@ -194,7 +165,6 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
     first = plan_next_iteration(**spec)
     second = plan_next_iteration(**spec)
     assert first["iteration_choice"]["execution_mode"] == "parallel"
-    assert first["workflow_started"] is False
     assert second["reused"] is True
     assert len(calls) == 1
     read = TaskAssistantSessionStore(tmp_path, "DEMO").read()
@@ -208,7 +178,6 @@ def test_parallel_selection_is_persisted_and_reused_without_new_model_call(tmp_p
                    expected_backlog_version=snapshot["version"])
     first_queue = queue_manager_iteration_choice(**handoff)
     again = queue_manager_iteration_choice(**handoff)
-    assert first_queue["workflow_started"] is False
     assert first_queue["queued_proposal_ids"] == again["queued_proposal_ids"]
     persisted = TaskAssistantSessionStore(tmp_path, "DEMO").read()
     queue = persisted["queued_task_proposals"]
@@ -276,7 +245,6 @@ def test_full_planning_inventory_is_not_limited_by_ui_candidate_preview(tmp_path
     )
     assert len(result["iteration_choice"]["selected_task_ids"]) == len(created)
     assert len(captures) == 1
-    assert result["workflow_started"] is False
 
 
 def test_manager_can_consider_unready_work_without_selecting_or_restarting_it():

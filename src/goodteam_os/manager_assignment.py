@@ -28,7 +28,7 @@ def queue_assignment(service, *, store, root, message_id, sources, action):
     if normalized is None:
         raise ValueError("The assignment requires valid write domains for its execution policy.")
     action = {**action, "write_domains": normalized}
-    # Intake only saves unconfirmed future work. Active Goal/Workflow/resource
+    # Intake only saves unconfirmed future work. Active Goal/batch/resource
     # exclusion belongs to the existing execution admission, not this queue.
     team = service.team_view(store.project_key) or {}
     role = next((item for item in team.get("roles", []) if item.get("role") == action["role"]), {})
