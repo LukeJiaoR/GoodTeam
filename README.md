@@ -147,6 +147,8 @@ Open **[localhost:21001/projects](http://localhost:21001/projects)**.
 
 The service defaults to `127.0.0.1:21001` and the current directory as its workspace (`--workspace` overrides it). If an installation is already running, use the [isolated live-smoke playbook](docs/live-smoke-playbook.md) rather than restarting its service for testing.
 
+Web and Operator start without Telegram. `goodteam restart` starts the Telegram poller only when both `GOODTEAM_TG_BOT_TOKEN` and `GOODTEAM_TG_CHAT_ID` are nonempty in the launch environment; otherwise `goodteam status` reports `Telegram: disabled`. Restart with both values to enable polling. Disabling Telegram does not approve, cancel, or reassign existing Operator work waiting for a Telegram decision. Restarting does not resend an approval card whose send result was already recorded.
+
 To stop it:
 
 ```bash
