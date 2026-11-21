@@ -15,7 +15,7 @@ def project_environment_context(project_root):
     return {"project_root": str(root), "environment_root": str(root)}
 
 
-def environment_for_task(project_root, setup, write_domains=(), *, source_root=None):
+def environment_for_task(project_root, setup):
     value = project_environment_context(project_root)
     root = Path(value["project_root"])
     # Reuse actual installations whether or not a setup command was configured.

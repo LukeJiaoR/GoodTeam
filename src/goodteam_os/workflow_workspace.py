@@ -78,15 +78,14 @@ def _binding(workspace, *, project_key: str, run_id: str) -> dict:
 
 @_workspace_errors
 def prepare_workflow_workspace(source_root: Path, *, project_key: str, run_id: str,
-                               worker_setup: dict | None = None, write_domains: list[str] | None = None) -> dict:
+                               worker_setup: dict | None = None) -> dict:
     """Capture at an authorized new-task start, before its first live Worker."""
     source, execution_id = _scope(source_root, project_key, run_id)
     with dispatch_workspace_lock(source, execution_id):
         workspace = prepare_dispatch_workspace(source, execution_id, [SLOT], worker_setup=worker_setup)
         from goodteam_os.project_environment import environment_for_task, bind_environment
 
-        environment = environment_for_task(source, worker_setup, write_domains or [],
-                                           source_root=workspace.workspace(SLOT))
+        environment = environment_for_task(source, worker_setup)
         # Retain the task's preparation intent with its original source baseline.
         # Reopening a run never recaptures configuration or task scope.
         previous = workspace.metadata.get("project_environment")

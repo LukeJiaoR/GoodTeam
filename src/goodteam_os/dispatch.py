@@ -388,8 +388,7 @@ def _dispatch_tracks(
         from goodteam_os.project_environment import environment_for_task, worker_environment_instructions
 
         tracks = [{**track, "context": str(track.get("context", "")) + "\n" +
-                   worker_environment_instructions(environment_for_task(
-                       project_root, worker_setup, track.get("write_domains", [])))} for track in tracks]
+                   worker_environment_instructions(environment_for_task(project_root, worker_setup))} for track in tracks]
     jobs_by_role = [
         _create_track_job(
             store,
@@ -416,9 +415,8 @@ def _dispatch_tracks(
     if isolated:
         from goodteam_os.project_environment import environment_for_task, bind_environment
 
-        for job, track in zip(jobs_by_role, tracks):
-            environment = environment_for_task(project_root, worker_setup, track.get("write_domains", []),
-                                               source_root=isolated.workspace(str(job["id"])))
+        for job in jobs_by_role:
+            environment = environment_for_task(project_root, worker_setup)
             bind_environment(isolated.workspace(str(job["id"])), environment)
             # The shared paths are runtime inputs; the source cwd stays isolated.
             job["project_environment"] = environment
