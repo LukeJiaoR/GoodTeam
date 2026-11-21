@@ -42,6 +42,8 @@ updates rather than additional execution requests, while the first intake uses
 the ordinary task proposal/confirmation route. Exact source history remains
 available; the current Manager memory projection includes the latest 20 sources
 and discloses omitted entries.
+A failed Goal ledger scan is logged separately and does not block authorized
+project continuation or Issue consumption allowed by the Operator service state.
 
 Only AST/static review applies to this local candidate. No test suite, model,
 Worker or external service has been invoked; runtime acceptance is not claimed. Full

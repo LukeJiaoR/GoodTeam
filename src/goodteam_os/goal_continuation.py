@@ -566,7 +566,7 @@ class GoalServiceStop(threading.Event):
 
 
 def start_goal_service(workspace):
-    """Observe each authorized Goal without waiting on another Goal assessment."""
+    """Scan Goals, authorized project continuations and pending Manager inputs."""
     workspace = Path(workspace)
     stop = GoalServiceStop()
 
@@ -600,7 +600,7 @@ def start_goal_service(workspace):
                         except GoalBusyError:
                             pass
                         except Exception:
-                            _LOG.exception("Goal continuation stopped before dispatch")
+                            _LOG.exception("Goal continuation tick failed for %s/%s", project_key, goal_id)
 
                     # Coordination only: actual work still enters the original
                     # batch runner and its shared process-capacity mechanism.
@@ -608,20 +608,33 @@ def start_goal_service(workspace):
                                               name=f"goodteam-goal-{goal['id']}", daemon=True)
                     thread.start()
                     stop.ticks[identity] = thread
-                if not stop.is_set():
-                    from goodteam_os.project_iteration_continuation import tick_authorized_project_continuations
-
-                    tick_authorized_project_continuations(workspace)
-                    # External input receipt processing shares this service; it
-                    # creates no execution scheduler or additional Worker pool.
-                    from goodteam_os.operator_manager_intake import consume_manager_inputs
-                    from goodteam_os.operator_queue import DurableOperatorQueue
-                    from goodteam_os.service import service_state_dir
-                    if not stop.is_set() and DurableOperatorQueue(service_state_dir()).summary()["desired_state"] == "running":
-                        consume_manager_inputs(workspace, stop=stop)
             except Exception:
                 validated_idle.clear()
-                _LOG.exception("Goal continuation ledger unavailable; no work dispatched")
+                _LOG.exception("Goal continuation scan failed")
+
+            if stop.is_set():
+                break
+            try:
+                from goodteam_os.project_iteration_continuation import tick_authorized_project_continuations
+
+                tick_authorized_project_continuations(workspace)
+            except Exception:
+                _LOG.exception("Project continuation scan failed")
+                # Preserve continuation priority: an interrupted scan does not admit input on this tick.
+                continue
+
+            if stop.is_set():
+                break
+            try:
+                # External inputs share this service, not a separate scheduler or Worker pool.
+                from goodteam_os.operator_manager_intake import consume_manager_inputs
+                from goodteam_os.operator_queue import DurableOperatorQueue
+                from goodteam_os.service import service_state_dir
+
+                if not stop.is_set() and DurableOperatorQueue(service_state_dir()).summary()["desired_state"] == "running":
+                    consume_manager_inputs(workspace, stop=stop)
+            except Exception:
+                _LOG.exception("Manager input scan failed")
     stop.thread = threading.Thread(target=run, name="goodteam-goal-continuation", daemon=True)
     stop.thread.start()
     return stop
