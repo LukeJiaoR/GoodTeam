@@ -144,13 +144,9 @@ from goodteam_os.assistant_workspace import build_project_assistant
 from goodteam_os.assistant_queue import QUEUE_ACTIONS, handle_queue_action
 from goodteam_os.telegram import send_approval_notification
 from goodteam_os.workflow_table import (
-    GATE_TRANSITIONS,
-    WORKFLOW_NODES,
     advisors_for_gate,
     approved_next_for_gate,
     resolve_profile,
-    workflow_execution_plan,
-    workflow_execution_plan_v2,
 )
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.worker_routing import resolve_role_adapter
@@ -3046,108 +3042,6 @@ def resolve_dashboard_state(workspace: Path, project_key: str = "", *, include_d
             return recover_transition(workspace, project_key)
         return _dashboard_state_view(state) if include_display_hints else state
     return store.read_current()
-
-
-def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, object]:
-    def _map_to_graph_node(node: str) -> str:
-        if node.endswith("_review_gate"):
-            return node.removesuffix("_review_gate")
-        if node.startswith("await_") and node.endswith("_approval"):
-            return node.removeprefix("await_").removesuffix("_approval")
-        return node
-
-    key = ""
-    if project_key.strip():
-        try:
-            key = normalize_project_key(project_key)
-        except ValueError:
-            key = ""
-
-    edge_fields = (
-        ("on_approved_next", "approved"),
-        ("on_changes_requested", "changes_requested"),
-        ("on_rejected", "rejected"),
-    )
-    edges: list[dict[str, str]] = []
-    identifiers = set(WORKFLOW_NODES) | set(GATE_TRANSITIONS)
-    for gate, transition in GATE_TRANSITIONS.items():
-        identifiers.add(gate)
-        identifiers.add(transition.gate)
-        for field, edge_type in edge_fields:
-            target = getattr(transition, field, None)
-            if target:
-                edges.append({"from": transition.gate, "to": target, "type": edge_type})
-                identifiers.add(target)
-    for node in WORKFLOW_NODES.values():
-        for dependency in getattr(node, "depends_on", ()):
-            edges.append({"from": dependency, "to": node.name, "type": "dependency"})
-            identifiers.add(node.name)
-            identifiers.add(dependency)
-        for field, edge_type in (("on_error", "error"), ("on_blocked", "blocked")):
-            target = getattr(node, field, "")
-            if target:
-                edges.append({"from": node.name, "to": target, "type": edge_type})
-                identifiers.add(node.name)
-                identifiers.add(target)
-
-    nodes = []
-    for identifier in sorted(identifiers):
-        workflow_node = WORKFLOW_NODES.get(identifier)
-        if workflow_node is not None:
-            nodes.append(
-                {
-                    "name": workflow_node.name,
-                    "gate": workflow_node.run_guard_gate,
-                    "runner": workflow_node.runner_fn,
-                    "kind": "stage",
-                }
-            )
-        elif identifier in GATE_TRANSITIONS:
-            nodes.append({"name": identifier, "kind": "gate"})
-        elif identifier in {"rejected", "blocked"}:
-            nodes.append({"name": identifier, "kind": "terminal"})
-        elif identifier.startswith("revise_"):
-            nodes.append({"name": identifier, "kind": "revise"})
-        else:
-            nodes.append({"name": identifier, "kind": "role"})
-
-    run = None
-    if key:
-        state = resolve_dashboard_state(workspace, project_key=key)
-        if is_active_run(state):
-            run = {
-                "run_id": state.run_id,
-                "current_node": state.current_node,
-                "next_node": state.next_node,
-                "current_graph_node": _map_to_graph_node(state.current_node),
-                "next_graph_node": _map_to_graph_node(state.next_node),
-                "approvals": {gate: str(decision) for gate, decision in state.approvals.items()},
-            }
-
-    return {
-        "project_key": key,
-        "nodes": nodes,
-        "edges": edges,
-        "execution_plan": _workflow_execution_plan_payload(),
-        "workflow_execution_plan_v2": _workflow_execution_plan_v2_payload(),
-        "run": run,
-    }
-
-
-def _workflow_execution_plan_payload() -> dict[str, object]:
-    try:
-        return workflow_execution_plan(WORKFLOW_NODES, gate_transitions=GATE_TRANSITIONS).to_dict()
-    except ValueError as exc:
-        return {
-            "scheduler": "unavailable",
-            "parallel_level_execution": "deferred",
-            "levels": [],
-            "error": str(exc),
-        }
-
-
-def _workflow_execution_plan_v2_payload() -> dict[str, object]:
-    return workflow_execution_plan_v2(WORKFLOW_NODES, gate_transitions=GATE_TRANSITIONS)
 
 
 def is_active_run(state: AgileDevState | None) -> bool:
@@ -7432,12 +7326,6 @@ def serve(
                             "legacy_artifacts": dict(state.artifacts) if state is not None else {},
                         },
                     )
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path == "/api/workflow/graph":
-                try:
-                    self._send_json(200, build_workflow_graph(workspace, project_key=project_key))
                 except Exception as exc:
                     self._send_api_error(exc)
                 return
