@@ -178,6 +178,10 @@ termination from remote work retirement. Unsupported USD caps/remote retirement
 remain explicit. That bridge is a **separate unimplemented increment**, not
 proof that this PR connects models.
 
+A later [bridge/relay experiment](https://github.com/LukeJiaoR/GoodTeam/blob/b0904326905b001ea52f1d11c39c7c3bdd512417/docs/skills/task-provider-bridge.md)
+proved model-free local forwarding only. It was removed without ever being
+wired into production Reviewer admission.
+
 No network/security setting, persistent credential, Dodo call, merge or
 deployment is changed. If bridge wiring needs setup, its exact targets and risks
 must be reviewable before requesting approval. Paid smoke needs its own unused

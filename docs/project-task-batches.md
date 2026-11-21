@@ -26,6 +26,15 @@ successful sibling outputs remain inspectable. The source checkout is never
 the Worker cwd or integration target. The candidate path and commit in the
 batch result identify the retained fan-in for independent review and explicit
 delivery confirmation. Worker success alone never marks project work done.
+New batches do not write a synthetic Workflow status to task cards. Existing
+Workflow runs still retain their own status and recovery records.
+
+Delivery revalidates every retained Worker result, reusing the opened workspace
+for results from the same dispatch. After an authorized retry, preserved Worker
+results are checked against their original dispatch rather than the retry's
+workspace. Quality views bind the displayed candidate and validation receipts
+to the same read; delivery independently checks the exact landed Git revision
+and the configured review policy.
 
 The API action is `start_queued_task_batch` on the existing project Task
 Assistant actions endpoint. It takes `proposal_ids`, an `expected_revisions`

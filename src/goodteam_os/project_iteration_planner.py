@@ -358,11 +358,11 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
                                  backlog: dict[str, Any], context: dict[str, Any],
                                  planning_attempt_id: str = "", resource_slot=None) -> dict[str, Any]:
     """Use a native, read-only Manager turn bound to the reserved planning input."""
-    from goodteam_os.graph import resolve_project_runtime_root
     from goodteam_os.manager_execution import (
         ManagerExecutionError, _manager_turn_lock, run_manager_analysis,
     )
     from goodteam_os.projects import load_project_target
+    from goodteam_os.project_runtime import resolve_project_runtime_root
 
     target = load_project_target(project_config)
     root = resolve_project_runtime_root(dict(target.get("repos", {})))
@@ -568,11 +568,7 @@ def plan_next_iteration(*, workspace: Path, project_key: str, root: Path,
             return {"iteration_choice": previous, "workflow_started": False, "reused": True}
         proposed = session.get("proposed_task")
         if isinstance(proposed, dict) and proposed.get("status") != "cancelled":
-            from goodteam_os.workflow_recovery import linked_parent
-
-            continuation = session.get("project_continuation") or {}
-            if linked_parent(workspace, project_key, continuation_id=continuation.get("id")) is None:
-                raise ValueError("Resolve the current task proposal before planning another iteration.")
+            raise ValueError("Resolve the current task proposal before planning another iteration.")
         if reserve_planning is not None:
             reserve_planning()
     # Native planning can run alongside foreground dialogue. Only snapshot

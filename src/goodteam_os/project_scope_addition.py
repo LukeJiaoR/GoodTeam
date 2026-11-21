@@ -40,8 +40,6 @@ def add_project_continuation_tasks(*, workspace, project_key, root, project_conf
                 return session  # Replay after Stop is read-only, never renewed authority.
             if value.get('status') != 'active':
                 raise ValueError('Only the current active continuation can receive confirmed later tasks.')
-            if value.get('workflow_recovery'):
-                raise ValueError('Workflow recovery retains its original fixed task scope.')
             if value.get('planning_backlog_version') or value.get('discovery_pending'):
                 raise ValueError('Reconcile the original reserved Manager decision before changing its task scope.')
             if (value['max_batches'] is not None and value['batches_started'] >= value['max_batches']

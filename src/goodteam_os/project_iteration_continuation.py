@@ -94,9 +94,6 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     ids = request.get("task_ids")
     maximum = request.get("max_batches")
     discovery = normalize_discovery(request.get("discovery"))
-    recovery = request.get("workflow_recovery")
-    if recovery is not None and (not isinstance(recovery, dict) or set(recovery) != {"run_id", "version"} or discovery):
-        raise ValueError("Recovery binds one failed Workflow and a fixed finite task inventory.")
     if not isinstance(key, str) or not 1 <= len(key) <= 256:
         raise ValueError("A stable continuation command identity is required.")
     if (not isinstance(ids, list) or not 1 <= len(ids) <= 128
@@ -108,7 +105,6 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     store = TaskAssistantSessionStore(workspace, project_key)
     identity = sha256(key.encode()).hexdigest()[:32]
     from goodteam_os.workflow_mutations import workflow_guard
-    from goodteam_os.workflow_recovery import confirm_parent
 
     with goal_guard(workspace, project_key), workflow_guard(workspace, project_key):
         session = store.read()
@@ -117,16 +113,12 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
         if original:
             if (original.get("seed_task_ids", original.get("task_ids")) != ids or original.get("max_batches") != maximum
                     or original.get("discovery") != discovery
-                    or original.get("approved_backlog_version") != request.get("expected_backlog_version")
-                    or ({key: original["workflow_recovery"].get(key) for key in ("run_id", "version")}
-                        if original.get("workflow_recovery") else None) != recovery):
+                    or original.get("approved_backlog_version") != request.get("expected_backlog_version")):
                 raise ValueError("Continuation command was already used with different scope or limits.")
             return original
         pending = pending_project_batch(session, root, project_key)
         if current.get("status") == "active" or pending:
             raise ValueError("Stop the existing continuation and settle its current batch first.")
-        if recovery is not None:
-            recovery = confirm_parent(workspace, project_key, root, recovery)
         ensure_team_state(workspace, project_key, project_config)
         tasks = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}
         version = rank_project_backlog(list(tasks.values()), project_key, limit=None)["version"]
@@ -151,7 +143,6 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
             "planning_backlog_version": "", "reason": "authorized",
             "authority": authority_snapshot(workspace, project_key, project_config, root),
             "created_at": datetime.now(UTC).isoformat(),
-            **({"workflow_recovery": recovery} if recovery is not None else {}),
         }
         if discovery:
             value.update(discovery=discovery, seed_task_ids=list(ids), discovered_task_ids=[], new_tasks_created=0,
@@ -563,7 +554,7 @@ def _require_clean_checkout(root, label):
 
 def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_commit, landed_commit):
     from goodteam_os.dispatch_workspace import (
-        _git, _read_git, dispatch_artifact_root, verify_dispatch_result,
+        _git, _read_git, dispatch_artifact_root, verify_dispatch_results,
     )
     from goodteam_os.project_iteration_execution import iteration_batch_report
     from goodteam_os.project_iteration_quality import accepted_batch_quality
@@ -577,8 +568,8 @@ def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_comm
     if not jobs or any(job.get("outcome") != "ok" for job in jobs):
         raise ValueError("Every task needs a successful retained Worker result before delivery review.")
     dispatch_id = report.get("run_id")
-    for job in jobs:
-        captured = verify_dispatch_result(root, {"dispatch_run_id": dispatch_id, **job})
+    results = verify_dispatch_results(root, ({"dispatch_run_id": dispatch_id, **job} for job in jobs))
+    for job, captured in zip(jobs, results, strict=True):
         if captured.get("result_commit") != job.get("result_commit"):
             raise ValueError("A Worker result changed after candidate integration.")
     candidate = Path(str(integration.get("candidate_path") or "")).absolute()

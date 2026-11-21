@@ -121,8 +121,8 @@ def reconcile_completed_observations(*, store, root, project_key, value, authori
 
 def _run(*, store, root, project_config, project_key, observation, observation_id,
          continuation_id, contract, authority_check):
-    from goodteam_os.graph import resolve_project_runtime_root
     from goodteam_os.manager_execution import run_manager_analysis
+    from goodteam_os.project_runtime import resolve_project_runtime_root
     from goodteam_os.projects import load_project_target
 
     configured = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))

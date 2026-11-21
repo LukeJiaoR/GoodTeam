@@ -101,7 +101,7 @@ atexit.register(close_runtimes)
 
 class ManagerAppServer:
     def __init__(self, project_config, project_key):
-        from goodteam_os.graph import resolve_project_runtime_root
+        from goodteam_os.project_runtime import resolve_project_runtime_root
         from goodteam_os.projects import load_project_target
 
         self.config = Path(project_config).resolve()

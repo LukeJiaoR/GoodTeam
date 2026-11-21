@@ -237,7 +237,7 @@ review_evidence_policy:
         raise AssertionError("review evidence policy projection must not dispatch reviewer jobs")
 
     monkeypatch.setattr(web, "append_action", fail_append_action)
-    monkeypatch.setattr(web, "dispatch_tracks", fail_dispatch)
+    monkeypatch.setattr("goodteam_os.dispatch.dispatch_tracks", fail_dispatch)
 
     reviews = web.build_approval_reviews(state, workspace=workspace)
     staging = next(review for review in reviews if review["approval"] == "staging")

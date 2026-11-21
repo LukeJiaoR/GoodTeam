@@ -388,8 +388,7 @@ def _dispatch_tracks(
         from goodteam_os.project_environment import environment_for_task, worker_environment_instructions
 
         tracks = [{**track, "context": str(track.get("context", "")) + "\n" +
-                   worker_environment_instructions(environment_for_task(
-                       project_root, worker_setup, track.get("write_domains", [])))} for track in tracks]
+                   worker_environment_instructions(environment_for_task(project_root, worker_setup))} for track in tracks]
     jobs_by_role = [
         _create_track_job(
             store,
@@ -416,9 +415,8 @@ def _dispatch_tracks(
     if isolated:
         from goodteam_os.project_environment import environment_for_task, bind_environment
 
-        for job, track in zip(jobs_by_role, tracks):
-            environment = environment_for_task(project_root, worker_setup, track.get("write_domains", []),
-                                               source_root=isolated.workspace(str(job["id"])))
+        for job in jobs_by_role:
+            environment = environment_for_task(project_root, worker_setup)
             bind_environment(isolated.workspace(str(job["id"])), environment)
             # The shared paths are runtime inputs; the source cwd stays isolated.
             job["project_environment"] = environment
@@ -564,8 +562,8 @@ def _create_track_job(
         if method_loading_mode:
             fields.update(method_loading_mode=method_loading_mode, method_workspace_mode="dispatch_isolated")
     if track.get("web_search") is not None:
+        from goodteam_os.session_runtimes import SESSION_BACKENDS
         from goodteam_os.web_search import search_policy
-        from goodteam_os.graph import SESSION_BACKENDS
 
         if (method_context and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}
                 or track.get("adapter") not in SESSION_BACKENDS

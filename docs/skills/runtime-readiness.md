@@ -1,5 +1,11 @@
 # Codex Runtime readiness and S5 implementation decision
 
+> **Historical record.** The offline manual probe is retired. The commands
+> below document the old checkout, not current usage. See the
+> [probe source at `b090432`](https://github.com/LukeJiaoR/GoodTeam/blob/b090432/src/goodteam_os/skill_runtime_readiness.py).
+
+## Original status
+
 Status: **engineering prerequisite work, not #440 or #445 acceptance**.
 Continue Draft PR #463. Do not activate strict binding, close either issue, or
 advance to #446 from the results below.

@@ -4,7 +4,7 @@ from hashlib import sha256
 import json
 from types import SimpleNamespace
 
-from goodteam_os import graph, manager_app_server, manager_execution, projects
+from goodteam_os import manager_app_server, manager_execution, project_runtime, projects
 from goodteam_os.project_observation_runtime import judge_with_production_runtime
 from goodteam_os.project_outcome_discovery import authorization_digest
 from goodteam_os.project_running_observation import _binding, human_observation_context
@@ -34,7 +34,7 @@ class NativeObservationFixture:
         self.store._mutate(lambda session: {**session, "project_continuation": value,
                                           "project_task_batches": {"batch": deepcopy(self.batch)}})
         monkeypatch.setattr(projects, "load_project_target", lambda _: {})
-        monkeypatch.setattr(graph, "resolve_project_runtime_root", lambda _: root)
+        monkeypatch.setattr(project_runtime, "resolve_project_runtime_root", lambda _: root)
         monkeypatch.setattr(manager_execution, "run_manager_analysis", self.analysis)
         monkeypatch.setattr(manager_app_server, "runtime_for", lambda *args: SimpleNamespace(
             root=root, reconcile=lambda identity: self.store.read().get("manager_app_server", {})

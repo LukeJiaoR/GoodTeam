@@ -126,7 +126,6 @@
 .product-shell--studio .work-workspace-shell[data-workspace] .product-work-page { width: calc(100% - 40px); height: calc(100dvh - 58px); min-height: 0; padding: 18px 0 20px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context { padding: 0 4px 12px; margin-bottom: 0; }
 .product-shell--studio .work-workspace-shell[data-workspace] .work-current-context__identity strong { font-size: 24px; font-weight: 550; }
-.product-shell--studio .work-workspace-shell[data-workspace] .work-focus-banner__content h2 { font-size: 1.5rem; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-manager-entry h3 { font-size: 1.25rem; }
 .studio-work-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 10px; padding: 0 4px 12px; color: var(--product-text-muted); font-size: var(--studio-text-small); }
 .studio-work-toolbar__actions > button { display: inline-flex; align-items: center; gap: 6px; color: var(--product-text-muted); border: 0; background: transparent; cursor: pointer; padding: 5px 8px; border-radius: 8px; }

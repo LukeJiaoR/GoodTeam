@@ -264,7 +264,7 @@ jobs:
       - name: Run full backend tests
         if: needs.classify.outputs.backend == 'full'
         run: PYTHONPATH=src python -m pytest tests --ignore=tests/test_workflow_http_recovery.py -q
-      - run: ruff check src/goodteam_os/ tests/ scripts/ci/ ops/ci-runner/runner_cleanup.py
+      - run: ruff check src/goodteam_os/ tests/ scripts/ci/
 
   gate:
     name: CI / gate

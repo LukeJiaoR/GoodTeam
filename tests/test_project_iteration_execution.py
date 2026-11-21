@@ -114,9 +114,7 @@ event('end')
         assert observed["run_id"] == first["run_id"]
         time.sleep(.02)
     report = iteration_batch_report(workspace=tmp_path, project_key="DEMO", root=source, run_id=first["run_id"])
-    first = {**first, "status": "review" if report["all_ok"] else "blocked", "report": report}
-    assert first["status"] == "review", first
-    report = first["report"]
+    assert report["all_ok"], report
     assert report["worker_capacity"]["pool_size"] == 10
     assert len(report["jobs"]) == len(WorkerJobStore(source).list_jobs()) == 11
     assert {job["project_task_id"] for job in report["jobs"]} == set(task_ids)
@@ -137,6 +135,7 @@ event('end')
                and task["run_id"] == first["run_id"] and task["dispatch_job_id"] for task in ledger.list_tasks())
 
     again = run_queued_iteration_batch(**request, confirmed=True)
+    assert again["status"] == "review"
     assert again["report"] == report
     assert len((signals / "calls.jsonl").read_text().splitlines()) == 22
     assert iteration_batch_report(workspace=tmp_path, project_key="DEMO", root=source,
@@ -150,15 +149,20 @@ event('end')
     retained_report = report_path.read_bytes()
     report_path.unlink()
     session = TaskAssistantSessionStore(tmp_path, "DEMO")
+    retired_link = {"run_id": "later-workflow", "version": "old-candidate", "review_reports": {}}
     def interrupted(value):
-        value["project_task_batches"][first["run_id"]]["status"] = "blocked"
+        value["project_task_batches"][first["run_id"]].update(status="blocked", workflow_recovery=retired_link)
         return value
     session._mutate(interrupted)
     later = create_initial_state("later-workflow", "DEMO", "Separate owner-authorized task")
+    later.current_node, later.next_node = "implementation", "blocked"
+    later.blockers = ["Unresolved QA failure"]
     StateStore(tmp_path).write_project_current(later)
     with pytest.raises(ValueError, match="active project execution"):
         run_queued_iteration_batch(**request, confirmed=True)
     assert len((signals / "calls.jsonl").read_text().splitlines()) == 22
+    # The removed authorization is inert, but the old batch metadata remains.
+    assert session.read()["project_task_batches"][first["run_id"]]["workflow_recovery"] == retired_link
     report_path.write_bytes(retained_report)
 
 

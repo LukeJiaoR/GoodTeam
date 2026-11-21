@@ -196,23 +196,6 @@ class DurableOperatorQueue:
                                   payload={"manager_input": receipt, "task_accepted": False})
             return dict(item)
 
-    def claim_next(self) -> dict[str, Any] | None:
-        with self._locked():
-            state = self._read_state_unlocked()
-            if state["desired_state"] != "running":
-                return None
-            if self._active_items(state):
-                return None
-            item = next((candidate for candidate in state["items"] if candidate["status"] == "queued"), None)
-            if item is None:
-                return None
-            item["status"] = "active"
-            item["phase"] = "hydrating"
-            item["attempt"] = max(1, int(item["attempt"]) + 1)
-            item["updated_at"] = self.clock()
-            self._commit_unlocked(state, item=item, event="claimed", payload={"phase": "hydrating"})
-            return dict(item)
-
     def transition(
         self,
         item_id: str,

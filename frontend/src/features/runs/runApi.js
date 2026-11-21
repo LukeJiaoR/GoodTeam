@@ -32,22 +32,6 @@ export const getTaskInputContext = (projectKey, runId, { signal } = {}) => reque
   { signal, cache: 'no-store' },
 );
 
-export const getWorkflowGraph = (projectKey, { signal } = {}) => requestJson(
-  `/api/workflow/graph?project=${encodeURIComponent(projectKey)}`,
-  { signal },
-);
-
-export const getDevLoop = (projectKey, { signal } = {}) => requestJson(
-  `/api/devloop?project=${encodeURIComponent(projectKey)}`,
-  { signal },
-);
-
-export const getMessages = (projectKey, runId, gate = '', { signal } = {}) => {
-  const params = new URLSearchParams({ project: projectKey, run: runId });
-  if (gate) params.set('gate', gate);
-  return requestJson(`/api/messages?${params}`, { signal });
-};
-
 // The request owner supplies and retains body.run_id for retries. Do not generate
 // a new identity per HTTP attempt. New starts return a task batch, not Workflow state.
 export const startRun = (body, options) => jsonPost('/api/start', body, options);
@@ -68,8 +52,6 @@ export const retryRun = (projectKey, expectedTarget = {}, options) => jsonPost('
 export const terminateRun = (projectKey, expectedRunId, options) => jsonPost('/api/terminate', {
   project_key: projectKey, expected_run_id: expectedRunId,
 }, options);
-export const dispatchTrack = (body, options) => jsonPost('/api/dispatch-track', body, options);
-export const startSmoke = (body, options) => jsonPost('/api/smoke-run', body, options);
 export const startChangeIntent = (projectKey, approval, expectedTarget = {}, options) => jsonPost(
   '/api/intent-commit/start',
   {
@@ -105,21 +87,16 @@ export const confirmChangeIntent = (projectKey, intentId, options) => jsonPost(
 export const runApi = {
   confirmChangeIntent,
   discussChangeIntent,
-  dispatchTrack,
-  getDevLoop,
-  getMessages,
   getProjectState,
   getGoalHistory,
   getProjectRun,
   getProjectRuns,
   getTaskInputContext,
-  getWorkflowGraph,
   keepDiscussingChangeIntent,
   retryRun,
   sendTaskAssistantMessage,
   startChangeIntent,
   startRun,
-  startSmoke,
   taskAssistantAction,
   terminateRun,
 };

@@ -11,6 +11,15 @@ changes go to Planner; no extra Manager approval gate is introduced. This adapte
 does not add per-Worker or parallel environment versions. Environment changes are
 not implicit input-adapter or arbitrary Worker side effects.
 
+The CLI and Telegram submit through Manager intake, not the old Operator
+execution engine. The Operator state machine reconciles active executions;
+it does not claim queued Issues as new legacy runs.
+
+Use `goodteam task` or Telegram `/gt task` for new Issues. The retired
+`goodteam execution intake-github-issue` command and
+`POST /api/executions/github/issues/intake` did not configure a GitHub client.
+Their removal does not affect existing Operator executions or their recovery.
+
 External issue content is explicitly marked untrusted context, not authority.
 Source URL, revision, repository, project root and exact snapshot are retained.
 Repeated URLs reuse the accepted snapshot and message identity. Failed or
@@ -37,6 +46,8 @@ updates rather than additional execution requests, while the first intake uses
 the ordinary task proposal/confirmation route. Exact source history remains
 available; the current Manager memory projection includes the latest 20 sources
 and discloses omitted entries.
+A failed Goal ledger scan is logged separately and does not block authorized
+project continuation or Issue consumption allowed by the Operator service state.
 
 Only AST/static review applies to this local candidate. No test suite, model,
 Worker or external service has been invoked; runtime acceptance is not claimed. Full

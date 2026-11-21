@@ -80,7 +80,7 @@ export const WORK_CONTEXT_TARGETS = {
   draft: { tab: 'manager', selector: '.team-task-proposal' },
   recovery: { tab: 'manager', selector: '.assistant-request' },
   continuation: { tab: 'manager', selector: '.project-continuation-controls' },
-  composer: { tab: 'manager', selector: '.team-manager-dock textarea, .work-start-panel textarea' },
+  composer: { tab: 'manager', selector: '.team-manager-dock textarea' },
   outcomes: { tab: 'outcomes', selector: '.team-pane--outcomes' },
   execution: { tab: 'execution', selector: '.team-pane--execution' },
   tasks: { tab: 'outcomes', selector: '#project-task-navigation' },

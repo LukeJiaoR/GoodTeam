@@ -64,7 +64,7 @@ def test_manager_starts_independent_b_before_a_finishes_and_retains_both(tmp_pat
         tick()  # Revisit original A, never reserve or execute it again.
         assert executions == [a['id'], b['id']] and len(calls) == 2
         with pytest.raises(ValueError):
-            execution._require_execution_slot(tmp_path, 'DEMO', 'new', continuation_id=grant['id'], task_ids=[conflict['id']])
+            execution._require_execution_slot(tmp_path, 'DEMO', 'new', task_ids=[conflict['id']])
         continuation.stop_project_continuation(workspace=tmp_path, project_key='DEMO', continuation_id=grant['id'])
         assert tick()['status'] == 'stopped' and len(calls) == 2
     finally:

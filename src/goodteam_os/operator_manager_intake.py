@@ -6,11 +6,32 @@ import json
 import logging
 from pathlib import Path
 
+from goodteam_os.operator_github import GhCliGitHubClient, parse_github_issue_url, resolve_known_project
+from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
+def enqueue_github_issue(*, workspace: Path, state_dir: Path, issue_url: str,
+                         github_client: GhCliGitHubClient | None = None) -> tuple[dict, bool]:
+    """Capture into Manager unless the same source is still owned by Operator history."""
+    parsed = parse_github_issue_url(issue_url)
+    project = resolve_known_project(workspace, parsed.repository)
+    key = _issue_key(project, parsed)
+    # An accepted legacy item keeps its execution, PR, and decision identity.
+    existing = next((item for item in DurableOperatorQueue(state_dir).list_items()
+                     if item["idempotency_key"] == key), None)
+    if existing is not None and existing["status"] != "transferred":
+        return existing, False
+    client = github_client or GhCliGitHubClient(cwd=project.project_root)
+    return intake_issue(workspace=workspace, project=project, parsed=parsed, client=client)
+
+
+def _issue_key(project, parsed):
+    return f"github_issue:{project.key}:{parsed.repository.lower()}#{parsed.issue_number}"
+
+
 def intake_issue(*, workspace, project, parsed, client, expected_revision=None, captured_snapshot=None):
-    key = f"github_issue:{project.key}:{parsed.repository.lower()}#{parsed.issue_number}"
+    key = _issue_key(project, parsed)
     snapshot = (dict(captured_snapshot) if captured_snapshot is not None
                 else asdict(client.fetch_issue(project.repository, parsed.issue_number)))
     revision_time = datetime.fromisoformat(snapshot["updated_at"].replace("Z", "+00:00"))

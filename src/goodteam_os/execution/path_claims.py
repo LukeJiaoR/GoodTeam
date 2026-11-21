@@ -209,9 +209,6 @@ def _area_mappings() -> list[tuple[tuple[str, ...], tuple[str, ...], str]]:
             ("review workbench", "workbench", "browser workbench"),
             (
                 "src/goodteam_os/execution/review_workbench.py",
-                "src/goodteam_os/execution/review_workbench_browser.py",
-                "src/goodteam_os/execution/review_workbench_browser_sandbox.py",
-                "tests/test_review_workbench_sandbox_evidence.py",
             ),
             "matched review workbench area",
         ),

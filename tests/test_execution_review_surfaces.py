@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from goodteam_os import cli, web
+from goodteam_os.execution.evidence import ExecutionEvidenceService
 from goodteam_os.execution.ledger import ExecutionLedger
 from tests.review_workbench_helpers import (
     full_lifecycle as _full_lifecycle,
@@ -18,44 +19,17 @@ class FakeRequest:
         return BytesIO()
 
 
-def test_export_is_read_only_for_ledger_and_memory(tmp_path):
+def test_cli_review_is_read_only_for_ledger_and_memory(tmp_path, capsys):
     api, execution_id = _full_lifecycle(tmp_path)
     api.persist_pr_diff(execution_id)
     ledger = ExecutionLedger(tmp_path)
     before_events = ledger.read_events(execution_id)
     before_memory = _memory_event_files(tmp_path)
 
-    # Provenance and the user-facing manifest must report the same observed
-    # CI, review and merge facts through their shared pure extractors.
-    from goodteam_os.execution.evidence import ExecutionEvidenceService
-
-    evidence = ExecutionEvidenceService(tmp_path)
-    provenance = evidence.build_provenance(execution_id)
-    manifest = evidence.get_evidence(execution_id)
-    for field in ("ci_summary", "review_summary", "merge_summary"):
-        assert provenance[field] == manifest[field]
-    assert provenance["ci_summary"]["state"] == "success"
-    assert provenance["review_summary"] == {"reviews": 1, "comments": 1, "states": ["APPROVED"]}
-    assert provenance["merge_summary"]["merged"] is True
-
-    first = api.export_review_workbench_html(execution_id)
-    second = api.export_review_workbench_html(execution_id)
-
-    assert Path(first["html_path"]).read_text(encoding="utf-8") == Path(second["html_path"]).read_text(
-        encoding="utf-8"
-    )
-    assert ledger.read_events(execution_id) == before_events
-    assert _memory_event_files(tmp_path) == before_memory
-
-
-def test_cli_exports_browser_workbench_artifacts(tmp_path, capsys):
-    api, execution_id = _full_lifecycle(tmp_path)
-    api.persist_pr_diff(execution_id)
-
     exit_code = cli.main(
         [
             "execution",
-            "export-review-workbench",
+            "review",
             "--execution-id",
             execution_id,
             "--project-root",
@@ -65,12 +39,21 @@ def test_cli_exports_browser_workbench_artifacts(tmp_path, capsys):
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert payload["status"] == "exported"
-    assert Path(payload["html_path"]).is_file()
-    assert Path(payload["json_path"]).is_file()
+    assert payload["execution_id"] == execution_id
+
+    # Provenance and the CLI review must report the same observed CI, review
+    # and merge facts through their shared pure extractors.
+    provenance = ExecutionEvidenceService(tmp_path).build_provenance(execution_id)
+    for field in ("ci_summary", "review_summary", "merge_summary"):
+        assert provenance[field] == payload["evidence"][field]
+    assert provenance["ci_summary"]["state"] == "success"
+    assert provenance["review_summary"] == {"reviews": 1, "comments": 1, "states": ["APPROVED"]}
+    assert provenance["merge_summary"]["merged"] is True
+    assert ledger.read_events(execution_id) == before_events
+    assert _memory_event_files(tmp_path) == before_memory
 
 
-def test_http_routes_expose_read_only_workbench_json_and_page(tmp_path, monkeypatch):
+def test_http_review_returns_json_but_not_the_standalone_page(tmp_path, monkeypatch):
     api, execution_id = _full_lifecycle(tmp_path)
     api.persist_pr_diff(execution_id)
     request = _capture_dashboard_requests(tmp_path, monkeypatch)
@@ -83,12 +66,8 @@ def test_http_routes_expose_read_only_workbench_json_and_page(tmp_path, monkeypa
     assert payload["schema_version"] == "review_workbench.v1"
     assert payload["diff"]["summary"] == "2 files changed (+130/-2)"
 
-    status, headers, html = request("GET", f"/review-workbench/{execution_id}?project_root={root}")
-    assert status == 200
-    assert headers["Content-Type"] == "text/html; charset=utf-8"
-    assert "Review Workbench" in html
-    assert execution_id in html
-    assert "2 files changed (+130/-2)" in html
+    status, _, _ = request("GET", f"/review-workbench/{execution_id}?project_root={root}")
+    assert status == 404
 
 
 def _capture_dashboard_requests(workspace: Path, monkeypatch):

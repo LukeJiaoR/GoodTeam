@@ -1,12 +1,18 @@
 # Skill Runtime conformance (S0 / #440)
 
+> **Historical record.** The manual probe is retired. The commands below
+> document the old checkout, not current usage. See the
+> [probe source at `b090432`](https://github.com/LukeJiaoR/GoodTeam/blob/b090432/src/goodteam_os/skill_conformance.py).
+
+## Original scope
+
 This is a diagnostic experiment, **not** a production readiness endpoint. It
 implements the first validation slice of #438 / #449. It does not install Skills,
 change Team configuration, start a GoodTeam workflow, or enable strict binding.
 
 ## Decision
 
-The current [Runtime readiness and S5 implementation decision](runtime-readiness.md)
+The follow-up [Runtime readiness and S5 implementation decision](runtime-readiness.md)
 records the discovered Codex 0.155.1 binaries, credential-free executable
 boundary checks, disposable Linux envelope, remaining Worker changes and the
 request/cost enforcement requirements. A missing binary on the earlier CI runner

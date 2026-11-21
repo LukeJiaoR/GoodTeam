@@ -498,6 +498,8 @@ def _component_specs(
     state_dir: Path,
     operator_args=(),
 ) -> list[Component]:
+    from goodteam_os.telegram import telegram_config_from_env
+
     runtime = state_dir / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
 
@@ -526,7 +528,7 @@ def _component_specs(
             heartbeat_token=heartbeat_token,
         )
 
-    return [
+    components = [
         component(
             "web",
             [
@@ -541,12 +543,14 @@ def _component_specs(
                 str(frontend_dist),
             ],
         ),
-        component("telegram", ["_telegram-component", "--workspace", str(workspace)]),
-        component(
-            "operator",
-            ["_operator-component", "--workspace", str(workspace), "--state-dir", str(state_dir), *operator_args],
-        ),
     ]
+    if telegram_config_from_env()["enabled"]:
+        components.append(component("telegram", ["_telegram-component", "--workspace", str(workspace)]))
+    components.append(component(
+        "operator",
+        ["_operator-component", "--workspace", str(workspace), "--state-dir", str(state_dir), *operator_args],
+    ))
+    return components
 
 
 def _start_component(component: Component, *, state_dir: Path) -> None:
@@ -760,6 +764,10 @@ def _write_projection(
         }
         for component in components
     }
+    # An unconfigured channel has no process, readiness or watchdog budget.
+    state["components"].setdefault("telegram", {
+        "status": "disabled", "ready": False, "pid": 0, "restart_count": 0,
+    })
     try:
         state["queue"] = queue.summary()
     except Exception as exc:

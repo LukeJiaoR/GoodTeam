@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from goodteam_os import graph
+from goodteam_os import graph, worker_routing
 from goodteam_os.goal_continuation import authority_snapshot
 from goodteam_os.manager_execution import _parse_team_commands
 from goodteam_os.team_control_plane import (
@@ -93,8 +93,9 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     with pytest.raises(ValueError):
         validate_discovered_task(packet, {**proposal, 'new_task': {**proposal['new_task'], 'task_type': 'investigation'}})
     original = deepcopy(team['skill_bindings'])
-    fields = graph._worker_job_fields({TEAM_STATE_TARGET_KEY: team}, 'planner', None,
-                                     model_fallback=lambda: 'WRONG_FALLBACK')
+    fields = worker_routing._worker_job_fields(
+        {TEAM_STATE_TARGET_KEY: team}, 'planner', None, model_fallback=lambda: 'WRONG_FALLBACK',
+    )
     assert fields['model'] == 'fixture-runtime' and fields['desired_instances'] == 1
     assert fields['worker_id'] == 'research-a' and fields['additional_prompt'] == ''
     workers = WorkerJobStore(root)
@@ -104,8 +105,9 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     assert workers.run_job(job['id'])['status'] == 'completed'
     assert team['skill_bindings'] == original
     team = command({'kind': 'set_role_runtime_source', 'role': 'architect', 'worker_id': 'research-a'})
-    second_fields = graph._worker_job_fields({TEAM_STATE_TARGET_KEY: team}, 'architect', None,
-                                            model_fallback=lambda: 'WRONG_FALLBACK')
+    second_fields = worker_routing._worker_job_fields(
+        {TEAM_STATE_TARGET_KEY: team}, 'architect', None, model_fallback=lambda: 'WRONG_FALLBACK',
+    )
     second = workers.create_job(run_id='role-source', role='architect', task='Assess the architecture',
         context='Architect private context', execution_policy='read_only', **second_fields)
     assert second['id'] != job['id'] and second['role'] == 'architect'
@@ -125,7 +127,7 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
         patch.setattr('goodteam_os.team_control_plane.worker_backend_doctor',
                       lambda provider: {'ready': True})
         patch.setattr(graph, 'load_project_target', lambda path: {TEAM_STATE_TARGET_KEY: routing})
-        assert graph.resolve_role_adapter({TEAM_STATE_TARGET_KEY: routing}, 'architect') == 'codex'
+        assert worker_routing.resolve_role_adapter({TEAM_STATE_TARGET_KEY: routing}, 'architect') == 'codex'
         assert graph.should_generate_artifact_with_worker(config, 'architect') is True
         source['runtime']['provider'] = 'fake'
         for member in routing['workers']:

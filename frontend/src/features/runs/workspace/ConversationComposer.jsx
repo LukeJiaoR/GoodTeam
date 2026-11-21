@@ -11,7 +11,7 @@ import { useConversationAttachments } from './useConversationAttachments';
 
 function Composer({
   draftKey, projectKey, acceptedMessage, awaitingReply = false,
-  busy, embedded = true, error, onStart, onQueueTask, suggestions = [], t,
+  busy, error, onStart, onQueueTask, suggestions = [], t,
   changeIntent, onDiscussChangeIntent, onKeepDiscussingChangeIntent,
   activeTask = false, changeTarget = null, recordedChange, onStartChangeIntent,
 }) {
@@ -149,7 +149,7 @@ function Composer({
   };
 
   return (
-    <form className={embedded ? 'team-manager-entry' : 'work-start-panel'} onSubmit={submit}>
+    <form className="team-manager-entry" onSubmit={submit}>
       <div className="conversation-entry-context">
       {queuing ? <p className="product-empty-copy">{t('assistant.project.queueBoundary')}</p> : null}
       {changeIntent ? <ConversationChangeContext active={!queuing && activeTask} intent={queuing ? null : changeIntent} target={queuing ? null : changeTarget}

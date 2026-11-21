@@ -2,13 +2,12 @@ import json
 import hashlib
 import os
 import re
-from collections.abc import Callable
 from difflib import unified_diff
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from goodteam_os.worker_capabilities import REASONING_DEPTHS
+from goodteam_os import project_runtime, worker_routing
 from goodteam_os.artifacts import ArtifactStore
 from goodteam_os.artifact_revisions import (
     capture_proposal, current_job_artifact, invalidate_artifact, require_proposal,
@@ -44,7 +43,7 @@ from goodteam_os.workflow_table import (
     workflow_execution_plan_v2,
     workflow_node,
 )
-from goodteam_os.workers import BUILTIN_WORKER_MODES, SESSION_BACKENDS, WorkerJobStore
+from goodteam_os.workers import BUILTIN_WORKER_MODES, WorkerJobStore
 from goodteam_os.workflow_mutations import serialized_workflow
 
 
@@ -408,7 +407,7 @@ def render_shallow_directory_tree(root: Path, *, max_entries: int = 80) -> str:
 
 
 def select_project_memory_root(repos: dict[object, object]) -> Path | None:
-    runtime_root = resolve_project_runtime_root(repos)
+    runtime_root = project_runtime.resolve_project_runtime_root(repos)
     if runtime_root is not None:
         return runtime_root
     for name in ["docs", "backend", "frontend"]:
@@ -416,20 +415,6 @@ def select_project_memory_root(repos: dict[object, object]) -> Path | None:
         if value and Path(str(value)).is_dir():
             return Path(str(value))
     return None
-
-
-def resolve_project_runtime_root(repos: dict[object, object]) -> Path | None:
-    roots = [
-        Path(str(value))
-        for value in repos.values()
-        if value and Path(str(value)).is_dir()
-    ]
-    if not roots:
-        return None
-    parents = {root.parent for root in roots}
-    if len(roots) > 1 and len(parents) == 1:
-        return next(iter(parents))
-    return roots[0]
 
 
 def ensure_project_memory(project_config: Path) -> Path | None:
@@ -449,7 +434,7 @@ def ensure_project_task_ledger(project_config: Path) -> Path | None:
     if not project_config.is_file():
         return None
     target = load_project_target(project_config)
-    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    runtime_root = project_runtime.resolve_project_runtime_root(dict(target.get("repos", {})))
     if runtime_root is None:
         return None
     project_key = str(target.get("key", "") or "")
@@ -467,7 +452,7 @@ def sync_project_stage_tasks(state: AgileDevState, project_config: Path | None) 
     runtime_root = None
     if project_config is not None and project_config.is_file():
         target = load_project_target(project_config)
-        runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+        runtime_root = project_runtime.resolve_project_runtime_root(dict(target.get("repos", {})))
     if runtime_root is None:
         ledger_ref = str(state.artifacts.get("task_ledger", "") or "")
         ledger = Path(ledger_ref) if ledger_ref else None
@@ -482,7 +467,7 @@ def ensure_project_role_memories(project_config: Path) -> dict[str, dict[str, Pa
     if not project_config.is_file():
         return {}
     target = load_project_target(project_config)
-    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    runtime_root = project_runtime.resolve_project_runtime_root(dict(target.get("repos", {})))
     if runtime_root is None:
         return {}
     return RoleMemoryStore(runtime_root).ensure_all_role_memories(
@@ -497,7 +482,7 @@ def artifact_mirror_root(project_config: Path | None, state: AgileDevState | Non
     if project_config is None or not project_config.is_file():
         return None
     target = load_project_target(project_config)
-    return resolve_project_runtime_root(dict(target.get("repos", {})))
+    return project_runtime.resolve_project_runtime_root(dict(target.get("repos", {})))
 
 
 def summarize_context_file(content: str) -> str:
@@ -1821,96 +1806,6 @@ def run_retro_until_complete(
     return state
 
 
-def _team_execution_role(target: dict[str, object], role: str) -> str:
-    from goodteam_os.team_control_plane import attached_team_state
-
-    # Intake is a workflow stage, provided by the existing Research capability.
-    return "research" if role == "project_intake" and attached_team_state(target) is not None else role
-
-
-def resolve_role_adapter(target: dict[str, object], role: str) -> str:
-    """Pick the worker backend for a single role.
-
-    With Team Control Plane state attached, an explicitly selected Runtime
-    source owns the routing choice; otherwise the first active Role member does. Legacy projects without team state resolve from
-    per-role `workers.<role>` overriding the global `worker_backend.mode`,
-    defaulting to codex. This does not gate dispatch — dispatch paths must go
-    through `resolve_worker_for_role`, which fails closed.
-    """
-    from goodteam_os.team_control_plane import (
-        active_workers_for_role, attached_team_state, normalize_provider, resolve_worker_from_state,
-    )
-
-    role = _team_execution_role(target, role)
-    state = attached_team_state(target)
-    if state is not None and role != "orchestrator":
-        if dict(dict(state.get("roles") or {}).get(role) or {}).get("runtime_source_worker_id"):
-            return str(resolve_worker_from_state(state, role)["adapter"])
-        active = sorted(active_workers_for_role(state, role), key=lambda w: (str(w["created_at"]), str(w["id"])))
-        if active:
-            return normalize_provider(dict(active[0]["runtime"]).get("provider", ""))
-    default_mode = str(dict(target.get("worker_backend", {})).get("mode", "codex") or "codex")
-    per_role = str(dict(target.get("workers", {})).get(role, "") or "").strip()
-    adapter = per_role or default_mode
-    if adapter == "manual":
-        adapter = "human"
-    return adapter
-
-
-def worker_type_settings_for_role(target: dict[object, object], role: str) -> dict[str, object]:
-    from goodteam_os.team_control_plane import MANAGER_ROLE, active_workers_for_role, attached_team_state
-
-    state = attached_team_state(target)
-    if state is not None:
-        if role == MANAGER_ROLE:
-            manager = dict(state.get("manager", {}) or {})
-            runtime = dict(manager.get("runtime", {}) or {})
-            reasoning_depth = str(runtime.get("reasoning_depth", "default") or "default")
-            return {
-                "reasoning_depth": reasoning_depth,
-                "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
-                "pi_thinking_level": _pi_thinking_level(resolve_role_adapter(target, role), reasoning_depth),
-            }
-        active = sorted(active_workers_for_role(state, role), key=lambda w: (str(w["created_at"]), str(w["id"])))
-        if active:
-            runtime = dict(active[0]["runtime"])
-            reasoning_depth = str(runtime.get("reasoning_depth", "default") or "default")
-            return {
-                "reasoning_depth": reasoning_depth,
-                "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
-                # Worker count derives from Worker records, not a count field.
-                "desired_instances": min(max(len(active), 1), 8),
-                "pi_thinking_level": _pi_thinking_level(resolve_role_adapter(target, role), reasoning_depth),
-            }
-    all_settings = target.get("worker_type_settings", {})
-    if not isinstance(all_settings, dict):
-        all_settings = {}
-    raw_settings = all_settings.get(role, {})
-    if not isinstance(raw_settings, dict):
-        raw_settings = {}
-    reasoning_depth = str(raw_settings.get("reasoning_depth", "default") or "default").strip().lower()
-    if reasoning_depth not in REASONING_DEPTHS:
-        reasoning_depth = "default"
-    additional_prompt = str(raw_settings.get("additional_prompt", "") or "").strip()
-    try:
-        desired_instances = int(raw_settings.get("desired_instances", 1) or 1) if role != MANAGER_ROLE else 1
-    except (TypeError, ValueError):
-        desired_instances = 1
-    desired_instances = min(max(desired_instances, 1), 8)
-    adapter = resolve_role_adapter(target, role)
-    return {
-        "reasoning_depth": reasoning_depth,
-        "additional_prompt": additional_prompt,
-        **({"desired_instances": desired_instances} if role != MANAGER_ROLE else {}),
-        "pi_thinking_level": _pi_thinking_level(adapter, reasoning_depth),
-    }
-
-
-def _pi_thinking_level(adapter: str, reasoning_depth: str) -> str:
-
-    return reasoning_depth if adapter in SESSION_BACKENDS and reasoning_depth != "default" else ""
-
-
 def run_implementation_workers(
     state: AgileDevState,
     project_config: Path | None = None,
@@ -1926,7 +1821,7 @@ def run_implementation_workers(
         return []
     target = load_project_target(project_config)
     job_specs = implementation_worker_job_specs(state, target, workspace=workspace)
-    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    runtime_root = project_runtime.resolve_project_runtime_root(dict(target.get("repos", {})))
     if runtime_root is None:
         from goodteam_os.workflow_workspace import WorkflowWorkspaceError, adapter_requires_workflow_workspace
 
@@ -1991,7 +1886,7 @@ def dispatch_gate_reviewer_jobs(
     if project_config is None or not project_config.is_file():
         return []
     target = load_project_target(project_config)
-    runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+    runtime_root = project_runtime.resolve_project_runtime_root(dict(target.get("repos", {})))
     if runtime_root is None:
         return []
     return dispatch_reviewer_jobs_for_gate(
@@ -2003,51 +1898,6 @@ def dispatch_gate_reviewer_jobs(
         artifact_path=str(artifact_path),
         context=worker_context_for_role(state, "review", workspace=workspace),
     )
-
-
-def _worker_job_fields(
-    target: dict[object, object],
-    role: str,
-    state: AgileDevState,
-    *,
-    model_fallback: Callable[[], str] | None = None,
-    worker_id: str | None = None,
-) -> dict[str, object]:
-    """Resolve the dispatching Worker for a role, enforcing Team gates.
-
-    Fails closed: a disabled TeamRole or a TeamRole without an active,
-    runtime-eligible Worker raises TeamDispatchBlocked. The resolved Worker's
-    runtime is authoritative; the role-level model profile only fills in when
-    the Worker has no explicit model configured.
-    """
-    from goodteam_os.team_control_plane import resolve_worker_for_role
-
-    role = _team_execution_role(target, role)
-
-    if model_fallback is not None:
-        fallback_model = model_fallback()
-    else:
-        fallback_model = worker_model_for_role(state, role)
-    resolution = resolve_worker_for_role(target, role, worker_id=worker_id)
-    if resolution is None:
-        return {
-            "adapter": resolve_role_adapter(target, role),
-            "model": fallback_model,
-            **worker_type_settings_for_role(target, role),
-        }
-    # The resolution IS the execution contract: identity, provider, model,
-    # reasoning depth, and prompt all come from this one Worker. Never merge
-    # fields from a second "first active worker" lookup here.
-    return {
-        "adapter": resolution["adapter"],
-        "model": resolution["model"] or fallback_model,
-        "worker_id": resolution["worker_id"],
-        "worker_name": resolution["worker_name"],
-        "reasoning_depth": resolution["reasoning_depth"],
-        "additional_prompt": resolution["additional_prompt"],
-        "pi_thinking_level": resolution["pi_thinking_level"],
-        **({"desired_instances": resolution["desired_instances"]} if "desired_instances" in resolution else {}),
-    }
 
 
 def implementation_worker_job_specs(
@@ -2073,7 +1923,9 @@ def implementation_worker_job_specs(
                 "Capture browser screenshot evidence when a local frontend can run.",
             ],
             "expected_artifacts": ui_delivery_expected_artifacts(delivery_mode),
-            **_worker_job_fields(target, "ui", state, model_fallback=lambda: ui_delivery_worker_model(state)),
+            **worker_routing._worker_job_fields(
+                target, "ui", state, model_fallback=lambda: ui_delivery_worker_model(state),
+            ),
         },
         {
             "run_id": state.run_id,
@@ -2086,7 +1938,7 @@ def implementation_worker_job_specs(
                 "Do not store secrets.",
             ],
             "expected_artifacts": implementation_expected_artifacts(delivery_mode) + release_deliverables,
-            **_worker_job_fields(target, "implementation", state),
+            **worker_routing._worker_job_fields(target, "implementation", state),
         },
         {
             "run_id": state.run_id,
@@ -2103,7 +1955,7 @@ def implementation_worker_job_specs(
                 "Record each exact verification command, exit code, tests executed, and any environment blocker. Agent completion is not tests passing; missing evidence is unknown.",
             ],
             "expected_artifacts": qa_expected_artifacts(delivery_mode),
-            **_worker_job_fields(target, "qa", state),
+            **worker_routing._worker_job_fields(target, "qa", state),
         },
     ]
 
@@ -2431,23 +2283,16 @@ def failure_memory_root(project_config: Path | None) -> Path | None:
     if project_config is None or not project_config.is_file():
         return None
     target = load_project_target(project_config)
-    return resolve_project_runtime_root(dict(target.get("repos", {})))
+    return project_runtime.resolve_project_runtime_root(dict(target.get("repos", {})))
 
 
 def ui_delivery_worker_model(state: AgileDevState) -> str:
     return (
-        worker_model_for_role(state, "frontend")
-        or worker_model_for_role(state, "implementation")
-        or worker_model_for_role(state, "ui")
+        worker_routing.worker_model_for_role(state, "frontend")
+        or worker_routing.worker_model_for_role(state, "implementation")
+        or worker_routing.worker_model_for_role(state, "ui")
         or "gpt-5.3-codex"
     )
-
-
-def worker_model_for_role(state: AgileDevState, role: str) -> str:
-    model = str(dict(state.role_models.get(role, {})).get("primary", "")).strip()
-    if ":" in model:
-        return model.split(":", 1)[1].strip()
-    return model
 
 
 def qa_result_reports_failure(result: dict[str, object]) -> bool:
@@ -3162,7 +3007,7 @@ def should_generate_artifact_with_worker(project_config: Path | None, role: str)
     if project_config is None or not project_config.is_file():
         return False
     target = load_project_target(project_config)
-    adapter = resolve_role_adapter(target, role)
+    adapter = worker_routing.resolve_role_adapter(target, role)
     return adapter not in BUILTIN_WORKER_MODES
 
 
@@ -3273,7 +3118,7 @@ def generate_artifact_via_worker(
         return None
     try:
         target = load_project_target(project_config)
-        runtime_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+        runtime_root = project_runtime.resolve_project_runtime_root(dict(target.get("repos", {})))
         if runtime_root is None:
             if state.task_skill_context:
                 from goodteam_os.skills.models import SkillError
@@ -3281,13 +3126,15 @@ def generate_artifact_via_worker(
                 raise SkillError("skill_dispatch_unavailable", "The original task runtime root is unavailable; template fallback is forbidden.")
             from goodteam_os.workflow_workspace import WorkflowWorkspaceError, adapter_requires_workflow_workspace
 
-            if adapter_requires_workflow_workspace(str(_worker_job_fields(target, role, state)["adapter"])):
+            if adapter_requires_workflow_workspace(
+                str(worker_routing._worker_job_fields(target, role, state)["adapter"])
+            ):
                 raise WorkflowWorkspaceError("workflow_workspace_source_unavailable")
             return None
 
         from goodteam_os.skills.task_start import workflow_job_fields
 
-        job_fields = _worker_job_fields(target, role, state)
+        job_fields = worker_routing._worker_job_fields(target, role, state)
         operation = str(state.pending_transition.get("id") or "initial")
         revision_input = json.dumps({"task": task_text,
                                      "generation": state.artifact_generations.get(artifact_key, "")}, sort_keys=True)
@@ -3362,7 +3209,7 @@ def generate_prd(*, workspace: Path, project_key: str) -> dict[str, object]:
         raise ValueError(f"Project config not found for project: {key}")
 
     target = load_project_target(project_config)
-    if resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
+    if project_runtime.resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
         raise ValueError(f"Project runtime root not found for project: {key}")
 
     failure_status: dict[str, object] = {}
@@ -3422,7 +3269,7 @@ def refine_artifact(
         raise ValueError("This artifact changed. Reload it before refining your edits.")
     project_config = _resolve_state_project_config(workspace, state, key)
     target = load_project_target(project_config)
-    if resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
+    if project_runtime.resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
         raise ValueError(f"Project runtime root not found for project: {key}")
 
     contract = artifact_contract(artifact_key)
@@ -3632,7 +3479,7 @@ def generate_rfc(*, workspace: Path, project_key: str) -> dict[str, object]:
         raise ValueError(f"Project config not found for project: {key}")
 
     target = load_project_target(project_config)
-    if resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
+    if project_runtime.resolve_project_runtime_root(dict(target.get("repos", {}))) is None:
         raise ValueError(f"Project runtime root not found for project: {key}")
 
     failure_status: dict[str, object] = {}

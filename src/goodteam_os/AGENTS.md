@@ -127,8 +127,6 @@ roles.py: 角色定义、提示词与 Workflow 产物契约。
 service.py: 本地服务状态、停止与重启。
 service_timeouts.py: Nested shutdown deadlines: outer supervisors must outlive the web drain.
 session_runtimes.py: Persistent worker-session contract and Pi RPC implementation.
-skill_conformance.py: Opt-in, disposable-fixture Codex probe; never a production readiness gate.
-skill_runtime_readiness.py: Credential-free Runtime prerequisites; never grants Skill execution authority.
 smoke.py: 隔离 smoke 项目、执行与结果分类。
 source_preview.py: Host-generated bounded source evidence from an already verified capture.
 staging.py: 交付及 staging 后端配置与执行。
@@ -152,7 +150,6 @@ worker_output_context.py: Bounded, invocation-bound Worker output. Never a contr
 worker_setup.py: Read optional project setup context for ordinary Planner/Worker tasks.
 workers.py: Worker 作业、运行时与结果持久化。
 workflow_mutations.py: Serialize workflow authority and retain interrupted human decisions.
-workflow_recovery.py: Exact failed-Workflow evidence, reused by the existing review and batch paths.
 workflow_retry.py: A workflow retry acts on the exact observed run, stage and attempt set.
 workflow_revisions.py: Resume recorded decisions and route requested changes back through evidence.
 workflow_table.py: Workflow 节点、门与执行路径定义。
