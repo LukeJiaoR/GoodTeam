@@ -300,7 +300,7 @@ def project_batch_quality_evidence(*, workspace, project_key, root, run_id):
             raise TaskInputError("batch_quality_input_missing")
         binding, candidate = _current_source(Path(root), snapshot)
         validation = CandidateValidationService(root)
-        checked = validation.evidence(snapshot.execution_id)
+        checked, checked_source = validation.evidence_with_source(snapshot.execution_id)
         automatic = AutomaticCandidateReviewService(root).projection(snapshot.execution_id)
         last = _read(validation._root(snapshot.execution_id) / "batch-quality-last-result.json") or {}
         if last and last.get("input_digest") != required["input_digest"]:
@@ -329,12 +329,12 @@ def project_batch_quality_evidence(*, workspace, project_key, root, run_id):
             value = authority.load()
             result["correction_input"] = value.reference
             result["correction_workspace"] = str(authority.workspace(value))
-        current = validation._current(snapshot)
-        if current:
-            plan, receipt, review = current
-            candidate = validation.source_root(snapshot, plan["request"])
-            result.update(candidate_commit=receipt["candidate"]["head_sha"], candidate_path=str(candidate),
+        if checked_source is not None:
+            receipt, review = checked["receipt"], checked["review"]
+            result.update(candidate_commit=receipt["candidate"]["head_sha"], candidate_path=str(checked_source),
                           validation_receipt_id=receipt["receipt_id"], review_receipt_id=(review or {}).get("receipt_id", ""))
+        elif checked["reason"] != "validation_not_run":
+            raise TaskInputError(checked["reason"])
         if (result["check_status"] == "passed" and result["review_status"] == "machine_recorded"
                 and result["acceptance_status"] == "accepted_by_review_policy"):
             result.update(status="reviewed", reason="candidate_review_policy_satisfied")

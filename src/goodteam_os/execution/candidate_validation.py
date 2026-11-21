@@ -298,6 +298,11 @@ class CandidateValidationService:
             return review
 
     def evidence(self, execution_id):
+        evidence, _source = self.evidence_with_source(execution_id)
+        return evidence
+
+    def evidence_with_source(self, execution_id):
+        """Return display evidence and its local source from one read, not delivery authority."""
         fallback = {"schema_version": "candidate_validation_evidence.v1", "available": False,
                     "check_status": "unknown", "review_status": "missing", "acceptance_status": "unknown",
                     "verification": "unverified", "reason": "validation_not_run", "criteria": []}
@@ -306,12 +311,14 @@ class CandidateValidationService:
             with role_lock(self._root(execution_id), create=False):
                 current = self._current(snapshot)
                 if current is None:
-                    return fallback
+                    return fallback, None
                 plan, result, review = current
                 observed = result["observation"]
                 reason, status = observed["reason"], observed["status"]
+                source = None
                 try:
-                    probe_candidate(self.source_root(snapshot, plan["request"]), result["candidate"]["head_sha"])
+                    source = self.source_root(snapshot, plan["request"])
+                    probe_candidate(source, result["candidate"]["head_sha"])
                 except TaskInputError as exc:
                     status, reason = "unknown", exc.code
                 mode = "simulated" if snapshot.to_dict()["adapter"] in {"fake", "noop"} else "runtime_unverified"
@@ -329,9 +336,9 @@ class CandidateValidationService:
                         "command_digest": digest(canonical_bytes(plan["request"]["argv"])), "cwd": ".",
                         "criteria": [{"index": i, "check_status": status, "mapping": "operator_supplied",
                                       "acceptance_status": "unknown", "reason": "semantic_acceptance_not_verified"}
-                                     for i in result["criteria"]]}
+                                     for i in result["criteria"]]}, source
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            return {**fallback, "reason": exc.code if isinstance(exc, TaskInputError) else "validation_store_unavailable"}
+            return {**fallback, "reason": exc.code if isinstance(exc, TaskInputError) else "validation_store_unavailable"}, None
 
 
 def candidate_evidence(project_root, execution_id):
