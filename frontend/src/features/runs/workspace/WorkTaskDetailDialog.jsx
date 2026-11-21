@@ -1,6 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- helper functions are exported for unit tests. */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   Check,
@@ -25,7 +24,6 @@ import FileLocation from '../../../components/ui/FileLocation';
 import { documentTitle } from '../../../lib/presentation/filePresentation';
 import MarkdownView from '../../../components/ui/MarkdownView';
 import StatusBadge from '../../../components/ui/StatusBadge';
-import { routes } from '../../../lib/routing/routes';
 
 const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -226,7 +224,6 @@ export default function WorkTaskDetailDialog({
   task,
   tasks = [],
   reviews = [],
-  projectKey = '',
   onClose,
   onOpenReview,
   t,
@@ -554,16 +551,10 @@ export default function WorkTaskDetailDialog({
                       <span>{copied ? t('work.plan.artifact.copied') : t('work.plan.artifact.copy')}</span>
                     </button>
                   ) : null}
-                  {projectKey && review?.approval ? (
-                    onOpenReview ? <button type="button" className="task-detail-workbench-link" onClick={() => onOpenReview(review.approval)}>
+                  {onOpenReview && review?.approval ? (
+                    <button type="button" className="task-detail-workbench-link" onClick={() => onOpenReview(review.approval)}>
                       <FileText size={13} aria-hidden="true" />{t('work.panel.reviewDetails')}
-                    </button> : <Link
-                      to={routes.projectReviewItem(projectKey, review.approval)}
-                      className="task-detail-workbench-link"
-                    >
-                      <ExternalLink size={13} />
-                      {t('work.plan.artifact.openWorkbench')}
-                    </Link>
+                    </button>
                   ) : null}
                 </div>
               </div>
@@ -630,17 +621,11 @@ export default function WorkTaskDetailDialog({
                 </div>
               ) : null}
 
-              {projectKey && review?.approval ? (
+              {onOpenReview && review?.approval ? (
                 <div className="task-detail-workbench-footer">
-                  {onOpenReview ? <button type="button" className="task-detail-workbench-link" onClick={() => onOpenReview(review.approval)}>
-                      <FileText size={13} aria-hidden="true" />{t('work.panel.reviewDetails')}
-                    </button> : <Link
-                    to={routes.projectReviewItem(projectKey, review.approval)}
-                    className="task-detail-workbench-link"
-                  >
-                    <ExternalLink size={13} />
-                    {t('work.plan.approval.openWorkbench')} →
-                  </Link>}
+                  <button type="button" className="task-detail-workbench-link" onClick={() => onOpenReview(review.approval)}>
+                    <FileText size={13} aria-hidden="true" />{t('work.panel.reviewDetails')}
+                  </button>
                 </div>
               ) : null}
             </section>

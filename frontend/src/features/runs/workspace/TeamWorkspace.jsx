@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 接收项目对话、Worker 状态、交付记录与顶栏挂载点。
- * [OUTPUT]: 提供 TeamWorkspace 工作台、可折叠右侧栏和任务详情入口。
+ * [OUTPUT]: 提供项目工作台、可折叠的执行与交付侧栏和任务详情入口。
  * [POS]: 组织工作台视图，将顶部工具区接入流式顶栏，并把 Worker 详情绑定到对应成员行。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
@@ -23,10 +23,8 @@ import {
   statusText,
   tone,
   translated,
-  WORK_VIEWS,
 } from './presentationUtils';
 import WorkTaskDetailDialog from './WorkTaskDetailDialog';
-import ManagerMissionEntry from './ConversationComposer';
 import { conversationTimeline } from './conversationFeedback';
 import DeliverySummary from './DeliverySummary';
 import SkillReviewExecutions from './SkillReviewExecutions';
@@ -263,56 +261,6 @@ function OutcomesPane({
   );
 }
 
-function AdvancedInspector({
-  children,
-  onClose,
-  onSelectView,
-  reducedMotion,
-  t,
-  view,
-}) {
-  const inspectorRef = useRef(null);
-
-  useEffect(() => {
-    if (!view || !inspectorRef.current) return;
-    inspectorRef.current.scrollIntoView?.({
-      behavior: reducedMotion ? 'auto' : 'smooth',
-      block: 'start',
-    });
-    inspectorRef.current.focus({ preventScroll: true });
-  }, [reducedMotion, view]);
-
-  if (!view) return null;
-  return (
-    <section
-      className="team-inspector"
-      aria-labelledby="team-inspector-title"
-      id="team-inspector"
-      ref={inspectorRef}
-      tabIndex={-1}
-    >
-      <header>
-        <div><span>{t('work.team.inspection')}</span><h2 id="team-inspector-title">{t(`work.views.${view}`)}</h2></div>
-        <button type="button" onClick={onClose}>{t('work.team.closeInspection')}</button>
-      </header>
-      <nav className="team-inspector__tabs" aria-label={t('work.team.detailViews')}>
-        {WORK_VIEWS.map((item) => (
-          <button
-            aria-pressed={view === item}
-            data-active={view === item ? 'true' : 'false'}
-            key={item}
-            onClick={() => onSelectView(item)}
-            type="button"
-          >
-            {t(`work.views.${item}`)}
-          </button>
-        ))}
-      </nav>
-      {children}
-    </section>
-  );
-}
-
 function TeamWorkspace({
   toolbarHost = null,
   onConfigureRuntime,
@@ -339,13 +287,10 @@ function TeamWorkspace({
   data,
   error,
   interactionsDisabled = false,
-  inspectorContent,
   language,
-  onCloseInspector,
   onConfirmChangeIntent,
   onDecide,
   onDiscussChangeIntent,
-  onInspect,
   onKeepDiscussingChangeIntent,
   onRetry,
   retry,
@@ -357,7 +302,6 @@ function TeamWorkspace({
   projectKey,
   reducedMotion,
   t,
-  view,
 }) {
   const mobileWorkspace = useMobileTeamWorkspace();
   const [mobileTab, setMobileTab] = useState('manager');
@@ -703,37 +647,15 @@ function TeamWorkspace({
       {taskForModal && !interactionsDisabled ? (
         <WorkTaskDetailDialog
           language={language}
-          onOpenReview={onOpenReview ? (approval) => { closeTaskModal(); onOpenReview(approval); } : undefined}
+          onOpenReview={!readOnly && onOpenReview ? (approval) => { closeTaskModal(); onOpenReview(approval); } : undefined}
           task={taskForModal}
           tasks={outcomes}
           reviews={readOnly ? (data.approval_reviews || []).map((review) => ({ ...review, is_actionable: false })) : data.approval_reviews || []}
-          projectKey={projectKey}
-          onDecide={readOnly ? undefined : onDecide}
           onClose={closeTaskModal}
-          onRequestChanges={!readOnly && activeReviewTargetId && attention?.approval_brief ? async (_approval, _target, note) => {
-            await onStartChangeIntent?.(
-              attention.target_id,
-              attention.approval_brief.approval_target,
-              note,
-            );
-            setMobileTab('manager');
-          } : undefined}
           t={t}
         />
       ) : null}
-      <AdvancedInspector
-        onClose={onCloseInspector}
-        onSelectView={onInspect}
-        reducedMotion={reducedMotion}
-        t={t}
-        view={mission ? view : ''}
-      >
-        {inspectorContent}
-      </AdvancedInspector>
     </>
   );
 }
-
-
-export { ManagerMissionEntry };
 export default TeamWorkspace;

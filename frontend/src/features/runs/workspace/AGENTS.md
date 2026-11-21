@@ -76,7 +76,7 @@ deliverySummary.css: 交付摘要样式。
 executionEvidence.js: 执行证据链接投影。
 executionEvidence.vitest.js: 执行证据链接检查。
 goalContinuation.css: Goal 持续执行面板样式。
-presentationUtils.js: 工作视图与状态展示工具。
+presentationUtils.js: 工作台状态展示工具。
 projectConversation.css: 项目会话样式。
 projectQuestionBoard.css: 项目问题板样式。
 skillReviewExecutions.css: Skill 审查执行记录样式。

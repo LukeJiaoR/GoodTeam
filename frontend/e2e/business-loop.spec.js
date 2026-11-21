@@ -70,12 +70,27 @@ async function verifyHistory(page, fixture, { first, secondRunId }) {
   ]);
   const archived = await getJson(page, `/api/projects/${fixture.key}/runs/${first.runId}`);
   expect(archived.state).toEqual(first.completed.state);
-  await page.goto(`/projects/${fixture.key}/work/runs/${first.runId}`);
+  await page.goto(`/projects/${fixture.key}/work/runs/${first.runId}?view=delivery`);
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Run detail views' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Run isolated dry smoke' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Show delivery panel' }).click();
   await expect(page.getByText('Historical runs are read-only and visually separate from the active run.')).toBeVisible();
   await expect(page.getByRole('heading', { name: firstRequest, exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve and continue', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
+
+  await page.getByRole('tab', { name: /^Worker status/ }).click();
+  const workers = archived.team_workspace.execution_actors.filter(actor => actor.role !== 'orchestrator');
+  const attemptedWorker = workers.findIndex(actor => actor.current_attempt_id);
+  expect(attemptedWorker).toBeGreaterThanOrEqual(0);
+  await page.locator('.team-worker-summary').nth(attemptedWorker).click();
+  await page.getByRole('button', { name: 'Inspect attempt' }).click();
+  const attempt = page.getByRole('dialog', { name: 'Attempt details' });
+  await expect(attempt.getByText('Historical task · read-only', { exact: true })).toBeVisible();
+  await expect(attempt.getByText(first.runId, { exact: true }).first()).toBeVisible();
+  await expect(attempt.getByText(workers[attemptedWorker].current_attempt_id, { exact: true }).first()).toBeVisible();
   await page.reload();
+  await page.getByRole('button', { name: 'Show delivery panel' }).click();
   await expect(page.getByRole('heading', { name: firstRequest, exact: true })).toBeVisible();
   const current = await workState(page, fixture.key);
   expect(current.state.run_id).toBe(secondRunId);
@@ -86,6 +101,9 @@ test('business loop: import, confirm, prepare, revise, reapprove, complete, and 
   const evidence = [];
   try {
     await test.step('Import an isolated project through the UI', () => importProject(page, fixture));
+    await page.goto(`/projects/${fixture.key}/work?view=execution`);
+    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Dispatch track' })).toHaveCount(0);
     const first = await test.step('Complete the first task with an explicit revision', () => completeFirstTask(page, fixture, evidence));
     const secondRunId = await test.step('Submit and explicitly start a second task', () => startSecondTask(page, fixture, first));
     await test.step('Verify the old run and current task remain separate', () => verifyHistory(page, fixture, { first, secondRunId }));
