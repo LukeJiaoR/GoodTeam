@@ -243,34 +243,3 @@ def registered_project_scope(worker_root: Path) -> tuple[Path, str] | None:
     if len(set(matches)) > 1:
         raise SkillError("project_scope_ambiguous", "Worker root belongs to multiple project scopes; explicit selection is required.")
     return matches[0] if matches else standalone_legacy()
-
-
-def execution_job_fields(store, *, execution_id: str, project_key: str, role: str) -> dict[str, Any]:
-    """Carry a real issue-execution's original lock into Operator review/fix jobs."""
-    from goodteam_os.execution.ledger import ExecutionLedger
-    from .task_context import validate_task_skill_context
-    from .worker_requests import WORKER_METADATA_LOADER, has_skill_fields, is_skill_job_id, subject_for_role
-
-    run = ExecutionLedger(store.project_root).read_run(execution_id)
-    task = TaskSkillIdentity("issue_execution", project_key, execution_id)
-    if run is None:
-        reject_missing_task_context(task)
-        return {}
-    jobs = [job for job in store.list_jobs() if job.get("id") == run.worker_job_id]
-    if not jobs:
-        if is_skill_job_id(run.worker_job_id):
-            raise SkillError("snapshot_missing", "The original execution Worker is unavailable.")
-        reject_missing_task_context(task)
-        return {}
-    original = jobs[0]
-    context = original.get("task_skill_context")
-    if not context:
-        if is_skill_job_id(run.worker_job_id) or has_skill_fields(original):
-            raise SkillError("task_context_missing", "The original execution lost its method reference.")
-        reject_missing_task_context(task)
-        return {}
-    context = validate_task_skill_context(context)
-    if context["task"] != {"kind": task.kind, "project_key": task.project_key, "logical_id": task.logical_id}:
-        raise SkillError("snapshot_scope_mismatch", "Execution method reference belongs to another task.")
-    return {"task_skill_context": context, "skill_subject": subject_for_role(role),
-            "skill_loader_version": WORKER_METADATA_LOADER}

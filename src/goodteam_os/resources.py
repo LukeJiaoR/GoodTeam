@@ -186,66 +186,6 @@ def register_task_ledger(state: Any, path: str | Path) -> ResourceDescriptor:
     )
 
 
-def register_runtime_resource(
-    state: Any,
-    key: str,
-    path: str | Path,
-    *,
-    kind: ResourceKind = ResourceKind.RUNTIME_RESOURCE,
-    mime: str = "",
-    capabilities: list[ResourceCapability] | None = None,
-    title: str = "",
-    consumer: str = "",
-) -> ResourceDescriptor:
-    """Register a typed project-runtime extension resource.
-
-    Concrete helpers such as ``register_task_ledger`` encode product-specific
-    defaults. This generic entry point remains the supported seam for runtime
-    kinds added during the resource-registry migration without bypassing the
-    typed descriptor and legacy projection rules.
-    """
-    return _store_resource(
-        state,
-        _descriptor(
-            key=key,
-            kind=kind,
-            scope=ResourceScope.PROJECT_RUNTIME,
-            path=path,
-            mime=mime,
-            title=title or key.replace("_", " ").title(),
-            consumer=consumer,
-            capabilities=capabilities or _capabilities(ResourceCapability.READ, ResourceCapability.DOWNLOAD),
-        ),
-    )
-
-
-def register_external_reference(
-    state: Any,
-    key: str,
-    url: str,
-    *,
-    title: str,
-    capabilities: list[ResourceCapability] | None = None,
-) -> ResourceDescriptor:
-    """Register a typed URL-only resource without adding an artifact path.
-
-    External integrations use this boundary to declare capabilities while
-    keeping URL references out of the local-file compatibility projection.
-    """
-    return _store_resource(
-        state,
-        _descriptor(
-            key=key,
-            kind=ResourceKind.EXTERNAL_REFERENCE,
-            scope=ResourceScope.EXTERNAL,
-            url=url,
-            title=title,
-            capabilities=capabilities or _capabilities(ResourceCapability.READ),
-            legacy_artifact=False,
-        ),
-    )
-
-
 def resource_to_dict(resource: ResourceDescriptor) -> dict[str, Any]:
     return {
         "key": resource.key,
