@@ -1,8 +1,5 @@
 # Git Source Materialization
 
-Historical design record. The offline materializer was removed because no
-product path called it. The commands below refer to earlier revisions.
-
 Issue #447 remains incomplete. This increment provides an offline package
 materializer, not Git download or installation from a URL. There is no new API,
 UI, ref resolver, credential reader, subprocess, or network path in production.
