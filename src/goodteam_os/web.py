@@ -34,7 +34,6 @@ from uuid import uuid4
 from goodteam_os import context as project_context
 from goodteam_os.database import provider_environment
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
-from goodteam_os.debate import default_debate_dispatch, run_gate_debate
 from goodteam_os.dispatch import (
     dispatch_tracks,
     ensure_dispatch_project_root_is_safe,
@@ -2382,10 +2381,6 @@ def build_server_action_capabilities(
                 available=True,
                 mode="execute",
             ),
-            "dry_smoke": _server_action_capability(
-                available=True,
-                mode="execute",
-            ),
             "land_pr": _server_action_capability(
                 available=destructive_actions_available,
                 mode=destructive_mode,
@@ -3749,20 +3744,6 @@ def resolve_runtime_model_config(model_config: Path) -> Path:
             return configured_path.resolve()
     repository_default = Path(__file__).resolve().parents[2] / "models.yaml"
     return repository_default.resolve() if repository_default.is_file() else candidate
-
-
-def _workflow_requires_repository(target, *, source_type, project_config):
-    from goodteam_os.reviewer_profiles import get_reviewer_profile
-    from goodteam_os.staging import staging_backend_enabled
-    from goodteam_os.workflow_workspace import adapter_requires_workflow_workspace
-
-    roles = ("project_intake", "product_requirement", "architect", "ui", "implementation", "qa", "release")
-    return (
-        any(adapter_requires_workflow_workspace(resolve_role_adapter(target, role)) for role in roles)
-        or any(adapter_requires_workflow_workspace(get_reviewer_profile(profile_id).adapter)
-               for profiles in normalize_reviewer_profile_config(target).values() for profile_id in profiles)
-        or staging_backend_enabled(source_type=source_type, project_config=project_config)
-    )
 
 
 def start_workflow(
@@ -8126,7 +8107,7 @@ def serve(
                 "/approve", "/recover-takeover-brief", "/artifact", "/project-config",
                 "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc",
                 "/refine-artifact", "/answer-open-questions", "/accept-refinement",
-                "/discard-refinement", "/open-path", "/debate", "/dispatch-track",
+                "/discard-refinement", "/open-path", "/dispatch-track",
                 "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose",
                 "/fs/mkdir", "/server-actions/run", "/git-init",
             }:
@@ -8368,27 +8349,6 @@ def serve(
                     status, result = retry_failed_reviewer_jobs_action(workspace, request, **runtime_kwargs)
                     self._send_json(status, result)
                     return
-                elif normalized_path == "/debate":
-                    project_key = str(request.get("project_key", ""))
-                    run_id = str(request.get("run", ""))
-                    gate = str(request.get("gate", ""))
-                    challenger_role = str(request.get("challenger_role", "qa"))
-                    owner_role = str(request.get("owner_role", "architect"))
-                    state = resolve_dashboard_state(workspace, project_key=project_key)
-                    artifact_key = approval_artifact_map().get(gate, gate)
-                    artifact_ref = state.artifacts.get(artifact_key, "") if state is not None else ""
-                    result = {
-                        "messages": run_gate_debate(
-                            workspace,
-                            project_key,
-                            run_id,
-                            gate,
-                            challenger_role=challenger_role,
-                            owner_role=owner_role,
-                            dispatch_fn=default_debate_dispatch(workspace, project_key, run_id),
-                            artifact_ref=artifact_ref,
-                        )
-                    }
                 elif normalized_path == "/artifact":
                     result = save_artifact(
                         workspace=workspace,

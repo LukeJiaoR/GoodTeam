@@ -30,8 +30,6 @@ def test_empty_project_can_prepare_git_and_resume_the_same_confirmed_draft(tmp_p
     assert list(root.iterdir()) == []  # Preparation remains read-only.
     service = TaskAssistantService(workspace, project_config=config)
     monkeypatch.setattr(web, "TaskAssistantService", lambda *_args, **_kwargs: service)
-    # This is the repository prerequisite regardless of model selection.
-    monkeypatch.setattr(web, "_workflow_requires_repository", lambda *_args, **_kwargs: True)
     store = TaskAssistantSessionStore(workspace, key)
     store.append_message("request", "user", "Build StockFlow")
     proposal = store.propose_task(["request"], "Build StockFlow")["proposed_task"]

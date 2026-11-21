@@ -71,7 +71,6 @@ def test_previously_confirmed_edited_named_draft_cannot_start_workflow(tmp_path,
     monkeypatch.setattr(web, "_project_config_for_key", lambda *_: tmp_path / "project.yaml")
     monkeypatch.setattr(web, "confirm_and_prepare", lambda *_args, **_kwargs: (sessions.read(), {}))
     monkeypatch.setattr(web, "build_capabilities", lambda *_: {"start_workflow": True})
-    monkeypatch.setattr(web, "_workflow_requires_repository", lambda *_args, **_kwargs: False)
     calls = []
     monkeypatch.setattr(web, "start_workflow", lambda **kwargs: calls.append(kwargs) or {"run_id": kwargs["run_id"]})
     with pytest.raises(web.ProjectApiError, match="named Worker") as error:
