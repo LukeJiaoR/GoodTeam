@@ -253,7 +253,7 @@ def _status_warnings(
 def _run_ids(raw: dict[str, Any]) -> list[str]:
     ids: list[str] = []
     for item in _raw_check_items(raw):
-        value = item.get("run_id") or item.get("workflow_run_id") or item.get("id")
+        value = item.get("run_id") or item.get("id")
         normalized = _first_non_empty(value)
         if normalized and normalized not in ids:
             ids.append(normalized)

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpenCheck, BrainCircuit, Files, Search, ShieldCheck, TerminalSquare } from 'lucide-react';
+import { BookOpenCheck, BrainCircuit, Search, ShieldCheck, TerminalSquare } from 'lucide-react';
 import { useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import './knowledgeMemory.css';
 import './knowledgeCompact.css';
-import KnowledgeArtifacts from './KnowledgeArtifacts';
 import MemoryEventInspector from './MemoryEventInspector';
 import { isMemoryEventId } from './memoryProvenance';
 import ProductError from '../../components/ui/ProductError';
@@ -21,15 +20,8 @@ function updatedLabel(value, language) {
 
 const VIEWS = [
   ['overview', BookOpenCheck],
-  ['artifacts', Files],
   ['memory', BrainCircuit],
 ];
-
-function artifactEntries(data) {
-  const artifacts = data?.state?.artifacts || {};
-  if (Array.isArray(artifacts)) return artifacts.map((item) => [item.key || item.name, item.path || item.value]);
-  return Object.entries(artifacts);
-}
 
 function normalizeScope(value) {
   return [...new Set(value.split(',').map(key => key.trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').toUpperCase()).filter(Boolean))];
@@ -307,7 +299,6 @@ export default function KnowledgePage() {
   const overviewKey = JSON.stringify([projectKey, overviewRequest]);
   const overviewReady = overviewResponse?.key === overviewKey && !overviewResponse.signal.aborted;
   const overviewError = overviewReady ? overviewResponse.error : null;
-  const artifactCount = artifactEntries(data).length;
   useEffect(() => {
     const controller = new AbortController();
     async function loadOverview() {
@@ -335,12 +326,11 @@ export default function KnowledgePage() {
         title={t('knowledge.title')}
         description={t('knowledge.description')}
       />
-      <nav className="knowledge-view-switcher" aria-label={t('knowledge.views.label')}>{VIEWS.map(([item, Icon]) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => { const next = new URLSearchParams(search); next.set('view', item); setSearch(next); }}><Icon aria-hidden="true" size={17} /><span>{t(`knowledge.views.${item}`)}</span>{item === 'artifacts' ? <span className="knowledge-tab-count">{artifactCount}</span> : null}</button>)}</nav>
+      <nav className="knowledge-view-switcher" aria-label={t('knowledge.views.label')}>{VIEWS.map(([item, Icon]) => <button aria-pressed={view === item} className={view === item ? 'is-active' : ''} key={item} onClick={() => { const next = new URLSearchParams(search); next.set('view', item); setSearch(next); }}><Icon aria-hidden="true" size={17} /><span>{t(`knowledge.views.${item}`)}</span></button>)}</nav>
       {status === 'stale' ? <ProductError error={error} onRetry={() => refresh()} t={t} /> : null}
       {view === 'overview' && !overviewReady ? <p role="status">{t('product.states.loading')}</p> : null}
       {view === 'overview' && overviewError ? <ProductError error={overviewError} onRetry={() => setOverviewRequest((value) => value + 1)} t={t} /> : null}
       {view === 'overview' && overviewReady && !overviewError ? <OverviewView home={overviewResponse.home} language={language} overview={overviewResponse.overview} t={t} /> : null}
-      {view === 'artifacts' ? <KnowledgeArtifacts entries={artifactEntries(data)} projectKey={projectKey} search={search} setSearch={setSearch} t={t} /> : null}
       {view === 'memory' ? <MemoryView key={projectKey} projectKey={projectKey} search={search} setSearch={setSearch} language={language} t={t} /> : null}
     </main>
   );

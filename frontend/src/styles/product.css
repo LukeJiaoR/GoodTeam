@@ -882,33 +882,6 @@
   justify-content: flex-end;
 }
 
-.product-shell .product-subnav {
-  display: flex;
-  gap: 0;
-  margin-bottom: 1.75rem;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--product-border);
-}
-
-.product-shell .product-subnav button {
-  padding: 0.7rem 0.9rem;
-  color: var(--product-text-muted);
-  background: transparent;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  font: inherit;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.product-shell .product-subnav button:hover,
-.product-shell .product-subnav button.is-active {
-  color: var(--product-text);
-  border-bottom-color: var(--product-accent-strong);
-}
-
-.product-shell .product-subnav button:focus-visible,
 .product-shell .review-queue a:focus-visible,
 .product-shell .knowledge-artifacts button:focus-visible,
 .product-shell .knowledge-memory button:focus-visible {
@@ -956,19 +929,8 @@
   border-radius: var(--product-radius);
 }
 
-.product-shell .product-inline-form {
-  display: grid;
-  gap: 1rem;
-  max-width: 46rem;
-  padding: clamp(1rem, 3vw, 1.5rem);
-  background: var(--product-surface);
-  border: 1px solid var(--product-border);
-  border-radius: var(--product-radius);
-}
-
 .product-shell .review-workspace h2,
 .product-shell .knowledge-overview h2 { margin: 0; font-size: 1.25rem; letter-spacing: -0.025em; }
-.product-shell .product-inline-form label,
 .product-shell .review-decision-panel label,
 .product-shell .knowledge-memory label { display: grid; gap: 0.4rem; color: var(--product-text-muted); font-size: 0.82rem; font-weight: 600; }
 
@@ -1331,64 +1293,6 @@
   .product-shell .review-editor-actions { flex-direction: column; }
 }
 
-/* ---- Workflow pipeline (track W) ---- */
-.product-shell .workflow-pipeline {
-  margin: 0 0 1.25rem;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-.product-shell .workflow-pipeline__list {
-  display: flex;
-  gap: 0.35rem;
-  min-width: max-content;
-  margin: 0;
-  padding: 0 1.25rem 0.35rem 0;
-  list-style: none;
-}
-.product-shell .workflow-pipeline__stage {
-  position: relative;
-  min-width: 9.5rem;
-  max-width: 12rem;
-  border: 1px solid var(--product-border);
-  border-radius: 8px;
-  background: var(--product-surface);
-}
-.product-shell .workflow-pipeline__stage--takeover {
-  border-style: dashed;
-}
-.product-shell .workflow-pipeline__stage--boundary::before {
-  content: '';
-  position: absolute;
-  left: -0.5rem;
-  top: 20%;
-  bottom: 20%;
-  width: 1px;
-  border-left: 1px dashed var(--product-border);
-}
-.product-shell .workflow-pipeline__stage--done { border-color: var(--product-success); }
-.product-shell .workflow-pipeline__stage--active { border-color: var(--product-accent); }
-.product-shell .workflow-pipeline__stage--review-needed { border-color: var(--product-warning); background: var(--product-surface-muted); }
-.product-shell .workflow-pipeline__stage--blocked { border-color: var(--product-danger); }
-.product-shell .workflow-pipeline__link,
-.product-shell .workflow-pipeline__static {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.6rem;
-  color: var(--product-text);
-  text-decoration: none;
-}
-.product-shell .workflow-pipeline__link:hover { background: var(--product-surface-muted); }
-.product-shell .workflow-pipeline__icon { flex: none; font-size: 1rem; line-height: 1.4; }
-.product-shell .workflow-pipeline__stage--done .workflow-pipeline__icon { color: var(--product-success); }
-.product-shell .workflow-pipeline__stage--active .workflow-pipeline__icon { color: var(--product-accent); }
-.product-shell .workflow-pipeline__stage--review-needed .workflow-pipeline__icon { color: var(--product-warning); }
-.product-shell .workflow-pipeline__stage--blocked .workflow-pipeline__icon { color: var(--product-danger); }
-.product-shell .workflow-pipeline__copy { display: flex; flex-direction: column; min-width: 0; gap: 0.1rem; }
-.product-shell .workflow-pipeline__copy strong { font-size: 0.85rem; line-height: 1.3; }
-.product-shell .workflow-pipeline__copy small { color: var(--product-text-muted); font-size: 0.75rem; }
-.product-shell .workflow-pipeline__copy em { color: var(--product-warning); font-size: 0.75rem; font-style: normal; font-weight: 600; }
-.product-shell .workflow-pipeline__number { margin-left: auto; color: var(--product-text-muted); font-size: 0.75rem; }
 .product-shell .review-pipeline-position { margin: 0.35rem 0 0; color: var(--product-text-muted); font-size: 0.8rem; }
 
 /* ---- Review evidence summary (track C2) ---- */
@@ -1444,70 +1348,6 @@
 .product-shell .product-data-age { margin: 0.3rem 0 0; color: var(--product-text-muted); font-size: 0.8rem; }
 .product-shell .review-questions-submitted { margin: 0.6rem 0 0; color: var(--product-success); font-size: 0.85rem; }
 .product-shell .knowledge-scope-hint { margin: 0.4rem 0 0; color: var(--product-warning); font-size: 0.8rem; }
-
-/* ---- Workflow canvas (track W v2) ---- */
-.product-shell .workflow-canvas {
-  position: relative;
-  height: 340px;
-  margin: 0 0 1.25rem;
-  border: 1px solid var(--product-border);
-  border-radius: 10px;
-  background: var(--product-surface-muted);
-  overflow: hidden;
-}
-.product-shell .workflow-canvas-controls { display: flex; gap: 0.3rem; align-items: center; }
-.product-shell .workflow-canvas-controls .product-button { min-width: 2rem; padding: 0.3rem 0.5rem; }
-.product-shell .workflow-canvas-level { margin-left: 0.4rem; color: var(--product-text-muted); font-size: 0.75rem; }
-.product-shell .workflow-canvas__node {
-  display: flex;
-  gap: 0.5rem;
-  min-width: 10rem;
-  max-width: 14rem;
-  padding: 0.6rem;
-  border: 1px solid var(--product-border);
-  border-radius: 8px;
-  background: var(--product-surface);
-  font-size: 0.85rem;
-}
-.product-shell .workflow-canvas__node--takeover { border-style: dashed; }
-.product-shell .workflow-canvas__node--done { border-color: var(--product-success); }
-.product-shell .workflow-canvas__node--active { border-color: var(--product-accent); }
-.product-shell .workflow-canvas__node--review-needed { border-color: var(--product-warning); background: var(--product-surface-muted); }
-.product-shell .workflow-canvas__node--blocked { border-color: var(--product-danger); }
-.product-shell .workflow-canvas__node--focused { outline: 3px solid var(--product-focus); outline-offset: 2px; }
-.product-shell .workflow-canvas__node-icon { flex: none; }
-.product-shell .workflow-canvas__node--done .workflow-canvas__node-icon { color: var(--product-success); }
-.product-shell .workflow-canvas__node--active .workflow-canvas__node-icon { color: var(--product-accent); }
-.product-shell .workflow-canvas__node--review-needed .workflow-canvas__node-icon { color: var(--product-warning); }
-.product-shell .workflow-canvas__node--blocked .workflow-canvas__node-icon { color: var(--product-danger); }
-.product-shell .workflow-canvas__node-copy { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
-.product-shell .workflow-canvas__node-copy small { color: var(--product-text-muted); font-size: 0.75rem; }
-.product-shell .workflow-canvas__node-copy em { color: var(--product-text-muted); font-size: 0.72rem; font-style: normal; }
-.product-shell .workflow-canvas__node-copy code { font-size: 0.7rem; color: var(--product-text-muted); overflow-wrap: anywhere; }
-.product-shell .workflow-canvas-detail {
-  position: absolute;
-  right: 1rem;
-  top: 1rem;
-  width: min(24rem, calc(100% - 2rem));
-  max-height: calc(100% - 2rem);
-  overflow: auto;
-  padding: 1rem;
-  border: 1px solid var(--product-border);
-  border-radius: 10px;
-  background: var(--product-surface);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
-  z-index: 5;
-}
-.product-shell .workflow-canvas-detail h3 { margin: 0.2rem 0 0.5rem; }
-.product-shell .workflow-canvas-detail .workflow-canvas-error { color: var(--product-danger); font-size: 0.8rem; }
-.product-shell .workflow-canvas-fallback-note { margin: -0.75rem 0 1.25rem; color: var(--product-text-muted); font-size: 0.75rem; }
-.product-shell .react-flow__edge-path {
-  stroke: var(--product-border-strong, #a89f91);
-  stroke-width: 2px;
-}
-.product-shell .react-flow__attribution {
-  display: none !important;
-}
 
 /* ---- Toast Notifications ---- */
 .product-toast-container {
@@ -1576,64 +1416,6 @@
   border-radius: 4px;
 }
 .product-toast-close:hover { color: var(--product-text); background: var(--product-surface-muted); }
-
-/* ---- Workflow Canvas Stats & Progress ---- */
-.product-shell .workflow-canvas-stats {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--product-surface);
-  border: 1px solid var(--product-border);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
-}
-
-.product-shell .workflow-canvas-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.product-shell .workflow-canvas-progress__label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--product-text);
-}
-
-.product-shell .workflow-canvas-progress__track {
-  width: 140px;
-  height: 5px;
-  background: var(--product-surface-muted);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.product-shell .workflow-canvas-progress__bar {
-  height: 100%;
-  background: var(--product-accent);
-  border-radius: 999px;
-  transition: width 300ms ease;
-}
-
-.product-shell .workflow-canvas-stats__badges {
-  display: flex;
-  gap: 0.35rem;
-}
-
-.product-shell .workflow-canvas-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.1rem 0.35rem;
-  border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  background: var(--product-surface-muted);
-}
-.product-shell .workflow-canvas-badge--done { color: var(--product-success); }
-.product-shell .workflow-canvas-badge--active { color: var(--product-accent); }
-.product-shell .workflow-canvas-badge--review { color: var(--product-warning); }
-.product-shell .workflow-canvas-badge--blocked { color: var(--product-danger); }
 
 /* ---- Decision Snippets & Keyboard Hints ---- */
 .product-shell .review-decision-snippets {

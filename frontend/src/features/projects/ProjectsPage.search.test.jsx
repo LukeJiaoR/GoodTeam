@@ -15,7 +15,7 @@ async function renderBrowse(initialEntries = ['/projects?source=bookmark']) {
         project: { project_key: name.toUpperCase(), display_name: name, root: `/work/${name.toLowerCase()}` },
         readiness: { lifecycle: 'ready' },
         attention_count: 0,
-        active_run: name === 'Allocation' ? { run_id: 'run-1', next_node: 'implement' } : null,
+        has_active_batch: name === 'Allocation',
       })),
     }),
   };

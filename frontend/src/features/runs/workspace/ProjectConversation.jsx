@@ -4,7 +4,6 @@
  * [POS]: 在工作台主栏呈现当前对话范围、消息和输入框。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
-import { blockerSummary } from './blockerPresentation';
 import { focusWorkContext } from './currentWorkContext.js';
 import { useRef } from 'react';
 import { readingChangeSummary, readingCopy, readingScope } from './conversationReading';
@@ -13,9 +12,8 @@ import { timelineCopy } from './timelineCopy';
 import { ChevronRight, Settings } from 'lucide-react';
 import ProductError from '../../../components/ui/ProductError';
 import StatusBadge from '../../../components/ui/StatusBadge';
-import { availableChangeTarget } from './conversationChangeContext';
 import { TimelineItem } from './ConversationTimeline';
-import { TaskAttention, ProjectPreparationAttention } from './TaskAttention';
+import { ProjectPreparationAttention } from './TaskAttention';
 import AssistantControls from './AssistantControls';
 import AssistantPendingReply from './AssistantPendingReply';
 import ConversationComposer from './ConversationComposer';
@@ -67,7 +65,7 @@ function ConversationReadingFrame({ scope, timeline, attentionKey, deliveryKey, 
 }
 
 export default function ProjectConversation({
-  onConfigureRuntime, canManageTasks = false, executionRunning = false,
+  onConfigureRuntime, canManageTasks = false,
   taskManagementOpen = false, onManageTasks,
   assistantState,
   onAssistantAction,
@@ -79,17 +77,9 @@ export default function ProjectConversation({
   error,
   language,
   mission,
-  onConfirmChangeIntent,
-  onDecide,
-  onDiscussChangeIntent,
-  onKeepDiscussingChangeIntent,
-  onReview,
-  onRetry,
-  retry,
   onConfirmTask,
   onContinuePreparation,
   onStart,
-  onStartChangeIntent,
   projectKey,
   sectionProps,
   timeline,
@@ -102,8 +92,6 @@ export default function ProjectConversation({
   iterationSession,
   canPlanIteration = false,
   onQueueTask,
-  contextTitle,
-  onClearContext,
 }) {
   const requestStatus = Object.values(assistantState?.assistant_requests || {}).find((request) => request.status === 'running')?.status
     || Object.values(assistantState?.assistant_requests || {}).find((request) => ['failed', 'interrupted'].includes(request.status))?.status;
@@ -116,12 +104,12 @@ export default function ProjectConversation({
   const managerStatus = t(responding ? 'assistant.project.responding' : needsAttention ? 'assistant.project.needsAttention' : 'assistant.project.available');
   const deliveryKey = (timeline || []).find((item) => item.delivery_status === 'sending')?.id || '';
   const scope = readingScope(projectKey, mission);
-  const hasPendingAttention = Boolean((attention && !(attention.kind === 'blocker' && executionRunning))
+  const hasPendingAttention = Boolean(attention
     || needsAssistantAttention || Object.values(assistantState?.assistant_requests || {}).some(request => ['failed', 'interrupted'].includes(request.status))
     || (proposedTask?.needs_clarification && !proposedTask.run_id && proposedTask.status !== 'cancelled'));
   const hasPendingItems = hasPendingAttention || Boolean(continuationNotice?.kind);
   const attentionKey = JSON.stringify([
-    hasPendingItems ? [attention?.kind || '', attention?.id || '', attention?.intent_commit?.status || ''] : [],
+    hasPendingItems ? [attention?.kind || '', attention?.id || '', attention?.step_id || ''] : [],
     assistantState?.pending_team_decision ? [assistantState.pending_team_decision.id, assistantState.pending_team_decision.status] : [],
     Object.entries(assistantState?.assistant_requests || {}).filter(([, request]) => ['failed', 'interrupted'].includes(request.status))
       .map(([id, request]) => [id, request.status, request.attempt]).sort(),
@@ -133,8 +121,7 @@ export default function ProjectConversation({
     <section className="team-pane team-pane--manager" aria-label={t('work.manager.name')} {...sectionProps}>
       <header className="project-conversation-toolbar">
         <div className="project-conversation-scope">
-          <h2>{contextTitle ? t('assistant.project.taskContext', { title: contextTitle }) : t('assistant.project.projectContext')}</h2>
-          {contextTitle && onClearContext ? <button type="button" onClick={onClearContext}>{t('assistant.project.clearContext')}</button> : null}
+          <h2>{t('assistant.project.projectContext')}</h2>
         </div>
         <div className="project-conversation-toolbar__actions">
           <StatusBadge tone={managerTone}>{managerStatus}</StatusBadge>
@@ -207,17 +194,7 @@ export default function ProjectConversation({
               onConfirm={onConfirmTask}
               t={t}
             />
-            {attention?.kind === 'approval' ? (
-              <div className="conversation-blocker-notice">
-                <span>{t('work.approvalCard.pending')}</span>
-                <button type="button" onClick={event => focusWorkContext(event.currentTarget.closest('.product-work-page'), 'approval')}>{t('work.approvalCard.view')}</button>
-              </div>
-            ) : attention?.kind === 'blocker' ? (
-              <div className="conversation-blocker-notice" role="status">
-                <span>{executionRunning ? t('work.blocker.workerActive') : blockerSummary(attention, t)}</span>
-                <button type="button" onClick={(event) => focusWorkContext(event.currentTarget.closest('.product-work-page'), 'blocker')}>{t('work.blocker.view')}</button>
-              </div>
-            ) : attention?.kind === 'project_preparation' ? (
+            {attention?.kind === 'project_preparation' ? (
               <ProjectPreparationAttention
                 attention={attention}
                 busy={busy}
@@ -225,20 +202,7 @@ export default function ProjectConversation({
                 onContinue={onContinuePreparation}
                 t={t}
               />
-            ) : !['project_mode', 'task_start_resume'].includes(attention?.kind) ? <TaskAttention
-              attention={attention}
-              busy={busy}
-              key={`${attention?.id || 'none'}:${attention?.intent_commit?.id || 'direct'}:${attention?.intent_commit?.status || 'idle'}`}
-              onConfirmChangeIntent={onConfirmChangeIntent}
-              onDecide={onDecide}
-              onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
-              onReview={onReview}
-              onRetry={onRetry}
-              retry={retry}
-              onStartChangeIntent={onStartChangeIntent}
-              projectKey={projectKey}
-              t={t}
-            /> : null}
+            ) : null}
             </div>
         </>
       </ConversationReadingFrame>
@@ -253,15 +217,6 @@ export default function ProjectConversation({
             busy={Boolean(assistantBusy)}
             onStart={onStart}
             onQueueTask={onQueueTask}
-            changeIntent={mission?.read_only ? null : attention?.intent_commit}
-            activeTask={!mission?.read_only && mission?.source === 'workflow' && Boolean(mission.run_id)}
-            changeTarget={availableChangeTarget({ mission, attention, projectKey })}
-            recordedChange={(timeline || []).filter((item) => item.event === 'change_request_committed'
-              && (!item.run_id || item.run_id === mission?.run_id)
-              && item.details?.intent_status === 'committed').at(-1)}
-            onStartChangeIntent={onStartChangeIntent}
-            onDiscussChangeIntent={onDiscussChangeIntent}
-            onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent}
             suggestions={suggestions}
             t={t}
           />

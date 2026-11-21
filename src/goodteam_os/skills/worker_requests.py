@@ -23,7 +23,7 @@ from .filesystem import directory, open_lock_file, regular_file, subdirectory, w
 from .library import LOCAL_SCOPE_OWNER, SkillLibraryService
 from .models import SkillConflict, SkillError, SkillScope, canonical_json, content_digest
 from .task_context import task_skill_context, validate_task_skill_context
-from .task_locks import MAX_REGISTRY_BYTES, MAX_RESOURCE_BYTES, REGISTRY_SCHEMA, TaskSkillIdentity, TaskSkillLockStore
+from .task_locks import MAX_REGISTRY_BYTES, MAX_RESOURCE_BYTES, REGISTRY_SCHEMA, SNAPSHOT_SCHEMA, TaskSkillIdentity, TaskSkillLockStore
 
 WORKER_REQUEST_SCHEMA = "worker_skill_request.v1"
 WORKER_METADATA_LOADER = "goodteam.worker-metadata.v1"
@@ -43,8 +43,6 @@ def has_skill_fields(value: dict[str, Any]) -> bool:
 def subject_for_role(role: str) -> str:
     if role == "orchestrator":
         return "manager:orchestrator"
-    if role == "project_intake":
-        return "workflow_role:project_intake"
     return "role:" + role
 
 
@@ -347,8 +345,6 @@ def create_skill_worker_job(store, values: dict[str, Any]) -> tuple[dict[str, An
     if (request.get("method_loading_mode") == "readonly_pi_methods.v1"
             and (task.kind != "direct_task" or subject not in {"role:research", "role:planner"})):
         raise SkillError("readonly_method_identity_invalid", "Read-only methods require their original Role dispatch.")
-    if task.kind == "workflow_run" and request["run_id"] != task.logical_id:
-        raise SkillError("snapshot_scope_mismatch", "Workflow Worker belongs to another run.")
     if task.kind == "issue_execution" and request.get("execution_id") != task.logical_id:
         raise SkillError("snapshot_scope_mismatch", "Issue Worker needs its explicit execution identity.")
     if not isinstance(required, tuple) or any(not isinstance(item, str) for item in required):
@@ -369,10 +365,8 @@ def create_skill_worker_job(store, values: dict[str, Any]) -> tuple[dict[str, An
             methods = lock["subjects"].get(subject)
             if methods is None:
                 raise SkillError("subject_not_locked", "Worker subject was not captured at task start.")
-            original_id = request.get("original_failed_job_id", "")
-            files = (_retry_bundle(store, locks, operator, request, context, subject)
-                     if is_skill_job_id(original_id) else _input_files(request, methods["role_contract"]))
-            if request.get("review_target") and not is_skill_job_id(original_id):
+            files = _input_files(request, methods["role_contract"])
+            if request.get("review_target"):
                 from .review_sources import SOURCE_FILE, capture_git_sources
 
                 if "review_prompt_base.md" not in files:
@@ -395,88 +389,27 @@ def create_skill_worker_job(store, values: dict[str, Any]) -> tuple[dict[str, An
         return _publish_job(root, job_id, _metadata(job_id, ref, snapshot), snapshot, authority_fd)
 
 
-def _retry_bundle(store, locks, operator, request, context, subject):
-    """Copy a failed Reviewer's original bundle, never reopen its source paths."""
-    from goodteam_os.reviewer_dispatch import _retry_idempotency_key
-    from goodteam_os.reviewer_retry_inputs import _verify_artifact
-
-    original_id = request["original_failed_job_id"]
-    # Resolve and validate the immutable parent before taking its lock. Invalid
-    # self/cyclic references must not acquire a second request lock.
-    registered = locks.find_snapshot(command_key=original_id)
-    if registered is None:
-        raise SkillError("snapshot_missing", "The original Reviewer snapshot is unavailable.")
-    original = registered["snapshot"]
-    expected = _metadata(original_id, registered["ref"], original)
-    protocol_review = expected["role"] == "code_review" and "review_prompt_base.md" in original["job_input"]["files"]
-    if (original["task_lock_ref"] != context["task_lock_ref"] or original["subject"] != subject
-            or expected["execution_policy"] != "read_only"
-            or (not protocol_review and (not expected.get("profile_id") or expected.get("phase") not in {"implementation", "release"}))):
-        raise SkillError("review_retry_identity", "Reviewer retry must retain its original task, subject and read-only policy.")
-    attempt = int(expected.get("retry_attempt") or expected.get("attempt") or 1) + 1
-    if (request.get("retry_attempt") != attempt or request.get("attempt") != attempt
-            or request.get("retry_of_idempotency_key") != expected["idempotency_key"]
-            or request["idempotency_key"] != _retry_idempotency_key(expected, retry_attempt=attempt)):
-        raise SkillConflict("review_retry_identity", "Reviewer retry must use its stable next-attempt identity.")
-    mutable = {"idempotency_key", "attempt", "retry_attempt", "original_failed_job_id", "retry_of_idempotency_key"}
-    original_request = original["job_input"]["request"]
-    if ({key: value for key, value in request.items() if key not in mutable}
-            != {key: value for key, value in original_request.items() if key not in mutable}):
-        raise SkillConflict("operation_conflict", "Reviewer retry cannot change the original immutable request.")
-    terminal_failure = False
-    if protocol_review:
-        from .review_results import ReviewResultStore
-
-        terminal_failure = ReviewResultStore(store, original_id).assert_retryable()
-    with _request_lock(operator, original_id) as authority_fd:
-        if not _read_publication(authority_fd, original_id, expected):
-            raise SkillError("worker_skill_publication_missing", "The original Reviewer was not completely published.")
-        with directory(Path(store.root)) as jobs:
-            with subdirectory(jobs, original_id) as fd:
-                _verify_files(fd, expected, original)
-                status = _json(regular_file(fd, "status.json", maximum=MAX_RESOURCE_BYTES)[0])
-        attempt_id = status.get("skill_preflight_attempt_id")
-        if not isinstance(attempt_id, str) or re.fullmatch(r"preflight-[0-9a-f]{32}", attempt_id) is None:
-            raise SkillError("review_retry_state_changed", "Reviewer failure has no trusted attempt evidence.")
-        recorded = _json(regular_file(authority_fd, original_id + "." + attempt_id + ".json", maximum=MAX_RESOURCE_BYTES)[0])
-        if (protocol_review and not terminal_failure
-                and not (status.get("skill_runtime_status") == "not_connected"
-                         and status.get("invocation_evidence", {}).get("external_invocation") is False)):
-            raise SkillError("review_retry_unconfirmed", "A projected failure cannot prove the previous Reviewer has stopped.")
-        if recorded != status or status.get("status") != "failed":
-            raise SkillConflict("review_retry_state_changed", "The original Reviewer failure state is unavailable or changed.")
-        if original_request.get("review_target"):
-            from .review_sources import captured_git_target
-
-            captured_git_target(original)
-        else:
-            _verify_artifact(expected)
-        return deepcopy(original["job_input"]["files"])
-
-
-def create_skill_reviewer_retry(store, selected, *, retry_attempt: int, idempotency_key: str):
-    """Route the real Reviewer retry entry through the same Worker contract."""
-    original_id = selected.get("id") or selected.get("job_id")
-    root, _operator, locks, _status = _services(store)
-    if not is_skill_job_id(original_id):
-        raise SkillError("review_retry_identity", "Reviewer retry requires its original Skill job identity.")
-    registered = locks.find_snapshot(command_key=original_id)
-    if registered is None:
-        raise SkillError("snapshot_missing", "The original Reviewer snapshot is unavailable.")
-    snapshot = registered["snapshot"]
-    if snapshot["job_input"].get("worker_root") != str(root):
-        raise SkillError("snapshot_scope_mismatch", "The original Reviewer belongs to another Worker root.")
-    expected = _metadata(original_id, registered["ref"], snapshot)
-    for key in ("id", "run_id", "project_key", "role", "profile_id", "phase", "approval", "gate",
-                "artifact_key", "artifact_path", "artifact_version", "dispatch_group_id", "idempotency_key"):
-        if key in selected and selected[key] != expected.get(key):
-            raise SkillConflict("review_retry_identity", "Selected Reviewer evidence no longer matches its registered identity.")
-    request = {**deepcopy(snapshot["job_input"]["request"]), "attempt": retry_attempt,
-               "idempotency_key": idempotency_key, "original_failed_job_id": original_id,
-               "retry_attempt": retry_attempt, "retry_of_idempotency_key": expected["idempotency_key"],
-               "task_skill_context": expected["task_skill_context"], "skill_subject": snapshot["subject"],
-               "skill_loader_version": snapshot["loader_version"], "required_skill_ids": tuple(snapshot["required_skill_ids"])}
-    return store.create_or_reuse_job(**request)
+def registered_reviewer_jobs(workers, context):
+    """Read only Reviewer jobs owned by the exact task lock and project root."""
+    root, _operator, locks, _availability = _services(workers)
+    lock = locks.read(context["task_lock_ref"], task=TaskSkillIdentity(**context["task"]))
+    binding = lock.get("start_input", {}).get("request", {}).get("confirmed_input", {}).get("producer_binding")
+    if binding is None or binding.get("worker_root") != str(root):
+        raise SkillError("snapshot_scope_mismatch", "The current project root does not match this task's original Worker root.")
+    records = []
+    with locks._locked() as fd:
+        for operation, entry in locks._registry(fd)["jobs"].items():
+            snapshot = locks._resource(fd, entry["ref"], SNAPSHOT_SCHEMA)
+            if snapshot["task"] != context["task"] or snapshot["subject"] != "role:code_review":
+                continue
+            payload = snapshot["job_input"]
+            if snapshot["task_lock_ref"] != context["task_lock_ref"] or payload.get("worker_root") != str(root):
+                raise SkillError("snapshot_scope_mismatch", "A registered Reviewer belongs to another task lock or Worker root.")
+            job_id = _job_id(root, locks.scope, payload["request"].get("idempotency_key"))
+            if _digest(job_id)[7:] != operation:
+                raise SkillError("review_identity_invalid", "A registered Reviewer has an inconsistent command identity.")
+            records.append((job_id, deepcopy(snapshot), deepcopy(entry["ref"])))
+    return sorted(records, key=lambda row: (row[1]["created_at"], row[0]))
 
 
 def original_worker_request(store, *, command_key: str, context: dict[str, Any]) -> dict[str, Any] | None:

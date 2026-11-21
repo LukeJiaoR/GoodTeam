@@ -45,8 +45,7 @@ def select_pending(session, value, tasks):
 
 
 def ready_parallel_tasks(workspace, project_key, root, session, value, tasks):
-    if (value.get('workflow_recovery')
-            or value['max_batches'] is not None and value['batches_started'] >= value['max_batches']
+    if (value['max_batches'] is not None and value['batches_started'] >= value['max_batches']
             or value['max_manager_calls'] is not None and value['manager_calls'] >= value['max_manager_calls']):
         return []
     from goodteam_os.dispatch_capacity import available_dispatch_slots
@@ -59,7 +58,7 @@ def ready_parallel_tasks(workspace, project_key, root, session, value, tasks):
         if not task['eligible_to_plan'] or identifier not in value['task_ids'] or identifier in occupied:
             continue
         try:
-            _require_execution_slot(workspace, project_key, 'next-unclaimed-batch', continuation_id=value['id'], task_ids=[identifier])
+            _require_execution_slot(workspace, project_key, 'next-unclaimed-batch', task_ids=[identifier])
         except ValueError:
             continue
         ready.append(identifier)

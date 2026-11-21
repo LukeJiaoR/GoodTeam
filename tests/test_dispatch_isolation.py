@@ -9,8 +9,9 @@ import sys
 
 import pytest
 
+from goodteam_os import dispatch_workspace
 from goodteam_os.dispatch import dispatch_tracks
-from goodteam_os.dispatch_workspace import DispatchWorkspaceError, prepare_dispatch_workspace
+from goodteam_os.dispatch_workspace import DispatchWorkspaceError, dispatch_artifact_root, prepare_dispatch_workspace
 from goodteam_os.project_registry import ProjectRegistry
 from goodteam_os.repository_snapshot import SnapshotLimits
 from goodteam_os.skills.models import SkillConflict
@@ -50,7 +51,7 @@ prompt = sys.stdin.read()
 assert prompt
 cwd = Path.cwd()
 assert Path(sys.argv[sys.argv.index('--cd') + 1]) == cwd
-assert (cwd / '.git').is_dir()
+assert (cwd / '.git').exists()
 config = Path(os.environ['CODEX_HOME']) / 'config.toml'
 if config.is_file():
     catalog = tomllib.loads(config.read_text()).get('model_catalog_json')
@@ -120,6 +121,34 @@ def test_capture_excludes_runtime_repositories_and_untracked_cache_but_keeps_sou
         prepared.collect("worker")
 
 
+def test_bulk_result_verification_reopens_each_origin_and_checks_every_result(tmp_path, monkeypatch):
+    source = repository(tmp_path / "source")
+    first = prepare_dispatch_workspace(source, "first", ["worker", "sibling"])
+    recovered = prepare_dispatch_workspace(source, "recovered", ["worker"], baseline_from="first")
+    results = []
+    for origin, prepared, job_id in (("first", first, "worker"),
+                                     ("recovered", recovered, "worker"),
+                                     ("first", first, "sibling")):
+        (prepared.workspace(job_id) / "output.txt").write_text(f"{origin}/{job_id}\n")
+        results.append({**prepared.collect(job_id), "dispatch_run_id": origin})
+
+    reopened = []
+
+    def reopen(project_root, run_id, job_ids):
+        reopened.append(run_id)
+        return prepare_dispatch_workspace(project_root, run_id, job_ids)
+
+    monkeypatch.setattr(dispatch_workspace, "prepare_dispatch_workspace", reopen)
+    verified = list(dispatch_workspace.verify_dispatch_results(source, results))
+    assert [row["result_commit"] for row in verified] == [row["result_commit"] for row in results]
+    assert reopened == ["first", "recovered"]
+
+    (first.workspace("sibling") / "output.txt").write_text("changed after publication\n")
+    with pytest.raises(DispatchWorkspaceError, match="Retained Worker result changed after publication"):
+        list(dispatch_workspace.verify_dispatch_results(source, results))
+    assert reopened == ["first", "recovered", "first", "recovered"]
+
+
 def test_codex_dispatch_preserves_a_config_relative_model_catalog(tmp_path, cli_fixture):
     source = repository(tmp_path / "source")
     home = tmp_path / "empty-codex-home"
@@ -166,7 +195,7 @@ def test_public_dispatch_replays_exact_result_without_worker_or_verify_reexecuti
     assert len(WorkerJobStore(source).list_jobs()) == 1
     # A crash after worker/verification settlement but before outer publication
     # must recover those receipts, rather than repeat either side effect.
-    report = Path(job["workspace_path"]).parent.parent / "report.json"
+    report = dispatch_artifact_root(source, first["run_id"]) / "report.json"
     report.unlink()
     recovered = dispatch_tracks(**request)
     assert recovered["all_ok"] is True, recovered

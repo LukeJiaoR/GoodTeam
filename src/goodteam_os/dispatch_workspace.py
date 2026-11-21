@@ -20,6 +20,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -409,7 +410,7 @@ class DispatchWorkspace:
                   retained_results: list[dict] | None = None) -> dict:
         if len(set(job_ids)) != len(job_ids):
             raise DispatchWorkspaceError("Integration job identities must be unique.")
-        baseline_capture = self._baseline_capture()
+        self._baseline_capture()
         results = [self.collect(job_id) for job_id in job_ids]
         if expected_results is not None and any(
             expected_results.get(result["job_id"]) != result["result_commit"] for result in results
@@ -589,6 +590,20 @@ def prepare_dispatch_workspace(project_root: Path, run_id: str, job_ids: list[st
 def verify_dispatch_result(project_root: Path, result: dict) -> dict:
     """Read the retained receipt and compare bytes without creating Git objects."""
     workspace = prepare_dispatch_workspace(project_root, result["dispatch_run_id"], None)
+    return _verify_dispatch_result(workspace, result)
+
+
+def verify_dispatch_results(project_root: Path, results: Iterable[dict]) -> Iterator[dict]:
+    """Verify results in order, reopening each source dispatch once for this pass."""
+    workspaces: dict[str, DispatchWorkspace] = {}
+    for result in results:
+        run_id = _identifier(result["dispatch_run_id"])
+        if run_id not in workspaces:
+            workspaces[run_id] = prepare_dispatch_workspace(project_root, run_id, None)
+        yield _verify_dispatch_result(workspaces[run_id], result)
+
+
+def _verify_dispatch_result(workspace: DispatchWorkspace, result: dict) -> dict:
     job_id = _identifier(result["job_id"])
     root = workspace._verify_job(job_id)
     raw = read_bytes(workspace.artifact_root / f"result-{hashlib.sha256(job_id.encode()).hexdigest()[:24]}.json",

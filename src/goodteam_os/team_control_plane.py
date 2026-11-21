@@ -25,7 +25,7 @@ shares one ``decision_id`` across the events caused by one intent.
 
 Current state, decision history, and execution snapshots are three different
 concepts: ``team-state.json`` holds current truth, ``team-events.jsonl`` holds
-the append-only decision ledger, and workflow runs bind their own immutable
+the append-only decision ledger, and task batches bind their own immutable
 execution snapshot at start.
 """
 
@@ -50,13 +50,12 @@ from goodteam_os.skills.bindings import (
     normalize_items,
     project_binding,
     role_subject,
-    workflow_role_subject,
 )
 from goodteam_os.skills.models import SkillError
 from goodteam_os.worker_capabilities import (
     MANAGER_DEFAULT_REASONING_DEPTH, MANAGER_REASONING_DEPTHS, REASONING_DEPTHS,
 )
-from goodteam_os.state import normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os import state_documents
 from goodteam_os.database import database_configured
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, worker_backend_doctor
@@ -64,14 +63,8 @@ from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACK
 
 TEAM_CONTROL_PLANE_SCHEMA_VERSION = "team_control_plane.v1"
 TEAM_CAPABILITY_VIEW_SCHEMA_VERSION = "team_capability_view.v1"
-TEAM_EXECUTION_SNAPSHOT_SCHEMA_VERSION = "team_execution_snapshot.v1"
 
 MANAGER_ROLE = "orchestrator"
-# project_intake is a workflow Role Definition, not a TeamRole. Its Worker
-# identity/runtime is provided by the Research Team capability today; its
-# method configuration remains an independent workflow-role subject.
-WORKFLOW_ROLE_PROVIDERS: dict[str, str] = {"project_intake": "research"}
-
 # Worker runtime providers this product accepts, mirroring the web-layer
 # accepted backend set without importing the web module.
 WORKER_PROVIDER_OPTIONS = frozenset({*BUILTIN_WORKER_MODES, *CLI_BACKENDS, *SESSION_BACKENDS, "manual"})
@@ -303,7 +296,6 @@ def _sanitize_team_state(payload: object) -> dict[str, object]:
             role_keys=ROLE_KEYS,
             manager_role=MANAGER_ROLE,
             project_key=project_key,
-            workflow_role_keys=tuple(WORKFLOW_ROLE_PROVIDERS),
         )
     except SkillError as exc:
         raise TeamControlPlaneError(str(exc)) from exc
@@ -784,10 +776,6 @@ def build_team_state_from_legacy_config(project_key: str, target: dict[str, obje
         "manager": {"runtime": manager_config, "updated_at": _now()},
         "skill_bindings": {
             **{role_subject(role): default_binding(role_subject(role), project_key=key) for role in ROLE_KEYS},
-            **{
-                workflow_role_subject(role): default_binding(workflow_role_subject(role), project_key=key)
-                for role in WORKFLOW_ROLE_PROVIDERS
-            },
             manager_subject(MANAGER_ROLE): default_binding(manager_subject(MANAGER_ROLE), project_key=key),
         },
         "migrated": {
@@ -924,12 +912,6 @@ def preview_team_commands(state: dict[str, object], commands: list[dict[str, obj
                 if subject.startswith("role:"):
                     role = subject.removeprefix("role:")
                     target.update(role=role, label=role_label(role))
-                elif subject.startswith("workflow_role:"):
-                    role = subject.removeprefix("workflow_role:")
-                    target.update(
-                        role=role,
-                        label="Project Intake" if role == "project_intake" else role_label(role),
-                    )
                 else:
                     target.update(role=MANAGER_ROLE, label="Task Assistant")
             else:
@@ -1042,7 +1024,6 @@ def _binding_subject(command: dict[str, object]) -> str:
         subject = role_subject(_command_role(command))
     allowed = {
         *(role_subject(role) for role in ROLE_KEYS),
-        *(workflow_role_subject(role) for role in WORKFLOW_ROLE_PROVIDERS),
         manager_subject(MANAGER_ROLE),
     }
     if subject not in allowed:
@@ -1676,21 +1657,6 @@ def build_team_capability_view(
         "project_key": state["project_key"],
         "revision": state["revision"],
         "roles": roles,
-        "workflow_roles": [
-            {
-                "role": role,
-                "label": "Project Intake" if role == "project_intake" else role_label(role),
-                "provided_by_team_role": provider,
-                "skill_binding": project_binding(
-                    normalize_binding(
-                        dict(state.get("skill_bindings", {}) or {}).get(workflow_role_subject(role), {}),
-                        subject=workflow_role_subject(role),
-                        project_key=str(state["project_key"]),
-                    )
-                ),
-            }
-            for role, provider in WORKFLOW_ROLE_PROVIDERS.items()
-        ],
         "manager": {
             "role": MANAGER_ROLE,
             "label": "Task Assistant",
@@ -1708,41 +1674,6 @@ def build_team_capability_view(
             ),
             "updated_at": manager.get("updated_at", ""),
         },
-    }
-
-
-def build_team_execution_snapshot(state: dict[str, object]) -> dict[str, object]:
-    """Immutable execution-time truth for one durable run/execution epoch.
-
-    Later Team changes (runtime edits, lifecycle moves, role changes, renames,
-    deletes) must never rewrite what a historical run bound at start.
-    """
-    roles = {
-        role: {"state": str(dict(roles_state).get("state", "enabled")),
-               **({"runtime_source_worker_id": roles_state["runtime_source_worker_id"]}
-                  if roles_state.get("runtime_source_worker_id") else {})}
-        for role, roles_state in _roles(state).items()
-    }
-    workers = {
-        str(worker["id"]): {
-            "name": worker["name"],
-            "role": worker["role"],
-            "lifecycle": worker["lifecycle"],
-            "provider": dict(worker["runtime"]).get("provider", ""),
-            "model": dict(worker["runtime"]).get("model", ""),
-            "reasoning_depth": dict(worker["runtime"]).get("reasoning_depth", "default"),
-            "additional_prompt": dict(worker["runtime"]).get("additional_prompt", ""),
-        }
-        for worker in _workers(state)
-    }
-    manager = dict(state["manager"])  # type: ignore[arg-type]
-    return {
-        "schema_version": TEAM_EXECUTION_SNAPSHOT_SCHEMA_VERSION,
-        "revision": state["revision"],
-        "captured_at": _now(),
-        "roles": roles,
-        "workers": workers,
-        "manager": {"runtime": dict(manager.get("runtime", {}) or {})},
     }
 
 
@@ -1764,7 +1695,7 @@ def attach_team_control_plane(target: dict[str, object], config_path: Path | Non
     console, doctor) sees the same current team truth. This is read-only by
     design: rejected/failing requests must never mutate the workspace. The
     lazy migration from legacy worker config happens only at explicit team
-    touchpoints (Team surface, chat turn, workflow start, control-plane
+    touchpoints (Team surface, chat turn, batch confirmation, control-plane
     command) via :meth:`TeamControlPlaneStore.load_or_migrate`.
     """
     if config_path is None:

@@ -2,25 +2,22 @@
 
 ## Project-iteration-first task selection
 
-**One execution path for new Manager work (2026-11-01):** Manager recommendations
-are read-only until explicitly queued. Send chosen project task IDs to the
-existing Task Assistant queue. A confirmed single draft can use the existing
-Workflow; a confirmed batch uses the Task Assistant batch adapter and the
-existing `dispatch_tracks` isolated Worker pool (up to 10 concurrently).
-The original LocalTaskStore card owns the task; the queue's immutable
-confirmation binds its Workflow or dispatch Run. Worker output and fan-in
-produce review evidence, NOT automatically done. Manual and authorized
+**One execution path for Manager work:** Manager recommendations are read-only
+until explicitly queued. Confirmed single tasks and batches use the same Task
+Assistant batch adapter and `dispatch_tracks` isolated Worker pool (up to 10
+concurrently). The original LocalTaskStore card owns the task; the queue's
+immutable confirmation binds the batch run. Worker output and fan-in produce
+review evidence, NOT automatically done. Manual and authorized
 automatic batches use the same queue adapter. Do not create
 a second Manager-specific dispatcher, task ledger or execution state machine.
 Explicit local batch-quality configuration reuses the existing candidate check,
 independent review and bounded correction services. Keep its protected input and
 final candidate receipts bound to the original batch. HTTP may advance configured
 work, but must never choose a command or mint Reviewer/correction authority.
-Goal continuation remains an authorized adapter to Workflow; historical
-Operator/direct-dispatch entries remain readable and functional. The disconnected
-AI Onboarding runner was retired; existing project import/readiness/inventory
-are the product's project discovery path. Do not restore the fake-only
-parallel-plan projection as a substitute for real isolated concurrent Workers.
+Goal continuation uses the same authorized task/batch path. Fresh workspaces
+use the task queue and batch state. Keep Manager Issue intake, shared Worker
+dispatch, project import, readiness, inventory and Git Skill import. Do not
+restore fake-only parallel-plan projection.
 
 The product target is **an autonomous, continuing AI engineering team for an
 entire project**, not just an issue executor. The only current two-class
@@ -37,7 +34,7 @@ a parallel work queue.
    observed outcomes. The project moves across *multiple distinct iterations*
    without the user manually supplying each next Issue. Preserve necessary
    scoped human gates, authorization, failure recovery and honest artifacts.
-2. **Not essential**: do not expand optional Telegram, external Planner/MCP,
+2. **Not essential**: do not expand external Planner/MCP,
    complete Skill marketplaces/runtime/version flows, workspace-wide Team
    migrations, mobile extras, billing, broad multi-provider matrices or
    speculative control-plane frameworks unless a demonstrated dependency
@@ -51,11 +48,11 @@ implemented user-specified Issue is necessary evidence, but is **not**
 acceptance of project-level autonomy. [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419)
 retains the real product acceptance record; [#540](https://github.com/LukeJiaoR/GoodTeam/issues/540)
 already implements bounded continuation inside one approved Goal, not
-open-ended project prioritization. Prefer extending/reusing these paths and
-the existing `fix` profile, not creating a second workflow engine.
+open-ended project prioritization. Reuse the task/batch path rather than adding
+a second execution engine.
 
-Preserve all existing approval, trusted-path, isolation, review provenance,
-idempotency, exact-head CI, cost/scope bounds and fail-closed protections.
+On supported execution paths, preserve approval, trusted-path, isolation, review
+provenance, idempotency, exact-head CI, cost/scope bounds and fail-closed protections.
 Within approved project scope, avoid unnecessary per-task user decisions;
 outside it, never infer permission to merge, deploy or spend without the
 specified authorization.
@@ -182,7 +179,8 @@ scoped to that workflow.
 
 ## OpenWiki
 
-This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
+Start with `docs/status.md` and `docs/architecture.md`. OpenWiki generates its
+pages from the current source.
 
 The OpenWiki GitHub Actions workflow is manual-only. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting an authorized OpenWiki run regenerate them.
 

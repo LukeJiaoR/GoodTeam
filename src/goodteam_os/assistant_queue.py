@@ -1,12 +1,14 @@
-"""Explicit, exact-text future work intake. Selecting a draft never starts it."""
+"""[INPUT]: 项目任务账、任务摘要与会话。
+[OUTPUT]: 重新校验并保存待确认任务。
+[POS]: Manager 与人工请求共用的队列。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
-from goodteam_os.assistant_drafts import archive_terminal_proposal
 from goodteam_os.assistant_requests import conversation_lock, response
-from goodteam_os.state import StateStore
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
@@ -28,8 +30,7 @@ def handle_queue_action(service, *, project_key, root, request):
                  if item.get("id") == request.get("proposal_id")), None
             )
             if queued is not None and queued.get("status") == "queued":
-                require_queued_project_task(root, project_key, queued, workflow=False)
-            archive_terminal_proposal(store, workspace=service.workspace, root=root)
+                require_queued_project_task(root, project_key, queued)
         store._mutate(lambda session: _apply(session, request))
         return response(service, project_key, root)
 
@@ -92,17 +93,12 @@ def _apply(session, request):
     return session
 
 
-def require_queued_project_task(root, project_key, proposal, *, workflow=True):
-    """Revalidate an original Manager-selected task before the existing Workflow.
+def require_queued_project_task(root, project_key, proposal):
+    """Revalidate an original Manager-selected task before batch execution.
 
     Ordinary human-typed drafts have no project_task_id and remain unchanged.
     A model recommendation is never an independent execution authorization.
     """
-    # Edited legacy drafts can retain an exact assignment without a ledger link.
-    # Only a single-draft Workflow replaces that target with a Role default.
-    assignment = proposal.get("assignment")
-    if workflow and isinstance(assignment, dict) and assignment.get("worker_id"):
-        raise ValueError("A named Worker task cannot enter a role-replacing Workflow.")
     task_id = proposal.get("project_task_id")
     if not task_id:
         return None
@@ -122,12 +118,6 @@ def require_queued_project_task(root, project_key, proposal, *, workflow=True):
     known = {item.get("id"): item for item in tasks}
     if any(known.get(dep, {}).get("status") != "done" for dep in task.get("dependencies", [])):
         raise ValueError("The Manager-selected task has unfinished dependencies.")
-    if workflow and task.get("web_search") is not None:
-        raise ValueError("Search-authorized project tasks must retain their confirmed batch search contract.")
-    if workflow and task.get("worker_id"):
-        raise ValueError("A named Worker task cannot enter a role-replacing Workflow.")
-    if workflow and task.get("execution_policy") == "read_only":
-        raise ValueError("Read-only Manager work cannot enter a code-writing Workflow.")
     return task
 
 
@@ -153,7 +143,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
                                    expected_choice_event_id=None, expected_task_ids=None):
     """One adapter: saved Manager picks become ordinary Task Assistant queue items.
 
-    It creates NO Worker, Workflow, Goal, or second project-task ledger. Queued
+    It writes the original task card and an unconfirmed queue entry. Queued
     work is not approved. Existing select -> confirm -> start handles authority.
     """
     from goodteam_os.project_iteration import (
@@ -187,7 +177,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
             known = {item["id"]: item for item in items}
             selected = [known[task_id] for task_id in validated["selected_task_ids"]]
             # Batch dispatch preserves read-only policy. The ordinary writing
-            # Workflow adapter still rejects it at selection/confirmation.
+            # Batch admission still rejects it at selection or confirmation.
             event_id = choice.get("source_event_id") or f"iteration-choice:{snapshot['version']}"
             if (expected_choice_event_id is not None and event_id != expected_choice_event_id
                     or expected_task_ids is not None and validated["selected_task_ids"] != expected_task_ids):
@@ -251,10 +241,9 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
 
             updated = store._mutate(append)
     return {
-        "status": "queued_for_existing_task_workflow",
+        "status": "queued_for_project_batch",
         "queued_task_ids": validated["selected_task_ids"],
         "queued_proposal_ids": [proposal["id"] for proposal in prepared],
-        "workflow_started": False,
         "task_assistant_session": updated,
     }
 
@@ -284,7 +273,7 @@ def configure_queued_search(store, root, project_key, request):
                 or type(request.get("expected_revision")) is not int
                 or proposal["revision"] != request["expected_revision"] or not proposal.get("project_task_id")):
             raise ValueError("Reload an unconfirmed queued project task before configuring search.")
-        task = require_queued_project_task(root, project_key, proposal, workflow=False)
+        task = require_queued_project_task(root, project_key, proposal)
         original = tasks._read()
         if policy is not None and not (task.get("execution_policy", "workspace_write") == "workspace_write"
                 or task.get("execution_policy") == "read_only" and task.get("role") in {"research", "planner"}):

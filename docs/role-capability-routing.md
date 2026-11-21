@@ -6,7 +6,7 @@ an internal template because of an unrelated fixed Role member.
 
 `graph.resolve_role_adapter` previously ignored runtime_source_worker_id. It is
 used by should_generate_artifact_with_worker (including web artifact revision and
-RFC regeneration) and web._workflow_requires_repository before workspace setup.
+RFC regeneration).
 It could disagree with the original dispatch resolver: source Codex/Pi versus
 rostered fake chose a template; the reverse could require Git unnecessarily.
 

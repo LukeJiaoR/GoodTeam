@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { conversationTimeline, createConversationDelivery, deliveryLabel, shouldSubmitConversationOnEnter, trackConversationDelivery } from './conversationFeedback';
 
-const message = { id: 'm1', projectKey: 'DEMO', runId: 'r1', text: 'Keep the schema.', status: 'sending' };
-const scope = { projectKey: 'DEMO', runId: 'r1' };
+const message = { id: 'm1', projectKey: 'DEMO', text: 'Keep the schema.', status: 'sending' };
+const scope = { projectKey: 'DEMO' };
 
 describe('conversation delivery, not execution authority', () => {
   it('publishes immediately, then records only after the API acknowledges', async () => {
@@ -11,8 +11,8 @@ describe('conversation delivery, not execution authority', () => {
     const request = trackConversationDelivery({ delivery: message,
       operation: () => new Promise((done) => { resolve = done; }), onUpdate: (item) => updates.push(item) });
     expect(updates).toEqual([message]);
-    resolve({ workflow_started: false });
-    expect(await request).toEqual({ workflow_started: false });
+    resolve({ accepted: true });
+    expect(await request).toEqual({ accepted: true });
     expect(updates.at(-1)).toMatchObject({ status: 'recorded', id: 'm1' });
   });
 
@@ -28,7 +28,7 @@ describe('conversation delivery, not execution authority', () => {
   it('reuses identity only for an explicit identical unconfirmed message resend', () => {
     const previous = { ...message, status: 'unconfirmed' };
     expect(createConversationDelivery({ ...message, previous }).id).toBe('m1');
-    for (const patch of [{ text: 'Different' }, { projectKey: 'OTHER' }, { runId: 'r2' }, { intentId: 'change1' }]) {
+    for (const patch of [{ text: 'Different' }, { projectKey: 'OTHER' }, { contextKey: 'other-draft' }]) {
       expect(createConversationDelivery({ ...message, ...patch, previous }).id).not.toBe('m1');
     }
     expect(createConversationDelivery({ ...message, previous: { ...message, status: 'recorded' } }).id).not.toBe('m1');
@@ -52,23 +52,9 @@ describe('conversation delivery, not execution authority', () => {
     expect(conversationTimeline(timeline, { ...message, status: 'unconfirmed' }, scope)).toBe(timeline);
   });
 
-  it('never leaks a delivery into another project, run or read-only history', () => {
+  it('keeps local delivery within the originating project', () => {
     const timeline = [];
-    for (const patch of [{ projectKey: 'OTHER' }, { runId: 'r2' }, { readOnly: true }]) {
-      expect(conversationTimeline(timeline, message, { ...scope, ...patch })).toBe(timeline);
-    }
-  });
-
-  it('uses the acknowledged durable change event identity', async () => {
-    const onUpdate = vi.fn();
-    await trackConversationDelivery({ delivery: { ...message, intentId: 'intent1' }, onUpdate,
-      operation: async () => ({ intent_commit: { events: [
-        { id: 'event1', actor: 'user', event: 'change_request_shared' },
-        { id: 'event2', actor: 'manager', event: 'change_intent_summarized' },
-      ] } }) });
-    const delivered = onUpdate.mock.calls.at(-1)[0];
-    expect(delivered.serverMessageId).toBe('event1');
-    expect(conversationTimeline([{ id: 'event1' }], delivered, scope)).toEqual([{ id: 'event1' }]);
+    expect(conversationTimeline(timeline, message, { projectKey: 'OTHER' })).toBe(timeline);
   });
 
   it('does not submit newlines, held keys or IME commit events', () => {

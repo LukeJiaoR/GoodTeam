@@ -47,11 +47,8 @@ def test_multiple_followups_publish_once_after_partial_write_and_lost_queue_repl
         store._mutate(lambda session: {**session, "project_continuation": deepcopy(value)})
 
     reset(value)
-    monkeypatch.setattr(planner, "_require_planning_idle", lambda *_: None)
     monkeypatch.setattr(discovery, "authority_snapshot", lambda *_: {})
     monkeypatch.setattr(discovery, "verified_outcome", lambda **_: deepcopy(outcome))
-    # The grant is a fixture, but keep the actual queue and its execution gates.
-    monkeypatch.setattr(assistant_queue, "require_no_active_project_goal", lambda *_: None)
 
     def run():
         return discovery.discover_next_iteration(workspace=tmp_path, project_key="APP", root=root,

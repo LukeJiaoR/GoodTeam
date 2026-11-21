@@ -1,13 +1,17 @@
+"""[INPUT]: 已注册项目和 gh 的只读 Issue 数据。
+[OUTPUT]: 校验仓库身份并读取 Issue 快照。
+[POS]: Manager 外部输入的 GitHub 适配器。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
-import base64
 import json
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from goodteam_os.execution.github import (
     GitHubIssueClosed,
@@ -15,7 +19,6 @@ from goodteam_os.execution.github import (
     GitHubIssueSnapshot,
 )
 from goodteam_os.database import provider_environment
-from goodteam_os.execution.models import GitHubBinding
 from goodteam_os.projects import load_project_target
 
 
@@ -42,10 +45,6 @@ class KnownProject:
     config_path: Path
     project_root: Path
     repository: str
-    worker_backend: str
-    merge_method: str
-    base_branch: str
-    required_checks: tuple[str, ...]
 
 
 class GitHubCLIError(RuntimeError):
@@ -90,23 +89,10 @@ def resolve_known_project(workspace: Path, repository: str) -> KnownProject:
             identity = _repository_identity(project_root)
             configured = str(target.get("repository", "") or target.get("github_repository", "")).strip()
             identity = configured or identity
-            if identity.lower() != wanted:
-                continue
-            backend = str(dict(target.get("worker_backend", {})).get("mode", "codex") or "codex")
-            merge_method = str(target.get("merge_method", "squash") or "squash").lower()
-            if merge_method not in {"merge", "squash", "rebase"}:
-                merge_method = "squash"
-            required_checks = _normalized_required_checks(target.get("required_checks", []))
-            return KnownProject(
-                key=str(target.get("key", config_path.stem)).strip().upper(),
-                config_path=config_path.resolve(),
-                project_root=project_root,
-                repository=identity,
-                worker_backend=backend,
-                merge_method=merge_method,
-                base_branch=str(target.get("base_branch", "") or "").strip(),
-                required_checks=required_checks,
-            )
+            if identity.lower() == wanted:
+                return KnownProject(key=str(target.get("key", config_path.stem)).strip().upper(),
+                                    config_path=config_path.resolve(), project_root=project_root,
+                                    repository=identity)
     raise ValueError(
         f"Unknown project repository: {repository}. Register it locally first; unknown-project adoption is tracked in #339."
     )
@@ -115,9 +101,8 @@ def resolve_known_project(workspace: Path, repository: str) -> KnownProject:
 class GhCliGitHubClient:
     """Concrete GitHub adapter using the existing routed ``gh`` installation."""
 
-    def __init__(self, *, cwd: Path, base_ref: str = ""):
+    def __init__(self, *, cwd: Path):
         self.cwd = Path(cwd).resolve()
-        self.base_ref = base_ref.strip()
 
     def fetch_issue(self, repo: str, issue_number: int) -> GitHubIssueSnapshot:
         try:
@@ -161,285 +146,12 @@ class GhCliGitHubClient:
             references=references,
         )
 
-    def create_or_update_branch(self, *, repo: str, branch_name: str, base_ref: str = "main") -> dict[str, Any]:
-        existing = self._json_optional(["gh", "api", f"repos/{repo}/git/ref/heads/{quote(branch_name, safe='/')}"])
-        if existing:
-            return {"sha": _nested(existing, "object", "sha"), "reused": True}
-        base = self._json(["gh", "api", f"repos/{repo}/git/ref/heads/{quote(base_ref, safe='/')}"])
-        base_sha = str(_nested(base, "object", "sha"))
-        created = self._json(
-            [
-                "gh",
-                "api",
-                "-X",
-                "POST",
-                f"repos/{repo}/git/refs",
-                "-f",
-                f"ref=refs/heads/{branch_name}",
-                "-f",
-                f"sha={base_sha}",
-            ]
-        )
-        return {"sha": _nested(created, "object", "sha"), "base_sha": base_sha, "reused": False}
-
-    def commit_files(
-        self,
-        *,
-        repo: str,
-        branch_name: str,
-        message: str,
-        files: dict[str, str],
-    ) -> dict[str, Any]:
-        last_commit = ""
-        for path, content in files.items():
-            encoded_path = quote(path.strip("/"), safe="/")
-            existing = self._json_optional(
-                ["gh", "api", f"repos/{repo}/contents/{encoded_path}?ref={quote(branch_name, safe='')}"],
-            )
-            args = [
-                "gh",
-                "api",
-                "-X",
-                "PUT",
-                f"repos/{repo}/contents/{encoded_path}",
-                "-f",
-                f"message={message}",
-                "-f",
-                f"content={base64.b64encode(content.encode('utf-8')).decode('ascii')}",
-                "-f",
-                f"branch={branch_name}",
-            ]
-            if existing and existing.get("sha"):
-                args.extend(["-f", f"sha={existing['sha']}"])
-            result = self._json(args)
-            last_commit = str(_nested(result, "commit", "sha") or "")
-        return {"commit_sha": last_commit}
-
-    def create_pr(
-        self,
-        *,
-        repo: str,
-        issue_number: int | None,
-        branch_name: str,
-        execution_id: str,
-        title: str,
-        body: str,
-    ) -> GitHubBinding:
-        existing = self._json(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--repo",
-                repo,
-                "--head",
-                branch_name,
-                "--state",
-                "open",
-                "--json",
-                "number,url",
-            ]
-        )
-        if isinstance(existing, list) and existing:
-            number = int(existing[0]["number"])
-        else:
-            command = [
-                    "gh",
-                    "pr",
-                    "create",
-                    "--repo",
-                    repo,
-                    "--head",
-                    branch_name,
-                    "--title",
-                    title,
-                    "--body",
-                    body,
-                ]
-            if self.base_ref:
-                command.extend(["--base", self.base_ref])
-            url = self._text(command).strip()
-            number = int(url.rstrip("/").rsplit("/", 1)[-1])
-        return GitHubBinding(
-            repo=repo,
-            issue_number=issue_number or 0,
-            pr_number=number,
-            branch_name=branch_name,
-            execution_id=execution_id,
-        )
-
-    def find_open_pr_by_head(self, repo: str, branch_name: str) -> dict[str, Any] | None:
-        value = self._json(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--repo",
-                repo,
-                "--head",
-                branch_name,
-                "--state",
-                "open",
-                "--json",
-                "number,url,headRefName,headRefOid,baseRefName,baseRefOid",
-            ]
-        )
-        if not isinstance(value, list) or not value:
-            return None
-        pr = dict(value[0])
-        return {
-            **pr,
-            "head_sha": pr.get("headRefOid", ""),
-            "base_sha": pr.get("baseRefOid", ""),
-        }
-
-    def fetch_checks(self, repo: str, ref: str) -> dict[str, Any]:
-        return self._json(["gh", "api", f"repos/{repo}/commits/{ref}/check-runs?per_page=100"])
-
-    def fetch_required_checks(self, repo: str, base_branch: str) -> list[str]:
-        payload = self._json_optional(
-            [
-                "gh",
-                "api",
-                f"repos/{repo}/branches/{quote(base_branch, safe='')}/protection/required_status_checks",
-            ]
-        )
-        if not isinstance(payload, dict):
-            return []
-        names = [str(value) for value in payload.get("contexts", [])]
-        names.extend(
-            str(item.get("context", ""))
-            for item in payload.get("checks", [])
-            if isinstance(item, dict)
-        )
-        return list(_normalized_required_checks(names))
-
-    def fetch_pr_reviews(self, repo: str, pr_number: int) -> list[dict[str, Any]]:
-        value = self._json(["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews"])
-        return value if isinstance(value, list) else []
-
-    def fetch_pr_comments(self, repo: str, pr_number: int) -> list[dict[str, Any]]:
-        value = self._json(["gh", "api", f"repos/{repo}/issues/{pr_number}/comments"])
-        return value if isinstance(value, list) else []
-
-    def fetch_pr(self, repo: str, pr_number: int) -> dict[str, Any]:
-        payload = self._json(
-            [
-                "gh",
-                "pr",
-                "view",
-                str(pr_number),
-                "--repo",
-                repo,
-                "--json",
-                "number,url,state,isDraft,mergeable,mergedAt,mergeCommit,headRefName,headRefOid,baseRefName,baseRefOid",
-            ]
-        )
-        merge_commit = dict(payload.get("mergeCommit", {}) or {})
-        return {
-            **payload,
-            "merged": str(payload.get("state", "")).upper() == "MERGED",
-            "merged_at": payload.get("mergedAt", ""),
-            "merge_commit_sha": merge_commit.get("oid", ""),
-            "head_sha": payload.get("headRefOid", ""),
-            "base_sha": payload.get("baseRefOid", ""),
-        }
-
-    def fetch_pr_diff(self, repo: str, pr_number: int) -> dict[str, Any]:
-        payload = self._json(
-            [
-                "gh",
-                "pr",
-                "view",
-                str(pr_number),
-                "--repo",
-                repo,
-                "--json",
-                "files,headRefOid,baseRefName",
-            ]
-        )
-        patch = self._text(["gh", "pr", "diff", str(pr_number), "--repo", repo])
-        return {
-            "base_ref": payload.get("baseRefName", ""),
-            "head_sha": payload.get("headRefOid", ""),
-            "changed_files": [
-                {
-                    "path": file.get("path", ""),
-                    "status": file.get("changeType", ""),
-                    "additions": file.get("additions", 0),
-                    "deletions": file.get("deletions", 0),
-                }
-                for file in payload.get("files", [])
-                if isinstance(file, dict)
-            ],
-            "patch": patch,
-        }
-
-    def merge_pr(self, repo: str, pr_number: int, *, head_sha: str, method: str) -> dict[str, Any]:
-        return self._json(
-            [
-                "gh",
-                "api",
-                "-X",
-                "PUT",
-                f"repos/{repo}/pulls/{pr_number}/merge",
-                "-f",
-                f"sha={head_sha}",
-                "-f",
-                f"merge_method={method}",
-            ]
-        )
-
-    def issue_comment_once(self, repo: str, issue_number: int, *, marker: str, body: str) -> dict[str, Any]:
-        comments = self._json(["gh", "api", f"repos/{repo}/issues/{issue_number}/comments?per_page=100"])
-        for comment in comments if isinstance(comments, list) else []:
-            if marker in str(comment.get("body", "")):
-                return {"id": comment.get("id"), "reused": True}
-        created = self._json(
-            [
-                "gh",
-                "api",
-                "-X",
-                "POST",
-                f"repos/{repo}/issues/{issue_number}/comments",
-                "-f",
-                f"body={body}\n\n{marker}",
-            ]
-        )
-        return {"id": created.get("id"), "reused": False}
-
-    def close_issue(self, repo: str, issue_number: int) -> dict[str, Any]:
-        return self._json(
-            ["gh", "api", "-X", "PATCH", f"repos/{repo}/issues/{issue_number}", "-f", "state=closed"]
-        )
-
-    def add_pr_comment(self, repo: str, pr_number: int, body: str) -> dict[str, Any]:
-        return self._json(
-            [
-                "gh",
-                "api",
-                "-X",
-                "POST",
-                f"repos/{repo}/issues/{pr_number}/comments",
-                "-f",
-                f"body={body}",
-            ]
-        )
-
     def _json(self, command: list[str]) -> Any:
         output = self._text(command)
         try:
             return json.loads(output or "null")
         except json.JSONDecodeError as exc:
             raise GitHubCLIError(f"GitHub CLI returned invalid JSON for {' '.join(command[:3])}") from exc
-
-    def _json_optional(self, command: list[str]) -> Any:
-        try:
-            return self._json(command)
-        except GitHubCLIError as exc:
-            if "404" in str(exc) or "not found" in str(exc).lower():
-                return None
-            raise
 
     def _text(self, command: list[str]) -> str:
         result = subprocess.run(command, cwd=self.cwd, env=provider_environment(), capture_output=True, check=False, text=True)
@@ -482,19 +194,3 @@ def _normalized_comment(item: dict[str, Any]) -> dict[str, Any]:
         "created_at": str(item.get("createdAt", "") or item.get("created_at", "")),
         "url": str(item.get("url", "") or item.get("html_url", "")),
     }
-
-
-def _normalized_required_checks(value: Any) -> tuple[str, ...]:
-    values = list(value.values()) if isinstance(value, dict) else ([value] if isinstance(value, str) else value)
-    if not isinstance(values, (list, tuple)):
-        return ()
-    return tuple(sorted({str(item).strip() for item in values if str(item).strip()}))
-
-
-def _nested(value: Any, *keys: str) -> Any:
-    current = value
-    for key in keys:
-        if not isinstance(current, dict):
-            return ""
-        current = current.get(key)
-    return current

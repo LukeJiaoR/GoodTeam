@@ -32,35 +32,6 @@ POLICY_SCHEMA = "goodteam.codex-trusted-review-policy.v1"
 START_SCHEMA = "goodteam.trusted-native-review-start.v1"
 
 
-def saved_workflow_review_context(workers, *, workspace, state):
-    """Read a native review's private receipt; never infer authority from a job.
-
-    Ordinary workflow roles keep their legacy context. The separately authorized
-    direct review owns only the code_review subject, with the same displayed run.
-    Read/retry/cancel routes can recover its registered receipt after restart.
-    """
-    from goodteam_os.service import service_state_dir
-    from .task_context import task_skill_context
-    from .task_service import ProjectTaskSkillService
-
-    if not (Path(service_state_dir()) / "skills" / "task-locks").exists():
-        return {}
-    task = TaskSkillIdentity("direct_task", state.project_key, state.run_id)
-    tasks = ProjectTaskSkillService(workspace, state.project_key, worker_roots=(workers.project_root,))
-    previous = tasks.locks.find_task(task=task, command_key="native-review:" + state.run_id)
-    if previous is None:
-        return {}
-    confirmed = previous["lock"].get("start_input", {}).get("request", {}).get("confirmed_input", {})
-    if (previous["status"] != "committed" or set(previous["lock"]["subjects"]) != {"role:code_review"}
-            or confirmed != {"schema_version": START_SCHEMA, "run_id": state.run_id,
-                             "producer_binding": {"workspace": str(Path(workspace).resolve()),
-                                                  "worker_root": str(Path(workers.project_root).resolve())}}):
-        raise SkillError("trusted_codex_task_mismatch", "The saved native review belongs to a different producer or Worker root.")
-    context = task_skill_context(task, previous["ref"])
-    tasks.read(context)
-    return context
-
-
 def runtime_boundaries(reference):
     captured = _decode(reference.encode())
     if (set(captured) != {"mode", "contexts", "seconds"} or captured["mode"] != "trusted_self_use"
@@ -157,35 +128,6 @@ class TrustedCodexReviewAdmission(CodexReviewAdmission):
     def _expired(self):
         expires_at = self.policy.get("expires_at")
         return expires_at is not None and time.time() >= expires_at
-
-    def capture_workflow_review(self, workers, *, workspace, state):
-        """Called by the guarded page Run action, never by Worker metadata."""
-        from dataclasses import asdict
-        from .task_start import capture_task_start, reject_missing_task_context
-
-        task = TaskSkillIdentity("direct_task", state.project_key, state.run_id)
-        if Path(workers.project_root).absolute() != self.root or asdict(task) != self.policy["task"]:
-            raise SkillError("trusted_codex_task_mismatch", "Native permission must name this exact current-task review and Worker root.")
-        if self._expired() or _private_file(self.path, maximum=32768) != self.policy_bytes:
-            raise SkillError("trusted_codex_authorization_revoked", "The private task authorization expired or changed.")
-        reject_missing_task_context(TaskSkillIdentity("workflow_run", state.project_key, state.run_id))
-        return capture_task_start(workspace=workspace, project_key=state.project_key, worker_root=workers.project_root,
-            task=task, command_key="native-review:" + state.run_id,
-            confirmed_input={"schema_version": START_SCHEMA, "run_id": state.run_id},
-            subjects=("role:code_review",), protocol_only_review=True)
-
-    def page_start_available(self, workers, *, state):
-        """Display an already authorized default-task start; no grant or probe."""
-        from dataclasses import asdict
-        task = TaskSkillIdentity("direct_task", state.project_key, state.run_id)
-        try:
-            return (not state.task_skill_context and Path(workers.project_root).absolute() == self.root
-                    and asdict(task) == self.policy["task"] and not self._expired()
-                    and _private_file(self.path, maximum=32768) == self.policy_bytes)
-        except (SkillError, OSError):
-            # Revocation closes new starts; an availability hint is not authority
-            # for reading an already registered immutable report.
-            return False
 
     def _current(self, snapshot):
         if self._expired() or _private_file(self.path, maximum=32768) != self.policy_bytes:

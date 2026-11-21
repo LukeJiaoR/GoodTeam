@@ -1,3 +1,8 @@
+"""[INPUT]: 项目身份、会话文档与事务锁。
+[OUTPUT]: 持久化消息、草稿和任务确认。
+[POS]: 助手会话原始记录。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import fcntl
@@ -9,13 +14,12 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
-from goodteam_os.state import normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os.database import database_configured
 from goodteam_os import state_documents
 
 
 SCHEMA_VERSION = "task_assistant_session.v2"
-_LEGACY_SCHEMA_VERSIONS = {"task_assistant_session.v1"}
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
@@ -37,17 +41,8 @@ class TaskAssistantSessionStore:
         if not isinstance(payload, dict):
             raise ValueError("Task Assistant session is invalid")
         version = str(payload.get("schema_version", ""))
-        if version in _LEGACY_SCHEMA_VERSIONS:
-            return _upgrade_session_v1(payload)
         if version != SCHEMA_VERSION:
             raise ValueError("Task Assistant session is invalid")
-        payload.setdefault("archived_task_proposals", [])
-        from goodteam_os.skills.task_context import workflow_skill_context
-
-        for proposal in [payload.get("proposed_task"), *payload["archived_task_proposals"]]:
-            if isinstance(proposal, dict) and "task_skill_context" in proposal:
-                workflow_skill_context(proposal["task_skill_context"],
-                                       run_id=f"task-{proposal['id']}", project_key=self.project_key)
         return payload
 
     def append_message(
@@ -208,63 +203,12 @@ class TaskAssistantSessionStore:
                     "source_message_ids": [str(item) for item in source_message_ids],
                     "exact_request": request,
                     "revision": 1,
+                    "status": "draft",
                     "confirmed": False,
-                    "start_claim_id": "",
-                    "start_run_id": "",
-                    "start_owner_pid": 0,
-                    "start_claimed_at": "",
-                    "start_status": "",
-                    "start_error": "",
                     "run_id": "",
                 },
                 "status": "waiting_for_human",
             }
-
-        return self._mutate(mutate)
-
-    def archive_task_proposal(
-        self,
-        proposal_id: str,
-        run_id: str,
-        terminal_status: str,
-    ) -> dict[str, object]:
-        if terminal_status not in {"complete", "rejected", "archived"}:
-            raise ValueError("Task proposal can only be archived with terminal run evidence")
-        if not str(run_id).strip():
-            raise ValueError("Task proposal archive requires a run ID")
-
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != str(proposal_id) or proposal.get("run_id") != str(run_id):
-                return session
-
-            archived = {
-                **proposal,
-                "status": "archived",
-                "terminal_status": terminal_status,
-                "archived_at": _now(),
-            }
-            history = list(session.get("archived_task_proposals") or [])
-            if not any(item.get("id") == archived["id"] for item in history):
-                history.append(archived)
-            session["archived_task_proposals"] = history
-            session["proposed_task"] = None
-            session["status"] = "ready_for_request"
-            event_id = f"task-proposal-archived:{proposal_id}"
-            if not any(item.get("message_id") == event_id for item in session["timeline"]):
-                session["timeline"].append({
-                    "message_id": event_id,
-                    "actor": "system",
-                    "event": "task_proposal_archived",
-                    "content": "",
-                    "run_id": str(run_id),
-                    "created_at": _now(),
-                    "details": {
-                        "proposal_id": str(proposal_id),
-                        "terminal_status": terminal_status,
-                    },
-                })
-            return session
 
         return self._mutate(mutate)
 
@@ -275,7 +219,7 @@ class TaskAssistantSessionStore:
 
         def mutate(session: dict[str, object]) -> dict[str, object]:
             proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or proposal.get("run_id") or proposal.get("confirmed") or proposal.get("status") == "cancelled":
+            if proposal.get("id") != proposal_id or proposal.get("confirmed") or proposal.get("status") == "cancelled":
                 raise ValueError("Task proposal is unavailable")
             if expected_revision is not None and (type(expected_revision) is not int or proposal.get("revision") != expected_revision):
                 raise ValueError("Task proposal changed. Reload the latest draft.")
@@ -296,12 +240,7 @@ class TaskAssistantSessionStore:
 
         return self._mutate(mutate)
 
-    def confirm_task(self, proposal_id: str, *, expected_revision=None, task_skill_context=None) -> dict[str, object]:
-        from goodteam_os.skills.task_context import workflow_skill_context
-
-        context = None if task_skill_context is None else workflow_skill_context(
-            task_skill_context, run_id=f"task-{proposal_id}", project_key=self.project_key,
-        )
+    def confirm_task(self, proposal_id: str, *, expected_revision=None) -> dict[str, object]:
         def mutate(session: dict[str, object]) -> dict[str, object]:
             proposal = dict(session.get("proposed_task") or {})
             if proposal.get("id") != proposal_id or proposal.get("status") == "cancelled":
@@ -312,132 +251,11 @@ class TaskAssistantSessionStore:
                 raise ValueError("Resolve the pending draft change before confirming.")
             if proposal.get("needs_clarification"):
                 raise ValueError("Clarify the task scope and acceptance criteria or edit the draft before confirming.")
-            if proposal.get("run_id") or proposal.get("confirmed"):
-                if context is not None and proposal.get("task_skill_context", {}) != context:
-                    raise ValueError("Confirmed task methods cannot be replaced during retry.")
+            if proposal.get("confirmed"):
                 return session
-            proposal["task_skill_context"] = context if context is not None else {}
             proposal["confirmed"] = True
             session["proposed_task"] = proposal
             session["status"] = "preparing_to_start"
-            return session
-
-        return self._mutate(mutate)
-
-    def claim_workflow_start(
-        self,
-        proposal_id: str,
-        claim_id: str,
-        run_id: str,
-        *,
-        owner_pid: int | None = None,
-    ) -> dict[str, object]:
-        identifier = str(claim_id).strip()
-        requested_run_id = str(run_id).strip()
-        if not identifier or not requested_run_id:
-            raise ValueError("Workflow start claim and run ID must not be blank")
-
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or not proposal.get("confirmed"):
-                raise ValueError("Task proposal is unavailable")
-            if proposal.get("run_id") or proposal.get("start_claim_id"):
-                return session
-            proposal["start_claim_id"] = identifier
-            proposal["start_run_id"] = requested_run_id
-            proposal["start_owner_pid"] = int(owner_pid if owner_pid is not None else os.getpid())
-            proposal["start_claimed_at"] = _now()
-            proposal["start_status"] = "claimed"
-            proposal["start_error"] = ""
-            session["proposed_task"] = proposal
-            session["status"] = "workflow_starting"
-            return session
-
-        return self._mutate(mutate)
-
-    def mark_workflow_start_indeterminate(
-        self,
-        proposal_id: str,
-        *,
-        claim_id: str = "",
-        reason: str = "",
-    ) -> dict[str, object]:
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or proposal.get("run_id"):
-                return session
-            active_claim = str(proposal.get("start_claim_id", ""))
-            owns_claim = bool(claim_id) and active_claim == str(claim_id)
-            owner_is_dead = bool(active_claim) and not _pid_alive(int(proposal.get("start_owner_pid", 0) or 0))
-            if not owns_claim and not owner_is_dead:
-                return session
-            proposal["start_status"] = "indeterminate"
-            proposal["start_error"] = str(reason).strip()
-            session["proposed_task"] = proposal
-            session["status"] = "workflow_start_indeterminate"
-            return session
-
-        return self._mutate(mutate)
-
-    def release_workflow_start(self, proposal_id: str, claim_id: str) -> dict[str, object]:
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id:
-                raise ValueError("Task proposal is unavailable")
-            if proposal.get("run_id") or proposal.get("start_claim_id") != str(claim_id):
-                return session
-            proposal["start_claim_id"] = ""
-            proposal["start_run_id"] = ""
-            proposal["start_owner_pid"] = 0
-            proposal["start_claimed_at"] = ""
-            session["proposed_task"] = proposal
-            session["status"] = "preparing_to_start"
-            return session
-
-        return self._mutate(mutate)
-
-    def bind_workflow(self, proposal_id: str, run_id: str, *, claim_id: str = "") -> dict[str, object]:
-        if not str(run_id).strip():
-            raise ValueError("Workflow run_id must not be blank")
-
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id:
-                raise ValueError("Task proposal is unavailable")
-            active_claim = str(proposal.get("start_claim_id", ""))
-            if active_claim and active_claim != str(claim_id):
-                raise ValueError("Workflow start claim is owned by another request")
-            start_run_id = str(proposal.get("start_run_id", ""))
-            if start_run_id and start_run_id != str(run_id):
-                raise ValueError("Workflow run does not match the claimed operation")
-            bound_run = str(proposal.get("run_id", ""))
-            if bound_run and bound_run != run_id:
-                raise ValueError("Task proposal is already bound to another run")
-            proposal["run_id"] = str(run_id)
-            proposal["start_status"] = "completed"
-            proposal["start_error"] = ""
-            session["proposed_task"] = proposal
-            session["status"] = "workflow_active"
-            return session
-
-        return self._mutate(mutate)
-
-    def reconcile_workflow(self, proposal_id: str, run_id: str) -> dict[str, object]:
-        if not str(run_id).strip():
-            raise ValueError("Workflow run_id must not be blank")
-
-        def mutate(session: dict[str, object]) -> dict[str, object]:
-            proposal = dict(session.get("proposed_task") or {})
-            if proposal.get("id") != proposal_id or proposal.get("start_run_id") != str(run_id):
-                raise ValueError("Workflow does not match the claimed task proposal")
-            bound_run = str(proposal.get("run_id", ""))
-            if bound_run and bound_run != str(run_id):
-                raise ValueError("Task proposal is already bound to another run")
-            proposal["run_id"] = str(run_id)
-            proposal["start_status"] = "completed"
-            proposal["start_error"] = ""
-            session["proposed_task"] = proposal
-            session["status"] = "workflow_active"
             return session
 
         return self._mutate(mutate)
@@ -487,37 +305,14 @@ class TaskAssistantSessionStore:
             "timeline": [],
             "attention_request": None,
             "proposed_task": None,
-            "archived_task_proposals": [],
             "pending_team_decision": None,
             "project_mode_hint": None,
             "suggestions": [],
         }
 
 
-def _upgrade_session_v1(payload: dict[str, object]) -> dict[str, object]:
-    """Lazy in-memory upgrade: v1 sessions gain the team-decision slot."""
-    return {
-        **payload,
-        "schema_version": SCHEMA_VERSION,
-        "archived_task_proposals": list(payload.get("archived_task_proposals") or []),
-        "pending_team_decision": payload.get("pending_team_decision"),
-    }
-
-
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def _opening_presentation(mode: str) -> tuple[str, tuple[str, ...]]:
@@ -563,7 +358,6 @@ def initial_task_assistant_session(
         ],
         "attention_request": None,
         "proposed_task": None,
-        "archived_task_proposals": [],
         "pending_team_decision": None,
         "project_mode_hint": dict(mode_hint),
         "suggestions": [{"id": item} for item in suggestions],

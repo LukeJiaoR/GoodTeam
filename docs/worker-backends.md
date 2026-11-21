@@ -189,9 +189,10 @@ workers:
 
 ```bash
 goodteam-os doctor --project-config projects/DEMO.local.yaml
-goodteam-os start "Implement the approved task" --project-key DEMO \
-  --project-config projects/DEMO.local.yaml --workspace /tmp/goodteam-demo-run
+goodteam-os serve --workspace /tmp/goodteam-demo-run
 ```
+
+Open the project's Work page and queue a scoped task through the Manager.
 
 The runtime boundary is:
 

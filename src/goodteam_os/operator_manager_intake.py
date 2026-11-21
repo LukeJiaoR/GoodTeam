@@ -1,4 +1,8 @@
-"""Source receipts consumed by the existing Manager service, never a dispatcher."""
+"""[INPUT]: GitHub Issue 快照和项目会话。
+[OUTPUT]: 按来源版本写入输入并交给 Manager。
+[POS]: 复用会话的请求身份与去重。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from dataclasses import asdict
 from datetime import datetime
 import hashlib
@@ -6,18 +10,28 @@ import json
 import logging
 from pathlib import Path
 
+from goodteam_os.operator_github import GhCliGitHubClient, parse_github_issue_url, resolve_known_project
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 
-def intake_issue(*, workspace, project, parsed, client, expected_revision=None, captured_snapshot=None):
-    key = f"github_issue:{project.key}:{parsed.repository.lower()}#{parsed.issue_number}"
-    snapshot = (dict(captured_snapshot) if captured_snapshot is not None
-                else asdict(client.fetch_issue(project.repository, parsed.issue_number)))
+def enqueue_github_issue(*, workspace: Path, issue_url: str,
+                         github_client: GhCliGitHubClient | None = None) -> tuple[dict, bool]:
+    parsed = parse_github_issue_url(issue_url)
+    project = resolve_known_project(workspace, parsed.repository)
+    client = github_client or GhCliGitHubClient(cwd=project.project_root)
+    return intake_issue(workspace=workspace, project=project, parsed=parsed, client=client)
+
+
+def _issue_key(project, parsed):
+    return f"github_issue:{project.key}:{parsed.repository.lower()}#{parsed.issue_number}"
+
+
+def intake_issue(*, workspace, project, parsed, client):
+    key = _issue_key(project, parsed)
+    snapshot = asdict(client.fetch_issue(project.repository, parsed.issue_number))
     revision_time = datetime.fromisoformat(snapshot["updated_at"].replace("Z", "+00:00"))
     if revision_time.tzinfo is None:
         raise ValueError("External source revision must include a timezone.")
-    if expected_revision is not None and snapshot["updated_at"] != expected_revision:
-        raise ValueError("Historical source revision changed; reconcile before transferring it.")
     source_id = "external-issue-" + hashlib.sha256(key.encode()).hexdigest()
     digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     message_id = source_id + ":" + digest

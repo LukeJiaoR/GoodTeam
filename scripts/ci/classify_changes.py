@@ -20,16 +20,13 @@ _DOC_PATHS = {
 }
 
 _TIER2_BACKEND_TARGETS = {
-    "src/goodteam_os/artifacts.py": ("tests/test_delivery_api.py",),
     "src/goodteam_os/cli.py": ("tests/test_cli_doctor.py", "tests/test_init.py"),
     "src/goodteam_os/context.py": ("tests/test_repository_inventory.py",),
     "src/goodteam_os/cross_project_memory.py": ("tests/test_memory_core.py",),
     "src/goodteam_os/failure_patterns.py": ("tests/test_full_smoke_preflight.py",),
     "src/goodteam_os/frontend_assets.py": ("tests/test_web_cors.py",),
     "src/goodteam_os/memory.py": ("tests/test_memory_core.py",),
-    "src/goodteam_os/messages.py": ("tests/test_task_assistant_session.py",),
     "src/goodteam_os/projects.py": ("tests/test_project_readiness_web.py",),
-    "src/goodteam_os/resources.py": ("tests/test_project_readiness_web.py",),
     "src/goodteam_os/role_prompts.json": ("tests/test_models.py",),
     "src/goodteam_os/roles.py": ("tests/test_models.py",),
     "src/goodteam_os/tasks.py": ("tests/test_tasks.py",),
@@ -41,25 +38,17 @@ _TIER2_BACKEND_TARGETS = {
 _TIER3_BACKEND_FILES = {
     "src/goodteam_os/debate.py",
     "src/goodteam_os/dispatch.py",
-    "src/goodteam_os/graph.py",
+    "src/goodteam_os/repository_context.py",
     "src/goodteam_os/models.py",
-    "src/goodteam_os/multi_reviewer_projection.py",
     "src/goodteam_os/operator.py",
     "src/goodteam_os/operator_github.py",
     "src/goodteam_os/operator_queue.py",
-    "src/goodteam_os/project_reviewer_profiles.py",
-    "src/goodteam_os/review_policy.py",
-    "src/goodteam_os/review_provenance.py",
-    "src/goodteam_os/reviewer_dispatch.py",
-    "src/goodteam_os/reviewer_evidence_snapshot.py",
-    "src/goodteam_os/reviewer_profiles.py",
     "src/goodteam_os/service.py",
     "src/goodteam_os/session_runtimes.py",
     "src/goodteam_os/staging.py",
-    "src/goodteam_os/state.py",
+    "src/goodteam_os/project_batch_lock.py",
     "src/goodteam_os/supervisor.py",
     "src/goodteam_os/workers.py",
-    "src/goodteam_os/workflow_table.py",
 }
 
 _TIER4_BACKEND_FILES = {
@@ -70,8 +59,6 @@ _TIER4_BACKEND_FILES = {
     "src/goodteam_os/project_readiness.py",
     "src/goodteam_os/project_readiness_executor.py",
     "src/goodteam_os/smoke.py",
-    "src/goodteam_os/telegram.py",
-    "src/goodteam_os/telegram_runtime_controls.py",
     "src/goodteam_os/web.py",
 }
 

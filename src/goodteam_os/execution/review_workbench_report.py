@@ -1,5 +1,8 @@
-"""Read-only, exact-candidate report details for the execution Workbench."""
-from html import escape
+"""[INPUT]: 候选验证收据、Worker 作业与 Reviewer 报告。
+[OUTPUT]: 提供 Review Workbench 的报告投影与文本。
+[POS]: 将已保存的审查结果绑定到当前候选提交。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 from goodteam_os.memory_storage import role_lock
 from goodteam_os.skills.review_results import ReviewResultStore
@@ -91,42 +94,3 @@ def report_lines(value):
                       item["observation"], item["quote"], "Source digest: " + item["source_digest"],
                       "Reference status: " + item["reference_status"]])
     return lines
-
-
-def render_report_html(value):
-    heading = '<section class="panel review-report" id="candidate-review-report"><h2>Reviewer report</h2>'
-    if not value.get("available"):
-        text = _UNAVAILABLE.get(value.get("reason"), _UNAVAILABLE["report_unavailable"])
-        return heading + '<p class="empty-state">' + escape(text) + '</p></section>'
-    report = value["report"]
-    body = '<p>' + escape(_LIMITATION) + '</p><p class="review-report-copy">' + escape(report["summary"]) + '</p>'
-    body += '<details><summary>Exact candidate and report identity</summary><dl class="details">'
-    body += ''.join('<dt>' + escape(label) + '</dt><dd>' + escape(text) + '</dd>'
-                    for label, text in report_metadata(value)) + '</dl></details>'
-    body += '<h3>Findings (' + str(len(report["findings"])) + ')</h3>'
-    if not report["findings"]:
-        body += '<p>No findings recorded. This alone does not establish acceptance.</p>'
-    for finding in report["findings"]:
-        body += ('<article class="review-report-item"><h4>' + escape(finding["id"] + ' · ' + finding["severity"]
-                 + ' · ' + finding["title"]) + '</h4><p class="review-report-copy">' + escape(finding["detail"])
-                 + '</p><p class="review-report-copy"><strong>Recommended change:</strong> '
-                 + escape(finding["recommendation"]) + '</p>' + _citations(finding["evidence_ids"]) + '</article>')
-    body += '<details><summary>Checks and limitations (' + str(len(report["checks"])) + ')</summary>'
-    for check in report["checks"]:
-        body += ('<article class="review-report-item"><h4>' + escape(check["status"] + ' · ' + check["name"])
-                 + '</h4><p class="review-report-copy">' + escape(check["detail"]) + '</p>'
-                 + _citations(check["evidence_ids"]) + '</article>')
-    body += ('</details><h3>Captured source evidence</h3><p>Follow a citation and expand its source entry to inspect the quote. '
-             'Paths name the fixed review input; they are not file-opening links.</p>')
-    for item in report["evidence"]:
-        body += ('<details class="review-report-item" id="review-evidence-' + escape(item["id"], quote=True)
-                 + '"><summary>' + escape(f"{item['id']} · {item['path']}:{item['line_start']}-{item['line_end']}")
-                 + '</summary><p class="review-report-copy">' + escape(item["observation"])
-                 + '</p><pre><code>' + escape(item["quote"]) + '</code></pre><p>Source digest: '
-                 + escape(item["source_digest"]) + '</p><p>Reference status: ' + escape(item["reference_status"]) + '</p></details>')
-    return heading + body + '</section>'
-
-
-def _citations(ids):
-    return '<p>Evidence: ' + (', '.join('<a href="#review-evidence-' + escape(key, quote=True) + '">'
-                                      + escape(key) + '</a>' for key in ids) or 'none') + '</p>'

@@ -33,7 +33,7 @@ class ProjectTaskSkillService:
     def __init__(self, workspace: Path, project_key: str, *, worker_roots: tuple[Path, ...] = (),
                  supported_loaders: frozenset[str] = frozenset()):
         from goodteam_os.service import service_state_dir
-        from goodteam_os.state import normalize_project_key
+        from goodteam_os.project_runtime import normalize_project_key
         from goodteam_os.team_control_plane import TeamControlPlaneStore
 
         bounded_text(project_key, maximum=128)
@@ -119,7 +119,7 @@ class ProjectTaskSkillService:
                     raise SkillConflict("team_revision_changed", "Team changed after task confirmation; review a new task proposal.")
                 bindings = state.get("skill_bindings", {})
                 if any(subject not in bindings for subject in request["subjects"]):
-                    raise SkillError("binding_subject_unknown", "Task inventory contains an unknown Team or workflow subject.")
+                    raise SkillError("binding_subject_unknown", "Task inventory contains an unknown Team subject.")
                 selected = {subject: deepcopy(bindings[subject]) for subject in request["subjects"]}
                 revision = state["revision"]
             # Only first-time authorized start initializes current-status

@@ -1,7 +1,7 @@
 import { routes } from './routes';
 
 const STORAGE_KEY = 'goodteam.project-navigation.v1';
-const PAGE_KEYS = ['work', 'review', 'knowledge', 'team'];
+const PAGE_KEYS = ['work', 'knowledge', 'team'];
 const MAX_PROJECTS = 20;
 const MAX_URL_LENGTH = 8192;
 
@@ -18,7 +18,7 @@ function projectLocation(url) {
     const parsed = new URL(url, 'https://goodteam.invalid');
     if (parsed.origin !== 'https://goodteam.invalid' || parsed.pathname !== pathname) return null;
   } catch { return null; }
-  const match = pathname.match(/^\/projects\/([^/]+)\/(work(?:\/runs\/[^/]+)?|review(?:\/[^/]+)?|knowledge|team)$/);
+  const match = pathname.match(/^\/projects\/([^/]+)\/(work|knowledge|team)$/);
   if (!match) return null;
   try {
     const projectKey = decodeURIComponent(match[1]);
@@ -56,7 +56,6 @@ export function rememberProjectLocation(pathname, search = '', storage = session
 export function projectNavigationDestinations(projectKey, pathname = '', search = '', storage = sessionStore()) {
   const defaults = {
     work: routes.projectWork(projectKey),
-    review: routes.projectReview(projectKey),
     knowledge: routes.projectKnowledge(projectKey),
     team: routes.projectTeam(projectKey),
   };

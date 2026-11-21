@@ -16,7 +16,7 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
-from goodteam_os.state import normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os.database import database_configured
 from goodteam_os.state_documents import ensure_storage_config
 
@@ -571,7 +571,7 @@ class GoalStore:
                     work["continuation_stopped"] = True
                     self._save_work(db, work)
                 elif work["status"] in {"dispatching", "running"}:
-                    # Stopping continuation does not stop an existing workflow/Worker.
+                    # Stopping continuation does not stop an existing batch or Worker.
                     work["continuation_stopped"] = True
                     self._save_work(db, work)
         return self._mutate(goal_id, "goal_stopped", revision, operation_key, dict(status=status, reason=reason), change)
@@ -698,7 +698,7 @@ class GoalStore:
     def _task(goal, criteria, evidence, *, legacy=False):
         task = "Confirmed goal:\n" + goal["objective"] + "\n\nAcceptance criteria for this work:\n"
         task += "\n".join(f"{index + 1}. {goal['acceptance_criteria'][index]}" for index in criteria)
-        task += ("\n\nDo not add new requirements, privileges, or deployment. Preserve every existing workflow approval gate."
+        task += ("\n\nDo not add new requirements, privileges, or deployment. Use the existing batch confirmation and review rules."
                  if legacy else "\n\nStay within the requested objective and project scope; report execution results and remaining acceptance evidence.")
         task += "\n\nAllowed scope (do not expand):\n" + "\n".join(f"- {item}" for item in goal["allowed_scope"])
         if evidence:

@@ -14,9 +14,6 @@ from goodteam_os.execution.orchestrator import ExecutionOrchestrator
 from goodteam_os.execution.pr import PullRequestBindingService
 from goodteam_os.execution.pr_diff import PullRequestDiffArtifactService
 from goodteam_os.execution.review_workbench import ReviewWorkbenchService
-from goodteam_os.execution.review_workbench_browser import (
-    export_review_workbench_html_artifacts,
-)
 from goodteam_os.execution.sandbox import SandboxGitAdapter, SandboxService
 from goodteam_os.workers import WorkerJobStore
 
@@ -66,31 +63,13 @@ class ExecutionAPI:
         )
         return self._status_payload(run.execution_id)
 
-    def run_execution(self, execution_id: str, *, candidate_review=None,
-                      resume_candidate_review=False, acknowledge_external_cost=False) -> dict[str, Any]:
-        """Run Builder, then its locally authorized delivery plan in the same entry.
-
-        HTTP callers do not pass either local-only option. Replaying/status
-        reading never authorizes command execution or a Reviewer invocation.
-        """
+    def run_execution(self, execution_id: str) -> dict[str, Any]:
         run = self.ledger_store.read_run(execution_id)
         if run is None:
             raise ValueError(f"Execution run not found: {execution_id}")
-        delivery = None
-        if candidate_review is not None or resume_candidate_review:
-            from .candidate_delivery import CandidateDeliveryService
-            delivery = CandidateDeliveryService(self.project_root, **self.review_runtime_kwargs,
-                                               **self.correction_runtime_kwargs)
-            if candidate_review is not None:
-                delivery.configure(execution_id, **candidate_review)
-            delivery.require_plan(execution_id)
         if run.status is not ExecutionRunStatus.SUCCEEDED:
             run = self._orchestrator().run_execution(execution_id)
-        payload = self._status_payload(run.execution_id)
-        if delivery is not None:
-            payload["candidate_delivery"] = delivery.advance(execution_id,
-                acknowledge_external_cost=acknowledge_external_cost)
-        return payload
+        return self._status_payload(run.execution_id)
 
     def create_or_reuse_pr(self, execution_id: str) -> dict[str, Any]:
         self._require_github_client()
@@ -258,10 +237,6 @@ class ExecutionAPI:
             self.project_root,
             clock=self.clock,
         ).get_review(execution_id)
-
-    def export_review_workbench_html(self, execution_id: str) -> dict[str, str]:
-        workbench = self.get_review_workbench(execution_id)
-        return export_review_workbench_html_artifacts(self.project_root, workbench)
 
     def persist_pr_diff(self, execution_id: str) -> dict[str, Any]:
         return PullRequestDiffArtifactService(

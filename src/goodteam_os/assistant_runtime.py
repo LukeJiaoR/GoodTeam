@@ -9,9 +9,9 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-from goodteam_os.graph import resolve_role_adapter
 from goodteam_os.manager_execution import _configured_manager_model, _manager_settings, _model_name
 from goodteam_os.projects import load_project_target
+from goodteam_os.worker_routing import resolve_role_adapter
 
 
 def runtime_snapshot(config):

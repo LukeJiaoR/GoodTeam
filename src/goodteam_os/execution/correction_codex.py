@@ -42,9 +42,7 @@ def correction_prompt(authority):
     if value.original.to_dict()["adapter"] != "codex":
         raise TaskInputError("correction_codex_contract_invalid")
     authority.workspace(value)
-    from .approved_plan import binding_for, render_binding
-    prompt = render_binding(binding_for(authority.project_root, value)) + "\n\n"
-    prompt += render_correction_input(authority.project_root, value, host_seals=True)
+    prompt = render_correction_input(authority.project_root, value, host_seals=True)
     result = {"schema_version": OUTPUT_SCHEMA, "input": value.reference,
               "base_sha": value.to_dict()["candidate"]["head_sha"], "summary": "Describe edits and remaining risks."}
     prompt += ("\n\nReturn only a JSON object in your final message with this exact shape. "

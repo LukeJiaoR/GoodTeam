@@ -1,3 +1,8 @@
+"""[INPUT]: 已确认的轨道、项目快照和 WorkerJobStore。
+[OUTPUT]: 隔离派工、并发限制和结果报告。
+[POS]: 批次执行与独立审查共享的 Worker 池。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import os
@@ -17,42 +22,6 @@ from goodteam_os.workers import WorkerJobStore
 
 if TYPE_CHECKING:
     from goodteam_os.skills.codex_runtime import CodexReviewAdmission
-
-
-def parse_dispatch_track_spec(spec: str, *, base_dir: Path | None = None) -> dict[str, object]:
-    parts = spec.split(":", 2)
-    if len(parts) != 3:
-        raise ValueError("Track spec must use role:adapter:task-file-or-inline-task.")
-    role, adapter, task_ref = (part.strip() for part in parts)
-    if not role or not adapter or not task_ref:
-        raise ValueError("Track spec requires non-empty role, adapter, and task.")
-
-    task_path = Path(task_ref)
-    if not task_path.is_absolute() and base_dir is not None:
-        task_path = base_dir / task_path
-    if task_path.is_file():
-        return {
-            "role": role,
-            "adapter": adapter,
-            "task": task_path.read_text(encoding="utf-8"),
-            "task_source": str(task_path),
-        }
-    return {
-        "role": role,
-        "adapter": adapter,
-        "task": task_ref,
-        "task_source": "inline",
-    }
-
-
-def parse_dispatch_verify_spec(spec: str) -> tuple[str, str]:
-    parts = spec.split(":", 1)
-    if len(parts) != 2:
-        raise ValueError("Verify spec must use role:shell-command.")
-    role, command = (part.strip() for part in parts)
-    if not role or not command:
-        raise ValueError("Verify spec requires non-empty role and shell command.")
-    return role, command
 
 
 def ensure_dispatch_project_root_is_safe(
@@ -321,7 +290,7 @@ def _dispatch_tracks(
                 "constraints_source": str(constraints_file) if constraints_file else "",
                 "research_report_source": str(research_report_file) if research_report_file else ""})
         if require_isolation and any(c and not m for c, m in per_track_methods):
-            raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
+            raise ValueError("Project batches require ordinary isolated Workers; protected Skill work uses its original execution contract.")
     elif scope is not None:
         workspace, key = scope
         task_identity = TaskSkillIdentity("direct_task", key, logical_id)
@@ -372,7 +341,7 @@ def _dispatch_tracks(
     if local_review and not context:
         raise ValueError("Local execution requires a registered project and its captured task protocol.")
     if require_isolation and (context and not ordinary_method_mode or any(track.get("review_target") is not None for track in tracks)):
-        raise ValueError("Project batches require ordinary isolated Workers; protected Skill work keeps its original workflow.")
+        raise ValueError("Project batches require ordinary isolated Workers; protected Skill work uses its original execution contract.")
     if candidate_source is not None and (not require_isolation or recovery_source is not None):
         raise ValueError("A continuation candidate requires a new isolated project batch.")
     parent_report = None
@@ -388,8 +357,7 @@ def _dispatch_tracks(
         from goodteam_os.project_environment import environment_for_task, worker_environment_instructions
 
         tracks = [{**track, "context": str(track.get("context", "")) + "\n" +
-                   worker_environment_instructions(environment_for_task(
-                       project_root, worker_setup, track.get("write_domains", [])))} for track in tracks]
+                   worker_environment_instructions(environment_for_task(project_root, worker_setup))} for track in tracks]
     jobs_by_role = [
         _create_track_job(
             store,
@@ -416,9 +384,8 @@ def _dispatch_tracks(
     if isolated:
         from goodteam_os.project_environment import environment_for_task, bind_environment
 
-        for job, track in zip(jobs_by_role, tracks):
-            environment = environment_for_task(project_root, worker_setup, track.get("write_domains", []),
-                                               source_root=isolated.workspace(str(job["id"])))
+        for job in jobs_by_role:
+            environment = environment_for_task(project_root, worker_setup)
             bind_environment(isolated.workspace(str(job["id"])), environment)
             # The shared paths are runtime inputs; the source cwd stays isolated.
             job["project_environment"] = environment
@@ -564,8 +531,8 @@ def _create_track_job(
         if method_loading_mode:
             fields.update(method_loading_mode=method_loading_mode, method_workspace_mode="dispatch_isolated")
     if track.get("web_search") is not None:
+        from goodteam_os.session_runtimes import SESSION_BACKENDS
         from goodteam_os.web_search import search_policy
-        from goodteam_os.graph import SESSION_BACKENDS
 
         if (method_context and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}
                 or track.get("adapter") not in SESSION_BACKENDS
@@ -778,4 +745,3 @@ def _constraints_from_file(path: Path | None) -> list[str]:
 def _output_tail(text: str, *, max_lines: int = 20) -> str:
     lines = text.splitlines()
     return "\n".join(lines[-max_lines:])
-

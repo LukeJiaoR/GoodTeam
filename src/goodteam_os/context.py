@@ -136,7 +136,7 @@ def load_or_generate_context(
     if entry is not None:
         return {"entry": entry, "estimate": None, "generated": False, "source": "l1_cache"}
 
-    from goodteam_os.graph import collect_project_context
+    from goodteam_os.repository_context import collect_project_context
 
     sources = collect_project_context(project_config)
     if not sources:
@@ -242,7 +242,7 @@ def _iter_skeleton_files(root: Path):
 
 def _render_directory_tree(root: Path) -> str:
     try:
-        from goodteam_os.graph import render_shallow_directory_tree
+        from goodteam_os.repository_context import render_shallow_directory_tree
 
         tree = render_shallow_directory_tree(root)
         if tree:
@@ -355,7 +355,7 @@ def _source_summary(source: dict) -> str:
 
 def _summarize_text(content: str) -> str:
     try:
-        from goodteam_os.graph import summarize_context_file
+        from goodteam_os.repository_context import summarize_context_file
 
         return _cap(summarize_context_file(content).strip())
     except Exception:

@@ -2,7 +2,7 @@
 import os
 
 from goodteam_os.context import load_or_generate_context, read_context_entry
-from goodteam_os.graph import collect_project_context
+from goodteam_os.repository_context import collect_project_context
 
 
 def test_context_cache_invalidates_changed_sources_and_regenerates_from_current_files(tmp_path):

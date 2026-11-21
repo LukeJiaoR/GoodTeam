@@ -1,3 +1,8 @@
+"""[INPUT]: 项目任务文档和更新意图。
+[OUTPUT]: 保存任务身份、状态、证据和依赖。
+[POS]: Manager 批次共用的任务账。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 import fcntl
 import hashlib
 import json
@@ -34,35 +39,6 @@ TASK_BOARD_STATUS_MAP = {
     "blocked": "blocked",
     "done": "done",
 }
-
-STAGE_TASKS = (
-    {
-        "node": "product_requirement",
-        "title": "Draft and approve PRD",
-        "role": "product_requirement",
-    },
-    {
-        "node": "architect",
-        "title": "Design RFC & Security Review",
-        "role": "architect",
-    },
-    {
-        "node": "implementation",
-        "title": "Implement approved design",
-        "role": "implementation",
-    },
-    {
-        "node": "qa",
-        "title": "Verify implementation",
-        "role": "qa",
-    },
-    {
-        "node": "release",
-        "title": "Approve and complete release",
-        "role": "release",
-    },
-)
-
 
 def task_evidence_digest(task: dict[str, Any]) -> str:
     """Exact project task identity, independently of unrelated backlog edits."""
@@ -310,78 +286,6 @@ class LocalTaskStore:
         return dict(task)
 
     @_locked
-    def claim_project_workflow(self, task_id: str, *, expected_digest: str, run_id: str) -> dict[str, Any]:
-        """Claim a Manager-selected task for the EXISTING Workflow, not a new engine.
-
-        Reserve before external Worker effects. A lost start response leaves the
-        bound identity inspectable; the same run may reconcile, never replace
-        an unknown outcome or silently claim another workflow.
-        """
-        if not isinstance(run_id, str) or not run_id.startswith("task-") or len(run_id) > 200:
-            raise ValueError("Project task requires an existing Task Assistant run identity.")
-        ledger = self._read()
-        tasks = list(ledger["tasks"])
-        known = {task["id"]: task for task in tasks}
-        current = known.get(task_id)
-        if current is None:
-            raise ValueError("Manager project task is missing.")
-        if current.get("run_id") == run_id and current["status"] == "in_progress":
-            return dict(current)
-        if current["status"] != "todo" or current.get("run_id"):
-            raise ValueError("Project task was already claimed by another execution.")
-        if not isinstance(expected_digest, str) or task_evidence_digest(current) != expected_digest:
-            raise ValueError("Project task evidence changed since Manager selected it.")
-        if any(known.get(dep, {}).get("status") != "done" for dep in current.get("dependencies", [])):
-            raise ValueError("Project task has unfinished dependencies.")
-        if current.get("execution_policy") == "read_only":
-            raise ValueError("A read-only task cannot enter a writing Workflow.")
-        claimed = {
-            **current, "status": "in_progress", "run_id": run_id,
-            "execution_origin": "manager_project_iteration", "updated_at": self._now(),
-        }
-        for index, task in enumerate(tasks):
-            if task["id"] == task_id:
-                tasks[index] = claimed
-                break
-        ledger["tasks"] = tasks
-        self._write(ledger)
-        return dict(claimed)
-
-    @_locked
-    def settle_project_workflow(self, task_id: str, *, run_id: str, terminal_status: str) -> dict[str, Any]:
-        """Project the existing Workflow outcome back onto its original backlog.
-
-        A completed Workflow is only ready for delivery review, NOT 'done':
-        the candidate must still be independently reviewed/integrated into a
-        real repository before the project can credit completed work.
-        """
-        if terminal_status not in {"complete", "rejected", "archived"}:
-            raise ValueError("A terminal Workflow observation is required.")
-        ledger = self._read()
-        tasks = list(ledger["tasks"])
-        for index, current in enumerate(tasks):
-            if current["id"] != task_id:
-                continue
-            if current.get("run_id") != run_id or current.get("execution_origin") != "manager_project_iteration":
-                raise ValueError("Workflow outcome belongs to another project task.")
-            expected = "review" if terminal_status == "complete" else "blocked"
-            if current["status"] == expected and current.get("observed_workflow_status") == terminal_status:
-                return dict(current)
-            if current["status"] != "in_progress":
-                raise ValueError("Project task is no longer awaiting this Workflow outcome.")
-            task = {
-                **current, "status": expected,
-                "observed_workflow_status": terminal_status,
-                "delivery_verified": False,
-                "updated_at": self._now(),
-            }
-            tasks[index] = task
-            ledger["tasks"] = tasks
-            self._write(ledger)
-            return dict(task)
-        raise ValueError("The original project task is unavailable.")
-
-    @_locked
     def upsert_external_task(self, *, external_ref: str, **fields: Any) -> dict[str, Any]:
         """One atomic read/modify/write for a durable external projection identity."""
         if not isinstance(external_ref, str) or not external_ref.strip():
@@ -482,146 +386,6 @@ class LocalTaskStore:
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat()
-
-
-def sync_stage_tasks(state: Any, store: LocalTaskStore) -> list[dict[str, Any]]:
-    statuses = _stage_statuses(state)
-    existing = store.list_tasks()
-    tasks: list[dict[str, Any]] = []
-    for index, stage in enumerate(STAGE_TASKS, start=1):
-        node = str(stage["node"])
-        external_ref = f"stage:{node}"
-        task = next(
-            (
-                item
-                for item in existing
-                if external_ref in [str(ref) for ref in item.get("external_refs", [])]
-            ),
-            None,
-        )
-        prefix = str(store.project_key or "GT").strip().upper()
-        expected_id = f"{prefix}-{index}"
-        if task is None:
-            task = store.create_task(
-                title=str(stage["title"]),
-                description=f"Workflow stage task for {node}.",
-                role=str(stage["role"]),
-                external_refs=[external_ref],
-            )
-            existing.append(task)
-        updates: dict[str, Any] = {
-            "title": str(stage["title"]),
-            "status": statuses[node],
-        }
-        if store.project_key and not str(task.get("id", "")).startswith(f"{prefix}-"):
-            updates["id"] = expected_id
-        artifact_ref = _stage_artifact_ref(state, node)
-        updates["artifact_refs"] = [artifact_ref] if artifact_ref else []
-        task = store.update_task(str(task["id"]), **updates)
-        tasks.append(task)
-    return tasks
-
-
-def build_stage_task_snapshot(state: Any, *, updated_at: str = "") -> list[dict[str, Any]]:
-    """Reconstruct the canonical stage rows from one run's durable state.
-
-    The project task ledger is shared and older stage rows may already have
-    been reused by a later mission. Historical Work views therefore derive a
-    read-only snapshot from the archived run itself instead of reading current
-    board state.
-    """
-
-    statuses = _stage_statuses(state)
-    prefix = str(getattr(state, "project_key", "") or "GT").strip().upper()
-    run_id = str(getattr(state, "run_id", "") or "").strip()
-    tasks: list[dict[str, Any]] = []
-    for index, stage in enumerate(STAGE_TASKS, start=1):
-        node = str(stage["node"])
-        artifact_ref = _stage_artifact_ref(state, node)
-        tasks.append(
-            {
-                "id": f"{prefix}-{index}",
-                "run_id": run_id,
-                "title": str(stage["title"]),
-                "description": f"Workflow stage task for {node}.",
-                "role": str(stage["role"]),
-                "status": statuses[node],
-                "priority": "medium",
-                "dependencies": [],
-                "acceptance_criteria": [],
-                "artifact_refs": [artifact_ref] if artifact_ref else [],
-                "external_refs": [f"stage:{node}", f"run:{run_id}"],
-                "created_at": "",
-                "updated_at": updated_at,
-            }
-        )
-    return tasks
-
-
-def _stage_statuses(state: Any) -> dict[str, str]:
-    approvals = {
-        str(key): str(value)
-        for key, value in dict(getattr(state, "approvals", {}) or {}).items()
-    }
-    artifacts = dict(getattr(state, "artifacts", {}) or {})
-    current_node = str(getattr(state, "current_node", "") or "")
-    next_node = str(getattr(state, "next_node", "") or "")
-
-    statuses = {str(stage["node"]): "todo" for stage in STAGE_TASKS}
-    if approvals.get("takeover") != "approved" and (
-        current_node == "takeover_review_gate" or next_node in {"await_takeover_approval", "revise_takeover"}
-    ):
-        return statuses
-    if approvals.get("prd") != "approved":
-        statuses["product_requirement"] = "review" if artifacts.get("prd_proposed") else "in_progress"
-        return statuses
-    statuses["product_requirement"] = "done"
-
-    if approvals.get("rfc") != "approved" or approvals.get("security") != "approved":
-        statuses["architect"] = "in_progress"
-        return statuses
-    statuses["architect"] = "done"
-
-    implementation_active = (
-        current_node in {"planner", "ui_design", "implementation", "code_review", "implementation_workers"}
-        or next_node in {"planner", "ui_design", "implementation", "code_review", "blocked"}
-        or (
-            approvals.get("staging") != "approved"
-            and current_node not in {"staging_review_gate", "release_review_gate", "complete"}
-            and next_node not in {"await_staging_approval", "release", "await_release_approval", "retro_memory"}
-        )
-    )
-    if implementation_active:
-        statuses["implementation"] = "in_progress"
-        return statuses
-    statuses["implementation"] = "done"
-
-    release_reached = current_node in {"release_review_gate", "complete"} or next_node in {
-        "release",
-        "await_release_approval",
-        "retro_memory",
-    }
-    if approvals.get("staging") != "approved" and not release_reached:
-        statuses["qa"] = "in_progress"
-        return statuses
-    statuses["qa"] = "done"
-
-    if approvals.get("release") == "approved" or current_node == "complete":
-        statuses["release"] = "done"
-    else:
-        statuses["release"] = "in_progress"
-    return statuses
-
-
-def _stage_artifact_ref(state: Any, node: str) -> str:
-    artifact_keys = {
-        "product_requirement": "prd",
-        "architect": "rfc",
-        "implementation": "implementation_handoff",
-        "qa": "qa_report",
-        "release": "release_notes",
-    }
-    return str(dict(getattr(state, "artifacts", {}) or {}).get(artifact_keys[node], "") or "")
 
 
 def build_task_board(tasks: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

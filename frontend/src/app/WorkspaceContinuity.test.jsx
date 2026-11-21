@@ -4,38 +4,13 @@ import { afterEach, expect, test, vi } from 'vitest';
 import ProductLayout from './ProductLayout';
 import ProjectsPage from '../features/projects/ProjectsPage';
 import { projectApi } from '../features/projects/projectApi';
-import ConversationComposer from '../features/runs/workspace/ConversationComposer';
 import { translate } from '../i18n';
 
 const t = (key) => translate('en', key);
 afterEach(() => { vi.restoreAllMocks(); sessionStorage.clear(); });
 
-test('restored attachments cannot be consumed by change discussion, but remain sendable as a message', async () => {
-  const file = { id: 'a'.repeat(64), name: 'notes.txt', size: 12, media_type: 'text/plain' };
-  const key = 'goodteam:conversation-files:DEMO';
-  sessionStorage.setItem(key, JSON.stringify([file]));
-  const onStart = vi.fn().mockResolvedValue({});
-  const onDiscussChangeIntent = vi.fn().mockResolvedValue({});
-  const onKeepDiscussingChangeIntent = vi.fn().mockResolvedValue({});
-  render(<ConversationComposer t={t} draftKey="DEMO" projectKey="DEMO" onStart={onStart}
-    changeIntent={{ id: 'change', status: 'ready_to_confirm', draft_text: 'Keep the schema.' }}
-    onDiscussChangeIntent={onDiscussChangeIntent} onKeepDiscussingChangeIntent={onKeepDiscussingChangeIntent} />);
-  const input = screen.getByRole('textbox');
-  fireEvent.change(input, { target: { value: 'Retain this discussion.' } });
-  fireEvent.submit(input.closest('form'));
-  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(t('work.attachments.messageOnly')));
-  expect(onDiscussChangeIntent).not.toHaveBeenCalled();
-  expect(onKeepDiscussingChangeIntent).not.toHaveBeenCalled();
-  expect(input).toHaveValue('Retain this discussion.');
-  expect(JSON.parse(sessionStorage.getItem(key))[0].id).toBe(file.id);
-  fireEvent.click(screen.getByRole('button', { name: t('work.taskAssistant.message'), exact: true }));
-  fireEvent.submit(input.closest('form'));
-  await waitFor(() => expect(onStart).toHaveBeenCalledWith(t('work.attachments.message'), [expect.objectContaining(file)]));
-  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull());
-});
-
 test('successful import refreshes the mounted sidebar and survives leaving and returning to the project', async () => {
-  const row = key => ({ project: { project_key: key, display_name: key, root: `/work/${key}` }, readiness: { lifecycle: 'ready' }, attention_count: 0, active_run: null });
+  const row = key => ({ project: { project_key: key, display_name: key, root: `/work/${key}` }, readiness: { lifecycle: 'ready' }, attention_count: 0, has_active_batch: false });
   let projects = [row('OLD')];
   let resolveOldList;
   const oldProjects = projects;

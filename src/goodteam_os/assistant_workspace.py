@@ -1,8 +1,12 @@
-"""Project conversation identity and model activity, independent of task lifecycle."""
+"""[INPUT]: 任务助手会话和 Manager 作业。
+[OUTPUT]: 投影队列、草稿、会话和 Manager 活动。
+[POS]: 为 Work 提供项目会话状态。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 from collections.abc import Mapping
 
-from goodteam_os.conversation_projection import change_discussion_timeline, dedupe_timeline
+from goodteam_os.conversation_projection import dedupe_timeline
 
 
 def is_assistant_activity(record: Mapping) -> bool:
@@ -11,31 +15,25 @@ def is_assistant_activity(record: Mapping) -> bool:
     return record.get("role") == "orchestrator"
 
 
-def build_project_assistant(session, workspace, *, project_key, workflow_active=False, jobs=(), intent_commits=()):
+def build_project_assistant(session, workspace, *, project_key, jobs=()):
     session = session or {}
     requests = session.get("assistant_requests") or {}
     statuses = {request.get("status") for request in requests.values()}
     status = "running" if "running" in statuses else "needs_attention" if statuses & {"failed", "interrupted"} else "available"
     proposal = session.get("proposed_task") or {}
-    editable_draft = proposal and not proposal.get("run_id") and proposal.get("status") != "cancelled"
-    timeline = list(workspace.get("manager_timeline", []))
-    run_ids = {str((intent.get("mission") or {}).get("id", "")) for intent in intent_commits}
-    for run_id in sorted(run_ids - {""}):
-        timeline.extend(change_discussion_timeline(run_id, intent_commits))
-    active_mission = workspace.get("mission") or {}
     return {
         "schema_version": "project_assistant.v1",
         "id": f"project-assistant:{project_key}",
         "project_key": project_key,
         "status": status,
-        "timeline": dedupe_timeline(timeline),
+        "timeline": dedupe_timeline(workspace.get("manager_timeline", [])),
         "runtime": session.get("runtime"),
         "assistant_requests": requests,
         "pending_team_decision": session.get("pending_team_decision"),
         "proposed_task": session.get("proposed_task"),
         "queued_tasks": [item for item in session.get("queued_task_proposals", []) if item.get("status") == "queued"],
-        "can_select_task": not workflow_active and not editable_draft and active_mission.get("source") != "operator_queue",
-        "suggestions": session.get("suggestions", []) if not workflow_active else [],
+        "can_select_task": not proposal or proposal.get("status") == "cancelled",
+        "suggestions": session.get("suggestions", []),
         "activity": [
             {**{key: job.get(key, "") for key in ("id", "role", "phase", "status", "updated_at")},
              **{key: job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref",

@@ -86,7 +86,7 @@ def _retained(project_root, slots):
 
 
 def _unmanaged_running(project_root, slots):
-    """Count ordinary dispatch and Workflow jobs covered by this capacity pool."""
+    """Count ordinary dispatch jobs covered by this capacity pool."""
     managed = {row['job_id'] for row in slots.values()}
     count = 0
     root = Path(project_root) / '.goodteam' / 'workers' / 'jobs'
@@ -102,11 +102,7 @@ def _unmanaged_running(project_root, slots):
         # Manager and protected Reviewer transports have different completion
         # receipts and are not admitted by the ordinary Worker capacity pool.
         # Do not reinterpret their retained history as an unretired Worker.
-        context = job.get('sandbox_context') or {}
-        ordinary_workflow = (job.get('workflow_workspace') is not None
-                             or isinstance(context, dict) and context.get('mode') == 'workflow_isolated')
-        ordinary_dispatch = str(job.get('run_id', '')).startswith('dispatch-')
-        if job.get('role') == 'code_review' or not (ordinary_dispatch or ordinary_workflow):
+        if job.get('role') == 'code_review' or not str(job.get('run_id', '')).startswith('dispatch-'):
             continue
         raw_status = read_bytes(directory / 'status.json')
         status = json.loads(raw_status) if raw_status is not None else {}

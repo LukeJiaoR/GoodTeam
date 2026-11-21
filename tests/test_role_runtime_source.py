@@ -3,12 +3,12 @@ from copy import deepcopy
 
 import pytest
 
-from goodteam_os import graph
+from goodteam_os import worker_routing
 from goodteam_os.goal_continuation import authority_snapshot
 from goodteam_os.manager_execution import _parse_team_commands
 from goodteam_os.team_control_plane import (
     TEAM_STATE_TARGET_KEY, TeamControlPlaneStore, TeamDispatchBlocked,
-    build_team_capability_view, build_team_execution_snapshot, ensure_team_state, execute_team_commands,
+    build_team_capability_view, ensure_team_state, execute_team_commands,
     resolve_worker_from_state,
 )
 from goodteam_os.workers import WorkerJobStore
@@ -38,7 +38,6 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     assert _parse_team_commands([selection]) == [selection]
     team = command(selection)
     assert authority_snapshot(tmp_path, 'DEMO', config, root) != before
-    assert build_team_execution_snapshot(team)['roles']['planner']['runtime_source_worker_id'] == 'research-a'
     # The ordinary discussion entry must use that same callable capability,
     # rather than requiring a fixed Planner member again at queue publication.
     from goodteam_os.task_assistant import TaskAssistantService
@@ -66,7 +65,7 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     task = LocalTaskStore(root, 'DEMO').get_task(queued[0]['project_task_id'])
     assert task['role'] == 'planner' and task['execution_policy'] == 'read_only'
     assert task['delegation']['scope'] == action['delegation']['scope']
-    assert 'worker_id' not in task and not queued_result['workflow_started']
+    assert 'worker_id' not in task
     service.send_message(**request)
     assert len(calls) == 1
     # Continuing Manager decisions must see the same configured capability as
@@ -93,8 +92,9 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     with pytest.raises(ValueError):
         validate_discovered_task(packet, {**proposal, 'new_task': {**proposal['new_task'], 'task_type': 'investigation'}})
     original = deepcopy(team['skill_bindings'])
-    fields = graph._worker_job_fields({TEAM_STATE_TARGET_KEY: team}, 'planner', None,
-                                     model_fallback=lambda: 'WRONG_FALLBACK')
+    fields = worker_routing._worker_job_fields(
+        {TEAM_STATE_TARGET_KEY: team}, 'planner', None, model_fallback=lambda: 'WRONG_FALLBACK',
+    )
     assert fields['model'] == 'fixture-runtime' and fields['desired_instances'] == 1
     assert fields['worker_id'] == 'research-a' and fields['additional_prompt'] == ''
     workers = WorkerJobStore(root)
@@ -104,8 +104,9 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     assert workers.run_job(job['id'])['status'] == 'completed'
     assert team['skill_bindings'] == original
     team = command({'kind': 'set_role_runtime_source', 'role': 'architect', 'worker_id': 'research-a'})
-    second_fields = graph._worker_job_fields({TEAM_STATE_TARGET_KEY: team}, 'architect', None,
-                                            model_fallback=lambda: 'WRONG_FALLBACK')
+    second_fields = worker_routing._worker_job_fields(
+        {TEAM_STATE_TARGET_KEY: team}, 'architect', None, model_fallback=lambda: 'WRONG_FALLBACK',
+    )
     second = workers.create_job(run_id='role-source', role='architect', task='Assess the architecture',
         context='Architect private context', execution_policy='read_only', **second_fields)
     assert second['id'] != job['id'] and second['role'] == 'architect'
@@ -124,17 +125,7 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     with monkeypatch.context() as patch:
         patch.setattr('goodteam_os.team_control_plane.worker_backend_doctor',
                       lambda provider: {'ready': True})
-        patch.setattr(graph, 'load_project_target', lambda path: {TEAM_STATE_TARGET_KEY: routing})
-        assert graph.resolve_role_adapter({TEAM_STATE_TARGET_KEY: routing}, 'architect') == 'codex'
-        assert graph.should_generate_artifact_with_worker(config, 'architect') is True
-        source['runtime']['provider'] = 'fake'
-        for member in routing['workers']:
-            if member['role'] == 'architect':
-                member['runtime']['provider'] = 'codex'
-        assert graph.should_generate_artifact_with_worker(config, 'architect') is False
-        source['lifecycle'] = 'inactive'
-        with pytest.raises(TeamDispatchBlocked, match='no fallback'):
-            graph.should_generate_artifact_with_worker(config, 'architect')
+        assert worker_routing.resolve_role_adapter({TEAM_STATE_TARGET_KEY: routing}, 'architect') == 'codex'
     def capability(current):
         return next(row for row in build_team_capability_view(current)['roles'] if row['role'] == 'planner')['capability']
     assert capability(team) == 'ready'

@@ -2,7 +2,6 @@
 import { Navigate, useLocation, useParams } from 'react-router-dom';
 import KnowledgePage from '../features/knowledge/KnowledgePage';
 import ProjectsPage from '../features/projects/ProjectsPage';
-import ReviewPage from '../features/reviews/ReviewPage';
 import WorkPage from '../features/runs/WorkPage';
 import WorkWorkspaceRoute from '../features/runs/workspace/WorkWorkspaceShell';
 import TeamPage from '../features/team/TeamPage';
@@ -35,7 +34,6 @@ function ProjectWorkRedirect() {
 export function createProductRoutes({
   ProjectsComponent = ProjectsPage,
   WorkComponent = WorkPage,
-  ReviewComponent = ReviewPage,
   KnowledgeComponent = KnowledgePage,
   TeamComponent = TeamPage,
 } = {}) {
@@ -55,12 +53,6 @@ export function createProductRoutes({
           path: '/projects/:projectKey/work',
           element: <WorkWorkspaceRoute Component={WorkComponent} />,
         },
-        {
-          path: '/projects/:projectKey/work/runs/:runId',
-          element: <WorkWorkspaceRoute Component={WorkComponent} />,
-        },
-        { path: '/projects/:projectKey/review', element: <ReviewComponent /> },
-        { path: '/projects/:projectKey/review/:reviewId', element: <ReviewComponent /> },
         { path: '/projects/:projectKey/knowledge', element: <KnowledgeComponent /> },
         { path: '/projects/:projectKey/settings', element: <SettingsPage /> },
         { path: '/projects/:projectKey/settings/:section', element: <ProjectTeamRedirect /> },

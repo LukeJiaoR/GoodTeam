@@ -15,29 +15,13 @@ The textual renderer is available through:
 python -m goodteam_os.execution.review_workbench <execution_id> --project-root <repo>
 ```
 
-The browser-visible MVP is available through static export:
-
-```bash
-goodteam-os execution export-review-workbench \
-  --execution-id <execution_id> \
-  --project-root <repo>
-```
-
-It writes:
-
-```text
-.goodteam/executions/<execution_id>/artifacts/review-workbench.html
-.goodteam/executions/<execution_id>/artifacts/review-workbench.json
-```
-
 When using the local server, the same canonical object is exposed at:
 
 ```text
 /api/executions/<execution_id>/review-workbench?project_root=<repo>
-/review-workbench/<execution_id>?project_root=<repo>
 ```
 
-The guarded browser decision action is available only through the local server:
+The guarded decision API is available through the local server:
 
 ```text
 POST /api/executions/<execution_id>/review-workbench/decision

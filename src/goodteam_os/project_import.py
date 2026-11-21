@@ -4,7 +4,6 @@ import errno
 import fcntl
 import logging
 import os
-import re
 import secrets
 import threading
 from contextlib import contextmanager
@@ -15,7 +14,7 @@ from typing import Iterator
 
 from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities
 from goodteam_os.projects import build_registered_project_config, load_project_target
-from goodteam_os.state import normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 
 
 IMPORT_LOCK_NAME = ".project-import.lock"
@@ -255,95 +254,6 @@ def read_bound_project_readiness(
         if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
             raise
         raise _workspace_not_isolated_error(workspace, root) from exc
-
-
-@contextmanager
-def bound_project_state_directory(
-    workspace: Path,
-    project_key: str,
-    root: Path,
-    relative_parts: tuple[str, ...],
-    create: bool,
-) -> Iterator[int]:
-    """Open a descriptor-bound directory below GoodTeam's project state."""
-
-    root = Path(root).expanduser().resolve()
-    _validate_root(root)
-    workspace = _validate_workspace_isolation(workspace, root)
-    key = normalize_project_key(project_key)
-    _validate_project_state_destination(workspace, root, key)
-    parts = tuple(relative_parts)
-    for part in parts:
-        _validate_project_state_part(part)
-
-    try:
-        with _workspace_import_lock(workspace) as workspace_fd:
-            _verify_workspace_identity(workspace, workspace_fd)
-            readiness = ProjectReadinessStore(
-                workspace, workspace_fd=workspace_fd
-            ).read(key)
-            if readiness is None:
-                raise ProjectImportError(
-                    "project_readiness_mismatch",
-                    f"Project readiness does not match the requested project: {key}",
-                    details={"project_key": key},
-                )
-            _validate_project_readiness_binding(
-                readiness,
-                project_key=key,
-                root=root,
-            )
-            _validate_project_root_identity(readiness, root, project_key=key)
-
-            descriptors: list[int] = []
-            names = ("state", "projects", key, *parts)
-            parent_fd = workspace_fd
-            try:
-                for name in names:
-                    descriptor = _open_directory_at(parent_fd, name, create=create)
-                    if descriptor is None:
-                        raise FileNotFoundError(
-                            errno.ENOENT,
-                            f"Project state directory does not exist: {name}",
-                            name,
-                        )
-                    descriptors.append(descriptor)
-                    parent_fd = descriptor
-                yield descriptors[-1]
-            finally:
-                try:
-                    _verify_workspace_identity(workspace, workspace_fd)
-                    parent_fd = workspace_fd
-                    for name, descriptor in zip(
-                        names,
-                        descriptors,
-                        strict=False,
-                    ):
-                        _verify_directory_identity_at(parent_fd, name, descriptor)
-                        parent_fd = descriptor
-                finally:
-                    for descriptor in reversed(descriptors):
-                        os.close(descriptor)
-    except OSError as exc:
-        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
-            raise
-        raise _workspace_not_isolated_error(workspace, root) from exc
-
-
-def _validate_project_state_part(part: object) -> None:
-    if (
-        not isinstance(part, str)
-        or not part
-        or not part.strip(".")
-        or "/" in part
-        or "\\" in part
-        or re.fullmatch(r"[A-Za-z0-9._-]+", part, flags=re.ASCII) is None
-    ):
-        raise ProjectImportError(
-            "project_state_path_invalid",
-            "Project state path contains an invalid directory name.",
-            details={"part": str(part)},
-        )
 
 
 def _verify_workspace_identity(workspace: Path, workspace_fd: int) -> None:

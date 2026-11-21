@@ -114,9 +114,7 @@ event('end')
         assert observed["run_id"] == first["run_id"]
         time.sleep(.02)
     report = iteration_batch_report(workspace=tmp_path, project_key="DEMO", root=source, run_id=first["run_id"])
-    first = {**first, "status": "review" if report["all_ok"] else "blocked", "report": report}
-    assert first["status"] == "review", first
-    report = first["report"]
+    assert report["all_ok"], report
     assert report["worker_capacity"]["pool_size"] == 10
     assert len(report["jobs"]) == len(WorkerJobStore(source).list_jobs()) == 11
     assert {job["project_task_id"] for job in report["jobs"]} == set(task_ids)
@@ -137,29 +135,11 @@ event('end')
                and task["run_id"] == first["run_id"] and task["dispatch_job_id"] for task in ledger.list_tasks())
 
     again = run_queued_iteration_batch(**request, confirmed=True)
+    assert again["status"] == "review"
     assert again["report"] == report
     assert len((signals / "calls.jsonl").read_text().splitlines()) == 22
     assert iteration_batch_report(workspace=tmp_path, project_key="DEMO", root=source,
                                   run_id=first["run_id"]) == report
-    # An interrupted outer publication does not authorize replay over a later
-    # Workflow. Existing Worker receipts remain, but no new execution starts.
-    from goodteam_os.dispatch_workspace import dispatch_artifact_root
-    from goodteam_os.state import StateStore, create_initial_state
-
-    report_path = dispatch_artifact_root(source, first["dispatch_run_id"]) / "report.json"
-    retained_report = report_path.read_bytes()
-    report_path.unlink()
-    session = TaskAssistantSessionStore(tmp_path, "DEMO")
-    def interrupted(value):
-        value["project_task_batches"][first["run_id"]]["status"] = "blocked"
-        return value
-    session._mutate(interrupted)
-    later = create_initial_state("later-workflow", "DEMO", "Separate owner-authorized task")
-    StateStore(tmp_path).write_project_current(later)
-    with pytest.raises(ValueError, match="active project execution"):
-        run_queued_iteration_batch(**request, confirmed=True)
-    assert len((signals / "calls.jsonl").read_text().splitlines()) == 22
-    report_path.write_bytes(retained_report)
 
 
 def test_batch_captured_write_scope_violation_blocks_candidate_and_preserves_source(tmp_path, monkeypatch):

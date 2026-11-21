@@ -65,7 +65,7 @@ def check_cancellation(results):
 def request_cancellation(results, request, *, check_task):
     """Persist before acknowledging; same-attempt replay never sends signals.
 
-    This does not acquire the long-running workflow execution guard: a stop
+    This does not acquire the long-running execution guard: a stop
     request must be receivable while that execution owns the guard. The caller
     rechecks the current task at admission and again under this result lock.
     Task/Worker/context binding prevents a task switch from cancelling new work.

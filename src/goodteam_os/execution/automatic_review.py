@@ -29,29 +29,17 @@ from .task_snapshot import TaskInputError, canonical_bytes, digest
 SCHEMA = "automatic_candidate_review.v1"
 MACHINE_SCHEMA = "candidate_machine_review.v1"
 LEGACY_POLICY = "candidate_review_policy.v1"
-LEGACY_PLAN_POLICY = "candidate_review_policy.v2"
 POLICY = "candidate_review_policy.v3"
 
 
-def review_policy(snapshot, approved_plan=None, *, legacy=False):
-    version = (LEGACY_PLAN_POLICY if approved_plan is not None else LEGACY_POLICY) if legacy else POLICY
+def review_policy(snapshot, *, legacy=False):
+    version = LEGACY_POLICY if legacy else POLICY
     policy = {"schema_version": version, "protocol": REVIEW_PROTOCOL,
             "criterion_ids": [f"criterion:{snapshot.payload_digest}:{i}"
                               for i in range(len(snapshot.task.task_contract.acceptance_criteria))],
             "blocking_severities": ["critical", "high", "medium", "low"],
             "require_passed_host_check": True, "require_unique_checked_criteria": True,
             "judgment_verification": "not_independently_verified"}
-    if approved_plan is not None:
-        # This is coverage of semantic judgments, not a keyword check or a new
-        # approval gate. The report retains each judgment's rationale/evidence.
-        binding_id = approved_plan["binding_id"]
-        policy.update(approved_plan_binding_id=binding_id,
-            plan_checks=[
-                {"name": f"{binding_id}:artifact:{item['artifact_key']}",
-                 "artifact_key": item["artifact_key"], "artifact_version": item["artifact_version"]}
-                for item in approved_plan["approved_artifacts"]
-            ] + [{"name": f"{binding_id}:derived-task", "artifact_key": approved_plan["derived_task"]["artifact_key"],
-                  "artifact_version": approved_plan["derived_task"]["artifact_version"]}])
     return policy
 
 
@@ -66,8 +54,7 @@ def policy_decision(policy, result, report):
     required = set(policy["criterion_ids"])
     if not required:
         return "inconclusive", "candidate_review_coverage_incomplete"
-    required.update(row["name"] for row in policy.get("plan_checks", []))
-    legacy = policy["schema_version"] in (LEGACY_POLICY, LEGACY_PLAN_POLICY)
+    legacy = policy["schema_version"] == LEGACY_POLICY
     seen = set()
     for row in report["checks"]:
         name = row["name"]
@@ -93,17 +80,9 @@ class AutomaticCandidateReviewService:
         self.clock = clock or time.time
 
     def _policy(self, snapshot, saved=None):
-        from .approved_plan import binding_for
-
-        binding = binding_for(self.project_root, snapshot)
         frozen = saved.get("policy") if saved is not None else None
-        if binding is not None and frozen == review_policy(snapshot, legacy=True):
-            # Never rewrite an in-flight immutable request or reinterpret an old
-            # report as having covered a requirement it was not asked to cover.
-            raise TaskInputError("automatic_review_plan_coverage_upgrade_required")
-        # Older decisions must still verify against the policy that issued them.
-        legacy = review_policy(snapshot, binding, legacy=True)
-        return legacy if frozen == legacy else review_policy(snapshot, binding)
+        legacy = review_policy(snapshot, legacy=True)
+        return legacy if frozen == legacy else review_policy(snapshot)
 
     def configuration(self, execution_id):
         """Read the frozen start, including incomplete-start recovery; never admit work."""
@@ -124,11 +103,8 @@ class AutomaticCandidateReviewService:
             return saved
 
     def _confirmation(self, snapshot, start):
-        from .approved_plan import binding_for
-
-        binding = binding_for(self.project_root, snapshot)
         return {"schema_version": SCHEMA, "original": snapshot.to_dict(), "start": start,
-                "policy": start["policy"], **({"approved_plan": binding} if binding is not None else {})}
+                "policy": start["policy"]}
 
     def _capture(self, snapshot, start):
         scope = registered_project_scope(self.project_root)
@@ -282,14 +258,6 @@ class AutomaticCandidateReviewService:
                 "include exactly one check whose name is that ID. Mark checked only when assessed with source evidence. "
                 "Unmet requirements must have actionable findings; uncertainty must be inconclusive. "
                 "Do not approve or advance any gate. Return the captured review report protocol."
-                + (" Also assess the pinned approved workflow intent and derived task mapping. "
-                   "For every policy.plan_checks entry include exactly one check named by its name. "
-                   "Assess whether the actual candidate fulfills the approved artifact's relevant intent, scope and constraints; "
-                   "for the derived-task entry assess its alignment with that intent and the original task. "
-                   "Explain the semantic judgment and its limits in detail, with exact candidate source evidence. "
-                   "Merely repeating identifiers, quoting the plan, a passing test, or an empty findings list is not an assessment. "
-                   "Report unmet intent or scope/constraint conflicts as actionable findings; uncertain alignment is inconclusive."
-                   if payload.get("approved_plan") else "")
                 + (" The host_check_output is the observed stdout/stderr for the exact recorded validation_plan. "
                    "The named evidence files are captured from HEAD even when unchanged. "
                    "Identify which evidence you checked; do not claim to have rerun the host command."

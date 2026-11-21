@@ -1,6 +1,12 @@
 # P0-1 First Runnable Dogfood
 
-This dogfood path proves the current execution runtime can intake a GitHub issue
+> **Historical record.** The dogfood launcher and module are retired. The
+> commands below document the old checkout, not current usage. See the
+> [launcher](https://github.com/LukeJiaoR/GoodTeam/blob/b090432/scripts/p0_1_dogfood.sh)
+> and [module](https://github.com/LukeJiaoR/GoodTeam/blob/b090432/src/goodteam_os/execution/dogfood.py)
+> at `b090432`.
+
+This dogfood path showed that the execution runtime could intake a GitHub issue
 fixture, create deterministic execution identity, enqueue a safe worker job,
 write ledger events, and replay the run without external network access.
 

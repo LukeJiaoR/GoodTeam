@@ -218,10 +218,6 @@ def _worker_safe_sandbox_context(context: dict[str, Any]) -> dict[str, Any]:
         "branch_name": str(context.get("branch_name", "")),
         "claimed_paths": [str(path) for path in claimed_paths],
     }
-    if safe["mode"] == "workflow_isolated":
-        safe.update({key: str(context.get(key, "")) for key in (
-            "workflow_run_id", "project_key", "job_id", "source_root", "baseline_commit",
-        )})
     if context.get("worker_setup"):
         safe["worker_setup"] = context["worker_setup"]
     if context.get("project_environment"):
@@ -1062,8 +1058,6 @@ class WorkerJobStore:
     def _admit_input_dispatch(self, job_root: Path, job: dict[str, Any]):
         snapshot = self.admit_task_input(job_root.name, job)
         if snapshot is not None:
-            from goodteam_os.execution.approved_plan import binding_for
-            binding_for(self.project_root, snapshot)
             self._input_store(snapshot).assert_dispatchable(snapshot)
         return snapshot
 
@@ -1120,7 +1114,6 @@ class WorkerJobStore:
         method_workspace_mode: str = "",
         review_target: dict[str, str] | None = None,
         task_input: "TaskExecutionSnapshot | None" = None,
-        workflow_workspace: dict[str, Any] | None = None,
         provider_connection: object = _CAPTURE_PROVIDER_CONNECTION,
         web_search: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -1141,13 +1134,10 @@ class WorkerJobStore:
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
             if provider_connection is not _CAPTURE_PROVIDER_CONNECTION:
                 raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
-            if workflow_workspace is not None:
-                raise ValueError("Workflow workspaces cannot replace the protected Skill execution protocol.")
             if task_input is not None:
                 from goodteam_os.execution.task_snapshot import TaskInputError
                 raise TaskInputError("task_input_protocol_conflict")
             skill_request = locals().copy()
-            skill_request.pop("workflow_workspace")
             skill_request.pop("provider_connection")
             if web_search is None:
                 skill_request.pop("web_search")
@@ -1167,8 +1157,6 @@ class WorkerJobStore:
         if task_input is None:
             self._reject_input_downgrade({"run_id": run_id, "execution_id": execution_id})
         if task_input is not None:
-            if workflow_workspace is not None:
-                raise ValueError("Workflow workspaces cannot replace the protected task-input execution protocol.")
             from goodteam_os.execution.task_snapshot import TaskExecutionSnapshot, TaskInputError
             from goodteam_os.execution.correction_input import CorrectionAttemptInput
             from goodteam_os.execution.task_context import task_worker_fields
@@ -1224,13 +1212,6 @@ class WorkerJobStore:
             # the original local configuration, including pre-provider jobs.
             job["provider_connection"] = (ProviderStore().capture()
                 if provider_connection is _CAPTURE_PROVIDER_CONNECTION else provider_connection)
-        if workflow_workspace is not None:
-            from goodteam_os.workflow_workspace import context_for_job
-
-            job["workflow_workspace"] = workflow_workspace
-            job["sandbox_context"] = context_for_job(
-                self.project_root, workflow_workspace, project_key=project_key, run_id=run_id, job_id=job_id, role=role,
-            )
         for key, value in {
             "pi_path": pi_path,
             "pi_provider": pi_provider,
@@ -1284,8 +1265,6 @@ class WorkerJobStore:
         if task_input is None:
             MemoryHandoffStore(self.project_root).reserve(job)
         self._write_json(job_root / "job.json", job)
-        if workflow_workspace is not None:
-            self._write_json(job_root / "sandbox_context.json", job["sandbox_context"])
         role_config, role_prompt = _role_prompt_for_job(role)
         (job_root / "role_prompt.md").write_text(role_prompt, encoding="utf-8")
         role_memory_store = runtime_role_memory_store(self.project_root, local_embedder=default_embedder)
@@ -1346,8 +1325,6 @@ class WorkerJobStore:
                 raise ValueError("Protected Workers retain their original task association protocol.")
             if values.pop("provider_connection") is not _CAPTURE_PROVIDER_CONNECTION:
                 raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
-            if values.pop("workflow_workspace") is not None:
-                raise ValueError("Workflow workspaces cannot replace the protected Skill execution protocol.")
             return create_skill_worker_job(self, values)
         from goodteam_os.skills.worker_requests import has_skill_fields, is_skill_job_id
 
@@ -1371,15 +1348,6 @@ class WorkerJobStore:
                 if any(key in existing and existing[key] != job_spec.get(key, "")
                        for key in ("project_task_id", "track_id")):
                     raise ValueError("The original Worker invocation belongs to another task or track.")
-                if (job_spec.get("workflow_workspace") is not None
-                        or existing.get("workflow_workspace") is not None):
-                    from goodteam_os.workflow_workspace import WorkflowWorkspaceError, validate_workflow_job_context
-
-                    if (existing.get("workflow_workspace") != job_spec.get("workflow_workspace")
-                            or existing.get("run_id") != job_spec.get("run_id")
-                            or existing.get("project_key") != job_spec.get("project_key")):
-                        raise WorkflowWorkspaceError("The existing Worker belongs to a different workflow baseline.")
-                    validate_workflow_job_context(self.project_root, existing)
                 return existing, False
         return self.create_job(**job_spec), True
 
@@ -1562,16 +1530,6 @@ class WorkerJobStore:
                 from goodteam_os.skills.pi_methods import ordinary_execution_slot
                 with ordinary_execution_slot(self, job_id):
                     return self._run_job(job_id, sandbox_context=sandbox_context)
-        # Protected Skill execution keeps its own admission and exact-source
-        # protocol. Ordinary sequential workflow jobs own one shared task slot.
-        if not is_skill_job_id(job_id):
-            job = self._read_json(self.root / job_id / "job.json")
-            if (job.get("workflow_workspace") is not None or isinstance(job.get("sandbox_context"), dict)
-                    and job["sandbox_context"].get("mode") == "workflow_isolated"):
-                from goodteam_os.workflow_workspace import workflow_job_lock
-
-                with workflow_job_lock(self.project_root, job):
-                    return self._run_job(job_id, sandbox_context=sandbox_context)
         return self._run_job(job_id, sandbox_context=sandbox_context)
 
     def _run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1601,8 +1559,7 @@ class WorkerJobStore:
                     "external_invocation": False, "reason": "local_codex_task_capture_required"}})
         if sandbox_context is not None:
             job = self._attach_sandbox_context(job_root, job, sandbox_context)
-        if (job.get("workflow_workspace") is not None or isinstance(job.get("sandbox_context"), dict)
-                and job["sandbox_context"].get("mode") in {"dispatch_isolated", "workflow_isolated"}):
+        if isinstance(job.get("sandbox_context"), dict) and job["sandbox_context"].get("mode") == "dispatch_isolated":
             self._worker_runtime_cwd(job)
         handoff = self._ordinary_memory_handoff(job_root, job)
         if handoff is not None:
@@ -2750,16 +2707,6 @@ class WorkerJobStore:
 
     def _worker_runtime_cwd(self, job: dict[str, Any]) -> WorkerRuntimeContext:
         context = job.get("sandbox_context")
-        if (job.get("workflow_workspace") is not None or isinstance(context, dict)
-                and context.get("mode") == "workflow_isolated"):
-            from goodteam_os.workflow_workspace import validate_workflow_job_context
-
-            workspace_path = validate_workflow_job_context(self.project_root, job)
-            return WorkerRuntimeContext(
-                runtime_cwd=workspace_path, workspace_context_available=True,
-                workspace_cwd_fallback=False, workspace_cwd_fallback_reason="",
-                runtime_workspace_mode="workflow_isolated", runtime_workspace_status="ready",
-            )
         if not isinstance(context, dict) or not context.get("available"):
             return WorkerRuntimeContext(
                 runtime_cwd=self.project_root,
@@ -2880,11 +2827,6 @@ class WorkerJobStore:
         result_path = job_root / "result.md"
         stdout_path = job_root / "stdout.txt"
         stderr_path = job_root / "stderr.txt"
-        if job.get("workflow_workspace") is not None:
-            bound_context = self._worker_runtime_cwd(job)
-            if runtime_context is not None and runtime_context != bound_context:
-                raise ValueError("workflow_runtime_context_mismatch")
-            runtime_context = bound_context
         runtime_context = runtime_context or self._worker_runtime_cwd(job)
         if correction and runtime_context.runtime_cwd != authority.check_runtime_context(task_input, job):
             raise ValueError("correction_workspace_mismatch")
@@ -3193,10 +3135,8 @@ class WorkerJobStore:
             from goodteam_os.execution.correction_input import CorrectionAttemptInput
             from goodteam_os.execution.correction_feedback import render_correction_input
 
-            from goodteam_os.execution.approved_plan import binding_for, render_binding
 
             sections.extend([
-                render_binding(binding_for(self.project_root, task_input)),
                 render_correction_input(self.project_root, task_input)
                 if isinstance(task_input, CorrectionAttemptInput) else render_task_contract(task_input),
                 "## Sandbox Context", sandbox_context,

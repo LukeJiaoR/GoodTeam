@@ -139,16 +139,7 @@ def _propose_delivery(store, root, snapshot, incoming, chinese):
 
 
 def run_dialogue(service, *, store, project_key, root, text, message_id, attempt_id):
-    """Use LangGraph only for new, unreferenced project conversation turns."""
-    accepted = (store.read().get("assistant_requests") or {}).get(message_id) or {}
-    captured_run = accepted.get("conversation_run_id", "")
-    current_scope = conversation_scope(store, root=root)
-    if captured_run and (not current_scope or current_scope.get("kind") != "running_task"
-                         or (current_scope.get("run") or {}).get("run_id") != captured_run):
-        # A model retry that belonged to an earlier run keeps the original
-        # read-only history path, including its interpretation restrictions.
-        return continue_conversation(service, store=store, project_key=project_key, root=root,
-            text=text, message_id=message_id, attempt_id=attempt_id, context_run_id=captured_run)
+    """Run the project conversation with its durable confirmation checkpoint."""
     incoming = {"text": text, "message_id": message_id, "attempt_id": attempt_id}
 
     def handle(state):
@@ -185,7 +176,7 @@ def run_dialogue(service, *, store, project_key, root, text, message_id, attempt
                     operation="accept_project_batch_delivery", receipt=receipt or result)}
 
         # Existing CLI identity/attempt accounting and read-only policy remain.
-        scope = conversation_scope(store, root=root)
+        scope = conversation_scope(store)
         from goodteam_os.project_readiness import assess_project_mode
         from goodteam_os.task_assistant import _manager_chat_context
 
@@ -200,8 +191,7 @@ def run_dialogue(service, *, store, project_key, root, text, message_id, attempt
             readiness = {"lifecycle": "legacy_unverified"}
         context = _manager_chat_context(readiness, assess_project_mode(root), session,
                                         team_view=service.team_view(project_key), current_message_id=turn_input["message_id"],
-                                        root=root, project_key=project_key, workspace=store.workspace,
-                                        run_id=((scope or {}).get("run") or {}).get("run_id", ""))
+                                        root=root, project_key=project_key, workspace=store.workspace)
         context += service.attachment_context(project_key, root, session, turn_input["message_id"])
         context += "\nFresh task context: " + json.dumps(scope, ensure_ascii=False, default=str)
         context += "\nFresh continuation/batch/attention (read-only, never authorization): " + json.dumps(

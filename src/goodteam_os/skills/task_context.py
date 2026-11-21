@@ -62,13 +62,3 @@ def validate_task_skill_context(value: object) -> dict[str, Any]:
     if ref["id"] != expected:
         raise SkillError("snapshot_scope_mismatch", "Task Skill reference does not match its bounded task identity.")
     return deepcopy(value)
-
-
-def workflow_skill_context(value: object, *, run_id: str, project_key: str) -> dict[str, Any]:
-    """Validate a workflow state's optional context without migrating legacy runs."""
-    if isinstance(value, dict) and not value:
-        return {}
-    context = validate_task_skill_context(value)
-    if context["task"] != {"kind": "workflow_run", "project_key": project_key, "logical_id": run_id}:
-        raise SkillError("snapshot_scope_mismatch", "Workflow Skill context belongs to another run, project or task kind.")
-    return context

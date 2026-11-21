@@ -24,7 +24,7 @@ def capture_task_start(
 ) -> dict[str, Any]:
     """Capture only at an authorized bounded start; replay saved confirmation.
 
-    ``None`` subjects selects the workflow's complete non-Manager inventory.
+    ``None`` subjects selects the complete non-Manager inventory.
     Manager/direct producers supply their explicit subject set. This helper does
     not guess task kind from a run ID, grant permissions, or dispatch a Worker.
     A supplied confirmation revision is checked, not silently rebased.
@@ -106,7 +106,7 @@ def capture_task_start(
             "ref": bindings[subject]["role_contract_ref"], "subject": subject,
             "input_contract": "Use only the bounded task and its supplied evidence.",
             "output_contract": "Return the result required by the explicit job output contract.",
-            "authority_boundary": "Methods cannot grant permissions, advance workflow gates, or approve their own result.",
+            "authority_boundary": "Methods cannot grant permissions, approve their own result.",
         } for subject in selected}
     # New Code Review tasks capture a method-free versioned protocol. The
     # replay path above uses the original contract verbatim, including pre-S6.
@@ -124,21 +124,6 @@ def capture_task_start(
     return service.begin(task, command_key=command_key, confirmed_input=confirmed,
                          subjects=selected, role_contracts=contracts, expected_team_revision=revision,
                          default_items=defaults)
-
-
-def workflow_job_fields(state, *, role: str, command_key: str) -> dict[str, Any]:
-    """Carry an existing workflow capture, never consult current configuration."""
-    from .task_context import workflow_skill_context
-    from .worker_requests import WORKER_METADATA_LOADER, subject_for_role
-
-    context = workflow_skill_context(getattr(state, "task_skill_context", {}), run_id=state.run_id, project_key=getattr(state, "project_key", ""))
-    if not context:
-        if getattr(state, "project_key", ""):
-            reject_missing_task_context(TaskSkillIdentity("workflow_run", state.project_key, state.run_id))
-        return {}
-    return {"task_skill_context": context, "skill_subject": subject_for_role(role),
-            "skill_loader_version": WORKER_METADATA_LOADER, "project_key": state.project_key,
-            "idempotency_key": command_key}
 
 
 def manager_requires_skill_path(*, workspace: Path, project_key: str, worker_root: Path,
@@ -183,7 +168,7 @@ def registered_project_scope(worker_root: Path) -> tuple[Path, str] | None:
     from goodteam_os.project_registry import get_default_registry_path
     from goodteam_os.database import database_configured
     from goodteam_os import state_documents
-    from goodteam_os.state import normalize_project_key
+    from goodteam_os.project_runtime import normalize_project_key
     from .filesystem import directory, regular_file
     from .worker_requests import _json
 
@@ -243,34 +228,3 @@ def registered_project_scope(worker_root: Path) -> tuple[Path, str] | None:
     if len(set(matches)) > 1:
         raise SkillError("project_scope_ambiguous", "Worker root belongs to multiple project scopes; explicit selection is required.")
     return matches[0] if matches else standalone_legacy()
-
-
-def execution_job_fields(store, *, execution_id: str, project_key: str, role: str) -> dict[str, Any]:
-    """Carry a real issue-execution's original lock into Operator review/fix jobs."""
-    from goodteam_os.execution.ledger import ExecutionLedger
-    from .task_context import validate_task_skill_context
-    from .worker_requests import WORKER_METADATA_LOADER, has_skill_fields, is_skill_job_id, subject_for_role
-
-    run = ExecutionLedger(store.project_root).read_run(execution_id)
-    task = TaskSkillIdentity("issue_execution", project_key, execution_id)
-    if run is None:
-        reject_missing_task_context(task)
-        return {}
-    jobs = [job for job in store.list_jobs() if job.get("id") == run.worker_job_id]
-    if not jobs:
-        if is_skill_job_id(run.worker_job_id):
-            raise SkillError("snapshot_missing", "The original execution Worker is unavailable.")
-        reject_missing_task_context(task)
-        return {}
-    original = jobs[0]
-    context = original.get("task_skill_context")
-    if not context:
-        if is_skill_job_id(run.worker_job_id) or has_skill_fields(original):
-            raise SkillError("task_context_missing", "The original execution lost its method reference.")
-        reject_missing_task_context(task)
-        return {}
-    context = validate_task_skill_context(context)
-    if context["task"] != {"kind": task.kind, "project_key": task.project_key, "logical_id": task.logical_id}:
-        raise SkillError("snapshot_scope_mismatch", "Execution method reference belongs to another task.")
-    return {"task_skill_context": context, "skill_subject": subject_for_role(role),
-            "skill_loader_version": WORKER_METADATA_LOADER}

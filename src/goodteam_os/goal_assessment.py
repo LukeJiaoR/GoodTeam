@@ -1,4 +1,4 @@
-"""Read-only Manager assessment of a completed, exactly bound workflow.
+"""Read-only Manager assessment of a completed, exactly bound batch.
 
 The Manager's assessment is not independent proof of correctness. Accepted
 criteria retain literal citations from the run's evidence for human inspection.
@@ -139,55 +139,8 @@ def _verify_native_assessment(project_root, goal, work, attempt, execution_id, e
         raise ValueError("Native assessment completion and evidence cannot be proven; retry is blocked.")
 
 
-def run_evidence(workspace, state, *, project_root=None):
-    """Read this completed run's artifacts and independently bound review reports.
-
-    Goal callers supply their already-authorized Worker root. Historical callers
-    without a root retain artifact-only reads; no current-config fallback is
-    allowed to select another project's Reviewer files.
-    """
-    if state.current_node != "complete" or state.next_node == "rejected" or state.blockers:
-        raise ValueError("Only a completed, unblocked workflow can be assessed.")
-    root = (Path(workspace) / "artifacts" / "runs" / state.run_id).resolve()
-    evidence = {}
-    size = 0
-
-    def retain(ref, full_text):
-        nonlocal size
-        if len(full_text.encode("utf-8")) > 1_000_000:
-            raise ValueError("Run evidence exceeds the bounded assessment size; inspect it manually.")
-        text = full_text[-32_000:]
-        size += len(text)
-        if size > 160_000:
-            raise ValueError("Run evidence exceeds the bounded assessment size; inspect it manually.")
-        evidence[ref] = text
-
-    for key, value in sorted(state.artifacts.items()):
-        if key not in {"qa", "qa_report", "code_review"}:
-            continue
-        path = Path(value).resolve()
-        if not path.is_relative_to(root) or not path.is_file():
-            continue
-        if path.stat().st_size > 1_000_000:
-            raise ValueError("Run evidence exceeds the bounded assessment size; inspect it manually.")
-        full_text = path.read_text(encoding="utf-8")
-        # QA/review summaries are appended after captured context. Feed a
-        # contiguous trailing window, not recursively repeated prior artifacts.
-        # Citations still hash the full artifact and quote literal source text.
-        ref = f"run:{state.run_id}:artifact:{key}:sha256:{hashlib.sha256(full_text.encode()).hexdigest()}"
-        retain(ref, full_text)
-    if project_root is not None:
-        from goodteam_os.goal_review_evidence import reviewer_evidence
-
-        for ref, full_text in reviewer_evidence(workspace, state, project_root):
-            retain(ref, full_text)
-    if not evidence:
-        raise ValueError("The completed run has no readable run-bound evidence.")
-    return evidence
-
-
 def batch_run_evidence(workspace, *, project_root, project_key, run_id, task_id=None):
-    """Adapt original batch quality evidence without inventing a Workflow state.
+    """Read Goal evidence from its bound batch and candidate receipts.
 
     Missing/failed checks stay visible to assessment. Neither a successful
     Worker nor a published candidate is substituted for validation or review.
@@ -256,21 +209,14 @@ def validate_assessment(result, goal, evidence):
     return {"accepted_criteria": sorted(accepted), "evidence_refs": sorted(set(refs)), "gaps": gaps, "assessment_checks": checks}
 
 
-def assess_goal(*, workspace, project_config, project_root, goal, work, evidence, state=None, execution_ref=None, attempt=1):
+def assess_goal(*, workspace, project_config, project_root, goal, work, evidence, execution_ref, attempt=1):
     if type(attempt) is not int or not 1 <= attempt <= 3:
         raise ValueError("Assessment attempt is outside its hard bound.")
     identity = assessment_identity(goal, work, attempt)
-    if execution_ref is not None:
-        if (execution_ref.get("project_key") != goal["project_key"]
-                or execution_ref.get("run_id") != work_execution_run_id(work)):
-            raise ValueError("Assessment execution reference differs from the original Goal work.")
-        run_id = execution_ref["run_id"]
-        if state is not None and state.run_id != run_id:
-            raise ValueError("Assessment received conflicting execution identities.")
-    elif state is not None and state.run_id == work_execution_run_id(work):
-        run_id = state.run_id
-    else:
-        raise ValueError("Assessment requires the original Goal work execution reference.")
+    if (execution_ref.get("project_key") != goal["project_key"]
+            or execution_ref.get("run_id") != work_execution_run_id(work)):
+        raise ValueError("Assessment execution reference differs from the original Goal work.")
+    run_id = execution_ref["run_id"]
     prompt = _assessment_prompt(work)
     context = json.dumps(assessment_packet(goal, work, run_id, evidence), ensure_ascii=False)
     result = run_manager_analysis(project_config=Path(project_config), project_key=goal["project_key"],

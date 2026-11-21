@@ -12,7 +12,8 @@ def test_explicit_planning_opt_in_preserves_old_grants_and_real_ledger_identity(
     enabled = normalize_discovery({**legacy, "allow_planning": True})
     grant = dict(id="grant", seed_task_ids=[], seed_task_intents={}, approved_backlog_version="v1", discovery=legacy, authority={}, max_batches=3,max_manager_calls=3,status="active")
     grant["authorization_digest"] = authorization_digest(grant)
-    with pytest.raises(ValueError): _current({"project_continuation": {**grant,"discovery":enabled}},grant)
+    with pytest.raises(ValueError):
+        _current({"project_continuation": {**grant, "discovery": enabled}}, grant)
     packet=dict(discovery=enabled,planning_capability={"dispatchable":True},role_capabilities=[{"role":"planner","dispatchable":True}], authorized_done_task_ids=[],authorized_task_ids=[],allowed_source_refs=["seed"],verified_outcome={"delivery":{"receipt_id":"seed"}})
     proposed=dict(new_task=dict(title="Plan the agreed feature",description="Decompose the agreed feature; preserve constraints and unresolved questions.",acceptance_criteria=["Return bounded steps, dependencies and uncertainty."],write_domains=[],dependencies=[],source_refs=["seed"],task_type="planning"),rationale="A bounded decomposition is needed before choosing the implementation increment.")
     selected=validate_discovered_task(packet,proposed)
@@ -26,14 +27,18 @@ def test_explicit_planning_opt_in_preserves_old_grants_and_real_ledger_identity(
     assert "Planning extension" in _discovery_prompt(packet)
     assert "Planning extension" not in _discovery_prompt({"discovery":legacy})
     for denied in (legacy,{**legacy,"allow_investigation":True},{**legacy,"allow_planning":False}):
-        with pytest.raises(ValueError): validate_discovered_task({**packet,"discovery":denied},proposed)
+        with pytest.raises(ValueError):
+            validate_discovered_task({**packet, "discovery": denied}, proposed)
     for wrong in ({"dispatchable":False},{}, {"dispatchable":"true"}):
-        with pytest.raises(ValueError): validate_discovered_task({**packet,"planning_capability":wrong},proposed)
+        with pytest.raises(ValueError):
+            validate_discovered_task({**packet, "planning_capability": wrong}, proposed)
     for key,val in (("write_domains",["src"]),("task_type","investigation"),("role","planner")):
-        with pytest.raises(ValueError): validate_discovered_task(packet,{**proposed,"new_task":{**proposed["new_task"],key:val}})
+        with pytest.raises(ValueError):
+            validate_discovered_task(packet, {**proposed, "new_task": {**proposed["new_task"], key: val}})
     for bad in (1,"true",None):
         for permission in ("allow_planning", "allow_undelivered_feedback"):
-            with pytest.raises(ValueError):normalize_discovery({**legacy,permission:bad})
+            with pytest.raises(ValueError):
+                normalize_discovery({**legacy, permission: bad})
 
 
 @pytest.mark.parametrize("permission", ["allow_planning", "allow_undelivered_feedback"])

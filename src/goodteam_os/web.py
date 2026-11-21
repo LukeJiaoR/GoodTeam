@@ -6,7 +6,6 @@
 import ipaddress
 import json
 import hmac
-import hashlib
 import logging
 import os
 import re
@@ -16,7 +15,6 @@ import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
-from dataclasses import asdict, replace
 from datetime import datetime, UTC
 from html import escape
 from goodteam_os.http_transport import (
@@ -34,38 +32,9 @@ from uuid import uuid4
 from goodteam_os import context as project_context
 from goodteam_os.database import provider_environment
 from goodteam_os.worker_capabilities import REASONING_DEPTHS
-from goodteam_os.debate import default_debate_dispatch, run_gate_debate
-from goodteam_os.dispatch import (
-    dispatch_tracks,
-    ensure_dispatch_project_root_is_safe,
-    parse_dispatch_track_spec,
-    parse_dispatch_verify_spec,
-)
 from goodteam_os.execution import ExecutionAPI
-from goodteam_os.execution.review_workbench_browser import render_review_workbench_html
 from goodteam_os.frontend_assets import FrontendAssetsNotFound, resolve_frontend_dist
-from goodteam_os.graph import (
-    accept_refinement,
-    advance_approved_workflow,
-    artifact_mirror_root,
-    discard_refinement,
-    extract_open_questions,
-    generate_rfc,
-    generate_prd,
-    refine_artifact,
-    render_downstream_artifact_markdown,
-    resolve_project_runtime_root,
-    resolve_role_adapter,
-    run_architecture_until_gate,
-    run_adoption_until_next_gate,
-    run_fix_until_next_gate,
-    run_until_next_gate,
-    should_generate_artifact_with_worker,
-    sync_project_stage_tasks,
-)
-from goodteam_os.artifacts import ArtifactStore
-from goodteam_os.intent_commit import IntentCommitError, IntentCommitStore
-from goodteam_os.manager_execution import ManagerExecutionError, run_manager_interpretation
+from goodteam_os.manager_execution import ManagerExecutionError
 from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.assistant_drafts import handle_draft_action
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
@@ -74,16 +43,10 @@ from goodteam_os.team_control_plane import (
     TeamControlPlaneStore,
     execute_team_commands,
 )
-from goodteam_os.models import list_model_profiles, resolve_project_model_profile
-from goodteam_os.multi_reviewer_projection import (
-    build_multi_reviewer_projection,
-    projection_supports_approval,
-    reviewer_statuses_for_artifact,
-)
+from goodteam_os.models import list_model_profiles
 from goodteam_os.native_picker import choose_native_path
-from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
-from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
+from goodteam_os.project_runtime import resolve_project_runtime_root
 from goodteam_os.project_import import (
     ProjectImportError,
     confirm_project_mode,
@@ -96,7 +59,6 @@ from goodteam_os.project_readiness_executor import (
     ProjectReadinessExecutor,
     ReadinessExecutionError,
 )
-from goodteam_os.reviewer_evidence_snapshot import build_reviewer_evidence_snapshot
 from goodteam_os.repository_access import AnchoredRepository, canonical_relative_path
 from goodteam_os.repository_snapshot import RepositorySnapshotError, inspect_repository_git
 from goodteam_os._trusted_system_executable import (
@@ -104,70 +66,23 @@ from goodteam_os._trusted_system_executable import (
     open_verified_executable,
     resolve_trusted_system_git,
 )
-from goodteam_os.artifact_revisions import invalidate_artifact
-from goodteam_os.reviewer_dispatch import (
-    artifact_version_for_path,
-    retry_failed_reviewer_jobs_for_gate,
-    run_queued_reviewer_jobs_for_gate,
-    select_failed_reviewer_jobs_for_gate,
-    select_queued_reviewer_jobs_for_gate,
-)
-from goodteam_os.resources import (
-    ResourceCapability,
-    ResourceKind,
-    ResourceScope,
-    register_markdown_artifact,
-    resource_to_dict,
-)
 from goodteam_os.service import service_state_dir
 from goodteam_os.skills.library import SkillLibraryService
 from goodteam_os.skills.models import SkillConflict, SkillError
-from goodteam_os.review_provenance import (
-    build_reviewer_provenance,
-    latest_reviewer_status_for_approval,
-    reviewer_phase_for_approval,
-    reviewer_profile_for_approval,
-)
-from goodteam_os.review_policy import evaluate_review_evidence_policy
-from goodteam_os.roles import (
-    artifact_contract, approval_artifact_for_gate, approval_artifact_map,
-    list_role_definitions, workflow_steps_for_source,
-)
 from goodteam_os.memory import RoleMemoryStore
-from goodteam_os.messages import read_messages
 from goodteam_os.staging import (
     deployment_backend_config,
     delivery_contract_report,
-    run_staging_backend,
 )
-from goodteam_os import state_documents
-from goodteam_os.database import database_configured
-from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
+from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os.tasks import (
     LocalTaskStore,
-    build_stage_task_snapshot,
-    build_task_board,
-    serialize_task_board,
 )
 from goodteam_os.team_workspace import build_team_workspace
 from goodteam_os.assistant_workspace import build_project_assistant
 from goodteam_os.assistant_queue import QUEUE_ACTIONS, handle_queue_action
-from goodteam_os.telegram import send_approval_notification
-from goodteam_os.workflow_table import (
-    GATE_TRANSITIONS,
-    WORKFLOW_NODES,
-    advisors_for_gate,
-    approved_next_for_gate,
-    resolve_profile,
-    workflow_execution_plan,
-    workflow_execution_plan_v2,
-)
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, WorkerJobStore, discover_installed_agents
 from goodteam_os.cross_project_memory import retrieve_report as retrieve_cross_project_memory
-from goodteam_os.workflow_mutations import (
-    WorkflowBusyError, begin_transition, finish_transition, interrupt_transition,
-    persist_transition, recover_transition, replay_approval, serialized_workflow, workflow_guard,
-)
 
 if TYPE_CHECKING:
     from goodteam_os.skills.codex_runtime import CodexReviewAdmission
@@ -211,7 +126,6 @@ SERVER_ACTION_TIMEOUT_SECONDS = 600
 FS_LIST_MAX_ENTRIES = 500
 ARTIFACT_PREVIEW_MAX_CHARS = 8000
 FS_LIST_IGNORED_NAMES = {".git", ".github", ".venv", "__pycache__", "node_modules", ".next", "dist", "build"}
-DISPATCH_TRACK_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 IMPORT_ERROR_STATUS = {
     "project_root_not_absolute": 400,
@@ -269,1012 +183,8 @@ class ProjectApiError(ValueError):
         self.recovery = recovery or []
 
 
-def append_action(
-    workspace: Path,
-    *,
-    run_id: str,
-    actor: str,
-    action: str,
-    project_key: str = "",
-    gate: str = "",
-    decision: str = "",
-    before_node: str = "",
-    after_node: str = "",
-    artifact: str = "",
-    artifact_path: str = "",
-    artifact_version: str = "",
-    debate_ref: str = "",
-    note: str = "",
-    decision_origin: str = "",
-    actor_ref: str = "",
-    review_mode: str = "",
-    review_session_id: str = "",
-    client_context: dict[str, object] | None = None,
-    evidence_snapshot: dict[str, object] | None = None,
-    reviewer_evidence_snapshot: dict[str, object] | None = None,
-    review_items: list[dict[str, object]] | None = None,
-    workflow_operation_id: str = "",
-) -> None:
-    action_log = _action_log_path(workspace, project_key)
-    action_log.parent.mkdir(parents=True, exist_ok=True)
-    event = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "project_key": normalize_project_key(project_key) if project_key else "",
-        "run_id": run_id,
-        "actor": actor,
-        "action": action,
-        "gate": gate,
-        "decision": decision,
-        "before_node": before_node,
-        "after_node": after_node,
-        "artifact": artifact,
-        "artifact_path": artifact_path,
-    }
-    if artifact_version:
-        event["artifact_version"] = artifact_version
-    if workflow_operation_id:
-        event["workflow_operation_id"] = workflow_operation_id
-    if debate_ref:
-        event["debate_ref"] = debate_ref
-    if note:
-        event["note"] = note
-    if decision_origin:
-        event["decision_origin"] = decision_origin
-    if actor_ref:
-        event["actor_ref"] = actor_ref
-    if review_mode:
-        event["review_mode"] = review_mode
-    if review_session_id:
-        event["review_session_id"] = review_session_id
-    if client_context:
-        event["client_context"] = client_context
-    if evidence_snapshot:
-        event["evidence_snapshot"] = evidence_snapshot
-    if reviewer_evidence_snapshot:
-        event["reviewer_evidence_snapshot"] = reviewer_evidence_snapshot
-    if review_items:
-        event["review_items"] = review_items
-    with action_log.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event) + "\n")
-
-
-_DEFAULT_TG_NOTIFY_GATES: frozenset[str] = frozenset(
-    {"prd", "rfc", "security", "staging", "release", "fix_plan", "code_review", "qa"}
-)
-
-def _approval_artifact_for_gate(gate: str) -> str:
-    """Resolve the artifact key for a gate, overlaying the fix-profile gates."""
-    return approval_artifact_for_gate(gate)
-
-
-def _tg_notify_gate_set() -> frozenset[str]:
-    """Return the set of gates that trigger a Telegram notification card."""
-    env = os.getenv("GOODTEAM_TG_NOTIFY_GATES", "")
-    if env.strip():
-        return frozenset(g.strip() for g in env.split(",") if g.strip())
-    return _DEFAULT_TG_NOTIFY_GATES
-
-
-def notify_current_approval_gate(state: AgileDevState | None, workspace: Path = Path(".")) -> dict[str, object]:
-    gate = current_approval_gate(state)
-    if state is None or not gate:
-        return {"status": "skipped", "reason": "no approval gate"}
-    if gate not in _tg_notify_gate_set():
-        return {"status": "skipped", "reason": "gate_not_in_notify_set"}
-    artifact_key = _approval_artifact_for_gate(gate)
-    try:
-        return send_approval_notification(
-            project_key=state.project_key,
-            run_id=state.run_id,
-            gate=gate,
-            artifact_path=state.artifacts.get(artifact_key, ""),
-            summary=f"GoodTeam is waiting for {gate.upper()} approval on {state.project_key}.",
-            workspace=workspace,
-        )
-    except Exception as exc:
-        return {"status": "failed", "error": exc.__class__.__name__}
-
-
-def current_approval_gate(state: AgileDevState | None) -> str:
-    if state is None:
-        return ""
-    match = re.fullmatch(r"await_(.+)_approval", state.next_node)
-    if not match:
-        return ""
-    gate = match.group(1)
-    if str(state.approvals.get(gate, "")) != ApprovalDecision.PENDING:
-        return ""
-    return gate
-
-
-def run_queued_reviewer_jobs_action(
-    workspace: Path, request: Mapping[str, object], *, codex_review_admission: "CodexReviewAdmission | None" = None,
-) -> tuple[int, dict[str, object]]:
-    from goodteam_os.skills.codex_runtime import review_worker_kwargs
-
-    runtime_kwargs = review_worker_kwargs(codex_review_admission)
-    project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
-    if not project_key:
-        return 400, {"error": "project_key is required"}
-    try:
-        with workflow_guard(workspace, project_key):
-            return _run_queued_reviewer_jobs_for_current_run(workspace, request, project_key, runtime_kwargs)
-    except WorkflowBusyError as exc:
-        return 409, {"error": str(exc), "code": "workflow_busy"}
-
-
-def _run_queued_reviewer_jobs_for_current_run(
-    workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
-) -> tuple[int, dict[str, object]]:
-    # The caller owns the guard through execution. Recover without reacquiring it.
-    state = interrupt_transition(workspace, project_key)
-    if state is None:
-        return 404, {"error": f"Unknown project or no active run: {project_key}"}
-
-    requested_run_id = str(request.get("run_id", "") or "").strip()
-    if requested_run_id and requested_run_id != state.run_id:
-        return 409, {"error": "run_id does not match the active project run"}
-
-    current_gate = current_approval_gate(state)
-    recovery_review = not current_gate and request.get("artifact_key") == "workflow_recovery"
-    if recovery_review:
-        from goodteam_os.workflow_recovery import candidate
-
-        try:
-            candidate(workspace, state)
-        except ValueError as exc:
-            return 409, {"error": str(exc)}
-        current_gate = "release"
-    requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
-    if not current_gate or requested_gate != current_gate:
-        return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
-
-    artifact_key = "workflow_recovery" if recovery_review else _approval_artifact_for_gate(current_gate)
-    requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
-    if requested_artifact_key and requested_artifact_key != artifact_key:
-        return 409, {"error": "artifact_key does not match the current approval gate"}
-    artifact_path = str(state.artifacts.get(artifact_key, "") or "")
-    profile_id = str(request.get("profile_id", "") or "").strip()
-    current_artifact_version = artifact_version_for_path(artifact_path)
-    artifact_version = str(request.get("artifact_version", "") or "").strip() or current_artifact_version
-    if artifact_version != current_artifact_version:
-        return 409, {"error": "artifact_version does not match the current approval artifact"}
-    requested_job_id = str(request.get("job_id", "") or "").strip()
-    target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
-    profile_order = _reviewer_profile_order_for_gate(target, current_gate)
-
-    aggregate = {
-        "selected_count": 0,
-        "ran_count": 0,
-        "skipped_count": 0,
-        "results": [],
-        "errors": [],
-    }
-    roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-    for root in roots:
-        store = WorkerJobStore(root, **runtime_kwargs)
-        jobs = store.list_jobs()
-        from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
-
-        admission = runtime_kwargs.get("codex_review_admission")
-        if isinstance(admission, TrustedCodexReviewAdmission) and not state.task_skill_context and not requested_job_id:
-            # Default workflows have no Skill lock. At the explicit guarded Run
-            # action, produce a separate task-bound review using the actual Team
-            # Worker/profile and artifact, leaving other workflow roles intact.
-            from goodteam_os.graph import worker_context
-            from goodteam_os.reviewer_dispatch import dispatch_prepared_reviewer_jobs, reviewer_job_specs_for_gate, reviewer_phase_for_approval
-            from goodteam_os.skills.models import SkillError
-            from goodteam_os.workers import _codex_model_name
-
-            if reviewer_phase_for_approval(current_gate) != "implementation":
-                return 409, {"error": "trusted_codex_task_mismatch", "message": "Native self-use is limited to Code Review."}
-            try:
-                specs = reviewer_job_specs_for_gate(state=state, target=target, approval=current_gate,
-                    artifact_key=artifact_key, artifact_path=artifact_path,
-                    context=worker_context(state, recipient_role="code_review", workspace=workspace))
-                if len(specs) == 1 and specs[0].get("adapter") == "codex" and specs[0].get("model"):
-                    # Skill publication preserves the request verbatim. Validate
-                    # and publish the same canonical model, not a prefix alias.
-                    specs[0]["model"] = _codex_model_name(str(specs[0]["model"]))
-                if (len(specs) != 1 or specs[0].get("adapter") != "codex" or not specs[0].get("model")
-                        or specs[0]["model"] != admission.policy["model"]):
-                    return 409, {"error": "trusted_codex_reviewer_selection",
-                                 "message": "Choose one Codex Reviewer profile with the privately authorized model."}
-                review_context = admission.capture_workflow_review(store, workspace=workspace, state=state)
-                jobs = dispatch_prepared_reviewer_jobs(store=store, state=state, specs=specs,
-                                                       code_review_context=review_context)
-            except (SkillError, OSError) as exc:
-                return 409, {"error": exc.code if isinstance(exc, SkillError) else "review_start_unavailable",
-                             "message": "The current task could not start its authorized native review."}
-        result = run_queued_reviewer_jobs_for_gate(
-            store=store,
-            jobs=[job for job in jobs if not requested_job_id or job.get("id") == requested_job_id],
-            run_id=state.run_id,
-            approval=current_gate,
-            artifact_key=artifact_key,
-            artifact_path=artifact_path,
-            artifact_version=artifact_version,
-            profile_id=profile_id,
-            profile_order=profile_order,
-        )
-        aggregate["selected_count"] = int(aggregate["selected_count"]) + int(result.get("selected_count", 0) or 0)
-        aggregate["ran_count"] = int(aggregate["ran_count"]) + int(result.get("ran_count", 0) or 0)
-        aggregate["skipped_count"] = int(aggregate["skipped_count"]) + int(result.get("skipped_count", 0) or 0)
-        aggregate["results"] = [*list(aggregate["results"]), *list(result.get("results", []))]
-        aggregate["errors"] = [*list(aggregate["errors"]), *list(result.get("errors", []))]
-
-    return 200, {
-        **aggregate,
-        "project_key": project_key,
-        "run_id": state.run_id,
-        "approval": current_gate,
-        "artifact_key": artifact_key,
-        "artifact_path": artifact_path,
-        "artifact_version": artifact_version,
-        "advisory_only": True,
-        "approval_unchanged": True,
-        "operator_message": "Reviewer evidence remains advisory. Human operator decides.",
-    }
-
-
-def retry_failed_reviewer_jobs_action(
-    workspace: Path, request: Mapping[str, object], *, codex_review_admission: "CodexReviewAdmission | None" = None,
-) -> tuple[int, dict[str, object]]:
-    from goodteam_os.skills.codex_runtime import review_worker_kwargs
-
-    runtime_kwargs = review_worker_kwargs(codex_review_admission)
-    project_key = normalize_project_key(str(request.get("project_key") or request.get("project") or ""))
-    if not project_key:
-        return 400, {"error": "project_key is required"}
-    try:
-        with workflow_guard(workspace, project_key):
-            return _retry_failed_reviewer_jobs_for_current_run(workspace, request, project_key, runtime_kwargs)
-    except WorkflowBusyError as exc:
-        return 409, {"error": str(exc), "code": "workflow_busy"}
-
-
-def _retry_failed_reviewer_jobs_for_current_run(
-    workspace: Path, request: Mapping[str, object], project_key: str, runtime_kwargs: dict[str, object],
-) -> tuple[int, dict[str, object]]:
-    # The caller owns the guard through retry creation. No nested dashboard recovery.
-    state = interrupt_transition(workspace, project_key)
-    if state is None:
-        return 404, {"error": f"Unknown project or no active run: {project_key}"}
-
-    requested_run_id = str(request.get("run_id", "") or "").strip()
-    if requested_run_id and requested_run_id != state.run_id:
-        return 409, {"error": "run_id does not match the active project run"}
-
-    current_gate = current_approval_gate(state)
-    recovery_review = not current_gate and request.get("artifact_key") == "workflow_recovery"
-    if recovery_review:
-        from goodteam_os.workflow_recovery import candidate
-
-        try:
-            candidate(workspace, state)
-        except ValueError as exc:
-            return 409, {"error": str(exc)}
-        current_gate = "release"
-    requested_gate = str(request.get("approval") or request.get("gate") or current_gate).strip()
-    if not current_gate or requested_gate != current_gate:
-        return 409, {"error": f"Approval gate is not currently actionable: {requested_gate}"}
-
-    artifact_key = "workflow_recovery" if recovery_review else _approval_artifact_for_gate(current_gate)
-    requested_artifact_key = str(request.get("artifact_key", "") or "").strip()
-    if requested_artifact_key and requested_artifact_key != artifact_key:
-        return 409, {"error": "artifact_key does not match the current approval gate"}
-    artifact_path = str(state.artifacts.get(artifact_key, "") or "")
-    current_artifact_version = artifact_version_for_path(artifact_path)
-    requested_artifact_version = str(request.get("artifact_version", "") or "").strip()
-    if requested_artifact_version and requested_artifact_version != current_artifact_version:
-        return 409, {"error": "artifact_version does not match the current approval artifact"}
-
-    profile_id = str(request.get("profile_id", "") or "").strip()
-    target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
-    profile_order = _reviewer_profile_order_for_gate(target, current_gate)
-    aggregate = {
-        "selected_count": 0,
-        "retried_count": 0,
-        "skipped_count": 0,
-        "results": [],
-        "errors": [],
-    }
-    roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-    for root in roots:
-        store = WorkerJobStore(root, **runtime_kwargs)
-        result = retry_failed_reviewer_jobs_for_gate(
-            store=store,
-            jobs=store.list_jobs(),
-            run_id=state.run_id,
-            approval=current_gate,
-            artifact_key=artifact_key,
-            artifact_path=artifact_path,
-            artifact_version=current_artifact_version,
-            profile_id=profile_id,
-            profile_order=profile_order,
-        )
-        aggregate["selected_count"] = int(aggregate["selected_count"]) + int(result.get("selected_count", 0) or 0)
-        aggregate["retried_count"] = int(aggregate["retried_count"]) + int(result.get("retried_count", 0) or 0)
-        aggregate["skipped_count"] = int(aggregate["skipped_count"]) + int(result.get("skipped_count", 0) or 0)
-        aggregate["results"] = [*list(aggregate["results"]), *list(result.get("results", []))]
-        aggregate["errors"] = [*list(aggregate["errors"]), *list(result.get("errors", []))]
-
-    return 200, {
-        **aggregate,
-        "project_key": project_key,
-        "run_id": state.run_id,
-        "approval": current_gate,
-        "artifact_key": artifact_key,
-        "artifact_path": artifact_path,
-        "artifact_version": current_artifact_version,
-        "advisory_only": True,
-        "approval_unchanged": True,
-        "operator_message": "Retry queued reviewer-dispatch jobs only. Approval remains human-operated.",
-    }
-
-
-def _reviewer_profile_order_for_gate(target: Mapping[str, object], gate: str) -> list[str]:
-    phase = reviewer_phase_for_approval(gate)
-    if phase is None:
-        return []
-    try:
-        configured = normalize_reviewer_profile_config(target)
-    except ValueError:
-        return []
-    return list(configured.get(phase, ()))
-
-
-def _mask_advisory_text(text: object) -> str:
-    try:
-        from goodteam_os.telegram import mask_sensitive_data
-
-        return mask_sensitive_data(str(text))
-    except Exception:
-        return str(text)
-
-
-def _project_runtime_roots_for_state(*, state: AgileDevState | object | None, workspace: Path, project_key: str) -> list[Path]:
-    project_roots: list[Path | None] = []
-    source_ref = str(getattr(state, "source_ref", "") or "") if state is not None else ""
-    if source_ref and source_ref != "manual":
-        source_path = Path(source_ref)
-        if source_path.is_file():
-            try:
-                target = load_project_target(source_path)
-                repos = target.get("repos", {})
-                if isinstance(repos, dict) and repos:
-                    project_roots.append(resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()}))
-                else:
-                    project_roots.append(source_path.parent)
-            except Exception:
-                project_roots.append(source_path.parent)
-    try:
-        config_path = _project_config_for_key(workspace, project_key)
-        target = load_project_target(config_path)
-        repos = target.get("repos", {})
-        if isinstance(repos, dict) and repos:
-            project_roots.append(resolve_project_runtime_root({str(key): Path(str(value)) for key, value in repos.items()}))
-        else:
-            project_roots.append(config_path.parent)
-    except Exception:
-        project_roots.append(workspace)
-
-    roots: list[Path] = []
-    seen_roots: set[Path] = set()
-    for root in project_roots:
-        if root is None:
-            continue
-        try:
-            resolved = root.resolve()
-        except Exception:
-            resolved = root
-        if resolved in seen_roots:
-            continue
-        seen_roots.add(resolved)
-        roots.append(resolved)
-    return roots
-
-
 class ProjectConfigNotFoundError(ValueError):
     """No local project config exists; distinct from a broken configured project."""
-
-
-def _reviewer_target_for_state(*, workspace: Path, project_key: str) -> dict[str, object]:
-    try:
-        return dict(load_project_target(_project_config_for_key(workspace, project_key)))
-    except ProjectConfigNotFoundError:
-        return {}
-    except Exception:
-        return {"_reviewer_configuration_unavailable": True}
-
-
-def _review_evidence_policy_config(target: Mapping[str, object]) -> object:
-    return target.get("review_evidence_policy", {})
-
-
-def _reviewer_statuses_for_state(
-    *,
-    state: AgileDevState | object | None,
-    workspace: Path,
-    project_key: str,
-) -> list[dict[str, object]]:
-    run_id = str(getattr(state, "run_id", "") or "") if state is not None else ""
-    if not run_id:
-        return []
-    statuses: list[dict[str, object]] = []
-    try:
-        roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-        for root in roots:
-            for job in WorkerJobStore(root).list_jobs():
-                if str(job.get("run_id", "")) == run_id:
-                    statuses.append(dict(job))
-    except Exception:
-        return []
-    return statuses
-
-
-def _safe_reviewer_evidence_snapshot_for_decision(
-    *,
-    state: AgileDevState,
-    workspace: Path,
-    project_key: str,
-    approval: str,
-) -> dict[str, object]:
-    reviewer_statuses = _reviewer_statuses_for_state(state=state, workspace=workspace, project_key=project_key)
-    reviewer_target = _reviewer_target_for_state(workspace=workspace, project_key=project_key)
-    try:
-        return build_reviewer_evidence_snapshot(
-            state=state,
-            approval=approval,
-            workspace=workspace,
-            worker_jobs=reviewer_statuses,
-            reviewer_statuses=reviewer_statuses,
-            reviewer_target=reviewer_target,
-        )
-    except Exception as exc:
-        artifact = _approval_artifact_for_gate(approval)
-        artifact_path = state.artifacts.get(artifact, "")
-        return {
-            "schema": "reviewer_evidence_snapshot.v1",
-            "run_id": state.run_id,
-            "approval": approval,
-            "artifact": {
-                "key": artifact,
-                "path": artifact_path,
-                "version": artifact_version_for_path(artifact_path),
-            },
-            "reviewer_dispatch": {
-                "mode": "unknown",
-                "parallel_requested": False,
-                "parallel_enabled": False,
-                "advisory_only": True,
-            },
-            "reviewers": [],
-            "jobs": {
-                "queued_total": 0,
-                "failed_total": 0,
-                "queued_by_profile": {},
-                "failed_by_profile": {},
-            },
-            "aggregate": {
-                "reviewer_count": 0,
-                "completed": 0,
-                "failed": 0,
-                "queued": 0,
-                "missing": 0,
-                "policy_blockers": 0,
-                "policy_warnings": 0,
-            },
-            "operator_message": "Reviewer evidence is advisory. Human operator remains authoritative.",
-            "errors": [str(exc)],
-        }
-
-
-def build_provenance_refs(*, state: AgileDevState | object | None, workspace: Path, project_key: str) -> list[dict[str, str]]:
-    refs: list[dict[str, str]] = []
-    try:
-        roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-        seen_manifests: set[Path] = set()
-        for root in roots:
-            provenance_root = root / ".goodteam" / "provenance"
-            if not provenance_root.is_dir():
-                continue
-            for manifest_path in sorted(provenance_root.glob("pr-*/manifest.json")):
-                try:
-                    resolved_manifest = manifest_path.resolve()
-                except Exception:
-                    resolved_manifest = manifest_path
-                if resolved_manifest in seen_manifests:
-                    continue
-                seen_manifests.add(resolved_manifest)
-                try:
-                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                if not isinstance(manifest, dict):
-                    continue
-                archive_paths = manifest.get("archive_paths", {})
-                archive_paths = archive_paths if isinstance(archive_paths, dict) else {}
-                pr_ref = manifest.get("pr", manifest.get("pr_number", manifest.get("number", "")))
-                if not pr_ref:
-                    pr_ref = manifest_path.parent.name.removeprefix("pr-")
-                refs.append(
-                    {
-                        "pr": _mask_advisory_text(pr_ref),
-                        "branch": _mask_advisory_text(manifest.get("branch", "")),
-                        "ci_status": _mask_advisory_text(manifest.get("ci_status", "")),
-                        "merge_sha": _mask_advisory_text(
-                            manifest.get("merge_sha", manifest.get("squash_merge_sha", manifest.get("squash_sha", "")))
-                        ),
-                        "job_ref": _mask_advisory_text(manifest.get("job_ref", archive_paths.get("job", ""))),
-                        "contract_ref": _mask_advisory_text(
-                            manifest.get("contract_ref", archive_paths.get("contract", archive_paths.get("task_contract", "")))
-                        ),
-                        "pre_review_ref": _mask_advisory_text(
-                            manifest.get(
-                                "pre_review_ref",
-                                manifest.get("pre-review_ref", archive_paths.get("pre_review", archive_paths.get("pre-review", ""))),
-                            )
-                        ),
-                    }
-                )
-    except Exception:
-        return []
-    return refs
-
-
-def build_approval_recommendation(
-    *,
-    state: AgileDevState | object | None,
-    review: dict[str, object] | object,
-    evidence_snapshot: dict[str, object] | object,
-    workspace: Path,
-) -> dict[str, object]:
-    del workspace
-    recommendation: dict[str, object] = {
-        "verdict": "caution",
-        "confidence": "low",
-        "blocking_count": 0,
-        "reasons": [],
-    }
-    try:
-        review_dict = review if isinstance(review, dict) else {}
-        evidence = evidence_snapshot if isinstance(evidence_snapshot, dict) else {}
-        reasons: list[dict[str, str]] = []
-        blockers = getattr(state, "blockers", []) if state is not None else []
-        blockers = blockers if isinstance(blockers, list) else []
-        for blocker in blockers:
-            reasons.append({"kind": "blocker", "text": _mask_advisory_text(blocker)})
-
-        evidence_blocker_count = 0
-        try:
-            evidence_blocker_count = int(evidence.get("blocker_count", 0) or 0)
-        except Exception:
-            evidence_blocker_count = 0
-        approval = str(review_dict.get("approval", "") or "")
-        status_values = [
-            str(evidence.get("ci_status", "unknown") or "unknown"),
-            str(evidence.get("smoke_status", "unknown") or "unknown"),
-            str(evidence.get("qa_status", "unknown") or "unknown"),
-        ]
-        unknown_count = sum(1 for status in status_values if status == "unknown")
-        release_stage = approval in {"staging", "release"}
-        if evidence_blocker_count > 0 and not blockers:
-            reasons.append({"kind": "missing_evidence", "text": "Evidence snapshot reports blockers without blocker details."})
-        if release_stage and unknown_count:
-            reasons.append({"kind": "missing_evidence", "text": "Release-stage gate has unknown CI, smoke, or QA evidence."})
-
-        # Legacy callers may omit both fields. Missing metadata is unknown,
-        # never a successful review inferred from non-empty artifact content.
-        provenance = review_dict.get("reviewer_provenance")
-        provenance = provenance if isinstance(provenance, dict) else {}
-        derived_policy = evaluate_review_evidence_policy(provenance, gate=approval)
-        policy = review_dict.get("review_evidence_policy")
-        inconsistent_policy = "review_evidence_policy" in review_dict and (
-            not isinstance(policy, dict) or policy.get("state") != "ok"
-            or policy.get("gate", approval) != approval
-            or policy.get("evidence", derived_policy["evidence"]) != derived_policy["evidence"]
-        )
-        if derived_policy["state"] != "ok" or inconsistent_policy:
-            reasons.append({"kind": "missing_evidence", "text": "Reviewer evidence is missing, simulated or unsuccessful. Human review is required."})
-        if "multi_reviewer_projection" in review_dict and not projection_supports_approval(
-            review_dict["multi_reviewer_projection"], approval=approval,
-            run_id=str(getattr(state, "run_id", "") or ""),
-            artifact_key=str(review_dict.get("artifact", "") or ""),
-            artifact_path=str(review_dict.get("artifact_path", "") or ""),
-            artifact_version=str(review_dict.get("artifact_version", "") or ""),
-        ):
-            projection = review_dict["multi_reviewer_projection"]
-            configuration_error = projection.get("configuration_error") if isinstance(projection, Mapping) else None
-            text = (configuration_error if isinstance(configuration_error, str) and configuration_error else
-                    "Current reviewer evidence is incomplete or inconsistent across the review team. Human review is required.")
-            reasons.append({"kind": "missing_evidence", "text": _mask_advisory_text(text)})
-
-        messages = {}
-        raw_messages = {}
-        committee = review_dict.get("committee", {})
-        committee = committee if isinstance(committee, dict) else {}
-        message_list = committee.get("messages", [])
-        message_list = message_list if isinstance(message_list, list) else []
-        for index, raw_message in enumerate(message_list):
-            if not isinstance(raw_message, dict):
-                continue
-            message_id = str(raw_message.get("id", "") or "")
-            if not message_id:
-                continue
-            messages[message_id] = index
-            raw_messages[message_id] = raw_message
-        for message_id, raw_message in raw_messages.items():
-            if str(raw_message.get("kind", "")) not in {"ask", "reject"}:
-                continue
-            message_index = messages.get(message_id, -1)
-            has_owner_reply = False
-            for later in message_list[message_index + 1 :]:
-                if not isinstance(later, dict):
-                    continue
-                if str(later.get("in_reply_to", "")) == message_id and str(later.get("kind", "")) in {"assert", "propose"}:
-                    has_owner_reply = True
-                    break
-            if not has_owner_reply:
-                body = str(raw_message.get("body", "") or "Committee objection is still unresolved.")
-                reasons.append({"kind": "open_objection", "text": _mask_advisory_text(body)})
-
-        content = str(review_dict.get("content", "") or "")
-        blocking_count = len(blockers)
-        if blockers:
-            verdict = "request_changes"
-        elif any(reason["kind"] in {"missing_evidence", "open_objection"} for reason in reasons):
-            verdict = "caution"
-        elif content.strip():
-            verdict = "approve"
-            reasons.append({"kind": "clean", "text": "Artifact content is present and no blocking signals were found."})
-        else:
-            verdict = "caution"
-            reasons.append({"kind": "missing_evidence", "text": "No artifact content is available for review."})
-
-        if blockers:
-            confidence = "low"
-        elif len(reasons) > 1 and any(reason["kind"] != "clean" for reason in reasons):
-            confidence = "low"
-        elif any(reason["kind"] in {"missing_evidence", "open_objection"} for reason in reasons):
-            confidence = "medium"
-        elif unknown_count:
-            confidence = "medium"
-        else:
-            confidence = "high"
-
-        recommendation = {
-            "verdict": verdict,
-            "confidence": confidence,
-            "blocking_count": blocking_count,
-            "reasons": reasons,
-        }
-    except Exception:
-        return recommendation
-    return recommendation
-
-
-def _latest_smoke_report(workspace: Path) -> tuple[Path, dict[str, object], dict[str, object]] | None:
-    root = workspace / "state" / "smoke-runs"
-    if not root.is_dir():
-        return None
-    for path in sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        try:
-            wrapper = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(wrapper, dict):
-            continue
-        nested = wrapper.get("report")
-        report = nested if isinstance(nested, dict) and nested else wrapper
-        if isinstance(report.get("runs", []), list):
-            return path, report, wrapper
-    return None
-
-
-def _smoke_command_refs(commands: object) -> list[dict[str, object]]:
-    if not isinstance(commands, list):
-        return []
-    refs: list[dict[str, object]] = []
-    for raw in commands:
-        if not isinstance(raw, dict):
-            continue
-        refs.append(
-            {
-                "name": str(raw.get("name", "") or ""),
-                "command": str(raw.get("command", "") or ""),
-                "cwd": str(raw.get("cwd", "") or ""),
-                "exit_code": raw.get("exit_code", ""),
-            }
-        )
-    return refs
-
-
-def _build_smoke_refs(workspace: Path, project_key: str) -> list[dict[str, object]]:
-    latest = _latest_smoke_report(workspace)
-    if latest is None:
-        return []
-    report_path, report, wrapper = latest
-    report_status = str(report.get("status", wrapper.get("status", "")) or "")
-    refs: list[dict[str, object]] = []
-    for raw in report.get("runs", []):
-        if not isinstance(raw, dict):
-            continue
-        run_project = str(raw.get("project_key", "") or "")
-        if project_key and run_project and run_project != project_key:
-            continue
-        evidence = raw.get("evidence", {})
-        evidence = evidence if isinstance(evidence, dict) else {}
-        smoke_report_path = str(evidence.get("smoke_report", "") or report_path)
-        refs.append(
-            {
-                "report_path": smoke_report_path,
-                "report_status": report_status,
-                "project_key": run_project,
-                "suite": str(raw.get("suite", "") or ""),
-                "cycle": raw.get("cycle", ""),
-                "status": str(raw.get("status", "") or ""),
-                "classification": str(raw.get("classification", "") or ""),
-                "run_id": str(raw.get("run_id", "") or ""),
-                "worker_job_ids": [str(item) for item in raw.get("worker_job_ids", []) if str(item)],
-                "worker_result_paths": [str(item) for item in evidence.get("worker_result_paths", []) if str(item)],
-                "commands": _smoke_command_refs(raw.get("commands", [])),
-            }
-        )
-    return refs
-
-
-def _derive_smoke_status_from_refs(smoke_refs: list[dict[str, object]]) -> str:
-    statuses: list[str] = []
-    for ref in smoke_refs:
-        statuses.append(str(ref.get("status", "") or "").lower())
-        statuses.append(str(ref.get("report_status", "") or "").lower())
-    if any(status == "failed" for status in statuses):
-        return "failed"
-    if any(status == "passed" for status in statuses):
-        return "passed"
-    return "unknown"
-
-
-def _derive_qa_status(state: AgileDevState | object | None) -> str:
-    """Map the run-scoped QA gate decision to a verdict; defaults to "unknown"."""
-    try:
-        approvals = getattr(state, "approvals", {}) if state is not None else {}
-        if not isinstance(approvals, dict):
-            return "unknown"
-        decision = str(approvals.get("qa", "") or "").lower()
-        if decision == "approved":
-            return "passed"
-        if decision == "rejected":
-            return "failed"
-        return "unknown"
-    except Exception:
-        return "unknown"
-
-
-def _map_manifest_ci_status(raw_status: object) -> str:
-    """Map a provenance manifest's ci_status string to passed/failed/unknown."""
-    status = str(raw_status or "").strip().lower()
-    if status in {"success", "passed", "pass", "succeeded"}:
-        return "passed"
-    if status in {"failure", "failed", "fail", "error"}:
-        return "failed"
-    return "unknown"
-
-
-def _derive_ci_status(
-    *,
-    state: AgileDevState | object | None,
-    workspace: Path,
-    project_key: str,
-) -> str:
-    """Read the run's provenance manifest ci_status from disk; defaults to "unknown"."""
-    try:
-        run_id = str(getattr(state, "run_id", "") or "") if state is not None else ""
-        roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-        seen_manifests: set[Path] = set()
-        candidates: list[tuple[float, str]] = []
-        run_match_status: str | None = None
-        for root in roots:
-            provenance_root = root / ".goodteam" / "provenance"
-            if not provenance_root.is_dir():
-                continue
-            for manifest_path in provenance_root.glob("pr-*/manifest.json"):
-                try:
-                    resolved_manifest = manifest_path.resolve()
-                except Exception:
-                    resolved_manifest = manifest_path
-                if resolved_manifest in seen_manifests:
-                    continue
-                seen_manifests.add(resolved_manifest)
-                try:
-                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                if not isinstance(manifest, dict):
-                    continue
-                ci_status = _map_manifest_ci_status(manifest.get("ci_status", ""))
-                manifest_run_id = str(manifest.get("run_id", "") or "")
-                if run_id and manifest_run_id and manifest_run_id == run_id:
-                    if ci_status != "unknown":
-                        return ci_status
-                    run_match_status = run_match_status or ci_status
-                try:
-                    mtime = manifest_path.stat().st_mtime
-                except Exception:
-                    mtime = 0.0
-                candidates.append((mtime, ci_status))
-        if run_match_status is not None:
-            return run_match_status
-        if not candidates:
-            return "unknown"
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        return candidates[0][1]
-    except Exception:
-        return "unknown"
-
-
-def build_approval_evidence_snapshot(
-    *,
-    state: AgileDevState | object | None,
-    workspace: Path,
-    project_key: str,
-    debate_ref: str = "",
-) -> dict[str, object]:
-    snapshot: dict[str, object] = {
-        "artifact_refs": [],
-        "worker_job_refs": [],
-        "ci_status": "unknown",
-        "smoke_status": "unknown",
-        "qa_status": "unknown",
-        "screenshot_refs": [],
-        "debate_refs": [debate_ref] if debate_ref else [],
-        "blocker_count": 0,
-        "provenance_refs": [],
-        "smoke_refs": [],
-    }
-    if getattr(state, "delivery_items", None):
-        from goodteam_os.delivery_outcomes import _artifact_item
-
-        snapshot["delivery_refs"] = [_artifact_item(workspace, state, key)
-                                     for key in getattr(state, "delivery_items", {})]
-    try:
-        artifacts = getattr(state, "artifacts", {}) if state is not None else {}
-        approvals = getattr(state, "approvals", {}) if state is not None else {}
-        artifact_refs: set[str] = set()
-        if isinstance(artifacts, dict):
-            artifact_refs.update(str(key) for key, value in artifacts.items() if str(key).strip() and str(value).strip())
-        if isinstance(approvals, dict):
-            approval_map = approval_artifact_map()
-            artifact_refs.update(
-                str(approval_map.get(str(gate), str(gate)))
-                for gate in approvals
-                if isinstance(artifacts, dict) and str(approval_map.get(str(gate), str(gate))) in artifacts
-            )
-        snapshot["artifact_refs"] = sorted(artifact_refs)
-    except Exception:
-        snapshot["artifact_refs"] = []
-
-    try:
-        blockers = getattr(state, "blockers", []) if state is not None else []
-        snapshot["blocker_count"] = len(blockers) if isinstance(blockers, list) else 0
-    except Exception:
-        snapshot["blocker_count"] = 0
-
-    try:
-        snapshot["provenance_refs"] = build_provenance_refs(state=state, workspace=workspace, project_key=project_key)
-    except Exception:
-        snapshot["provenance_refs"] = []
-
-    try:
-        snapshot["smoke_refs"] = _build_smoke_refs(workspace, project_key)
-        snapshot["smoke_status"] = _derive_smoke_status_from_refs(list(snapshot["smoke_refs"]))
-    except Exception:
-        snapshot["smoke_refs"] = []
-        snapshot["smoke_status"] = "unknown"
-
-    try:
-        snapshot["qa_status"] = _derive_qa_status(state)
-    except Exception:
-        snapshot["qa_status"] = "unknown"
-
-    try:
-        snapshot["ci_status"] = _derive_ci_status(state=state, workspace=workspace, project_key=project_key)
-    except Exception:
-        snapshot["ci_status"] = "unknown"
-
-    try:
-        run_id = str(getattr(state, "run_id", "") or "")
-        if not run_id:
-            return snapshot
-        project_roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=project_key)
-        worker_refs: set[str] = set()
-        for root in project_roots:
-            for job in WorkerJobStore(root).list_jobs():
-                if str(job.get("run_id", "")) != run_id:
-                    continue
-                job_id = str(job.get("id", "") or job.get("job_id", ""))
-                if job_id:
-                    worker_refs.add(job_id)
-        snapshot["worker_job_refs"] = sorted(worker_refs)
-    except Exception:
-        snapshot["worker_job_refs"] = []
-
-    return snapshot
-
-
-def _action_log_path(workspace: Path, project_key: str = "") -> Path:
-    if project_key:
-        return StateStore(workspace).project_state_dir(project_key) / "action-log.jsonl"
-    return workspace / "state" / "action-log.jsonl"
-
-
-def build_action_title(action: dict[str, str]) -> str:
-    actor = action.get("actor", "").title() or "System"
-    action_type = action.get("action", "")
-    artifact = action.get("artifact", "")
-    gate = action.get("gate", "")
-    decision = action.get("decision", "")
-    if action_type == "workflow_started":
-        return f"{actor} started workflow"
-    if action_type.endswith("_generated") and artifact:
-        return f"{actor} generated {artifact.upper()}"
-    if action_type.endswith("_regenerated") and gate:
-        return f"{actor} regenerated {gate.upper()}"
-    if action_type == "artifact_saved" and artifact:
-        return f"{actor} saved {artifact.upper()} artifact"
-    if action_type == "approval_decided" and gate and decision:
-        verb = {
-            "approved": "approved",
-            "changes_requested": "requested changes on",
-            "rejected": "rejected",
-        }.get(decision, decision.replace("_", " "))
-        return f"{actor} {verb} {gate.upper()}"
-    return f"{actor} {action_type.replace('_', ' ')}".strip()
-
-
-def build_action_items(workspace: Path, project_key: str = "") -> list[dict[str, object]]:
-    action_log = _action_log_path(workspace, project_key)
-    if not action_log.is_file():
-        return []
-    items = []
-    for line in action_log.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        action = {
-            key: value if key in {"client_context", "evidence_snapshot", "review_items"} else str(value)
-            for key, value in raw.items()
-        }
-        before_node = action.get("before_node", "")
-        after_node = action.get("after_node", "")
-        action["title"] = build_action_title(action)
-        action["node_transition"] = f"{before_node} -> {after_node}" if before_node or after_node else ""
-        items.append(action)
-    return list(reversed(items))
-
-
-def build_smoke_run_items(workspace: Path) -> list[dict[str, str]]:
-    root = workspace / "state" / "smoke-runs"
-    if not root.is_dir():
-        return []
-    items: list[dict[str, str]] = []
-    for path in sorted(root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        try:
-            report = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-        nested_report = report.get("report")
-        display_report = dict(nested_report) if isinstance(nested_report, dict) and nested_report else report
-        for run in display_report.get("runs", []):
-            raw = dict(run)
-            raw["report_path"] = str(path)
-            raw["report_status"] = str(display_report.get("status", report.get("status", "")))
-            items.append({key: str(value) for key, value in raw.items()})
-    return items[:12]
 
 
 def _run_readonly_command(command: list[str], workspace: Path, warnings: list[str]) -> subprocess.CompletedProcess[str] | None:
@@ -1468,361 +378,6 @@ def _native_picker_origin_is_trusted(*, origin: str, request_host: str, port: in
     if parsed.netloc.lower() == request_host.lower():
         return True
     return origin_port == 8790 and port != 8790
-
-
-def _dispatch_worktree_path(workspace: Path, name: str) -> Path:
-    return workspace.resolve().parent / f"goodteam-dev-{name}"
-
-
-def _ensure_dispatch_worktree(workspace: Path, *, name: str, branch: str) -> Path:
-    worktree = _dispatch_worktree_path(workspace, name)
-    workspace_root = workspace.resolve()
-    resolved_worktree = worktree.resolve() if worktree.exists() else worktree.absolute().resolve(strict=False)
-    if resolved_worktree == workspace_root or workspace_root in resolved_worktree.parents:
-        raise ValueError("dispatch worktree must be outside the live repo")
-    if not worktree.exists():
-        subprocess.run(
-            ["git", "worktree", "add", str(worktree), "-b", branch, "main"],
-            cwd=workspace,
-            env=provider_environment(),
-            check=True,
-        )
-    _link_dispatch_worktree_venv(workspace, worktree)
-    return worktree
-
-
-def _link_dispatch_worktree_venv(workspace: Path, worktree: Path) -> None:
-    workspace_root = workspace.resolve()
-    worktree_root = worktree.resolve() if worktree.exists() else worktree.absolute().resolve(strict=False)
-    source_bin = workspace_root / ".venv" / "bin"
-    if not source_bin.exists():
-        return
-    venv_dir = worktree_root / ".venv"
-    bin_link = venv_dir / "bin"
-    if venv_dir.exists() or venv_dir.is_symlink():
-        return
-    venv_dir.mkdir(parents=True, exist_ok=True)
-    bin_link.symlink_to(source_bin)
-
-
-def _prepare_dispatch_track_inputs(
-    worktree: Path,
-    *,
-    run_id: str,
-    task: str,
-    constraints: str,
-) -> tuple[Path, Path | None]:
-    input_dir = worktree / ".goodteam" / "dispatch-inputs" / run_id
-    input_dir.mkdir(parents=True, exist_ok=True)
-    task_file = input_dir / "task.md"
-    task_file.write_text(task, encoding="utf-8")
-    constraints_file = None
-    if constraints.strip():
-        constraints_file = input_dir / "constraints.md"
-        constraints_file.write_text(constraints, encoding="utf-8")
-    return task_file, constraints_file
-
-
-def _dispatch_track_status_path(workspace: Path, run_id: str) -> Path:
-    return workspace / "state" / "dispatch-tracks" / f"dispatch-track-{run_id}.json"
-
-
-def _smoke_run_status_path(workspace: Path, run_id: str) -> Path:
-    return workspace / "state" / "smoke-runs" / f"smoke-run-{run_id}.json"
-
-
-def _write_dispatch_track_status(
-    workspace: Path,
-    *,
-    run_id: str,
-    name: str,
-    worktree: Path,
-    status: str,
-    error: str = "",
-    report: dict[str, object] | None = None,
-) -> None:
-    status_path = _dispatch_track_status_path(workspace, run_id)
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "run_id": run_id,
-        "name": name,
-        "worktree": str(worktree),
-        "status": status,
-        "error": error,
-        **({"report": report} if report is not None else {}),
-        "updated_at": datetime.now(UTC).isoformat(),
-    }
-    status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _write_smoke_run_status(
-    workspace: Path,
-    *,
-    run_id: str,
-    suites: list[str],
-    cycles: int,
-    dry_run: bool,
-    worker_mode: str,
-    status: str,
-    report: dict[str, object] | None = None,
-    error: str = "",
-) -> None:
-    status_path = _smoke_run_status_path(workspace, run_id)
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "run_id": run_id,
-        "suites": suites,
-        "cycles": cycles,
-        "dry_run": dry_run,
-        "worker_mode": worker_mode,
-        "status": status,
-        "report": report or {},
-        "error": error,
-        "updated_at": datetime.now(UTC).isoformat(),
-    }
-    status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _start_dispatch_track_background(
-    *,
-    workspace: Path,
-    run_id: str,
-    name: str,
-    worktree: Path,
-    tracks: list[dict[str, object]],
-    verify_commands: dict[str, str],
-    constraints_file: Path | None,
-    response_written: threading.Event | None = None,
-) -> None:
-    projects_dir = workspace / "projects"
-
-    def run_dispatch_track() -> None:
-        if response_written is not None:
-            response_written.wait()
-        _write_dispatch_track_status(
-            workspace,
-            run_id=run_id,
-            name=name,
-            worktree=worktree,
-            status="started",
-        )
-        try:
-            report = dispatch_tracks(
-                project_root=worktree,
-                tracks=tracks,
-                verify_commands=verify_commands,
-                constraints_file=constraints_file,
-                projects_dir=projects_dir,
-                logical_task_id=run_id,
-            )
-        except Exception as exc:
-            _write_dispatch_track_status(
-                workspace,
-                run_id=run_id,
-                name=name,
-                worktree=worktree,
-                status="failed",
-                error=str(exc),
-            )
-            return
-        _write_dispatch_track_status(
-            workspace,
-            run_id=run_id,
-            name=name,
-            worktree=worktree,
-            status="completed" if report.get("all_ok") else "failed",
-            report=report,
-            error="" if report.get("all_ok") else "Dispatch requires attention; inspect the retained report and candidate.",
-        )
-
-    thread = threading.Thread(
-        target=run_dispatch_track,
-        daemon=True,
-    )
-    thread.start()
-
-
-def run_smoke_suite(**kwargs) -> dict[str, object]:
-    from goodteam_os.smoke import run_smoke_suite as _run_smoke_suite
-
-    return _run_smoke_suite(**kwargs)
-
-
-def _start_smoke_run_background(
-    *,
-    workspace: Path,
-    run_id: str,
-    suites: list[str],
-    cycles: int,
-    dry_run: bool,
-    worker_mode: str,
-) -> None:
-    def run_smoke() -> None:
-        _write_smoke_run_status(
-            workspace,
-            run_id=run_id,
-            suites=suites,
-            cycles=cycles,
-            dry_run=dry_run,
-            worker_mode=worker_mode,
-            status="started",
-        )
-        try:
-            report = run_smoke_suite(
-                workspace=workspace,
-                suites=suites,
-                cycles=cycles,
-                autonomy="full",
-                dry_run=dry_run,
-                worker_mode=worker_mode,
-            )
-        except Exception as exc:
-            _write_smoke_run_status(
-                workspace,
-                run_id=run_id,
-                suites=suites,
-                cycles=cycles,
-                dry_run=dry_run,
-                worker_mode=worker_mode,
-                status="failed",
-                error=str(exc),
-            )
-            return
-        status = "completed" if report.get("status") in {"passed", "planned"} else str(report.get("status") or "incomplete")
-        _write_smoke_run_status(
-            workspace,
-            run_id=run_id,
-            suites=suites,
-            cycles=cycles,
-            dry_run=dry_run,
-            worker_mode=worker_mode,
-            status=status,
-            report=report,
-        )
-
-    threading.Thread(target=run_smoke, daemon=True).start()
-
-
-def start_smoke_run(workspace: Path, request: dict[str, object]) -> dict[str, object]:
-    raw_suite = request.get("suite", request.get("suites", "self"))
-    if isinstance(raw_suite, list):
-        suites = [str(value).strip() for value in raw_suite if str(value).strip()]
-    else:
-        suites = [part.strip() for part in str(raw_suite or "self").split(",") if part.strip()]
-    suites = suites or ["self"]
-    invalid_suites = [suite for suite in suites if suite not in {"contentops", "self"}]
-    if invalid_suites:
-        raise ValueError(f"Unknown smoke suite: {', '.join(invalid_suites)}")
-    cycles = int(request.get("cycles", 1) or 1)
-    if cycles < 1 or cycles > 5:
-        raise ValueError("cycles must be between 1 and 5")
-    worker_mode = str(request.get("worker_mode", "fake") or "fake").strip()
-    if worker_mode not in {"fake", "noop", "codex"}:
-        raise ValueError("worker_mode must be one of: fake, noop, codex")
-    # The web control plane starts in dry-run mode by default. Real smoke can be
-    # enabled explicitly once the operator wants the workflow-mutating path.
-    dry_run = bool(request.get("dry_run", True))
-    run_id = f"smoke-{uuid4()}"
-    _start_smoke_run_background(
-        workspace=workspace,
-        run_id=run_id,
-        suites=suites,
-        cycles=cycles,
-        dry_run=dry_run,
-        worker_mode=worker_mode,
-    )
-    return {
-        "run_id": run_id,
-        "suites": suites,
-        "cycles": cycles,
-        "dry_run": dry_run,
-        "worker_mode": worker_mode,
-        "status": "started",
-    }
-
-
-def start_dispatch_track(
-    workspace: Path,
-    request: dict[str, object],
-    *,
-    response_written: threading.Event | None = None,
-) -> dict[str, object]:
-    from goodteam_os.skills.models import SkillError
-    from goodteam_os.skills.worker_requests import has_skill_fields, subject_for_role
-
-    if has_skill_fields(request):
-        raise SkillError("skill_dispatch_track_not_connected", "Worktree dispatch does not accept Skill task references; no fallback was started.")
-    selected_key = str(request.get("project_key", "") or "")
-    if selected_key:
-        from goodteam_os.skills.task_start import workflow_job_fields
-        from goodteam_os.team_control_plane import TeamControlPlaneStore
-
-        existing = StateStore(workspace).read_project_current(selected_key)
-        if existing is not None:
-            workflow_job_fields(existing, role=str(request.get("role", "")), command_key="worktree-dispatch-reference-check")
-            if existing.task_skill_context:
-                raise SkillError("skill_dispatch_track_not_connected", "A method-bound task cannot enter the legacy worktree dispatcher.")
-        # This helper creates a NEW dispatch, not a retry of the existing run.
-        # An old legacy run must not hide the selected Role's current methods.
-        team = TeamControlPlaneStore(workspace, selected_key).read()
-        if team and team.get("skill_bindings", {}).get(subject_for_role(str(request.get("role", ""))), {}).get("mode") == "custom":
-            raise SkillError("skill_dispatch_track_not_connected", "Custom-method worktree dispatch requires a supported bounded task start.")
-    else:
-        from goodteam_os.service import service_state_dir
-
-        if (Path(service_state_dir()).expanduser().resolve() / "skills" / "task-locks").exists():
-            raise SkillError("project_scope_unknown", "Skill-aware worktree dispatch requires explicit project scope before creating a branch.")
-    name = str(request.get("name", "")).strip()
-    role = str(request.get("role", "")).strip()
-    adapter = str(request.get("adapter", "")).strip()
-    task = str(request.get("task", ""))
-    constraints = str(request.get("constraints", ""))
-    verify = str(request.get("verify", "")).strip()
-    if not DISPATCH_TRACK_NAME_RE.fullmatch(name):
-        raise ValueError("name must be a slug using lowercase letters, numbers, and hyphens")
-    if not role:
-        raise ValueError("role is required")
-    if not adapter:
-        raise ValueError("adapter is required")
-    if not task.strip():
-        raise ValueError("task is required")
-
-    branch = f"feat/{name}"
-    worktree = _dispatch_worktree_path(workspace, name)
-    safety = ensure_dispatch_project_root_is_safe(worktree, projects_dir=workspace / "projects")
-    if not safety.get("safe"):
-        raise ValueError(str(safety.get("reason", "unsafe dispatch target")))
-    worktree = _ensure_dispatch_worktree(workspace, name=name, branch=branch)
-
-    run_id = f"dispatch-{uuid4()}"
-    task_file, constraints_file = _prepare_dispatch_track_inputs(
-        worktree,
-        run_id=run_id,
-        task=task,
-        constraints=constraints,
-    )
-    tracks = [parse_dispatch_track_spec(f"{role}:{adapter}:{task_file}", base_dir=worktree)]
-    verify_commands = {}
-    if verify:
-        verify_commands = dict([parse_dispatch_verify_spec(f"{role}:{verify}")])
-
-    _start_dispatch_track_background(
-        workspace=workspace,
-        run_id=run_id,
-        name=name,
-        worktree=worktree,
-        tracks=tracks,
-        verify_commands=verify_commands,
-        constraints_file=constraints_file,
-        response_written=response_written,
-    )
-    return {
-        "run_id": run_id,
-        "name": name,
-        "branch": branch,
-        "worktree": str(worktree),
-        "status": "started",
-    }
 
 
 def _parse_gh_pull_requests(output: str, warnings: list[str]) -> list[dict[str, object]]:
@@ -2382,10 +937,6 @@ def build_server_action_capabilities(
                 available=True,
                 mode="execute",
             ),
-            "dry_smoke": _server_action_capability(
-                available=True,
-                mode="execute",
-            ),
             "land_pr": _server_action_capability(
                 available=destructive_actions_available,
                 mode=destructive_mode,
@@ -2539,14 +1090,6 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
     }
 
 
-def build_agile_board(state: AgileDevState | None) -> dict[str, object]:
-    ledger = _task_ledger_from_state(state)
-    if ledger is None:
-        return serialize_task_board(build_task_board([]))
-    project_key = str(getattr(state, "project_key", "") or "")
-    return serialize_task_board(build_task_board(LocalTaskStore(ledger.parents[2], project_key=project_key).list_tasks()))
-
-
 def build_team_view_payload(workspace: Path, project_key: str) -> dict[str, object]:
     """Current Team truth for the Team surface: capability view plus ledger metadata."""
     key = normalize_project_key(project_key)
@@ -2625,97 +1168,40 @@ def build_project_work_state(workspace: Path, project_key: str, *, goal_limit: i
 
 
 def _build_project_work_state(workspace: Path, project_key: str, *, goal_limit: int | None = None) -> dict[str, object]:
-    from goodteam_os.delivery_outcomes import build_delivery_summary
-
     project_config = _project_config_for_key(workspace, project_key)
     start_context = build_start_console_context(workspace, project_config=project_config)
-    retry_state = resolve_dashboard_state(workspace, project_key=project_key, include_display_hints=False)
-    state = _dashboard_state_view(retry_state)
     project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
     task_assistant_session = (
         TaskAssistantService(workspace, project_config=project_config).session(project_key, project_root, **({"goal_limit": goal_limit} if goal_limit is not None else {}))
         if project_root is not None
         else None
     )
-    resources = build_resource_items(state)
-    approval_reviews = build_approval_reviews(state, workspace=workspace)
-    action_items = build_action_items(workspace, project_key=project_key)
-    agile_board = build_agile_board(state)
     from goodteam_os.project_iteration import project_iteration_backlog, latest_iteration_choice
     iteration_backlog = project_iteration_backlog(project_root, project_key)
     worker_job_records = WorkerJobStore(project_root).list_jobs() if project_root is not None else []
     worker_jobs = _serialize_worker_job_items(worker_job_records)
-    task_rows = [
-        task
-        for column in dict(agile_board.get("columns", {})).values()
-        for task in (column if isinstance(column, list) else [])
-        if isinstance(task, dict)
-    ]
-    active_run = is_active_run(state)
-    intent_commits = IntentCommitStore(workspace, project_key).list_intents()
     team_payload = None
     try:
         team_payload = build_team_view_payload(workspace, project_key)["team"]
     except (ProjectApiError, ValueError):
         team_payload = None
     team_workspace = build_team_workspace(
-        state=state,
-        workflow_active=active_run,
-        project_root=project_root,
-        project_key=project_key,
-        operator_state_dir=service_state_dir(),
-        tasks=task_rows,
-        worker_jobs=worker_job_records,
-        approval_reviews=approval_reviews,
-        action_items=action_items,
-        intent_commits=intent_commits,
-        task_assistant_session=task_assistant_session,
+        task_assistant_session, project_root=project_root, project_key=project_key, worker_jobs=worker_job_records,
     )
     return {
         "type": "project",
-        "state": asdict(state) if state is not None else None,
-        "resources": resources,
         "start_context": start_context,
         "team": team_payload,
-        "active_run": active_run,
         "task_assistant_session": task_assistant_session,
-        "role_observations": build_role_observations(state),
-        "workflow_steps": build_workflow_steps(state),
-        "approval_reviews": approval_reviews,
-        "action_items": action_items,
-        "smoke_run_items": build_smoke_run_items(workspace),
-        "agile_board": agile_board,
         "iteration_backlog": iteration_backlog,
         "iteration_choice": latest_iteration_choice(task_assistant_session, iteration_backlog),
         "worker_jobs": worker_jobs,
-        # Team projection can migrate configuration; version its final config
-        # against the same persisted state, not the display-only revision hint.
-        "retry_target": workflow_retry_target(workspace, retry_state),
-        "delivery_summary": build_delivery_summary(workspace, state=state, jobs=worker_job_records, worker_root=project_root),
         "team_workspace": team_workspace,
         "project_assistant": build_project_assistant(
             task_assistant_session, team_workspace, project_key=project_key,
-            workflow_active=active_run, jobs=worker_job_records, intent_commits=intent_commits,
+            jobs=worker_job_records,
         ),
     }
-
-
-def _task_ledger_from_state(state: AgileDevState | None) -> Path | None:
-    if state is None:
-        return None
-    path = ""
-    for resource in state.resources.values():
-        if ResourceCapability.BOARD_SOURCE in resource.capabilities and resource.path:
-            path = resource.path
-            break
-    if not path:
-        path = str(state.artifacts.get("task_ledger", "")).strip()
-    if not path:
-        return None
-    ledger = Path(path)
-    if ledger.name != "tasks.json" or not state_documents.exists(ledger):
-        return None
-    return ledger
 
 
 def maybe_send_favicon_response(handler: object, path: str) -> bool:
@@ -3439,302 +1925,6 @@ def _delivery_contract_lines(
     return lines
 
 
-def workflow_steps_for_state(state: AgileDevState | None) -> list[dict[str, str]]:
-    source_type = state.source_type if state is not None else "new_project"
-    return workflow_steps_for_source(source_type)
-
-
-def _dashboard_state_view(state):
-    if state is not None and state.next_node.startswith("revise_") and not state.blockers:
-        return replace(state, blockers=["Changes requested; retry to apply the recorded revision."])
-    return state
-
-
-def resolve_dashboard_state(workspace: Path, project_key: str = "", *, include_display_hints: bool = True) -> AgileDevState | None:
-    store = StateStore(workspace)
-    if project_key:
-        state = store.read_project_current(project_key)
-        if state is not None and state.pending_transition.get("status") in {"recording", "executing"}:
-            return recover_transition(workspace, project_key)
-        return _dashboard_state_view(state) if include_display_hints else state
-    return store.read_current()
-
-
-def build_workflow_graph(workspace: Path, project_key: str = "") -> dict[str, object]:
-    def _map_to_graph_node(node: str) -> str:
-        if node.endswith("_review_gate"):
-            return node.removesuffix("_review_gate")
-        if node.startswith("await_") and node.endswith("_approval"):
-            return node.removeprefix("await_").removesuffix("_approval")
-        return node
-
-    key = ""
-    if project_key.strip():
-        try:
-            key = normalize_project_key(project_key)
-        except ValueError:
-            key = ""
-
-    edge_fields = (
-        ("on_approved_next", "approved"),
-        ("on_changes_requested", "changes_requested"),
-        ("on_rejected", "rejected"),
-    )
-    edges: list[dict[str, str]] = []
-    identifiers = set(WORKFLOW_NODES) | set(GATE_TRANSITIONS)
-    for gate, transition in GATE_TRANSITIONS.items():
-        identifiers.add(gate)
-        identifiers.add(transition.gate)
-        for field, edge_type in edge_fields:
-            target = getattr(transition, field, None)
-            if target:
-                edges.append({"from": transition.gate, "to": target, "type": edge_type})
-                identifiers.add(target)
-    for node in WORKFLOW_NODES.values():
-        for dependency in getattr(node, "depends_on", ()):
-            edges.append({"from": dependency, "to": node.name, "type": "dependency"})
-            identifiers.add(node.name)
-            identifiers.add(dependency)
-        for field, edge_type in (("on_error", "error"), ("on_blocked", "blocked")):
-            target = getattr(node, field, "")
-            if target:
-                edges.append({"from": node.name, "to": target, "type": edge_type})
-                identifiers.add(node.name)
-                identifiers.add(target)
-
-    nodes = []
-    for identifier in sorted(identifiers):
-        workflow_node = WORKFLOW_NODES.get(identifier)
-        if workflow_node is not None:
-            nodes.append(
-                {
-                    "name": workflow_node.name,
-                    "gate": workflow_node.run_guard_gate,
-                    "runner": workflow_node.runner_fn,
-                    "kind": "stage",
-                }
-            )
-        elif identifier in GATE_TRANSITIONS:
-            nodes.append({"name": identifier, "kind": "gate"})
-        elif identifier in {"rejected", "blocked"}:
-            nodes.append({"name": identifier, "kind": "terminal"})
-        elif identifier.startswith("revise_"):
-            nodes.append({"name": identifier, "kind": "revise"})
-        else:
-            nodes.append({"name": identifier, "kind": "role"})
-
-    run = None
-    if key:
-        state = resolve_dashboard_state(workspace, project_key=key)
-        if is_active_run(state):
-            run = {
-                "run_id": state.run_id,
-                "current_node": state.current_node,
-                "next_node": state.next_node,
-                "current_graph_node": _map_to_graph_node(state.current_node),
-                "next_graph_node": _map_to_graph_node(state.next_node),
-                "approvals": {gate: str(decision) for gate, decision in state.approvals.items()},
-            }
-
-    return {
-        "project_key": key,
-        "nodes": nodes,
-        "edges": edges,
-        "execution_plan": _workflow_execution_plan_payload(),
-        "workflow_execution_plan_v2": _workflow_execution_plan_v2_payload(),
-        "run": run,
-    }
-
-
-def _workflow_execution_plan_payload() -> dict[str, object]:
-    try:
-        return workflow_execution_plan(WORKFLOW_NODES, gate_transitions=GATE_TRANSITIONS).to_dict()
-    except ValueError as exc:
-        return {
-            "scheduler": "unavailable",
-            "parallel_level_execution": "deferred",
-            "levels": [],
-            "error": str(exc),
-        }
-
-
-def _workflow_execution_plan_v2_payload() -> dict[str, object]:
-    return workflow_execution_plan_v2(WORKFLOW_NODES, gate_transitions=GATE_TRANSITIONS)
-
-
-def is_active_run(state: AgileDevState | None) -> bool:
-    return state is not None and bool(state.next_node) and state.next_node != "rejected"
-
-
-def _latest_archived_run_summary(workspace: Path, project_key: str) -> dict[str, str]:
-    key = normalize_project_key(project_key)
-    archive_dir = StateStore(workspace).project_state_dir(key) / "archived"
-    if not database_configured() and not archive_dir.is_dir():
-        return {}
-    archived_paths = state_documents.paths(archive_dir, newest_first=True)
-    for path in archived_paths:
-        try:
-            data = state_documents.read_json(path)
-        except (OSError, json.JSONDecodeError):
-            continue
-        return {
-            "run_id": str(data.get("run_id", "") or ""),
-            "idea": str(data.get("idea", "") or ""),
-            "source_type": str(data.get("source_type", "") or ""),
-            "archive_path": str(path),
-        }
-    return {}
-
-
-def _run_projection(
-    state: AgileDevState,
-    *,
-    status: str,
-    updated_at: str,
-    reason: str = "",
-) -> dict[str, object]:
-    return {
-        "run_id": state.run_id,
-        "project_key": state.project_key,
-        "idea": state.idea,
-        "source_type": state.source_type,
-        "status": status,
-        "current_node": state.current_node,
-        "next_node": state.next_node,
-        "updated_at": updated_at,
-        "reason": reason,
-        "task_skill_context": state.task_skill_context,
-    }
-
-
-def build_project_run_history(workspace: Path, project_key: str) -> dict[str, object]:
-    key = normalize_project_key(project_key)
-    store = StateStore(workspace)
-    runs: list[dict[str, object]] = []
-    current = store.read_project_current(key)
-    current_path = store.project_state_dir(key) / "current.json"
-    if current is not None:
-        runs.append(
-            _run_projection(
-                current,
-                status="active" if is_active_run(current) else "complete",
-                updated_at=datetime.fromtimestamp(
-                    state_documents.modified_time(current_path),
-                    tz=UTC,
-                ).isoformat(),
-            )
-        )
-    for path, state in store.list_project_archived(key):
-        reason = path.stem.removeprefix(f"{state.run_id}-")
-        runs.append(
-            _run_projection(
-                state,
-                status="archived",
-                updated_at=datetime.fromtimestamp(state_documents.modified_time(path), tz=UTC).isoformat(),
-                reason=reason,
-            )
-        )
-    return {"project_key": key, "runs": runs}
-
-
-def build_project_run_detail(
-    workspace: Path,
-    project_key: str,
-    run_id: str,
-) -> dict[str, object]:
-    from goodteam_os.delivery_outcomes import build_delivery_summary
-
-    key = normalize_project_key(project_key)
-    store = StateStore(workspace)
-    current = store.read_project_current(key)
-    if current is not None and current.run_id == run_id:
-        current_path = store.project_state_dir(key) / "current.json"
-        status = "active" if is_active_run(current) else "complete"
-        state = current
-        summary = _run_projection(
-            state,
-            status=status,
-            updated_at=datetime.fromtimestamp(state_documents.modified_time(current_path), tz=UTC).isoformat(),
-        )
-    else:
-        archived = next(
-            (
-                (path, candidate)
-                for path, candidate in store.list_project_archived(key)
-                if candidate.run_id == run_id
-            ),
-            None,
-        )
-        if archived is None:
-            raise ProjectApiError(
-                "run_not_found",
-                f"Run not found for project {key}: {run_id}",
-                404,
-                details={"project_key": key, "run_id": run_id},
-                recovery=["return_to_project_work", "choose_another_run"],
-            )
-        path, state = archived
-        summary = _run_projection(
-            state,
-            status="archived",
-            updated_at=datetime.fromtimestamp(state_documents.modified_time(path), tz=UTC).isoformat(),
-            reason=path.stem.removeprefix(f"{state.run_id}-"),
-        )
-    project_config = _project_config_for_key(workspace, key)
-    project_root = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
-    agile_board = build_agile_board(state)
-    task_rows = [
-        task
-        for column in dict(agile_board.get("columns", {})).values()
-        for task in (column if isinstance(column, list) else [])
-        if isinstance(task, dict)
-    ]
-    worker_jobs = WorkerJobStore(project_root).list_jobs() if project_root is not None else []
-    approval_reviews = build_approval_reviews(state, workspace=workspace)
-    run_tasks = [task for task in task_rows if str(task.get("run_id", "")) == state.run_id]
-    if not run_tasks:
-        run_tasks = build_stage_task_snapshot(
-            state,
-            updated_at=str(summary.get("updated_at", "")),
-        )
-    team_workspace = build_team_workspace(
-        state=state,
-        workflow_active=False,
-        project_root=project_root,
-        project_key=key,
-        # Prefer explicitly run-bound rows. Older runs predate that identity,
-        # so their canonical stage rows are reconstructed from the archived
-        # state rather than leaking the current shared board into history.
-        tasks=run_tasks,
-        worker_jobs=worker_jobs,
-        approval_reviews=approval_reviews,
-        action_items=build_action_items(workspace, project_key=key),
-        intent_commits=IntentCommitStore(workspace, key).list_intents(mission_id=state.run_id),
-        read_only=True,
-        historical_reason=str(summary.get("reason", "")),
-    )
-    return {
-        "project_key": key,
-        "run": summary,
-        "state": asdict(state),
-        "resources": build_resource_items(state),
-        "workflow_steps": build_workflow_steps(state),
-        "agile_board": agile_board,
-        "approval_reviews": approval_reviews,
-        "team_workspace": team_workspace,
-        "delivery_summary": build_delivery_summary(
-            workspace, state=state, jobs=worker_jobs, historical_reason=str(summary.get("reason", "")),
-            worker_root=project_root,
-        ),
-    }
-
-
-def _normalize_start_delivery_standards(value: list[str] | str) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [line.strip() for line in str(value).splitlines() if line.strip()]
-
-
 def resolve_runtime_model_config(model_config: Path) -> Path:
     """Resolve the default model catalog independently of the server cwd."""
     candidate = model_config.expanduser()
@@ -3751,60 +1941,26 @@ def resolve_runtime_model_config(model_config: Path) -> Path:
     return repository_default.resolve() if repository_default.is_file() else candidate
 
 
-def _workflow_requires_repository(target, *, source_type, project_config):
-    from goodteam_os.reviewer_profiles import get_reviewer_profile
-    from goodteam_os.staging import staging_backend_enabled
-    from goodteam_os.workflow_workspace import adapter_requires_workflow_workspace
-
-    roles = ("project_intake", "product_requirement", "architect", "ui", "implementation", "qa", "release")
-    return (
-        any(adapter_requires_workflow_workspace(resolve_role_adapter(target, role)) for role in roles)
-        or any(adapter_requires_workflow_workspace(get_reviewer_profile(profile_id).adapter)
-               for profiles in normalize_reviewer_profile_config(target).values() for profile_id in profiles)
-        or staging_backend_enabled(source_type=source_type, project_config=project_config)
-    )
-
-
-def start_workflow(
+def start_planning_batch(
     *, workspace: Path, idea: str, project_key: str, model_config: Path,
     model_profile: str, delivery_mode: str = "", delivery_standards: list[str] | str = "",
     source_type: str = "new_project", project_config: Path | None = None,
     role_model_overrides: list[str] | None = None, load_profile: str = "greenfield",
-    dry_run: bool = False, run_id: str = "", expected_team_revision: int | None = None,
-    task_skill_context: dict[str, object] | None = None,
-    task_write_domains: list[str] | None = None,
-    background: bool = True,
+    run_id: str = "",
 ) -> dict[str, object]:
-    """Compatibility API name; new requests use ordinary task/batch execution.
-
-    A free-form request starts Planner work, not an implicit PRD/adoption/fix
-    state machine. Historical Workflow records remain readable and resumable
-    through their existing controls; this function never creates a new one.
-    """
     if not idea.strip():
         raise ValueError("A project request is required.")
     key = normalize_project_key(project_key)
     request_id = str(run_id).strip() or str(uuid4())
-    if run_id:
-        previous = StateStore(workspace).read_project_current(key)
-        if previous and previous.run_id == run_id:
-            if previous.idea != idea.strip():
-                raise ValueError("The original Workflow request has different input.")
-            return {**asdict(previous), "historical_workflow": True, "execution_started": False}
-    if task_skill_context:
-        raise ValueError("An original Workflow method capture must be recovered through its original run, not a new task.")
-    if dry_run:
-        return {"dry_run": True, "project_key": key, "request_id": request_id, "phase": "planning",
-                "role": "planner", "exact_request": idea.strip(),
-                "execution_started": False, "workflow_started": False}
     config = Path(project_config).expanduser() if project_config is not None else _project_config_for_key(workspace, key)
     target = load_project_target(config)
     root = resolve_project_runtime_root(dict(target.get("repos", {})))
     if root is None:
         raise ValueError("Select this project's actual repository before starting its task.")
-    criteria = _normalize_start_delivery_standards(delivery_standards) if delivery_standards else []
+    values = delivery_standards.splitlines() if isinstance(delivery_standards, str) else delivery_standards
+    criteria = [str(value).strip() for value in values if str(value).strip()]
     metadata = {"source_type": source_type, "delivery_mode": delivery_mode or target.get("delivery_mode", ""),
-                "load_profile": load_profile, "requested_write_domains": task_write_domains or []}
+                "load_profile": load_profile, "requested_write_domains": []}
     runtime = {"model_config": str(resolve_runtime_model_config(model_config)),
                "model_profile": model_profile, "role_model_overrides": role_model_overrides or []}
     from goodteam_os.assistant_queue import queue_project_request
@@ -3815,7 +1971,7 @@ def start_workflow(
         runtime_request=runtime, metadata=metadata)
     result = run_queued_iteration_batch(workspace=workspace, project_key=key, root=root,
         project_config=config, proposal_ids=[proposal["id"]], expected_revisions={proposal["id"]: proposal["revision"]},
-        confirmed=True, background=background, expected_team_revision=expected_team_revision)
+        confirmed=True, background=True)
     return {**result, "project_key": key, "request_id": request_id,
             "task_id": proposal["project_task_id"], "phase": "planning", "dry_run": False}
 
@@ -3850,7 +2006,7 @@ def report_bug(
     heading = f"[BUG][{severity}] {title}".strip() if title else f"[BUG][{severity}]"
     idea = f"{heading}\n\n{description}".strip()
 
-    result = start_workflow(
+    result = start_planning_batch(
         workspace=workspace,
         idea=idea,
         project_key=project_key,
@@ -3866,1174 +2022,6 @@ def report_bug(
     return result
 
 
-@serialized_workflow
-def decide_approval(
-    *,
-    workspace: Path,
-    approval: str,
-    decision: str,
-    project_key: str = "",
-    debate_ref: str = "",
-    note: str = "",
-    decision_origin: str = "web",
-    actor_ref: str = "",
-    review_mode: str = "",
-    review_session_id: str = "",
-    client_context: dict[str, object] | None = None,
-    review_items: list[dict[str, object]] | None = None,
-    expected_run_id: str = "",
-    expected_target_type: str = "",
-    expected_target_id: str = "",
-    expected_artifact_key: str = "",
-    expected_artifact_version: str = "",
-) -> dict[str, object]:
-    try:
-        approval_decision = ApprovalDecision(decision)
-    except ValueError as exc:
-        raise ValueError(f"Unknown approval decision: {decision}") from exc
-
-    if not isinstance(note, str):
-        raise ProjectApiError("invalid_approval_note", "Approval note must be text.", 400)
-
-    if approval_decision in (ApprovalDecision.CHANGES_REQUESTED, ApprovalDecision.REJECTED):
-        if not note.strip():
-            raise ValueError(f"Approval decision reason is required for {approval_decision.value}")
-
-    state_store = StateStore(workspace)
-    state = state_store.read_project_current(project_key) if project_key else state_store.read_current()
-    if state is None:
-        raise ValueError("No active run to approve.")
-    key = normalize_project_key(project_key or state.project_key)
-
-    # Resolve the approved-next target through the run's load profile. Greenfield
-    # keeps the historical module-function call path (so monkeypatch-based tests
-    # that spy on web.approved_next_for_gate stay valid, including its
-    # "Unknown approval gate" raise ordering); other profiles (e.g. fix) resolve
-    # against their own captured gate-transition table.
-    profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
-    if profile.name == "greenfield":
-        approved_next = approved_next_for_gate(approval)
-    else:
-        approved_next = profile.approved_next_for_gate(approval)
-
-    if approval not in state.approvals:
-        raise ValueError(f"Approval gate is not present in current state: {approval}")
-    if state.next_node != f"await_{approval}_approval":
-        if replay_approval(state, approval=approval, decision=decision, expected={
-            "run_id": expected_run_id, "target_type": expected_target_type,
-            "target_id": expected_target_id, "artifact_key": expected_artifact_key,
-            "artifact_version": expected_artifact_version,
-        }):
-            return {**asdict(state), "decision": decision, "replayed": True}
-        raise ValueError(f"Approval gate is not currently actionable: {approval}")
-
-    approval_target = _validate_approval_target(
-        state=state,
-        workspace=workspace,
-        approval=approval,
-        expected_run_id=expected_run_id,
-        expected_target_type=expected_target_type,
-        expected_target_id=expected_target_id,
-        expected_artifact_key=expected_artifact_key,
-        expected_artifact_version=expected_artifact_version,
-    )
-
-    resolved_actor_ref = actor_ref
-    if not resolved_actor_ref and decision_origin == "web":
-        resolved_actor_ref = os.getenv("GOODTEAM_OPERATOR_REF") or "web:local"
-    evidence_snapshot = build_approval_evidence_snapshot(
-        state=state,
-        workspace=workspace,
-        project_key=key,
-        debate_ref=debate_ref,
-    )
-    reviewer_evidence_snapshot = _safe_reviewer_evidence_snapshot_for_decision(
-        state=state,
-        workspace=workspace,
-        project_key=key,
-        approval=approval,
-    )
-    before_node = state.next_node
-    state.approvals[approval] = approval_decision
-    state.current_node = f"{approval}_review_gate"
-    state.next_node = gate_next_node(state, gate=approval, approved_next=approved_next)
-    if approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        state.change_requests[approval] = note if decision_origin == "manager_intent_commit" else note.strip()
-    begin_transition(workspace, state, dict(
-        run_id=state.run_id,
-        actor="human",
-        action="approval_decided",
-        project_key=key,
-        gate=approval,
-        decision=str(approval_decision),
-        before_node=before_node,
-        after_node=state.next_node,
-        artifact=_approval_artifact_for_gate(approval),
-        artifact_path=state.artifacts.get(_approval_artifact_for_gate(approval), ""),
-        artifact_version=str(approval_target["artifact_version"]),
-        debate_ref=debate_ref,
-        note=note if decision_origin == "manager_intent_commit" else note.strip(),
-        decision_origin=decision_origin,
-        actor_ref=resolved_actor_ref,
-        review_mode=review_mode,
-        review_session_id=review_session_id,
-        client_context=client_context,
-        evidence_snapshot=evidence_snapshot,
-        reviewer_evidence_snapshot=reviewer_evidence_snapshot,
-        review_items=review_items,
-    ))
-    if approval == "takeover" and approval_decision == ApprovalDecision.APPROVED:
-        regenerate_before_node = state.next_node
-        state_store.write_project_current(state, key)
-        state_store.write_project_checkpoint(state, key)
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        if state.current_node == "prd_review_gate":
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="system",
-                action="prd_generated",
-                project_key=key,
-                gate="prd",
-                before_node=regenerate_before_node,
-                after_node=state.next_node,
-                artifact="prd",
-                artifact_path=state.artifacts.get("prd", ""),
-            )
-    elif approval_decision == ApprovalDecision.APPROVED:
-        generated_before = set(state.artifacts)
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        if project_config is None and project_key:
-            try:
-                project_config = _project_config_for_key(workspace, project_key)
-            except ValueError:
-                project_config = None
-        state = advance_approved_workflow(state=state, workspace=workspace, project_config=project_config)
-        for artifact in sorted(set(state.artifacts) - generated_before):
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="system",
-                action=f"{artifact}_generated",
-                project_key=key,
-                gate=approval,
-                before_node=before_node,
-                after_node=state.next_node,
-                artifact=artifact,
-                artifact_path=state.artifacts.get(artifact, ""),
-            )
-    elif approval in {"prd", "rfc"} and approval_decision == ApprovalDecision.REJECTED:
-        regenerate_before_node = state.next_node
-        state.approvals[approval] = ApprovalDecision.PENDING
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        if project_config is None and project_key:
-            try:
-                project_config = _project_config_for_key(workspace, project_key)
-            except ValueError:
-                project_config = None
-        if approval == "prd":
-            state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        else:
-            state = regenerate_rfc_review_gate(state=state, workspace=workspace, project_config=project_config)
-        if approval != "prd" or state.current_node == "prd_review_gate":
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="system",
-                action=f"{approval}_regenerated",
-                project_key=key,
-                gate=approval,
-                before_node=regenerate_before_node,
-                after_node=state.next_node,
-                artifact=approval_artifact_map().get(approval, approval),
-                artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
-            )
-    elif approval == "takeover" and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        revision_note = note if decision_origin == "manager_intent_commit" else note.strip()
-        regenerate_before_node = state.next_node
-        state.change_requests[approval] = revision_note
-        state.approvals[approval] = ApprovalDecision.PENDING
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        if project_config is None and project_key:
-            try:
-                project_config = _project_config_for_key(workspace, project_key)
-            except ValueError:
-                project_config = None
-        state = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        append_action(
-            workspace,
-            run_id=state.run_id,
-            actor="system",
-            action="takeover_revised",
-            project_key=key,
-            gate=approval,
-            before_node=regenerate_before_node,
-            after_node=state.next_node,
-            artifact="takeover",
-            artifact_path=state.artifacts.get("takeover", ""),
-            note=revision_note,
-        )
-    elif approval in {"prd", "rfc"} and approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        revision_note = note if decision_origin == "manager_intent_commit" else note.strip()
-        regenerate_before_node = state.next_node
-        state.change_requests[approval] = revision_note
-        state.approvals[approval] = ApprovalDecision.PENDING
-        project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-        if project_config is None and project_key:
-            try:
-                project_config = _project_config_for_key(workspace, project_key)
-            except ValueError:
-                project_config = None
-        revision_role = "product_requirement" if approval == "prd" else "architect"
-        uses_worker_revision = should_generate_artifact_with_worker(project_config, revision_role)
-        if approval == "prd":
-            state = run_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-        else:
-            state = regenerate_rfc_review_gate(state=state, workspace=workspace, project_config=project_config)
-        if not uses_worker_revision:
-            state.change_requests.pop(approval, None)
-        if approval != "prd" or state.current_node == "prd_review_gate":
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="system",
-                action=f"{approval}_revised",
-                project_key=key,
-                gate=approval,
-                before_node=regenerate_before_node,
-                after_node=state.next_node,
-                artifact=approval_artifact_map().get(approval, approval),
-                artifact_path=state.artifacts.get(approval_artifact_map().get(approval, approval), ""),
-                note=revision_note,
-            )
-    elif approval_decision == ApprovalDecision.CHANGES_REQUESTED:
-        from goodteam_os.workflow_revisions import revise_workflow_gate
-
-        state = revise_workflow_gate(state, workspace, approval=approval)
-    finish_transition(state)
-    project_config_for_sync = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-    if project_config_for_sync is None or not project_config_for_sync.is_file():
-        try:
-            project_config_for_sync = _project_config_for_key(workspace, key)
-        except ValueError:
-            project_config_for_sync = None
-    sync_project_stage_tasks(state, project_config_for_sync)
-    persist_transition(workspace, state)
-    notify_current_approval_gate(state, workspace=workspace)
-
-    try:
-        from goodteam_os.telegram import update_active_tg_review_on_web_decision
-        update_active_tg_review_on_web_decision(
-            workspace=workspace,
-            project_key=key,
-            gate=approval,
-            decision=decision,
-        )
-    except Exception:
-        pass
-
-    payload = asdict(state)
-    payload["decision"] = str(approval_decision)
-    return payload
-
-
-def _validate_approval_target(
-    *,
-    state: AgileDevState,
-    workspace: Path,
-    approval: str,
-    expected_run_id: str = "",
-    expected_target_type: str = "",
-    expected_target_id: str = "",
-    expected_artifact_key: str = "",
-    expected_artifact_version: str = "",
-) -> dict[str, str]:
-    """Resolve the current actionable review and reject stale UI bindings."""
-
-    actionable = next(
-        (
-            review
-            for review in build_approval_reviews(state, workspace=workspace)
-            if str(review.get("approval", "")) == approval and bool(review.get("is_actionable"))
-        ),
-        None,
-    )
-    current = {
-        "run_id": str(state.run_id),
-        "target_type": "review",
-        "target_id": approval,
-        "artifact_key": str(actionable.get("artifact", "")) if actionable else "",
-        "artifact_version": str(actionable.get("artifact_version", "")) if actionable else "",
-    }
-    expected = {
-        "run_id": expected_run_id.strip(),
-        "target_type": expected_target_type.strip(),
-        "target_id": expected_target_id.strip(),
-        "artifact_key": expected_artifact_key.strip(),
-        "artifact_version": expected_artifact_version.strip(),
-    }
-    mismatches = [
-        field
-        for field, expected_value in expected.items()
-        if expected_value and expected_value != current[field]
-    ]
-    if actionable is None:
-        mismatches.append("actionable_review")
-    if mismatches:
-        raise ProjectApiError(
-            "stale_approval",
-            "This approval changed after the brief was loaded. Refresh the brief and review the current version before approving.",
-            409,
-            details={
-                "mismatches": list(dict.fromkeys(mismatches)),
-                "expected": expected,
-                "current": current,
-            },
-            recovery=["refresh_approval_brief"],
-        )
-    return current
-
-
-def start_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    approval: str,
-    expected_run_id: str,
-    expected_target_type: str,
-    expected_target_id: str,
-    expected_artifact_key: str,
-    expected_artifact_version: str,
-    expected_task_id: str = "",
-    expected_head_sha: str = "",
-    initial_text: str = "",
-) -> dict[str, object]:
-    """Open a durable Manager discussion without deciding the approval."""
-
-    key = normalize_project_key(project_key)
-    state = StateStore(workspace).read_project_current(key)
-    if state is None:
-        raise ProjectApiError(
-            "intent_mission_not_found",
-            "This Task Assistant mission is no longer active.",
-            409,
-            recovery=["refresh_approval_brief"],
-        )
-    target = _validate_intent_binding(
-        state=state,
-        workspace=workspace,
-        approval=approval,
-        expected_run_id=expected_run_id,
-        expected_target_type=expected_target_type,
-        expected_target_id=expected_target_id,
-        expected_artifact_key=expected_artifact_key,
-        expected_artifact_version=expected_artifact_version,
-        expected_task_id=expected_task_id,
-        expected_head_sha=expected_head_sha,
-    )
-    try:
-        intent, created = IntentCommitStore(workspace, key).open_request_changes(
-            mission={
-                "id": state.run_id,
-                "run_id": state.run_id,
-                "execution_id": "",
-                "source": "workflow",
-            },
-            target=target,
-            initial_text=initial_text,
-        )
-    except IntentCommitError as exc:
-        raise ProjectApiError("intent_commit_invalid", str(exc), 409) from exc
-    return {"intent_commit": intent, "created": created}
-
-
-def discuss_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    intent_id: str,
-    text: str,
-) -> dict[str, object]:
-    store, intent = _load_current_request_changes_intent(
-        workspace=workspace,
-        project_key=project_key,
-        intent_id=intent_id,
-    )
-    _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
-    state = StateStore(workspace).read_project_current(normalize_project_key(project_key))
-    project_config = (
-        Path(state.source_ref)
-        if state is not None and state.source_ref and state.source_ref != "manual"
-        else None
-    )
-    interpretation = None
-    if (project_config is not None and project_config.is_file()
-            and resolve_role_adapter(load_project_target(project_config), "orchestrator") not in BUILTIN_WORKER_MODES):
-        target = dict(intent.get("target") or {})
-        try:
-            interpretation = run_manager_interpretation(
-                project_config=project_config,
-                run_id=str(dict(intent.get("mission") or {}).get("run_id", "")),
-                project_key=normalize_project_key(project_key),
-                intent_id=intent_id,
-                logical_intent_id=next((str(event["id"]) for event in reversed(intent.get("events", []))
-                                        if event.get("event") in {"change_discussion_started", "change_discussion_continued"}), intent_id),
-                change_request=text,
-                context=(
-                    f"Approval: {target.get('approval', '')}\n"
-                    f"Artifact: {target.get('artifact_key', '')}\n"
-                    f"Target: {target.get('target_type', '')}:{target.get('target_id', '')}"
-                ),
-            )
-        except ManagerExecutionError as exc:
-            raise ProjectApiError("manager_execution_failed", str(exc), 502) from exc
-    try:
-        updated = store.discuss(intent_id, text, interpretation=interpretation)
-    except IntentCommitError as exc:
-        raise ProjectApiError("intent_discussion_invalid", str(exc), 400) from exc
-    return {"intent_commit": updated}
-
-
-def keep_discussing_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    intent_id: str,
-) -> dict[str, object]:
-    store, intent = _load_current_request_changes_intent(
-        workspace=workspace,
-        project_key=project_key,
-        intent_id=intent_id,
-    )
-    _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
-    try:
-        updated = store.keep_discussing(intent_id)
-    except IntentCommitError as exc:
-        raise ProjectApiError("intent_transition_invalid", str(exc), 409) from exc
-    return {"intent_commit": updated}
-
-
-def confirm_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    intent_id: str,
-) -> dict[str, object]:
-    """Commit the confirmed interpretation through the existing authority."""
-
-    store, _ = _load_current_request_changes_intent(
-        workspace=workspace,
-        project_key=project_key,
-        intent_id=intent_id,
-    )
-    key = normalize_project_key(project_key)
-    # Holding the shared per-path lock across authority mutation prevents a
-    # concurrent request from mistaking live work for a restart. After a real
-    # process restart no holder remains, so the persisted state can reconcile.
-    with store.confirmation_guard():
-        intent = store.get(intent_id)
-        if intent is None:
-            raise ProjectApiError(
-                "intent_commit_not_found",
-                "This change discussion no longer exists.",
-                404,
-            )
-        if intent.get("status") == "committed":
-            return _committed_intent_response(intent, idempotent=True)
-
-        if intent.get("status") in {"committing", "ambiguous"}:
-            evidence_state, decision_action, evidence_details = _intent_decision_evidence(
-                workspace,
-                key,
-                intent,
-            )
-            if evidence_state == "matched" and decision_action is not None:
-                return _complete_intent_from_decision_action(
-                    store,
-                    intent_id,
-                    decision_action,
-                    idempotent=True,
-                )
-            if evidence_state == "ambiguous":
-                store.mark_ambiguous(intent_id, reason="decision_evidence_mismatch")
-                raise _ambiguous_intent_commit_error(evidence_details)
-            if intent.get("status") == "ambiguous":
-                raise _ambiguous_intent_commit_error(
-                    {"reason": str(intent.get("ambiguity_reason", "authority_state_unresolved"))}
-                )
-            try:
-                _assert_stored_intent_target(
-                    workspace=workspace,
-                    store=store,
-                    intent=intent,
-                )
-            except ProjectApiError as exc:
-                store.mark_ambiguous(intent_id, reason="authority_state_unresolved")
-                raise _ambiguous_intent_commit_error(
-                    {
-                        "reason": "target_changed_without_decision_evidence",
-                        "target_error": exc.code,
-                    }
-                ) from exc
-            # No decision evidence exists and the exact authority target is
-            # still pending. The previous process stopped before mutation, so
-            # it is safe to restore the confirmed draft and try once now.
-            intent = store.recover_unrecorded_confirmation(intent_id)
-
-        _validate_stored_intent_target(workspace=workspace, store=store, intent=intent)
-        try:
-            confirming, already_committed = store.begin_confirm(intent_id)
-        except IntentCommitError as exc:
-            raise ProjectApiError("intent_confirmation_invalid", str(exc), 409) from exc
-        if already_committed:
-            return _committed_intent_response(confirming, idempotent=True)
-
-        interpretation = dict(confirming.get("confirmed_interpretation") or {})
-        instruction = str(confirming.get("draft_text", "") or "")
-        target = dict(confirming.get("target") or {})
-        manager_execution = dict(interpretation.get("manager_execution") or {})
-        try:
-            decision_result = decide_approval(
-                workspace=workspace,
-                project_key=key,
-                approval=str(target.get("approval", "")),
-                decision="changes_requested",
-                note=instruction,
-                decision_origin="manager_intent_commit",
-                review_mode="intent_commit",
-                review_session_id=intent_id,
-                client_context={
-                    "intent_commit_id": intent_id,
-                    "interpretation_schema_version": str(
-                        interpretation.get("schema_version", "")
-                    ),
-                    **(
-                        {
-                            "manager_job_id": str(manager_execution.get("job_id", "")),
-                            "manager_adapter": str(manager_execution.get("adapter", "")),
-                            "manager_model": str(manager_execution.get("model", "")),
-                            "manager_reasoning_depth": str(
-                                manager_execution.get("reasoning_depth", "")
-                            ),
-                        }
-                        if manager_execution
-                        else {}
-                    ),
-                },
-                expected_run_id=str(
-                    target.get("run_id", "")
-                    or dict(confirming.get("mission") or {}).get("run_id", "")
-                ),
-                expected_target_type=str(target.get("target_type", "")),
-                expected_target_id=str(target.get("target_id", "")),
-                expected_artifact_key=str(target.get("artifact_key", "")),
-                expected_artifact_version=str(target.get("artifact_version", "")),
-            )
-        except (ProjectApiError, ValueError) as exc:
-            recovered = _reconcile_intent_decision_after_error(
-                workspace=workspace,
-                project_key=key,
-                store=store,
-                intent=confirming,
-            )
-            if recovered is not None:
-                return recovered
-            is_stale = isinstance(exc, ProjectApiError) and exc.code == "stale_approval"
-            store.fail_confirm(intent_id, stale=is_stale or isinstance(exc, ValueError))
-            if is_stale:
-                raise _stale_intent_error(exc.details) from exc
-            raise
-        except Exception:
-            recovered = _reconcile_intent_decision_after_error(
-                workspace=workspace,
-                project_key=key,
-                store=store,
-                intent=confirming,
-            )
-            if recovered is not None:
-                return recovered
-            store.fail_confirm(intent_id)
-            raise
-
-        committed = store.complete_commit(
-            intent_id,
-            decision="changes_requested",
-            result={
-                "run_id": str(decision_result.get("run_id", "")),
-                "approval": str(target.get("approval", "")),
-                "next_node": str(decision_result.get("next_node", "")),
-            },
-        )
-        return _committed_intent_response(committed, idempotent=False)
-
-
-def _validate_intent_binding(
-    *,
-    state: AgileDevState,
-    workspace: Path,
-    approval: str,
-    expected_run_id: str,
-    expected_target_type: str,
-    expected_target_id: str,
-    expected_artifact_key: str,
-    expected_artifact_version: str,
-    expected_task_id: str = "",
-    expected_head_sha: str = "",
-) -> dict[str, str]:
-    expected = {
-        "run_id": expected_run_id.strip(),
-        "target_type": expected_target_type.strip(),
-        "target_id": expected_target_id.strip(),
-        "artifact_key": expected_artifact_key.strip(),
-        "artifact_version": expected_artifact_version.strip(),
-    }
-    missing = [field for field, value in expected.items() if not value]
-    if missing:
-        raise ProjectApiError(
-            "intent_binding_required",
-            "Request changes requires the exact run, review target, artifact key, and artifact version from the current brief.",
-            409,
-            details={"missing": missing},
-            recovery=["refresh_approval_brief"],
-        )
-    try:
-        current = _validate_approval_target(
-            state=state,
-            workspace=workspace,
-            approval=approval,
-            expected_run_id=expected["run_id"],
-            expected_target_type=expected["target_type"],
-            expected_target_id=expected["target_id"],
-            expected_artifact_key=expected["artifact_key"],
-            expected_artifact_version=expected["artifact_version"],
-        )
-    except ProjectApiError as exc:
-        if exc.code == "stale_approval":
-            raise _stale_intent_error(exc.details) from exc
-        raise
-    return {
-        "approval": approval.strip(),
-        **current,
-        "task_id": expected_task_id.strip(),
-        "head_sha": expected_head_sha.strip(),
-    }
-
-
-def _load_current_request_changes_intent(
-    *,
-    workspace: Path,
-    project_key: str,
-    intent_id: str,
-) -> tuple[IntentCommitStore, dict[str, object]]:
-    key = normalize_project_key(project_key)
-    store = IntentCommitStore(workspace, key)
-    try:
-        intent = store.get(intent_id)
-    except IntentCommitError as exc:
-        raise ProjectApiError("intent_commit_invalid", str(exc), 409) from exc
-    if intent is None or intent.get("kind") != "request_changes":
-        raise ProjectApiError("intent_commit_not_found", "This change discussion no longer exists.", 404)
-    return store, intent
-
-
-def _validate_stored_intent_target(
-    *,
-    workspace: Path,
-    store: IntentCommitStore,
-    intent: Mapping[str, object],
-) -> None:
-    try:
-        _assert_stored_intent_target(
-            workspace=workspace,
-            store=store,
-            intent=intent,
-        )
-    except ProjectApiError:
-        store.mark_stale(str(intent.get("id", "")))
-        raise
-
-
-def _assert_stored_intent_target(
-    *,
-    workspace: Path,
-    store: IntentCommitStore,
-    intent: Mapping[str, object],
-) -> None:
-    """Check the stored binding without changing the Intent Commit status."""
-
-    mission = dict(intent.get("mission") or {})
-    target = dict(intent.get("target") or {})
-    state = StateStore(workspace).read_project_current(store.project_key)
-    if state is None or state.run_id != str(mission.get("run_id", "")):
-        raise _stale_intent_error({"reason": "mission_changed"})
-    try:
-        _validate_approval_target(
-            state=state,
-            workspace=workspace,
-            approval=str(target.get("approval", "")),
-            expected_run_id=str(mission.get("run_id", "")),
-            expected_target_type=str(target.get("target_type", "")),
-            expected_target_id=str(target.get("target_id", "")),
-            expected_artifact_key=str(target.get("artifact_key", "")),
-            expected_artifact_version=str(target.get("artifact_version", "")),
-        )
-    except (ProjectApiError, ValueError) as exc:
-        details = exc.details if isinstance(exc, ProjectApiError) else {"reason": str(exc)}
-        raise _stale_intent_error(details) from exc
-
-
-def _stale_intent_error(details: Mapping[str, object] | None = None) -> ProjectApiError:
-    return ProjectApiError(
-        "stale_intent_target",
-        "The approval target changed during this discussion. Review the current brief and restart the change discussion.",
-        409,
-        details=dict(details or {}),
-        recovery=["refresh_approval_brief", "restart_change_discussion"],
-    )
-
-
-def _committed_intent_response(
-    intent: Mapping[str, object],
-    *,
-    idempotent: bool,
-    reconciled: bool = False,
-) -> dict[str, object]:
-    response = {
-        "intent_commit": dict(intent),
-        "decision": "changes_requested",
-        "committed": True,
-        "idempotent": idempotent,
-        **dict(intent.get("commit_result") or {}),
-    }
-    if reconciled:
-        response["reconciled"] = True
-    return response
-
-
-def _complete_intent_from_decision_action(
-    store: IntentCommitStore,
-    intent_id: str,
-    action: Mapping[str, object],
-    *,
-    idempotent: bool,
-) -> dict[str, object]:
-    committed = store.complete_commit(
-        intent_id,
-        decision="changes_requested",
-        result={
-            "run_id": str(action.get("run_id", "")),
-            "approval": str(action.get("gate", "")),
-            "next_node": str(action.get("after_node", "")),
-        },
-    )
-    return _committed_intent_response(
-        committed,
-        idempotent=idempotent,
-        reconciled=True,
-    )
-
-
-def _reconcile_intent_decision_after_error(
-    *,
-    workspace: Path,
-    project_key: str,
-    store: IntentCommitStore,
-    intent: Mapping[str, object],
-) -> dict[str, object] | None:
-    evidence_state, action, details = _intent_decision_evidence(
-        workspace,
-        project_key,
-        intent,
-    )
-    intent_id = str(intent.get("id", ""))
-    if evidence_state == "matched" and action is not None:
-        return _complete_intent_from_decision_action(
-            store,
-            intent_id,
-            action,
-            idempotent=False,
-        )
-    if evidence_state == "ambiguous":
-        store.mark_ambiguous(intent_id, reason="decision_evidence_mismatch")
-        raise _ambiguous_intent_commit_error(details)
-    return None
-
-
-def _intent_decision_evidence(
-    workspace: Path,
-    project_key: str,
-    intent: Mapping[str, object],
-) -> tuple[str, dict[str, object] | None, dict[str, object]]:
-    """Classify durable authority evidence for one interrupted confirmation."""
-
-    intent_id = str(intent.get("id", ""))
-    candidates = [
-        item
-        for item in build_action_items(workspace, project_key=project_key)
-        if item.get("action") == "approval_decided"
-        and item.get("review_mode") == "intent_commit"
-        and item.get("review_session_id") == intent_id
-    ]
-    if not candidates:
-        return "none", None, {"reason": "decision_evidence_missing"}
-
-    mission = dict(intent.get("mission") or {})
-    target = dict(intent.get("target") or {})
-    interpretation = dict(intent.get("confirmed_interpretation") or {})
-    summary = str(interpretation.get("summary", "") or "").strip()
-
-    def matches(action: Mapping[str, object]) -> bool:
-        client_context = action.get("client_context")
-        client_context = client_context if isinstance(client_context, Mapping) else {}
-        return all(
-            (
-                action.get("decision") == "changes_requested",
-                action.get("decision_origin") == "manager_intent_commit",
-                action.get("run_id") == str(target.get("run_id", "") or mission.get("run_id", "")),
-                action.get("gate") == str(target.get("approval", "")),
-                action.get("artifact") == str(target.get("artifact_key", "")),
-                action.get("artifact_version") == str(target.get("artifact_version", "")),
-                action.get("note") == summary,
-                client_context.get("intent_commit_id") == intent_id,
-                client_context.get("interpretation_schema_version")
-                == str(interpretation.get("schema_version", "")),
-            )
-        )
-
-    matched = [item for item in candidates if matches(item)]
-    if len(candidates) == 1 and len(matched) == 1:
-        return "matched", matched[0], {"reason": "decision_evidence_matched"}
-    return (
-        "ambiguous",
-        None,
-        {
-            "reason": "decision_evidence_mismatch",
-            "evidence_count": len(candidates),
-            "matching_evidence_count": len(matched),
-        },
-    )
-
-
-def _ambiguous_intent_commit_error(
-    details: Mapping[str, object] | None = None,
-) -> ProjectApiError:
-    return ProjectApiError(
-        "intent_commit_ambiguous",
-        "GoodTeam could not prove whether this Intent Commit reached the approval authority. It will not replay the decision.",
-        409,
-        details=dict(details or {}),
-        recovery=["refresh_change_discussion"],
-    )
-
-
-def recover_legacy_takeover_review(
-    *,
-    workspace: Path,
-    project_key: str,
-    note: str = "",
-) -> dict[str, object]:
-    """Turn one persisted pre-brief Takeover revision into a normal review.
-
-    Old Takeover runs could persist a machine-oriented context packet as the
-    approval artifact after ``changes_requested``.  Recovery is deliberately
-    explicit and limited to that exact legacy state; reads never mutate it.
-    """
-
-    key = normalize_project_key(project_key)
-    state_store = StateStore(workspace)
-    state = state_store.read_project_current(key)
-    if state is None:
-        raise ValueError(f"No active run for project: {key}")
-    if not _is_legacy_takeover_change_request(state, "takeover"):
-        raise ValueError("The current Takeover review does not need recovery.")
-
-    revision_note = note.strip() or _latest_takeover_change_request_note(workspace, state)
-    if not revision_note:
-        raise ValueError("Describe the requested Takeover changes before regenerating the brief.")
-
-    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-    if project_config is None or not project_config.is_file():
-        try:
-            project_config = _project_config_for_key(workspace, key)
-        except ValueError:
-            project_config = None
-    if project_config is None or not project_config.is_file():
-        raise ValueError("The configured project source is unavailable, so GoodTeam cannot regenerate the Takeover Brief.")
-
-    before_node = state.next_node
-    state.change_requests["takeover"] = revision_note
-    state.approvals["takeover"] = ApprovalDecision.PENDING
-    state = run_adoption_until_next_gate(state=state, workspace=workspace, project_config=project_config)
-    append_action(
-        workspace,
-        run_id=state.run_id,
-        actor="human",
-        action="takeover_recovery_reopened",
-        project_key=key,
-        gate="takeover",
-        before_node=before_node,
-        after_node=state.next_node,
-        artifact="takeover",
-        artifact_path=state.artifacts.get("takeover", ""),
-        note=revision_note,
-    )
-    state_store.write_project_current(state, key)
-    state_store.write_project_checkpoint(state, key)
-    notify_current_approval_gate(state, workspace=workspace)
-    payload = asdict(state)
-    payload["recovered"] = True
-    return payload
-
-
-def regenerate_rfc_review_gate(
-    *,
-    state: AgileDevState,
-    workspace: Path,
-    project_config: Path | None = None,
-) -> AgileDevState:
-    if should_generate_artifact_with_worker(project_config, "architect"):
-        return run_architecture_until_gate(state=state, workspace=workspace, project_config=project_config)
-    invalidate_artifact(state, "rfc")
-    rfc_path = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
-                             revision_tokens=state.artifact_generations).write_markdown(
-        state.run_id,
-        "rfc",
-        "rfc.md",
-        render_downstream_artifact_markdown("rfc", state, project_config),
-    )
-    register_markdown_artifact(state, "rfc", rfc_path)
-    state.current_node = "rfc_review_gate"
-    state.next_node = gate_next_node(state, gate="rfc", approved_next="planner")
-    sync_project_stage_tasks(state, project_config)
-    return state
-
-
-def _workflow_retry_context(workspace, state):
-    from goodteam_os.workflow_revisions import project_config_for_state
-
-    config = project_config_for_state(state, workspace)
-    target = load_project_target(config) if config is not None else {}
-    root = resolve_project_runtime_root(dict(target.get("repos", {})))
-    jobs = WorkerJobStore(root).list_jobs() if root is not None else []
-    context = {"config": str(config) if config else "", "root": str(root) if root else "",
-               "config_digest": hashlib.sha256(config.read_bytes()).hexdigest() if config else ""}
-    return config, jobs, context
-
-
-def workflow_retry_target(workspace, state):
-    from goodteam_os.workflow_retry import build_retry_target
-
-    if state is None:
-        return None
-    _config, jobs, context = _workflow_retry_context(workspace, state)
-    return build_retry_target(state, jobs=jobs, actions=build_action_items(workspace, state.project_key),
-                              execution_context=context)
-
-
-def retry_blocked_workflow(*, workspace: Path, project_key: str,
-                           expected_run_id: str | None = None,
-                           expected_retry_version: str | None = None) -> dict[str, object]:
-    from goodteam_os.workflow_retry import build_retry_target
-
-    key = normalize_project_key(project_key)
-    if not isinstance(expected_run_id, str) or not expected_run_id.strip() or not isinstance(expected_retry_version, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_retry_version):
-        raise ProjectApiError("retry_binding_required", "Refresh and select the exact task attempt to retry.", 400,
-                              recovery=["refresh"])
-    with workflow_guard(workspace, key):
-        state = StateStore(workspace).read_project_current(key)
-        # Binding failures must not enter the recovery exception handler: it
-        # would interrupt the replacement run's still-active transition.
-        if state is None or state.run_id != expected_run_id or state.project_key != key:
-            raise ProjectApiError("run_binding_mismatch", "The active task changed. Refresh before retrying.", 409,
-                                  recovery=["refresh"])
-        config, jobs, context = _workflow_retry_context(workspace, state)
-        target = build_retry_target(state, jobs=jobs, actions=build_action_items(workspace, key),
-                                    execution_context=context)
-        if target["version"] != expected_retry_version:
-            raise ProjectApiError("retry_target_changed", "The task stage or attempt changed. Refresh before retrying.", 409,
-                                  recovery=["refresh"])
-        if not target["available"]:
-            code = {"active_attempt": "retry_attempt_active", "attempt_unknown": "retry_attempt_unknown"}.get(target["reason"], "retry_not_available")
-            raise ProjectApiError(code, "This task cannot be retried from the displayed attempt. Refresh to inspect its current state.", 409,
-                                  recovery=["refresh"])
-        from goodteam_os.project_iteration_continuation import pending_project_batch
-
-        session = TaskAssistantSessionStore(workspace, key).read()
-        continuation = session.get("project_continuation") or {}
-        if ((continuation.get("workflow_recovery") or {}).get("run_id") == state.run_id
-                and (continuation.get("status") == "active"
-                     or pending_project_batch(session, Path(context["root"]), key))):
-            raise ProjectApiError("workflow_recovery_pending", "Stop future recovery work and settle its admitted batch before retrying the parent.", 409)
-        append_action(workspace, run_id=state.run_id, project_key=key, actor="human",
-                      action="blocked_workflow_retry_started", before_node=state.next_node,
-                      workflow_operation_id=uuid4().hex,
-                      client_context={"expected_retry_version": expected_retry_version, "retry_mode": target["mode"]})
-        try:
-            return _retry_bound_workflow(workspace=workspace, key=key, state=state, project_config=config)
-        except Exception:
-            interrupt_transition(workspace, key)
-            raise
-
-
-def _retry_bound_workflow(*, workspace, key, state, project_config):
-    state_store = StateStore(workspace)
-    if state.pending_transition.get("status") in {"recording", "executing", "interrupted"}:
-        from goodteam_os.workflow_revisions import resume_transition
-
-        return resume_transition(state, workspace)
-    if state.next_node.startswith("revise_"):
-        from goodteam_os.workflow_revisions import retry_legacy_revision
-
-        return retry_legacy_revision(state, workspace)
-    if state.load_profile == "fix" and state.next_node == "blocked":
-        from goodteam_os.workflow_revisions import retry_fix_workflow
-
-        return retry_fix_workflow(state, workspace)
-    retryable_implementation = state.next_node == "blocked" or (
-        state.next_node == "failure_triage" and bool(state.blockers)
-    )
-    if state.current_node != "implementation" or not retryable_implementation:
-        raise ValueError(f"Current run is not blocked at implementation: {key}")
-
-    before_node = state.next_node
-    state.role_models = refresh_state_role_models(state, project_config)
-    state_store.write_project_current(state, key)
-    state_store.write_project_checkpoint(state, key)
-
-    generated_before = set(state.artifacts)
-    staging_retry = any(blocker.startswith("staging ") for blocker in state.blockers)
-    state.blockers = []
-    if staging_retry:
-        from goodteam_os.workflow_workspace import collect_workflow_workspace, workspace_for_workflow
-
-        execution_root = None
-        repository_candidate = {}
-        if state.repository_baseline:
-            source = Path(str(state.repository_baseline.get("source_root", "")))
-            execution_root = workspace_for_workflow(source, state.repository_baseline,
-                                                     project_key=state.project_key, run_id=state.run_id)
-            repository_candidate = collect_workflow_workspace(source, state.repository_baseline,
-                                                               project_key=state.project_key, run_id=state.run_id)
-        staging_result = run_staging_backend(project_config=project_config, execution_root=execution_root,
-                                             repository_candidate=repository_candidate)
-        from goodteam_os.graph import render_staging_report_markdown
-        from goodteam_os.artifacts import ArtifactStore
-
-        invalidate_artifact(state, "staging_report")
-        store = ArtifactStore(root=workspace, mirror_root=artifact_mirror_root(project_config, state),
-                              revision_tokens=state.artifact_generations)
-        staging_path = store.write_markdown(
-            state.run_id,
-            "staging_report",
-            "staging-report.md",
-            render_staging_report_markdown(state, project_config, staging_result),
-        )
-        register_markdown_artifact(state, "staging_report", staging_path, reviewable=True)
-        if str(staging_result.get("status", "")) != "passed":
-            failed_step = str(staging_result.get("failed_step", "") or "deploy")
-            state.current_node = "implementation"
-            state.next_node = "blocked"
-            evidence_gap = str(staging_result.get("evidence_gap", "") or "")
-            if failed_step == "acceptance" and evidence_gap:
-                state.blockers = [f"staging acceptance failed: {evidence_gap}"]
-            else:
-                state.blockers = [f"staging {failed_step} failed"]
-        else:
-            state.current_node = "staging_review_gate"
-            state.next_node = "await_staging_approval"
-    else:
-        state.current_node = "rfc_review_gate"
-        state.next_node = "planner"
-        state = advance_approved_workflow(state=state, workspace=workspace, project_config=project_config)
-    sync_project_stage_tasks(state, project_config)
-    state_store.write_project_current(state, key)
-    state_store.write_project_checkpoint(state, key)
-
-    append_action(
-        workspace,
-        run_id=state.run_id,
-        actor="human",
-        action="blocked_workflow_retried",
-        project_key=key,
-        before_node=before_node,
-        after_node=state.next_node,
-    )
-    for artifact in sorted(set(state.artifacts) - generated_before):
-        append_action(
-            workspace,
-            run_id=state.run_id,
-            actor="system",
-            action=f"{artifact}_generated",
-            project_key=key,
-            before_node=before_node,
-            after_node=state.next_node,
-            artifact=artifact,
-            artifact_path=state.artifacts.get(artifact, ""),
-        )
-
-    notify_current_approval_gate(state, workspace=workspace)
-    payload = asdict(state)
-    payload["retried"] = True
-    return payload
-
-
-def refresh_state_role_models(state: AgileDevState, project_config: Path | None) -> dict[str, dict[str, str]]:
-    target = load_project_target(project_config) if project_config is not None and project_config.is_file() else {}
-    try:
-        _profile, role_models = resolve_project_model_profile(
-            Path("models.yaml"),
-            target,
-            explicit_profile=state.model_profile,
-            role_overrides=[],
-        )
-    except Exception:
-        return state.role_models
-    return role_models
-
-
-def terminate_project_run(
-    *, workspace: Path, project_key: str, expected_run_id: str | None = None,
-) -> dict[str, object]:
-    key = normalize_project_key(project_key)
-    if expected_run_id is not None and (not isinstance(expected_run_id, str) or not expected_run_id.strip()):
-        raise ProjectApiError("run_binding_required", "Refresh and select the task to archive.", 400)
-    with workflow_guard(workspace, key):
-        state_store = StateStore(workspace)
-        state = state_store.read_project_current(key)
-        # Reject before recovery or writes: an old tab has no authority over a
-        # replacement run, including its interrupted transition evidence.
-        if expected_run_id is not None and (state is None or state.run_id != expected_run_id):
-            raise ProjectApiError(
-                "run_binding_mismatch", "The active task changed. Refresh before archiving it.", 409,
-                details={"expected_run_id": expected_run_id, "current_run_id": state.run_id if state else ""},
-                recovery=["refresh"],
-            )
-        if state is None:
-            raise ValueError(f"No active run for project: {key}")
-        before_node = state.next_node
-        try:
-            archive_path = state_store.archive_project_current(key, reason="cancelled")
-            append_action(
-                workspace,
-                run_id=state.run_id,
-                actor="human",
-                action="run_terminated",
-                project_key=key,
-                before_node=before_node,
-                after_node="cancelled",
-            )
-        except Exception:
-            interrupt_transition(workspace, key)
-            raise
-        return {
-            "terminated": True,
-            "project_key": key,
-            "run_id": state.run_id,
-            "archive_path": str(archive_path),
-        }
-
-
 def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
     key = normalize_project_key(project_key)
     config_path = _project_config_for_key(workspace, key)
@@ -5042,9 +2030,8 @@ def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
     if projects_dir not in resolved_config.parents or not resolved_config.name.endswith(".local.yaml"):
         raise ValueError("Project deletion is limited to local project configs under workspace/projects.")
 
-    state_store = StateStore(workspace)
     state_projects_dir = (workspace / "state" / "projects").resolve()
-    state_dir = state_store.project_state_dir(key).resolve()
+    state_dir = (state_projects_dir / key).resolve()
     if state_projects_dir not in state_dir.parents:
         raise ValueError("Project deletion is limited to project-scoped GoodTeam state.")
 
@@ -5056,7 +2043,7 @@ def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
         "deleted": True,
         "project_key": key,
         "project_config": str(config_path),
-        "state_dir": str(state_store.project_state_dir(key)),
+        "state_dir": str(state_dir),
     }
 
 
@@ -5086,452 +2073,6 @@ def open_path_in_file_manager(*, workspace: Path, relative_path: str) -> dict[st
     except Exception as exc:
         return {"opened": False, "error": str(exc)}
 
-
-
-def build_role_observations(state: AgileDevState | None) -> list[dict[str, str]]:
-    if state is None:
-        return []
-
-    observations = []
-    for role in list_role_definitions():
-        artifact = role["artifact"]
-        model_config = state.role_models.get(role["key"], {})
-        status = "No activity"
-        if artifact == "state":
-            status = "Active"
-        elif artifact in state.artifacts:
-            status = "Artifact ready"
-        if artifact in state.approvals and state.next_node == f"await_{artifact}_approval":
-            status = "Waiting for approval"
-        if role["key"] == state.current_node:
-            status = "Active"
-        if role["key"] == state.next_node:
-            status = "Ready"
-
-        observations.append(
-            {
-                "name": role["name"],
-                "artifact": artifact,
-                "status": status,
-                "description": role["description"],
-                "artifact_path": state.artifacts.get(artifact, ""),
-                "model": model_config.get("primary", "unassigned"),
-                "mode": model_config.get("mode", "default"),
-            }
-        )
-    return observations
-
-
-def build_workflow_steps(state: AgileDevState | None) -> list[dict[str, str]]:
-    steps = []
-    for index, step in enumerate(workflow_steps_for_state(state), start=1):
-        artifact = step.get("artifact", "")
-        approval = step.get("approval", "")
-        status = "not-started"
-        status_label = "Not started"
-        action_label = ""
-        feedback = "No work recorded yet."
-
-        if state is not None:
-            approval_value = str(state.approvals.get(str(approval), "")) if approval else ""
-            if artifact and artifact in state.artifacts:
-                status = "done"
-                status_label = "Done"
-                feedback = "Artifact is available."
-            if approval and approval_value == "pending" and state.next_node == f"await_{approval}_approval":
-                status = "review-needed"
-                status_label = "Needs review"
-                action_label = f"Review {approval.upper()}"
-                feedback = "Human review is required before the workflow can continue."
-            elif approval and approval_value == "approved":
-                status = "done"
-                status_label = "Approved"
-                feedback = "Approval completed."
-            elif approval and approval_value in {"changes_requested", "rejected"}:
-                status = "blocked"
-                status_label = approval_value.replace("_", " ").title()
-                feedback = "Workflow is blocked by this decision."
-            elif step.get("node") == state.current_node:
-                status = "active"
-                status_label = "Active"
-                feedback = "Worker is marked as active in current state."
-            elif step.get("node") == state.next_node:
-                status = "ready"
-                status_label = "Ready"
-                feedback = "Ready to run; no worker execution or artifact has been recorded yet."
-
-        steps.append(
-            {
-                "number": str(index),
-                "key": str(step["key"]),
-                "title": str(step["title"]),
-                "roles": str(step["roles"]),
-                "artifact": str(artifact),
-                "approval": str(approval),
-                "summary": str(step["summary"]),
-                "feedback": feedback,
-                "status": status,
-                "status_label": status_label,
-                "action_label": action_label,
-                "artifact_path": state.artifacts.get(str(artifact), "") if state is not None and artifact else "",
-            }
-        )
-    return steps
-
-
-def _review_artifact_snapshot(path: str, max_chars: int = ARTIFACT_PREVIEW_MAX_CHARS) -> tuple[str, str, bool]:
-    artifact = Path(path).expanduser() if path else None
-    if artifact is None or not artifact.is_file():
-        return "", "missing", False
-    try:
-        raw_content = artifact.read_bytes()
-    except OSError:
-        return "", "missing", False
-    content = raw_content.decode("utf-8")
-    truncated = len(content) > max_chars
-    preview = content[:max_chars] + "\n\n[Preview truncated]" if truncated else content
-    return preview, f"sha256:{hashlib.sha256(raw_content).hexdigest()}", truncated
-
-
-def _resolve_registered_artifact(workspace: Path, artifact_key: str, project_key: str = "") -> tuple[AgileDevState, Path]:
-    store = StateStore(workspace)
-    state = store.read_project_current(project_key) if project_key else store.read_current()
-    if state is None:
-        raise ValueError("No active run state found.")
-    resource = state.resources.get(artifact_key)
-    if resource is not None:
-        if resource.kind not in {ResourceKind.MARKDOWN_ARTIFACT, ResourceKind.PROPOSED_MARKDOWN_ARTIFACT}:
-            raise ValueError(f"Resource is not a markdown artifact: {artifact_key}")
-        if ResourceCapability.READ not in resource.capabilities:
-            raise ValueError(f"Resource does not allow read: {artifact_key}")
-        artifact_path = resource.path
-    else:
-        artifact_path = state.artifacts.get(artifact_key, "")
-    if not artifact_path:
-        raise ValueError(f"Artifact is not registered in current run: {artifact_key}")
-
-    path = Path(artifact_path)
-    run_root = (workspace / "artifacts" / "runs" / state.run_id).resolve()
-    if path.is_absolute():
-        path = path.resolve()
-    else:
-        candidates = [(workspace / path).resolve(), path.resolve()]
-        path = next(
-            (
-                candidate
-                for candidate in candidates
-                if run_root in [candidate, *candidate.parents]
-            ),
-            candidates[0],
-        )
-    if resource is None or resource.scope == ResourceScope.RUN:
-        if run_root not in [path, *path.parents]:
-            raise ValueError("Artifact path must stay inside the current run artifacts directory.")
-    elif resource.scope != ResourceScope.PROJECT_RUNTIME:
-        raise ValueError("Artifact path must stay inside the current run artifacts directory.")
-    if path.suffix.lower() not in {".md", ".markdown"}:
-        raise ValueError("Only markdown artifacts can be edited in the dashboard.")
-    if not path.is_file():
-        raise ValueError(f"Artifact file does not exist: {artifact_key}")
-    return state, path
-
-
-def build_resource_items(state: AgileDevState | None) -> list[dict[str, object]]:
-    if state is None:
-        return []
-    return [
-        resource_to_dict(resource)
-        for _key, resource in sorted(state.resources.items())
-    ]
-
-
-def read_artifact(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
-    if artifact_key == "source_preview":
-        from goodteam_os.delivery_outcomes import _artifact_bytes
-
-        raw_content = _artifact_bytes(workspace, state, artifact_key)
-    else:
-        raw_content = path.read_bytes()
-    content = raw_content.decode("utf-8")
-    return {
-        **({"proposal_binding": dict(state.artifact_proposals[artifact_key.removesuffix("_proposed")])}
-           if artifact_key.endswith("_proposed") and artifact_key.removesuffix("_proposed") in state.artifact_proposals else {}),
-        "artifact": artifact_key,
-        "path": str(path),
-        "content": content,
-        "run_id": state.run_id,
-        "artifact_version": f"sha256:{hashlib.sha256(raw_content).hexdigest()}",
-        "resource": resource_to_dict(state.resources[artifact_key]) if artifact_key in state.resources else {},
-    }
-
-
-def read_open_questions(*, workspace: Path, artifact_key: str, project_key: str = "") -> dict[str, object]:
-    artifact = read_artifact(workspace=workspace, artifact_key=artifact_key, project_key=project_key)
-    return {
-        "artifact": artifact_key,
-        "questions": extract_open_questions(artifact["content"]),
-    }
-
-
-def answer_open_questions(
-    *,
-    workspace: Path,
-    project_key: str,
-    artifact_key: str,
-    answers: list[object],
-    expected_run_id: str = "", expected_artifact_version: str = "",
-) -> dict[str, object]:
-    artifact = read_artifact(workspace=workspace, artifact_key=artifact_key, project_key=project_key)
-    if (not expected_run_id or not expected_artifact_version or expected_run_id != artifact["run_id"]
-            or expected_artifact_version != artifact["artifact_version"]):
-        raise ProjectApiError("stale_artifact", "Reload the artifact before answering its questions.", 409)
-    guidance_parts: list[str] = []
-    for raw_answer in answers:
-        if not isinstance(raw_answer, dict):
-            continue
-        answer = str(raw_answer.get("answer", "")).strip()
-        if not answer:
-            continue
-        question = str(raw_answer.get("question", "")).strip()
-        guidance_parts.append(f"Q: {question}\nA: {answer}\n\n")
-    return refine_artifact(
-        workspace=workspace,
-        project_key=project_key,
-        artifact_key=artifact_key,
-        content=artifact["content"],
-        guidance="".join(guidance_parts),
-        expected_run_id=artifact["run_id"],
-        expected_artifact_version=artifact["artifact_version"],
-    )
-
-
-@serialized_workflow
-def save_artifact(*, workspace: Path, artifact_key: str, content: str, project_key: str = "",
-                  expected_run_id: str = "", expected_artifact_version: str = "") -> dict[str, object]:
-    # Enforce this for older persisted registries that still advertise EDIT too.
-    if artifact_key == "source_preview":
-        raise ProjectApiError("read_only_artifact", "Retained source evidence is read-only.", 403)
-    state, path = _resolve_registered_artifact(workspace, artifact_key, project_key)
-    if (expected_run_id and expected_run_id != state.run_id) or (
-        expected_artifact_version and expected_artifact_version != artifact_version_for_path(str(path))
-    ):
-        raise ProjectApiError("stale_artifact", "This artifact changed. Reload it before saving your edits.", 409)
-    if path.read_text(encoding="utf-8") != content:
-        from goodteam_os.artifacts import ArtifactStore
-        from goodteam_os.graph import _register_written_markdown
-
-        invalidate_artifact(state, artifact_key, rewind=True)
-        path = ArtifactStore(workspace, revision_tokens=state.artifact_generations).write_markdown(
-            state.run_id, artifact_key, path.name, content)
-        _register_written_markdown(state, artifact_key, path)
-        store = StateStore(workspace)
-        if project_key:
-            store.write_project_current(state)
-            store.write_project_checkpoint(state)
-        else:
-            store.write_current(state)
-            store.write_checkpoint(state)
-
-    key = normalize_project_key(project_key or state.project_key)
-    project_config = Path(state.source_ref) if state.source_ref and state.source_ref != "manual" else None
-    if project_config is None or not project_config.is_file():
-        try:
-            project_config = _project_config_for_key(workspace, key)
-        except ValueError:
-            project_config = None
-    sync_project_stage_tasks(state, project_config)
-    edit_log = StateStore(workspace).project_state_dir(key) / "edit-log.jsonl" if project_key else workspace / "state" / "edit-log.jsonl"
-    edit_log.parent.mkdir(parents=True, exist_ok=True)
-    edit_event = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "run_id": state.run_id,
-        "artifact": artifact_key,
-        "path": str(path),
-        "bytes": len(content.encode("utf-8")),
-    }
-    with edit_log.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(edit_event) + "\n")
-
-    append_action(
-        workspace,
-        run_id=state.run_id,
-        actor="human",
-        action="artifact_saved",
-        project_key=key if project_key else "",
-        before_node=state.next_node,
-        after_node=state.next_node,
-        artifact=artifact_key,
-        artifact_path=str(path),
-    )
-
-    return {
-        "artifact": artifact_key,
-        "path": str(path),
-        "bytes": edit_event["bytes"],
-        "saved": True,
-    }
-
-
-def _approval_review_title(state: AgileDevState, artifact: str) -> str:
-    resource = state.resources.get(artifact)
-    if isinstance(resource, Mapping):
-        title = str(resource.get("title", "") or "").strip()
-    else:
-        title = str(getattr(resource, "title", "") or "").strip()
-    if title:
-        return title
-    try:
-        contract = artifact_contract(artifact)
-    except ValueError:
-        return artifact.replace("_", " ").title()
-    return str(contract.get("title", "") or "").strip() or artifact.replace("_", " ").title()
-
-
-def _is_legacy_takeover_change_request(state: AgileDevState, approval: str) -> bool:
-    return (
-        approval == "takeover"
-        and str(state.approvals.get("takeover", "")) == ApprovalDecision.CHANGES_REQUESTED
-        and state.current_node == "takeover_review_gate"
-        and state.next_node == "revise_takeover"
-    )
-
-
-def _latest_takeover_change_request_note(workspace: Path, state: AgileDevState) -> str:
-    for action in build_action_items(workspace, project_key=state.project_key):
-        if (
-            action.get("run_id") == state.run_id
-            and action.get("action") == "approval_decided"
-            and action.get("gate") == "takeover"
-            and action.get("decision") == ApprovalDecision.CHANGES_REQUESTED
-        ):
-            return str(action.get("note", "") or "").strip()
-    return ""
-
-
-def build_approval_reviews(state: AgileDevState | None, *, workspace: Path = Path(".")) -> list[dict[str, object]]:
-    if state is None:
-        return []
-
-    reviews = []
-    profile = resolve_profile(getattr(state, "load_profile", "") or "greenfield")
-    relevant_gates = None if profile.name == "greenfield" else set(profile.gate_names())
-    reviewer_target = _reviewer_target_for_state(workspace=workspace, project_key=state.project_key)
-    reviewer_statuses = _reviewer_statuses_for_state(state=state, workspace=workspace, project_key=state.project_key)
-    from goodteam_os.legacy_reviewer_reports import build_legacy_reviewer_reports
-
-    reviewer_reports = build_legacy_reviewer_reports(state, _project_runtime_roots_for_state(
-        state=state, workspace=workspace, project_key=state.project_key))
-    for approval, decision in state.approvals.items():
-        if relevant_gates is not None and approval not in relevant_gates:
-            continue
-        artifact = _approval_artifact_for_gate(approval)
-        artifact_path = state.artifacts.get(artifact, "")
-        preview, artifact_version, truncated = _review_artifact_snapshot(artifact_path)
-        legacy_takeover_recovery = _is_legacy_takeover_change_request(state, approval)
-        review = {
-            "approval": approval,
-            "title": _approval_review_title(state, artifact),
-            "decision": str(decision),
-            "is_pending": str(decision) == ApprovalDecision.PENDING,
-            "is_actionable": str(decision) == ApprovalDecision.PENDING and state.next_node == f"await_{approval}_approval",
-            "is_current": state.current_node == f"{approval}_review_gate",
-            "artifact": artifact,
-            "artifact_path": artifact_path,
-            "artifact_version": artifact_version,
-            "content": "" if legacy_takeover_recovery else preview,
-            "content_truncated": truncated and not legacy_takeover_recovery,
-            "presentation": "legacy_takeover_context" if legacy_takeover_recovery else "review_artifact",
-            "recovery": {
-                "available": legacy_takeover_recovery,
-                "action": "regenerate_takeover_brief" if legacy_takeover_recovery else "",
-                "note": _latest_takeover_change_request_note(workspace, state) if legacy_takeover_recovery else "",
-            },
-            "review_roles": PRD_REVIEW_ROLES if approval == "prd" else [],
-        }
-        current_reviewer_statuses = reviewer_statuses_for_artifact(
-            reviewer_statuses, artifact_key=artifact, artifact_path=artifact_path,
-            artifact_version=artifact_version, require_exact=True,
-        )
-        reviewer_profile = reviewer_profile_for_approval(reviewer_target, approval)
-        reviewer_status = latest_reviewer_status_for_approval(current_reviewer_statuses, approval)
-        review["reviewer_provenance"] = build_reviewer_provenance(reviewer_status, profile=reviewer_profile)
-        review["review_evidence_policy"] = evaluate_review_evidence_policy(
-            review["reviewer_provenance"],
-            gate=approval,
-            config=_review_evidence_policy_config(reviewer_target),
-        )
-        review["multi_reviewer_projection"] = build_multi_reviewer_projection(
-            approval=approval,
-            reviewer_target=reviewer_target,
-            reviewer_statuses=current_reviewer_statuses,
-            review_evidence_policy_config=_review_evidence_policy_config(reviewer_target),
-            artifact_key=artifact,
-            artifact_path=artifact_path,
-            artifact_version=artifact_version,
-        )
-        from goodteam_os.gate_report_projection import project_gate_reports
-
-        review["reviewer_reports"] = project_gate_reports(
-            [entry["status"] for entry in review["multi_reviewer_projection"]["reviewers"]
-             if isinstance(entry.get("status"), dict)],
-            roots=_project_runtime_roots_for_state(state=state, workspace=workspace, project_key=state.project_key),
-            run_id=state.run_id, project_key=state.project_key,
-        )
-        review["queued_reviewer_jobs"] = select_queued_reviewer_jobs_for_gate(
-            reviewer_statuses,
-            run_id=state.run_id,
-            approval=approval,
-            artifact_key=artifact,
-            artifact_path=artifact_path,
-            artifact_version=artifact_version,
-            profile_order=_reviewer_profile_order_for_gate(reviewer_target, approval),
-        )
-        review["legacy_reviewer_jobs"] = [item for item in reviewer_reports if item["approval"] == approval]
-        review["failed_reviewer_jobs"] = select_failed_reviewer_jobs_for_gate(
-            reviewer_statuses,
-            run_id=state.run_id,
-            approval=approval,
-            artifact_key=artifact,
-            artifact_path=artifact_path,
-            artifact_version=artifact_version,
-            profile_order=_reviewer_profile_order_for_gate(reviewer_target, approval),
-        )
-        advisors = advisors_for_gate(approval)
-        if advisors:
-            messages = [
-                {
-                    "id": str(message.get("id", "")),
-                    "from_role": str(message.get("from_role", "")),
-                    "to": list(message.get("to", [])) if isinstance(message.get("to", []), list) else [],
-                    "kind": str(message.get("kind", "")),
-                    "gate": str(message.get("gate", "")),
-                    "body": str(message.get("body", "")),
-                    "in_reply_to": str(message.get("in_reply_to", "")),
-                }
-                for message in read_messages(workspace, state.project_key, state.run_id, gate=approval)
-            ]
-            review["committee"] = {
-                "advisors": list(advisors),
-                "convened": bool(messages),
-                "messages": messages,
-            }
-        if review["is_actionable"]:
-            evidence_snapshot = build_approval_evidence_snapshot(
-                state=state,
-                workspace=workspace,
-                project_key=state.project_key,
-            )
-            evidence_snapshot["reviewer_reports"] = review["reviewer_reports"]
-            review["evidence_snapshot"] = evidence_snapshot
-            review["recommendation"] = build_approval_recommendation(
-                state=state,
-                review=review,
-                evidence_snapshot=evidence_snapshot,
-                workspace=workspace,
-            )
-        reviews.append(review)
-    return reviews
 
 
 def build_start_console_context(
@@ -5569,7 +2110,6 @@ def build_start_console_context(
         "worker_roles": WORKER_ROLES,
         "deployment_backend": deployment_backend,
         "delivery_contract": delivery_contract,
-        "latest_archived_run": _latest_archived_run_summary(workspace, str(project.get("key", "GTO") or "GTO")),
         "project_base": str(directory_base),
         "candidate_dirs": discover_project_directories(directory_base),
     }
@@ -5630,7 +2170,6 @@ def build_workspace_product_settings(workspace: Path) -> dict[str, object]:
             "workspace": str(workspace.expanduser().resolve()),
             "settings_path": str(_workspace_product_settings_path(workspace)),
             "project_count": len(overview),
-            "active_run_count": sum(1 for item in overview if item.get("status") == "active"),
             "server_actions_enabled": os.getenv("GOODTEAM_SERVER_ACTIONS", "0") == "1",
         },
     }
@@ -5690,7 +2229,6 @@ def discover_project_configs(workspace: Path) -> list[Path]:
         paths.extend(ProjectRegistry().list_registered_configs())
     except Exception:
         pass
-    paths.extend(_project_configs_from_state_sources(workspace))
     unique = sorted({path.resolve(): path.resolve() for path in paths if path.is_file()}.values(), key=lambda item: item.name.lower())
     return unique
 
@@ -5719,60 +2257,12 @@ def _project_config_dirs(workspace: Path) -> list[Path]:
     return unique
 
 
-def _project_configs_from_state_sources(workspace: Path) -> list[Path]:
-    state_dirs = [
-        workspace / "state" / "projects",
-        workspace.parent / "state" / "projects",
-    ]
-    goodteam_home = os.getenv("GOODTEAM_HOME")
-    if goodteam_home:
-        state_dirs.append(Path(goodteam_home).expanduser() / "state" / "projects")
-    else:
-        state_dirs.append(Path.home() / ".goodteam" / "state" / "projects")
-    store = StateStore(workspace)
-    paths: list[Path] = []
-    seen_keys: set[str] = set()
-    for state_projects_dir in state_dirs:
-        if not state_projects_dir.is_dir() and not database_configured():
-            continue
-        for current_path in state_documents.paths(state_projects_dir, "*/current.json"):
-            project_name = current_path.parent.name
-            if project_name in seen_keys:
-                continue
-            seen_keys.add(project_name)
-            state = store.read_project_current(project_name)
-            if state is None:
-                continue
-            source_ref = str(state.source_ref or "").strip()
-            if not source_ref or source_ref == "manual":
-                continue
-            source_path = Path(source_ref).expanduser().resolve()
-            if source_path.is_file():
-                paths.append(source_path)
-    return paths
-
-
-def build_project_overview_items(workspace: Path, model_config: Path = Path("models.yaml")) -> list[dict[str, str]]:
+def build_project_overview_items(workspace: Path) -> list[dict[str, str]]:
     items = []
-    store = StateStore(workspace)
     for config_path in discover_project_configs(workspace):
         target = load_project_target(config_path)
         project_key = normalize_project_key(str(target.get("key", config_path.stem)))
-        state = store.read_project_current(project_key)
-        action_items = build_action_items(workspace, project_key=project_key)
-        items.append(
-            {
-                "project_name": str(target.get("name", project_key) or project_key),
-                "project_key": project_key,
-                "project_config": str(config_path),
-                "status": "active" if is_active_run(state) else "idle",
-                "run_id": state.run_id if state is not None else "",
-                "next_node": state.next_node if state is not None else "",
-                "model_profile": str(target.get("model_profile", "balanced") or "balanced"),
-                "delivery_mode": normalize_delivery_mode(str(target.get("delivery_mode", "init_project") or "init_project")),
-                "last_action": action_items[0].get("timestamp", "") if action_items else "",
-            }
-        )
+        items.append({"project_key": project_key, "project_config": str(config_path)})
     return items
 
 
@@ -5854,19 +2344,8 @@ def build_project_home(
                 details={"project_key": key},
                 recovery=["return_to_projects", "reload_project"],
             ) from exc
-    state = StateStore(workspace).read_project_current(key)
     worker_preflight = check_project_target(target).get("worker_backend_preflight", {})
     worker_preflight = dict(worker_preflight) if isinstance(worker_preflight, Mapping) else {}
-    active_run = (
-        {
-            "run_id": state.run_id,
-            "idea": state.idea,
-            "current_node": state.current_node,
-            "next_node": state.next_node,
-        }
-        if is_active_run(state)
-        else None
-    )
     pending = next(
         (
             step
@@ -5926,9 +2405,7 @@ def build_project_home(
         "facts": {
             "root": str(root),
             "detected_mode": readiness["project_mode"],
-            "active_run": active_run,
-            "project_goal": state.idea if state is not None else str(readiness.get("inputs", {}).get("goal", "")),
-            "blockers": list(state.blockers) if state is not None else [],
+            "project_goal": str(readiness.get("inputs", {}).get("goal", "")),
             "constraints": constraints,
             "constraints_confirmed": constraint_values.get("confirmed") is True,
             "confirmed_commands": confirmed_commands,
@@ -5941,41 +2418,25 @@ def build_project_home(
         "git_baseline": _project_git_baseline(root),
         "capabilities": {
             **build_capabilities(readiness),
-            "workflow_entry_url": f"/projects/{quote(key, safe='')}/work",
         },
         "next_action": pending
         or {"id": "shared_readiness_complete", "status": "complete"},
     }
 
 
-def _project_attention_snapshot(workspace, key, root, readiness, state):
+def _project_attention_snapshot(workspace, key, readiness):
     from goodteam_os.project_attention import build_project_attention
 
     # Do not call build_project_work_state or TaskAssistantService.session here:
     # those routes may initialize/migrate Team/session state. A cross-project
     # scan must never dispatch, reconcile or write another project's records.
     session = TaskAssistantSessionStore(workspace, key).read()
-    if session.get("project_key") != key or (state is not None and state.project_key != key):
+    if session.get("project_key") != key:
         raise ValueError("Attention source belongs to another project")
-    workflow = None
-    if state is not None and not isinstance(state.pending_transition, Mapping):
-        raise ValueError("Workflow transition is invalid")
-    if state is not None and state.pending_transition.get("status") in {"recording", "executing"}:
-        # Work may reconcile this transition when entered. The overview cannot
-        # trigger recovery or claim its pre-transition gate is still current.
-        raise ValueError("Workflow transition is still in progress")
-    if is_active_run(state):
-        state = _dashboard_state_view(state)
-        board = build_agile_board(state)
-        tasks = [task for column in board.get("columns", {}).values() for task in column]
-        workflow = build_team_workspace(
-            state=state, workflow_active=True, project_root=root, project_key=key,
-            tasks=tasks,
-            worker_jobs=WorkerJobStore(root).list_jobs() if root is not None else [],
-            approval_reviews=build_approval_reviews(state, workspace=workspace),
-            intent_commits=IntentCommitStore(workspace, key).list_intents(),
-        )
-    return build_project_attention(project_key=key, readiness=readiness, workflow=workflow, session=session)
+    active = any(batch.get("status") in {"claimed", "running"} and batch.get("confirmed") is True
+                 and batch.get("project_root") == readiness["canonical_root"]
+                 for batch in session.get("project_task_batches", {}).values())
+    return build_project_attention(project_key=key, readiness=readiness, session=session), active
 
 
 def build_project_list(workspace: Path) -> dict[str, object]:
@@ -5990,7 +2451,6 @@ def build_project_list(workspace: Path) -> dict[str, object]:
 
 def _build_project_list(workspace: Path) -> dict[str, object]:
     projects: list[dict[str, object]] = []
-    state_store = StateStore(workspace)
     for config_path in discover_project_configs(workspace):
         target = load_project_target(config_path)
         key = normalize_project_key(str(target.get("key", config_path.stem)))
@@ -6012,12 +2472,6 @@ def _build_project_list(workspace: Path) -> dict[str, object]:
                 "steps": [],
                 "updated_at": None,
             }
-        state = state_store.read_project_current(key)
-        active_run = (
-            {"run_id": state.run_id, "next_node": state.next_node}
-            if is_active_run(state)
-            else None
-        )
         steps = readiness.get("steps", [])
         attention_count = sum(
             1
@@ -6025,11 +2479,11 @@ def _build_project_list(workspace: Path) -> dict[str, object]:
             if isinstance(step, dict) and step.get("status") in {"needs_input", "failed"}
         )
         try:
-            attention = _project_attention_snapshot(workspace, key, root, readiness, state)
+            attention, has_active_batch = _project_attention_snapshot(workspace, key, readiness)
         except (ValueError, OSError, TypeError, KeyError):
             # Unknown is not an empty queue. Keep ordinary project navigation
             # available if an optional attention source cannot be read.
-            attention = None
+            attention, has_active_batch = None, False
         projects.append(
             {
                 "attention": attention,
@@ -6041,8 +2495,8 @@ def _build_project_list(workspace: Path) -> dict[str, object]:
                 "readiness": readiness,
                 "capabilities": build_capabilities(readiness),
                 "attention_count": attention_count,
-                "active_run": active_run,
-            }
+                "has_active_batch": has_active_batch,
+                }
         )
     return {"projects": projects}
 
@@ -6052,8 +2506,6 @@ def handle_project_api_get(
     path: str,
     *, codex_review_admission: "CodexReviewAdmission | None" = None,
 ) -> tuple[int, dict[str, object]] | None:
-    from goodteam_os.skills.review_api import handle_review_get
-    from goodteam_os.task_input_context import handle_task_input_get
 
     if path == "/api/providers":
         from goodteam_os.providers import ProviderStore
@@ -6062,13 +2514,6 @@ def handle_project_api_get(
         from goodteam_os.provider_usage import usage_summary
         return 200, usage_summary()
 
-    task_input_response = handle_task_input_get(workspace, path)
-    if task_input_response is not None:
-        return task_input_response
-    from goodteam_os.skills.codex_runtime import review_worker_kwargs
-    review_response = handle_review_get(workspace, path, **review_worker_kwargs(codex_review_admission))
-    if review_response is not None:
-        return review_response
     if path == "/api/skills":
         return 200, SkillLibraryService(service_state_dir(), worker_roots=(workspace,)).list_library()
     skill_proposal_match = re.fullmatch(r"/api/skills/proposals/(proposal-[0-9a-f]{32})", path)
@@ -6082,11 +2527,6 @@ def handle_project_api_get(
     if home_match:
         encoded_key = home_match.group(1)
         return 200, build_project_home(workspace, _decode_project_api_key(encoded_key))
-    runs_match = re.fullmatch(r"/api/projects/([^/]+)/runs", path)
-    if runs_match:
-        key = _decode_project_api_key(runs_match.group(1))
-        _project_config_for_key(workspace, key)
-        return 200, build_project_run_history(workspace, key)
     batch_match = re.fullmatch(r"/api/projects/([^/]+)/iteration-batches/(task-batch-[0-9a-f]{64})", path)
     if batch_match:
         from goodteam_os.project_iteration_execution import iteration_batch_report
@@ -6107,12 +2547,6 @@ def handle_project_api_get(
             return 200, {**report, "recovery": recovery, **({"quality": quality} if quality["required"] else {})}
         except (OSError, ValueError) as exc:
             raise ProjectApiError("iteration_batch_report_unavailable", str(exc), 409) from exc
-    run_match = re.fullmatch(r"/api/projects/([^/]+)/runs/([^/]+)", path)
-    if run_match:
-        key = _decode_project_api_key(run_match.group(1))
-        _project_config_for_key(workspace, key)
-        run_id = _decode_project_run_id(run_match.group(2))
-        return 200, build_project_run_detail(workspace, key, run_id)
     team_events_match = re.fullmatch(r"/api/projects/([^/]+)/team/events", path)
     if team_events_match:
         key = _decode_project_api_key(team_events_match.group(1))
@@ -6208,8 +2642,6 @@ def handle_project_api_post(
     codex_review_admission: "CodexReviewAdmission | None" = None,
     codex_correction_admission=None,
 ) -> tuple[int, dict[str, object]] | None:
-    from goodteam_os.skills.codex_runtime import review_worker_kwargs
-    from goodteam_os.skills.review_api import handle_review_post
 
     if path in {"/api/providers", "/api/providers/models"}:
         from goodteam_os.providers import ProviderStore, ProviderError
@@ -6219,9 +2651,6 @@ def handle_project_api_post(
         except ProviderError as exc:
             raise ProjectApiError(exc.code, str(exc), exc.status) from None
 
-    review_response = handle_review_post(workspace, path, request, **review_worker_kwargs(codex_review_admission))
-    if review_response is not None:
-        return review_response
     if path == "/api/settings":
         return 200, save_workspace_product_settings(workspace, request)
     if path == "/api/projects/import":
@@ -6318,15 +2747,6 @@ def handle_project_api_post(
                 result["projection_unavailable"] = True
             return 200, result
         key, target, root = _project_target_and_root(workspace, key)
-        if action == "prepare_workflow_recovery":
-            from goodteam_os.workflow_recovery import prepare
-
-            if set(request) - {"action", "expected_run_id", "expected_retry_version"}:
-                raise ProjectApiError("workflow_recovery_input_invalid", "Select only the displayed failed task attempt.", 409)
-            try:
-                return 200, prepare(workspace, key, request)
-            except (ValueError, OSError) as exc:
-                raise ProjectApiError("workflow_recovery_unavailable", str(exc), 409) from exc
         if action in {"retry_project_batch", "abandon_project_batch"}:
             from goodteam_os.project_iteration_recovery import recover_project_batch
 
@@ -6521,9 +2941,7 @@ def handle_project_api_post(
                 400,
                 recovery=["retry_request"],
             )
-        store = TaskAssistantSessionStore(workspace, key)
         executor = ProjectReadinessExecutor(workspace)
-        proposal_id = str(request.get("proposal_id", ""))
         from goodteam_os.assistant_drafts import start_selected_project_task
 
         service = TaskAssistantService(workspace, readiness_executor=executor,
@@ -6532,22 +2950,7 @@ def handle_project_api_post(
             selected_result = start_selected_project_task(service, project_key=key, root=root, request=request)
         except ValueError as exc:
             raise ProjectApiError("task_draft_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
-        if selected_result is not None:
-            return 202, selected_result
-        # Only an already-started legacy Workflow can reach this branch.
-        # New free-form and assigned drafts are consumed by the task adapter.
-        proposal = store.read().get("proposed_task") or {}
-        original_run = proposal.get("run_id") or proposal.get("start_run_id")
-        current = StateStore(workspace).read_project_current(key)
-        if original_run and current and current.run_id == original_run:
-            if current.idea != str(proposal.get("exact_request", "")).strip():
-                raise ProjectApiError("workflow_start_indeterminate", "The original Workflow input differs.", 409)
-            session = store.reconcile_workflow(str(proposal["id"]), original_run)
-            return 200, {"task_assistant_session": session, "workflow_started": False,
-                         "historical_workflow": True, "status": "workflow_reconciled", "run_id": original_run}
-        raise ProjectApiError("workflow_start_indeterminate",
-            "This retained Workflow attempt has no matching execution record; inspect its original attempt rather than launching a replacement.",
-            409, recovery=["inspect_workflow_state"])
+        return 202, selected_result
     team_commands_match = re.fullmatch(r"/api/projects/([^/]+)/team/commands", path)
     if team_commands_match:
         key = _decode_project_api_key(team_commands_match.group(1))
@@ -6640,7 +3043,6 @@ def handle_project_api_post(
         r"/api/projects/([^/]+)/readiness/(start|input|retry|cancel)",
         path,
     )
-    workflow_match = re.fullmatch(r"/api/projects/([^/]+)/workflow", path)
     if readiness_match:
         key = _decode_project_api_key(readiness_match.group(1))
         action = readiness_match.group(2)
@@ -6686,14 +3088,6 @@ def handle_project_api_post(
             key,
             readiness_override=executor.cancel(key, root),
         )
-    if workflow_match:
-        key = _decode_project_api_key(workflow_match.group(1))
-        key, _target, root = _project_target_and_root(workspace, key)
-        return 200, {
-            "project_key": key,
-            "workflow_url": f"/projects/{quote(key, safe='')}/work",
-            "bridge": "product_project_workflow",
-        }
     return None
 
 
@@ -6737,29 +3131,6 @@ def _decode_readiness_step_id(encoded_step_id: str) -> str:
     return decoded
 
 
-def _decode_project_run_id(encoded_run_id: str) -> str:
-    try:
-        if re.search(r"%(?![0-9A-Fa-f]{2})", encoded_run_id):
-            raise ValueError("malformed percent escape")
-        decoded = unquote_to_bytes(encoded_run_id).decode("utf-8", errors="strict")
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise ProjectApiError(
-            "invalid_run_id",
-            "Run ID must be one valid URL segment.",
-            400,
-            recovery=["return_to_project_work", "choose_another_run"],
-        ) from exc
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", decoded):
-        raise ProjectApiError(
-            "invalid_run_id",
-            "Run ID must be one valid URL segment.",
-            400,
-            details={"run_id": decoded},
-            recovery=["return_to_project_work", "choose_another_run"],
-        )
-    return decoded
-
-
 def _is_skill_api_post_path(path: str) -> bool:
     return path in {"/api/skills/local/preview", "/api/skills/local/install"}
 
@@ -6782,10 +3153,9 @@ def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path in {"/api/projects/import", "/api/settings", "/api/providers", "/api/providers/models"}
         or re.fullmatch(
-            r"/api/projects/[^/]+/(mode|workflow|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions|attachments)|team/commands)",
+            r"/api/projects/[^/]+/(mode|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions|attachments)|team/commands)",
             path,
         )
-        or re.fullmatch(r"/api/projects/[^/]+/runs/[^/]+/skill-reviews/job-skill-[0-9a-f]{64}/(?:retry|cancel)", path)
     )
 
 
@@ -6878,7 +3248,7 @@ def is_product_spa_path(path: str) -> bool:
     return bool(
         path in {"/", "/legacy", "/projects", "/inbox", "/activity", "/settings"}
         or re.fullmatch(
-            r"/projects/[^/]+/(?:home|work|work/runs/[^/]+|review|review/[^/]+|knowledge|team|settings(?:/[^/]+)?)",
+            r"/projects/[^/]+/(?:home|work|knowledge|team|settings(?:/[^/]+)?)",
             path,
         )
     )
@@ -7126,32 +3496,8 @@ def handle_execution_get(path: str, query: dict[str, list[str]]) -> tuple[int, d
         return _execution_error_response(exc)
 
 
-def handle_review_workbench_page_get(path: str, query: dict[str, list[str]]) -> tuple[int, str] | None:
-    match = re.fullmatch(r"/review-workbench/([^/]+)", path)
-    if match is None:
-        return None
-    execution_id = match.group(1)
-    try:
-        review = ExecutionAPI(_execution_project_root_from_query(query)).get_review_workbench(execution_id)
-        return 200, render_review_workbench_html(review, decision_actions_enabled=True)
-    except ValueError as exc:
-        status, payload = _execution_error_response(exc)
-        return status, f"<h1>Review Workbench unavailable</h1><p>{escape(str(payload['error']))}</p>"
-
-
 def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, dict[str, object]] | None:
     try:
-        if path == "/executions/github/issues/intake":
-            api = ExecutionAPI(_execution_project_root_from_body(request))
-            repo = _required_str(request, "repo")
-            issue_number = _required_int(request.get("issue_number", request.get("issue")), "issue_number")
-            return 200, api.intake_github_issue(
-                repo=repo,
-                issue_number=issue_number,
-                adapter=str(request.get("adapter", "fake")),
-                role=str(request.get("role", "implementation")),
-            )
-
         correction_match = re.fullmatch(r"/executions/([^/]+)/correction/(start|stop|prepare-worker)", path)
         if correction_match is not None:
             api = ExecutionAPI(_execution_project_root_from_body(request))
@@ -7236,18 +3582,6 @@ def _required_str(request: dict[str, object], field_name: str) -> str:
     if not value:
         raise ValueError(f"{field_name} is required")
     return value
-
-
-def _required_int(value: object, field_name: str) -> int:
-    if isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a positive int")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be a positive int") from exc
-    if parsed <= 0:
-        raise ValueError(f"{field_name} must be a positive int")
-    return parsed
 
 
 def _execution_error_response(exc: ValueError) -> tuple[int, dict[str, object]]:
@@ -7807,11 +4141,6 @@ def serve(
             if parsed.path in {"/", "/index.html"} and frontend_error is not None:
                 self._send_html(503, render_frontend_assets_diagnostic(workspace, frontend_error))
                 return
-            review_workbench_page = handle_review_workbench_page_get(parsed.path, query)
-            if review_workbench_page is not None:
-                status, body = review_workbench_page
-                self._send_html(status, body)
-                return
             execution_response = handle_execution_get(parsed.path, query)
             if execution_response is not None:
                 status, payload = execution_response
@@ -7826,54 +4155,6 @@ def serve(
                 status, payload = project_response
                 self._send_json(status, payload)
                 return
-            if parsed.path == "/api/delivery-artifact":
-                from goodteam_os.delivery_outcomes import DeliveryArtifactError, read_delivery_artifact
-                try:
-                    payload = read_delivery_artifact(
-                        workspace, project_key=project_key,
-                        run_id=_decode_project_run_id(query.get("run", [""])[0]),
-                        artifact_key=query.get("key", [""])[0], version=query.get("version", [""])[0],
-                    )
-                    if query.get("view") == ["text"]:
-                        self._send_text(payload["content"])
-                    else:
-                        self._send_json(200, payload)
-                except DeliveryArtifactError as exc:
-                    self._send_json(exc.status, {"error": "delivery_artifact_unavailable", "message": str(exc)})
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path == "/api/reviewer-report":
-                from goodteam_os.delivery_outcomes import DeliveryArtifactError, delivery_state
-                from goodteam_os.legacy_reviewer_reports import read_legacy_reviewer_report
-
-                try:
-                    state = delivery_state(workspace, project_key=project_key,
-                        run_id=_decode_project_run_id(query.get("run", [""])[0]))
-                    roots = _project_runtime_roots_for_state(state=state, workspace=workspace, project_key=state.project_key)
-                    self._send_json(200, read_legacy_reviewer_report(state, roots,
-                        job_id=query.get("job", [""])[0], profile_id=query.get("profile", [""])[0],
-                        approval=query.get("approval", [""])[0], artifact_key=query.get("artifact", [""])[0],
-                        artifact_version=query.get("artifact_version", [""])[0], version=query.get("version", [""])[0]))
-                except DeliveryArtifactError as exc:
-                    self._send_json(exc.status, {"error": "reviewer_report_unavailable", "message": str(exc)})
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path in {"/artifact", "/api/artifact"}:
-                try:
-                    artifact_key = query.get("key", [""])[0]
-                    self._send_json(200, read_artifact(workspace=workspace, project_key=project_key, artifact_key=artifact_key))
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path == "/api/open-questions":
-                try:
-                    artifact_key = query.get("artifact", [""])[0]
-                    self._send_json(200, read_open_questions(workspace=workspace, project_key=project_key, artifact_key=artifact_key))
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
             if parsed.path == "/api/goal-history":
                 try:
                     self._send_json(200, build_goal_history(
@@ -7885,37 +4166,11 @@ def serve(
                 return
             if parsed.path == "/api/state":
                 try:
-                    if not project_key:
-                        legacy_state = StateStore(workspace).read_current()
-                        res_data = {
-                            "type": "overview",
-                            "project_items": build_project_overview_items(workspace),
-                            "legacy_state": asdict(legacy_state) if legacy_state is not None else None,
-                            "resources": build_resource_items(legacy_state),
-                        }
-                    else:
-                        res_data = build_project_work_state(workspace, project_key, **({"goal_limit": _goal_page_limit(query)} if "goal_limit" in query else {}))
-                    self._send_json(200, res_data)
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path == "/api/resources":
-                try:
-                    state = resolve_dashboard_state(workspace, project_key=project_key) if project_key else StateStore(workspace).read_current()
-                    self._send_json(
-                        200,
-                        {
-                            "project_key": normalize_project_key(project_key or state.project_key) if state is not None else "",
-                            "resources": build_resource_items(state),
-                            "legacy_artifacts": dict(state.artifacts) if state is not None else {},
-                        },
+                    res_data = build_project_work_state(
+                        workspace, project_key,
+                        **({"goal_limit": _goal_page_limit(query)} if "goal_limit" in query else {}),
                     )
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-            if parsed.path == "/api/workflow/graph":
-                try:
-                    self._send_json(200, build_workflow_graph(workspace, project_key=project_key))
+                    self._send_json(200, res_data)
                 except Exception as exc:
                     self._send_api_error(exc)
                 return
@@ -8066,27 +4321,6 @@ def serve(
                 except Exception as exc:
                     self._send_api_error(exc)
                 return
-            if parsed.path == "/api/messages":
-                try:
-                    run_id = query.get("run", [""])[0].strip()
-                    gate = query.get("gate", [None])[0]
-                    if not project_key or not run_id:
-                        raise ValueError("project and run are required.")
-                    self._send_json(
-                        200,
-                        {
-                            "messages": read_messages(
-                                workspace,
-                                project_key,
-                                run_id,
-                                gate=gate,
-                            )
-                        },
-                    )
-                except Exception as exc:
-                    self._send_api_error(exc)
-                return
-
             if not parsed.path.startswith("/api/") and dist_dir is not None:
                 rel_path = parsed.path.lstrip("/")
                 if not rel_path or rel_path == "index.html":
@@ -8138,19 +4372,14 @@ def serve(
             normalized_path = project_path
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
-            is_execution_path = normalized_path == "/executions/github/issues/intake" or bool(
+            is_execution_path = bool(
                 re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision|correction/start|correction/stop|correction/prepare-worker)", normalized_path)
             )
 
             if not is_project_path and not is_skill_path and not is_execution_path and normalized_path not in {
-                "/start", "/report-bug", "/context-estimate", "/context-generate",
-                "/intent-commit/start", "/intent-commit/discuss",
-                "/intent-commit/keep-discussing", "/intent-commit/confirm",
-                "/approve", "/recover-takeover-brief", "/artifact", "/project-config",
-                "/terminate", "/project-delete", "/retry", "/generate-prd", "/generate-rfc",
-                "/refine-artifact", "/answer-open-questions", "/accept-refinement",
-                "/discard-refinement", "/open-path", "/debate", "/dispatch-track",
-                "/smoke-run", "/reviewer-jobs/run", "/reviewer-jobs/retry", "/fs/choose",
+                "/report-bug", "/context-estimate", "/context-generate",
+                "/project-config", "/project-delete", "/open-path",
+                "/fs/choose",
                 "/fs/mkdir", "/server-actions/run", "/git-init",
             }:
                 self.send_error(404)
@@ -8243,11 +4472,6 @@ def serve(
                     self._send_json(status, result)
                     return
                 request = json.loads(raw_body.decode("utf-8") or "{}")
-                if normalized_path in {"/artifact", "/refine-artifact", "/answer-open-questions"}:
-                    if not all(isinstance(request.get(field), str) and request[field].strip()
-                               for field in ("expected_run_id", "expected_artifact_version")):
-                        raise ProjectApiError("artifact_binding_required",
-                            "Reload the current artifact before editing or refining it.", 400)
                 if is_execution_path:
                     execution_response = handle_execution_post(normalized_path, request)
                     if execution_response is None:
@@ -8282,22 +4506,6 @@ def serve(
                     except FsListBadRequestError as exc:
                         self._send_api_error(exc)
                         return
-                elif normalized_path == "/start":
-                    result = start_workflow(
-                        workspace=workspace,
-                        idea=str(request.get("idea", "")),
-                        project_key=str(request.get("project_key", "")),
-                        model_config=Path(str(request.get("model_config", "models.yaml"))),
-                        model_profile=str(request.get("model_profile", "balanced")),
-                        delivery_mode=str(request.get("delivery_mode", "")),
-                        delivery_standards=request.get("delivery_standards", ""),
-                        source_type=str(request.get("source_type", "new_project")),
-                        project_config=Path(str(request["project_config"])) if str(request.get("project_config", "")).strip() else None,
-                        role_model_overrides=[str(value) for value in request.get("role_model_overrides", [])],
-                        dry_run=bool(request.get("dry_run", False)),
-                        expected_team_revision=request.get("expected_team_revision"),
-                        run_id=str(request.get("run_id", "")),
-                    )
                 elif normalized_path == "/report-bug":
                     result = report_bug(
                         workspace=workspace,
@@ -8311,187 +4519,10 @@ def serve(
                     result = context_estimate_for_request(workspace, request)
                 elif normalized_path == "/context-generate":
                     result = context_generate_for_request(workspace, request)
-                elif normalized_path == "/intent-commit/start":
-                    result = start_request_changes_intent(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        approval=str(request.get("approval", "")),
-                        expected_run_id=str(request.get("expected_run_id", "") or ""),
-                        expected_target_type=str(request.get("expected_target_type", "") or ""),
-                        expected_target_id=str(request.get("expected_target_id", "") or ""),
-                        expected_artifact_key=str(request.get("expected_artifact_key", "") or ""),
-                        expected_artifact_version=str(request.get("expected_artifact_version", "") or ""),
-                        expected_task_id=str(request.get("expected_task_id", "") or ""),
-                        expected_head_sha=str(request.get("expected_head_sha", "") or ""),
-                        initial_text=request.get("initial_text", ""),
-                    )
-                elif normalized_path == "/intent-commit/discuss":
-                    result = discuss_request_changes_intent(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        intent_id=str(request.get("intent_id", "")),
-                        text=str(request.get("text", "")),
-                    )
-                elif normalized_path == "/intent-commit/keep-discussing":
-                    result = keep_discussing_request_changes_intent(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        intent_id=str(request.get("intent_id", "")),
-                    )
-                elif normalized_path == "/intent-commit/confirm":
-                    result = confirm_request_changes_intent(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        intent_id=str(request.get("intent_id", "")),
-                    )
-                elif normalized_path == "/approve":
-                    approval_binding = {
-                        "expected_run_id": str(request.get("expected_run_id", "") or "").strip(),
-                        "expected_target_type": str(request.get("expected_target_type", "") or "").strip(),
-                        "expected_target_id": str(request.get("expected_target_id", "") or "").strip(),
-                        "expected_artifact_key": str(request.get("expected_artifact_key", "") or "").strip(),
-                        "expected_artifact_version": str(
-                            request.get("expected_artifact_version", "") or ""
-                        ).strip(),
-                    }
-                    if str(request.get("decision", "")) == "approved":
-                        missing_binding = [
-                            field
-                            for field, value in approval_binding.items()
-                            if not value
-                        ]
-                        if missing_binding:
-                            raise ProjectApiError(
-                                "approval_binding_required",
-                                "Approve requires the exact run, review target, artifact key, and artifact version from the current brief.",
-                                409,
-                                details={"missing": missing_binding},
-                                recovery=["refresh_approval_brief"],
-                            )
-                    result = decide_approval(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        approval=str(request.get("approval", "")),
-                        decision=str(request.get("decision", "")),
-                        debate_ref=str(request.get("debate_ref", "")),
-                        note=request.get("note", ""),
-                        **approval_binding,
-                    )
-                elif normalized_path == "/recover-takeover-brief":
-                    result = recover_legacy_takeover_review(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        note=str(request.get("note", "")),
-                    )
-                elif normalized_path == "/reviewer-jobs/run":
-                    status, result = run_queued_reviewer_jobs_action(workspace, request, **runtime_kwargs)
-                    self._send_json(status, result)
-                    return
-                elif normalized_path == "/reviewer-jobs/retry":
-                    status, result = retry_failed_reviewer_jobs_action(workspace, request, **runtime_kwargs)
-                    self._send_json(status, result)
-                    return
-                elif normalized_path == "/debate":
-                    project_key = str(request.get("project_key", ""))
-                    run_id = str(request.get("run", ""))
-                    gate = str(request.get("gate", ""))
-                    challenger_role = str(request.get("challenger_role", "qa"))
-                    owner_role = str(request.get("owner_role", "architect"))
-                    state = resolve_dashboard_state(workspace, project_key=project_key)
-                    artifact_key = approval_artifact_map().get(gate, gate)
-                    artifact_ref = state.artifacts.get(artifact_key, "") if state is not None else ""
-                    result = {
-                        "messages": run_gate_debate(
-                            workspace,
-                            project_key,
-                            run_id,
-                            gate,
-                            challenger_role=challenger_role,
-                            owner_role=owner_role,
-                            dispatch_fn=default_debate_dispatch(workspace, project_key, run_id),
-                            artifact_ref=artifact_ref,
-                        )
-                    }
-                elif normalized_path == "/artifact":
-                    result = save_artifact(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        content=str(request.get("content", "")),
-                        expected_run_id=str(request.get("expected_run_id", "")),
-                        expected_artifact_version=str(request.get("expected_artifact_version", "")),
-                    )
-                elif normalized_path == "/terminate":
-                    expected_run_id = request.get("expected_run_id")
-                    if not isinstance(expected_run_id, str) or not expected_run_id.strip():
-                        raise ProjectApiError("run_binding_required", "Refresh and select the task to archive.", 400)
-                    result = terminate_project_run(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        expected_run_id=expected_run_id,
-                    )
                 elif normalized_path == "/project-delete":
                     result = delete_project(
                         workspace=workspace,
                         project_key=str(request.get("project_key", "")),
-                    )
-                elif normalized_path == "/retry":
-                    result = retry_blocked_workflow(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        expected_run_id=request.get("expected_run_id"),
-                        expected_retry_version=request.get("expected_retry_version"),
-                    )
-                elif normalized_path == "/generate-prd":
-                    result = generate_prd(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                    )
-                elif normalized_path == "/generate-rfc":
-                    result = generate_rfc(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                    )
-                elif normalized_path == "/refine-artifact":
-                    result = refine_artifact(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        content=str(request.get("content", "")),
-                        expected_run_id=str(request.get("expected_run_id", "")),
-                        expected_artifact_version=str(request.get("expected_artifact_version", "")),
-                    )
-                elif normalized_path == "/answer-open-questions":
-                    raw_answers = request.get("answers", [])
-                    result = answer_open_questions(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        answers=raw_answers if isinstance(raw_answers, list) else [],
-                        expected_run_id=request.get("expected_run_id", ""),
-                        expected_artifact_version=request.get("expected_artifact_version", ""),
-                    )
-                elif normalized_path == "/accept-refinement":
-                    result = accept_refinement(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        expected_run_id=request.get("expected_run_id", ""),
-                        expected_artifact_key=request.get("expected_artifact_key", ""),
-                        expected_artifact_version=request.get("expected_artifact_version", ""),
-                        expected_proposal_id=request.get("expected_proposal_id", ""),
-                        expected_proposal_version=request.get("expected_proposal_version", ""),
-                    )
-                elif normalized_path == "/discard-refinement":
-                    result = discard_refinement(
-                        workspace=workspace,
-                        project_key=str(request.get("project_key", "")),
-                        artifact_key=str(request.get("artifact", "")),
-                        expected_run_id=request.get("expected_run_id", ""),
-                        expected_artifact_key=request.get("expected_artifact_key", ""),
-                        expected_artifact_version=request.get("expected_artifact_version", ""),
-                        expected_proposal_id=request.get("expected_proposal_id", ""),
-                        expected_proposal_version=request.get("expected_proposal_version", ""),
                     )
                 elif normalized_path == "/open-path":
                     result = open_path_in_file_manager(
@@ -8500,18 +4531,6 @@ def serve(
                     )
                 elif normalized_path == "/git-init":
                     result = initialize_project_git_for_request(workspace, request)
-                elif normalized_path == "/dispatch-track":
-                    response_written = threading.Event()
-                    result = start_dispatch_track(workspace, request, response_written=response_written)
-                    try:
-                        self._send_json(202, result)
-                    finally:
-                        response_written.set()
-                    return
-                elif normalized_path == "/smoke-run":
-                    result = start_smoke_run(workspace, request)
-                    self._send_json(202, result)
-                    return
                 elif normalized_path == "/server-actions/run":
                     project_root = resolve_project_root_for_request(workspace, request)
                     result = run_gated_server_action(
@@ -8686,4 +4705,3 @@ def serve(
         finally:
             for signum, previous in previous_signals.items():
                 signal.signal(signum, previous)
-

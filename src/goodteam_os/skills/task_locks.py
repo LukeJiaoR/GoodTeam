@@ -30,7 +30,7 @@ REF_SCHEMA = "skill_resource_ref.v1"
 REGISTRY_SCHEMA = "task_skill_registry.v1"
 MAX_RESOURCE_BYTES = 2 * 1024 * 1024
 MAX_REGISTRY_BYTES = 16 * 1024 * 1024
-TASK_KINDS = frozenset({"workflow_run", "issue_execution", "direct_task", "manager_message"})
+TASK_KINDS = frozenset({"issue_execution", "direct_task", "manager_message"})
 
 
 def _digest(value: Any) -> str:

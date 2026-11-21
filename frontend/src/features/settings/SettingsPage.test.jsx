@@ -6,7 +6,7 @@ import { createProductRoutes } from '../../app/AppRouter';
 
 function Placeholder() { return <main id="main-content">Project content</main>; }
 function openSettings(path) {
-  const router = createMemoryRouter(createProductRoutes({ ProjectsComponent: Placeholder, WorkComponent: Placeholder, TeamComponent: Placeholder, KnowledgeComponent: Placeholder, ReviewComponent: Placeholder }), { initialEntries: [path] });
+  const router = createMemoryRouter(createProductRoutes({ ProjectsComponent: Placeholder, WorkComponent: Placeholder, TeamComponent: Placeholder, KnowledgeComponent: Placeholder }), { initialEntries: [path] });
   render(<RouterProvider router={router} />);
   return router;
 }
@@ -28,13 +28,13 @@ test('settings is a real destination and shares appearance and language preferen
 
 test('project settings keeps deep-linked work context and exposes named navigation for compact layouts', async () => {
   const user = userEvent.setup();
-  const router = openSettings('/projects/DEMO/work/runs/history?view=outcomes');
+  const router = openSettings('/projects/DEMO/work?view=outcomes');
   await user.click(screen.getByRole('link', { name: 'Settings', exact: true }));
   expect(router.state.location.pathname).toBe('/projects/DEMO/settings');
   expect(screen.getByRole('link', { name: 'Configure team' })).toHaveAttribute('href', '/projects/DEMO/team');
   expect(screen.getByRole('link', { name: 'Workbench' })).toHaveAttribute('aria-label', 'Workbench');
   await user.click(screen.getByRole('link', { name: 'Workbench' }));
-  expect(router.state.location.pathname + router.state.location.search).toBe('/projects/DEMO/work/runs/history?view=outcomes');
+  expect(router.state.location.pathname + router.state.location.search).toBe('/projects/DEMO/work?view=outcomes');
   await act(() => router.navigate(-1));
   expect(screen.getByRole('heading', { name: 'Settings' })).toBeVisible();
 });

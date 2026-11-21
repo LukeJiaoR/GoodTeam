@@ -62,7 +62,7 @@ def test_explicit_recovery_restores_original_pointer_once_and_preserves_stop(tmp
     monkeypatch.setattr(recovery, "TaskAssistantSessionStore", Store)
     monkeypatch.setattr(recovery, "LocalTaskStore", Ledger)
     monkeypatch.setattr(recovery, "goal_guard", lambda *args: nullcontext())
-    monkeypatch.setattr(recovery, "workflow_guard", lambda *args: nullcontext())
+    monkeypatch.setattr(recovery, "project_batch_guard", lambda *args: nullcontext())
     monkeypatch.setattr(assistant_requests, "conversation_lock", lambda *args: nullcontext())
     monkeypatch.setattr(recovery, "dispatch_artifact_root", lambda *args: tmp_path)
     monkeypatch.setattr(recovery, "read_bytes", lambda path: raw if path.name == "report.json" else b'{"idempotency_key":"old-call"}')

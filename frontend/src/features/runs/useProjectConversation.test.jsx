@@ -22,7 +22,6 @@ test('transport failure releases the composer before refresh and keeps resend id
   let retry;
   await act(async () => { retry = result.current.send('Explain the old task.'); });
   expect(runApi.sendTaskAssistantMessage.mock.calls[1][1]).toEqual(original);
-  expect(original.context_run_id).toBe('old-run');
   await act(async () => { releaseRefresh(); await retry; });
   expect(result.current.busy).toBe('');
   expect(result.current.delivery.status).toBe('recorded');
@@ -37,11 +36,11 @@ test('transport failure releases the composer before refresh and keeps resend id
   await act(async () => { failed = await result.current.answer(questionId, 'Internal staff only.'); });
   expect(failed).toBe(false);
   const answer = runApi.sendTaskAssistantMessage.mock.lastCall[1];
-  expect(answer).toEqual({ message_id: expect.any(String), text: `/answer ${questionId} Internal staff only.`, context_run_id: '' });
+  expect(answer).toEqual({ message_id: expect.any(String), text: `/answer ${questionId} Internal staff only.` });
   const otherQuestionId = `human-${'b'.repeat(32)}`;
   await act(async () => { await result.current.answer(otherQuestionId, 'Support owns it.'); });
   expect(runApi.sendTaskAssistantMessage.mock.lastCall[1]).toMatchObject({
-    text: `/answer ${otherQuestionId} Support owns it.`, context_run_id: '',
+    text: `/answer ${otherQuestionId} Support owns it.`,
   });
   expect(runApi.sendTaskAssistantMessage.mock.lastCall[1].message_id).not.toBe(answer.message_id);
   await act(async () => { await result.current.send('Show the latest progress.'); });

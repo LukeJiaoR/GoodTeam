@@ -9,7 +9,6 @@ from goodteam_os.assistant_drafts import handle_draft_action
 from goodteam_os.manager_execution import _parse_chat_turn
 from goodteam_os.project_readiness import ProjectReadinessStore
 from goodteam_os.project_readiness_executor import ProjectReadinessExecutor
-from goodteam_os.state import StateStore
 from goodteam_os.task_assistant import TaskAssistantService
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
@@ -56,12 +55,10 @@ def test_import_waits_for_user_and_research_uses_existing_task_intake(tmp_path, 
     text = "梳理当前项目的架构、关键流程和待办，交给 Researcher，只研究，不修改代码。"
     result = service.send_message(project_key=key, root=root, message_id="research", text=text)
     assert result["intent"] == "work_request"
-    assert result["workflow_started"] is False
     proposal = result["session"]["proposed_task"]
     assert proposal["exact_request"] == text
     assert proposal["source_message_ids"] == ["research"]
     assert not proposal["confirmed"] and not proposal.get("run_id")
-    assert StateStore(workspace).read_project_current(key) is None
     replay = service.send_message(project_key=key, root=root, message_id="research", text=text)
     assert replay["session"]["proposed_task"] == proposal
     assert len(calls) == 1

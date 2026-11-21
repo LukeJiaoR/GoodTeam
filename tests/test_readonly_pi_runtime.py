@@ -91,9 +91,8 @@ def test_dispatch_readonly_to_real_fake_rpc_restore(tmp_path, monkeypatch, missi
         return {}
 
     monkeypatch.setattr(PiResourceChannel, "start", witness)
-    monkeypatch.setattr("goodteam_os.session_runtimes.PI_STARTUP_TIMEOUT_FLOOR_SECONDS", 0.02)
     fake = fake_pi_with_restore(tmp_path)
-    cfg = PiRuntimeConfig(str(fake), "", "", "", tmp_path / "sessions", 0.1 if missing else 2)
+    cfg = PiRuntimeConfig(str(fake), "", "", "", tmp_path / "sessions", 2)
 
     def runtime():
         return PiSessionRuntime(

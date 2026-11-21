@@ -1,3 +1,8 @@
+"""[INPUT]: 本地状态目录、进程身份和服务端口。
+[OUTPUT]: 查询、启动和停止 Supervisor。
+[POS]: 后台服务生命周期入口。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import json
@@ -14,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 from goodteam_os.frontend_assets import resolve_frontend_dist
-from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.service_timeouts import SERVICE_STOP_TIMEOUT_SECONDS
 
 if os.name == "nt":
@@ -52,10 +56,6 @@ def _service_status_unlocked() -> dict[str, Any]:
     identity = str(state.get("identity", "") or "")
     if pid > 0 and _state_process_is_running(pid, identity):
         state["running"] = True
-        try:
-            state["queue"] = DurableOperatorQueue(service_state_dir()).summary()
-        except Exception as exc:
-            state["queue"] = {"error": f"{exc.__class__.__name__}: {exc}"}
         return state
     _state_path().unlink(missing_ok=True)
     result = {"running": False, "stale_pid": pid or None}
@@ -64,26 +64,19 @@ def _service_status_unlocked() -> dict[str, Any]:
     return result
 
 
-def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT, *,
-                    operator_review_config=None, local_codex_policy=None, trusted_codex_review_policy=None,
-                    operator_review_config_sha256="") -> dict[str, Any]:
-    from goodteam_os.operator_startup import startup_arguments
-    operator_args = startup_arguments(operator_review_config=operator_review_config,
-        local_codex_policy=local_codex_policy, trusted_codex_review_policy=trusted_codex_review_policy,
-        operator_review_config_sha256=operator_review_config_sha256)
+def restart_service(workspace: Path, host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> dict[str, Any]:
     frontend_dist = resolve_frontend_dist()
     workspace = workspace.expanduser().resolve()
     if not workspace.is_dir():
         raise RuntimeError(f"workspace does not exist: {workspace}")
     with _service_lock():
-        return _restart_service_unlocked(workspace, host=host, port=port, frontend_dist=frontend_dist,
-                                         operator_args=operator_args)
+        return _restart_service_unlocked(workspace, host=host, port=port, frontend_dist=frontend_dist)
 
 
-def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend_dist: Path, operator_args=()) -> dict[str, Any]:
+def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend_dist: Path) -> dict[str, Any]:
     old_state = _read_state()
     _preflight_port(host, port, old_state=old_state)
-    _stop_service_unlocked(set_stopped=False)
+    _stop_service_unlocked()
 
     state_dir = service_state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -111,7 +104,6 @@ def _restart_service_unlocked(workspace: Path, *, host: str, port: int, frontend
         "--ready-file",
         str(ready_path),
         f"--ready-token={ready_token}",
-        *operator_args,
     ]
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(
@@ -158,27 +150,21 @@ def stop_service() -> dict[str, Any]:
         return _stop_service_unlocked()
 
 
-def _stop_service_unlocked(*, set_stopped: bool = True) -> dict[str, Any]:
+def _stop_service_unlocked() -> dict[str, Any]:
     state = _read_state()
     if not state:
-        if set_stopped:
-            DurableOperatorQueue(service_state_dir()).set_desired_state("stopped")
         return {"stopped": False, "reason": "not running"}
     pid = int(state.get("pid", 0) or 0)
     identity = str(state.get("identity", "") or "")
     if pid <= 0 or not _state_process_is_running(pid, identity):
         mismatch = pid > 0 and _process_is_running(pid)
         _state_path().unlink(missing_ok=True)
-        if set_stopped:
-            DurableOperatorQueue(service_state_dir()).set_desired_state("stopped")
         return {
             "stopped": False,
             "reason": "identity mismatch" if mismatch else "not running",
             "pid": pid or None,
         }
 
-    queue = DurableOperatorQueue(service_state_dir())
-    queue.set_desired_state("draining")
     os.kill(pid, signal.SIGTERM)
     deadline = time.monotonic() + SERVICE_STOP_TIMEOUT_SECONDS
     while time.monotonic() < deadline and _state_process_is_running(pid, identity):
@@ -188,8 +174,6 @@ def _stop_service_unlocked(*, set_stopped: bool = True) -> dict[str, Any]:
             os.killpg(pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
-    if set_stopped:
-        queue.set_desired_state("stopped")
     _state_path().unlink(missing_ok=True)
     return {"stopped": True, "pid": pid}
 

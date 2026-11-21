@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from goodteam_os import assistant_requests
-from goodteam_os.assistant_drafts import archive_terminal_proposal, is_conversation_only, stage_draft
+from goodteam_os.assistant_drafts import is_conversation_only, stage_draft
 from goodteam_os.assistant_intake import intake_source_messages, mark_draft_needs_clarification, resolve_intake_sources
 from goodteam_os.assistant_runtime import runtime_view
 from goodteam_os.goals import GoalStore, goal_store_exists
@@ -176,7 +176,7 @@ class TaskAssistantService:
     def check_runtime(self, *, project_key, root, message_id):
         return assistant_requests.check_runtime(self, project_key=project_key, root=root, message_id=message_id)
 
-    def _send_native_message(self, *, project_key, root, text, message_id, attempt_id, context_run_id=""):
+    def _send_native_message(self, *, project_key, root, text, message_id, attempt_id):
         """Continue the Manager's native conversation; its tools own business calls."""
         from goodteam_os.assistant_conversation import conversation_scope
         from goodteam_os.manager_execution import ManagerExecutionError
@@ -185,20 +185,12 @@ class TaskAssistantService:
 
         store = TaskAssistantSessionStore(self.workspace, project_key)
         session = store.read()
-        captured_run = (session.get("assistant_requests", {}).get(message_id) or {}).get("conversation_run_id", "")
-        scope = conversation_scope(store, context_run_id, root=root)
-        if captured_run and not context_run_id:
-            if (not scope or scope.get("kind") != "running_task"
-                    or (scope.get("run") or {}).get("run_id") != captured_run):
-                # Admission already chose the referenced task. A delayed start
-                # resolves that original history or fails; it cannot retarget.
-                context_run_id = captured_run
-                scope = conversation_scope(store, context_run_id, root=root)
+        scope = conversation_scope(store)
         context = _manager_chat_context(
             self._readiness_state(project_key, root), assess_project_mode(root), session,
             team_view=self.team_view(project_key), current_message_id=message_id,
-            root=root, project_key=project_key, run_id=context_run_id, workspace=self.workspace)
-        context += "\nReferenced task context: " + json.dumps(scope, ensure_ascii=False, default=str)
+            root=root, project_key=project_key, workspace=self.workspace)
+        context += "\nCurrent draft context: " + json.dumps(scope, ensure_ascii=False, default=str)
         context += self.attachment_context(project_key, root, session, message_id)
         environment = environment_for_task(root, load_worker_setup(self.project_config))
         environment.pop("setup", None)
@@ -223,7 +215,6 @@ class TaskAssistantService:
         if not str(text).strip():
             raise ValueError("Task Assistant message must not be blank")
         store = TaskAssistantSessionStore(self.workspace, project_key)
-        archive_terminal_proposal(store, workspace=self.workspace, root=root)
         mode_hint = assess_project_mode(root)
         store.initialize_context(mode_hint)
         store.append_message(message_id, "user", str(text))
@@ -321,7 +312,6 @@ class TaskAssistantService:
                 "task_assistant_session": session,
                 "session": session,
                 "intent": intent,
-                "workflow_started": False,
                 "run_id": "",
             }
         if intent == "team_management":
@@ -363,7 +353,7 @@ class TaskAssistantService:
                              "manager_execution": manager_execution, "actions_applied": True},
                 )
                 return {"session": session, "task_assistant_session": session, "intent": intent,
-                        "workflow_started": False, "run_id": ""}
+                        "run_id": ""}
             event = stage_draft(store, text=str(text), message_id=message_id, source_messages=draft_sources)
             if event in {"task_proposed", "task_revised"}:
                 self._resolve_confident_mode(project_key, root, state, mode_hint)
@@ -390,7 +380,6 @@ class TaskAssistantService:
             "task_assistant_session": session,
             "session": session,
             "intent": intent,
-            "workflow_started": False,
             "run_id": "",
             "model_call_skipped": bool(detection and detection.candidates),
         }
@@ -423,8 +412,8 @@ class TaskAssistantService:
             # An injected turn callable owns classification (tests, harnesses).
             return False
         try:
-            from goodteam_os.graph import resolve_role_adapter
             from goodteam_os.projects import load_project_target
+            from goodteam_os.worker_routing import resolve_role_adapter
             from goodteam_os.workers import BUILTIN_WORKER_MODES
 
             adapter = resolve_role_adapter(load_project_target(self.project_config), MANAGER_ROLE)

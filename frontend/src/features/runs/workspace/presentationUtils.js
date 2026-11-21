@@ -1,5 +1,3 @@
-export const WORK_VIEWS = ['plan', 'activity', 'execution', 'messages', 'delivery'];
-
 export function tone(status) {
   if (['complete', 'completed', 'done', 'approved', 'success'].includes(status)) return 'success';
   if (['blocked', 'failed', 'error', 'stopped'].includes(status)) return 'danger';

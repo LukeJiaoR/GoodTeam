@@ -37,7 +37,7 @@ def synchronous_ready_executor(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_existing_readiness_api_runs_confirms_and_unlocks_real_workflow_bridge(
+def test_existing_readiness_api_confirms_commands_and_constraints(
     tmp_path: Path,
     synchronous_ready_executor: None,
 ) -> None:
@@ -85,19 +85,6 @@ def test_existing_readiness_api_runs_confirms_and_unlocks_real_workflow_bridge(
         },
     )
     assert ready["readiness"]["lifecycle"] == "ready"
-    assert ready["capabilities"]["start_workflow"] is True
-
-    bridge_status, bridge = web.handle_project_api_post(
-        workspace,
-        f"/api/projects/{key}/workflow",
-        {},
-    )
-    assert bridge_status == 200
-    assert bridge == {
-        "project_key": key,
-        "workflow_url": f"/projects/{key}/work",
-        "bridge": "product_project_workflow",
-    }
 
 
 def test_new_project_api_persists_brief_and_never_writes_target(
@@ -156,49 +143,6 @@ def test_readiness_step_artifact_api_uses_step_id_not_a_filesystem_path(
     assert artifact["project_key"] == key
     assert artifact["step_id"] == "repository_understanding"
     assert artifact["content"]["scan"]["read_only"] is True
-
-
-def test_workflow_bridge_rechecks_server_readiness_and_fails_closed(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    root = tmp_path / "empty"
-    root.mkdir()
-    key = import_project(workspace, str(root))["project"]["project_key"]
-
-    with pytest.raises(web.ReadinessExecutionError) as captured:
-        web.handle_project_api_post(workspace, f"/api/projects/{key}/workflow", {})
-
-    assert captured.value.code == "readiness_not_ready"
-    status, payload = web._project_api_error_response(captured.value)
-    assert status == 409
-    assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
-    assert payload["code"] == "readiness_not_ready"
-
-
-def test_ready_workflow_bridge_rejects_same_path_root_replacement(
-    tmp_path: Path,
-    synchronous_ready_executor: None,
-) -> None:
-    workspace = tmp_path / "workspace"
-    root = tmp_path / "empty"
-    root.mkdir()
-    key = import_project(workspace, str(root))["project"]["project_key"]
-    confirm_project_mode(workspace, key, root, "new_project")
-    web.handle_project_api_post(
-        workspace,
-        f"/api/projects/{key}/readiness/start",
-        {"inputs": {"goal": "Demo", "brief": "Ready project"}},
-    )
-    original = tmp_path / "original-root"
-    root.rename(original)
-    root.mkdir()
-    marker = root / "replacement.txt"
-    marker.write_text("must remain untouched", encoding="utf-8")
-
-    with pytest.raises(web.ReadinessExecutionError) as captured:
-        web.handle_project_api_post(workspace, f"/api/projects/{key}/workflow", {})
-
-    assert captured.value.code == "project_root_changed"
-    assert marker.read_text(encoding="utf-8") == "must remain untouched"
 
 
 @pytest.mark.parametrize("mutation", ["wrong_key", "wrong_root", "missing_key", "missing_root"])
@@ -282,7 +226,7 @@ def test_readiness_conflicts_use_stable_409_envelope(code: str) -> None:
     assert set(payload) == {"code", "message", "details", "recovery", "request_id"}
 
 
-def test_partial_inventory_api_retains_evidence_and_blocks_workflow(
+def test_partial_inventory_api_retains_evidence_without_ready_state(
     tmp_path: Path,
     synchronous_ready_executor: None,
 ) -> None:
@@ -298,12 +242,9 @@ def test_partial_inventory_api_retains_evidence_and_blocks_workflow(
     )
     assert status == 202
     assert response["readiness"]["execution"]["status"] == "failed"
-    assert response["capabilities"]["start_workflow"] is False
+    assert response["readiness"]["lifecycle"] != "ready"
     artifact_status, artifact = web.handle_project_api_get(
         workspace, f"/api/projects/{key}/readiness/steps/repository_understanding/artifact",
     )
     assert artifact_status == 200
     assert artifact["content"]["scan"]["snapshot_omitted_files"] == 1
-    with pytest.raises(web.ReadinessExecutionError) as failure:
-        web.handle_project_api_post(workspace, f"/api/projects/{key}/workflow", {})
-    assert failure.value.code == "readiness_not_ready"

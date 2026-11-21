@@ -109,7 +109,6 @@ def test_planning_reuses_only_current_inputs_and_pins_an_automatic_attempt(tmp_p
         expected_backlog_version=spec["expected_backlog_version"],
         expected_choice_event_id=restored["source_event_id"], expected_task_ids=restored["selected_task_ids"])
     assert queued["queued_task_ids"] == first["iteration_choice"]["selected_task_ids"]
-    assert queued["workflow_started"] is False
     store.append_message("new-goal", "user", "项目目标：优先完成可离线验证的迭代。")
     assert plan_next_iteration(**spec)["reused"] is False
     assert len(calls.read_text().splitlines()) == 3
