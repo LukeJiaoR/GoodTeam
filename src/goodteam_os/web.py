@@ -7141,17 +7141,6 @@ def handle_review_workbench_page_get(path: str, query: dict[str, list[str]]) -> 
 
 def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, dict[str, object]] | None:
     try:
-        if path == "/executions/github/issues/intake":
-            api = ExecutionAPI(_execution_project_root_from_body(request))
-            repo = _required_str(request, "repo")
-            issue_number = _required_int(request.get("issue_number", request.get("issue")), "issue_number")
-            return 200, api.intake_github_issue(
-                repo=repo,
-                issue_number=issue_number,
-                adapter=str(request.get("adapter", "fake")),
-                role=str(request.get("role", "implementation")),
-            )
-
         correction_match = re.fullmatch(r"/executions/([^/]+)/correction/(start|stop|prepare-worker)", path)
         if correction_match is not None:
             api = ExecutionAPI(_execution_project_root_from_body(request))
@@ -7236,18 +7225,6 @@ def _required_str(request: dict[str, object], field_name: str) -> str:
     if not value:
         raise ValueError(f"{field_name} is required")
     return value
-
-
-def _required_int(value: object, field_name: str) -> int:
-    if isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a positive int")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be a positive int") from exc
-    if parsed <= 0:
-        raise ValueError(f"{field_name} must be a positive int")
-    return parsed
 
 
 def _execution_error_response(exc: ValueError) -> tuple[int, dict[str, object]]:
@@ -8138,7 +8115,7 @@ def serve(
             normalized_path = project_path
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
-            is_execution_path = normalized_path == "/executions/github/issues/intake" or bool(
+            is_execution_path = bool(
                 re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision|correction/start|correction/stop|correction/prepare-worker)", normalized_path)
             )
 

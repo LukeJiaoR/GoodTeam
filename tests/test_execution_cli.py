@@ -5,7 +5,12 @@ import json
 import pytest
 
 import goodteam_os.cli as cli
-from goodteam_os.execution import GitHubBinding, GitHubIssueNotFound, GitHubIssueSnapshot
+from goodteam_os.execution import (
+    ExecutionOrchestrator,
+    GitHubBinding,
+    GitHubIssueNotFound,
+    GitHubIssueSnapshot,
+)
 
 
 class FakeGitHubClient:
@@ -63,28 +68,12 @@ def test_execution_cli_commands_emit_stable_json(tmp_path, monkeypatch, capsys):
     client = FakeGitHubClient()
     _install_fake_api(monkeypatch, client)
 
-    assert (
-        cli.main(
-            [
-                "execution",
-                "intake-github-issue",
-                "--repo",
-                "LukeJiaoR/GoodTeam",
-                "--issue",
-                "230",
-                "--project-root",
-                str(tmp_path),
-                "--adapter",
-                "fake",
-            ]
-        )
-        == 0
+    run = ExecutionOrchestrator(tmp_path, client).intake_github_issue(
+        repo="LukeJiaoR/GoodTeam", issue_number=230, adapter="fake"
     )
-    intake = json.loads(capsys.readouterr().out)
-    execution_id = intake["execution_id"]
-    assert intake["status"] == "ok"
+    execution_id = run.execution_id
 
-    # This legacy intake has no trusted task snapshot or delivery plan. The local
+    # GitHub intake alone has no trusted task snapshot or delivery plan. The local
     # delivery CLI must reject it, while the ordinary Builder-only API remains usable.
     assert cli.main(["execution", "run", "--execution-id", execution_id,
                      "--project-root", str(tmp_path)]) == 2
@@ -111,25 +100,3 @@ def test_execution_cli_missing_required_args_returns_parser_error(tmp_path):
         cli.main(["execution", "run", "--project-root", str(tmp_path)])
 
     assert exc_info.value.code == 2
-
-
-def test_execution_cli_service_error_returns_nonzero(tmp_path, capsys):
-    exit_code = cli.main(
-        [
-            "execution",
-            "intake-github-issue",
-            "--repo",
-            "LukeJiaoR/GoodTeam",
-            "--issue",
-            "230",
-            "--project-root",
-            str(tmp_path),
-            "--adapter",
-            "fake",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code != 0
-    assert "GitHubClient is required" in captured.err
-    assert captured.out == ""

@@ -11,6 +11,11 @@ changes go to Planner; no extra Manager approval gate is introduced. This adapte
 does not add per-Worker or parallel environment versions. Environment changes are
 not implicit input-adapter or arbitrary Worker side effects.
 
+Use `goodteam task` or Telegram `/gt task` for new Issues. The retired
+`goodteam execution intake-github-issue` command and
+`POST /api/executions/github/issues/intake` did not configure a GitHub client.
+Their removal does not affect existing Operator executions or their recovery.
+
 External issue content is explicitly marked untrusted context, not authority.
 Source URL, revision, repository, project root and exact snapshot are retained.
 Repeated URLs reuse the accepted snapshot and message identity. Failed or

@@ -251,13 +251,6 @@ def build_parser() -> argparse.ArgumentParser:
     execution = subparsers.add_parser("execution")
     execution_subparsers = execution.add_subparsers(dest="execution_command", required=True)
 
-    intake_github_issue = execution_subparsers.add_parser("intake-github-issue")
-    intake_github_issue.add_argument("--repo", required=True)
-    intake_github_issue.add_argument("--issue", type=int, required=True)
-    intake_github_issue.add_argument("--project-root", type=Path, required=True)
-    intake_github_issue.add_argument("--adapter", default="fake")
-    intake_github_issue.add_argument("--role", default="implementation")
-
     bind_plan = execution_subparsers.add_parser("bind-plan", help="Bind a captured task to existing approved workflow intent")
     bind_plan.add_argument("--execution-id", required=True)
     bind_plan.add_argument("--project-root", type=Path, required=True)
@@ -784,13 +777,6 @@ def _run_execution_command(args: argparse.Namespace, *, codex_review_admission=N
 
     api = ExecutionAPI(args.project_root, **review_worker_kwargs(codex_review_admission),
                        **correction_worker_kwargs(codex_correction_admission))
-    if args.execution_command == "intake-github-issue":
-        return api.intake_github_issue(
-            repo=args.repo,
-            issue_number=args.issue,
-            adapter=args.adapter,
-            role=args.role,
-        )
     if args.execution_command == "bind-plan":
         from goodteam_os.execution.approved_plan import ApprovedPlanBinding
         value = ApprovedPlanBinding(args.project_root).register(args.execution_id,
