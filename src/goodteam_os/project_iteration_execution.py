@@ -426,7 +426,7 @@ def _settle_batch(workspace, project_key, root, batch, report=None, error=""):
             reviewable = intent_matches and job.get("outcome") == "ok" and job.get("attribution_status") == "captured"
             task.update(status="review" if reviewable else "blocked", dispatch_job_id=job.get("job_id", ""),
                         dispatch_run_id=job.get("dispatch_run_id", effective_dispatch_id(batch)),
-                        observed_workflow_status="complete" if reviewable else "rejected", delivery_verified=False,
+                        delivery_verified=False,
                         execution_error=error if intent_matches else "Project task intent changed during execution.",
                         updated_at=datetime.now(UTC).isoformat())
             task_statuses[task["id"]] = task["status"]

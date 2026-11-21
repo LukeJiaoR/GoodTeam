@@ -26,6 +26,8 @@ successful sibling outputs remain inspectable. The source checkout is never
 the Worker cwd or integration target. The candidate path and commit in the
 batch result identify the retained fan-in for independent review and explicit
 delivery confirmation. Worker success alone never marks project work done.
+New batches do not write a synthetic Workflow status to task cards. Existing
+Workflow runs still retain their own status and recovery records.
 
 Delivery revalidates every retained Worker result, reusing the opened workspace
 for results from the same dispatch. After an authorized retry, preserved Worker

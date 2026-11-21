@@ -233,7 +233,8 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
     report_path = dispatch_artifact_root(source, batch["dispatch_run_id"]) / "report.json"
     original_report = report_path.read_bytes()
     initial_head = batch["report"]["integration"]["candidate_commit"]
-    assert all(task["status"] == "review" and not task["delivery_verified"] for task in ledger.list_tasks())
+    assert all(task["status"] == "review" and not task["delivery_verified"]
+               and "observed_workflow_status" not in task for task in ledger.list_tasks())
 
     checks = tmp_path / "check-calls.jsonl"
     check = ("import json; from pathlib import Path; "
