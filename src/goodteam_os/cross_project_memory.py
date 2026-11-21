@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from goodteam_os.graph import resolve_project_runtime_root
 from goodteam_os.memory import RoleMemoryStore
+from goodteam_os.project_runtime import resolve_project_runtime_root
 from goodteam_os.projects import load_project_target
 from goodteam_os.state import normalize_project_key
 

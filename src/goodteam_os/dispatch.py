@@ -562,8 +562,8 @@ def _create_track_job(
         if method_loading_mode:
             fields.update(method_loading_mode=method_loading_mode, method_workspace_mode="dispatch_isolated")
     if track.get("web_search") is not None:
+        from goodteam_os.session_runtimes import SESSION_BACKENDS
         from goodteam_os.web_search import search_policy
-        from goodteam_os.graph import SESSION_BACKENDS
 
         if (method_context and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}
                 or track.get("adapter") not in SESSION_BACKENDS

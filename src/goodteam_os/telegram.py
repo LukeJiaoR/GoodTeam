@@ -856,7 +856,7 @@ def _send_masked_telegram_message(*, token: str, chat_id: object, text: str) -> 
 
 
 def _project_runtime_root(workspace: Path, project_key: str, state: object | None = None) -> Path | None:
-    from goodteam_os.graph import resolve_project_runtime_root
+    from goodteam_os.project_runtime import resolve_project_runtime_root
     from goodteam_os.projects import load_project_target
     from goodteam_os.state import normalize_project_key
 
@@ -1209,7 +1209,7 @@ def _process_telegram_command(
             )
             return {"status": "processed", "command": command, "accepted": False}
         try:
-            from goodteam_os.operator import enqueue_github_issue
+            from goodteam_os.operator_manager_intake import enqueue_github_issue
             from goodteam_os.service import service_state_dir
 
             item, created = enqueue_github_issue(

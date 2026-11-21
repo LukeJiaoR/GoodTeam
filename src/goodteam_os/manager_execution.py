@@ -15,9 +15,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from goodteam_os.graph import worker_type_settings_for_role
 from goodteam_os.models import resolve_project_model_profile
 from goodteam_os.worker_capabilities import MANAGER_DEFAULT_REASONING_DEPTH
+from goodteam_os.worker_routing import worker_type_settings_for_role
 
 
 class ManagerExecutionError(RuntimeError):

@@ -20,7 +20,7 @@ from goodteam_os.projects import (
     load_project_target,
 )
 from goodteam_os.smoke import run_smoke_suite
-from goodteam_os.operator import enqueue_github_issue
+from goodteam_os.operator_manager_intake import enqueue_github_issue
 from goodteam_os.operator_queue import DurableOperatorQueue
 from goodteam_os.service import DEFAULT_PORT, restart_service, service_state_dir, service_status, stop_service
 from goodteam_os.supervisor import ComponentHeartbeat, run_operator_component, run_supervisor, run_telegram_component

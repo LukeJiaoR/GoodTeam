@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from goodteam_os.graph import resolve_project_runtime_root
+from goodteam_os.project_runtime import resolve_project_runtime_root
 from goodteam_os.projects import load_project_target
 from goodteam_os.session_runtimes import SESSION_BACKENDS
 from goodteam_os.state import StateStore, normalize_project_key

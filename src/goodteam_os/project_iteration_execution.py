@@ -162,10 +162,11 @@ def dispatch_policy(task):
 
 
 def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposals):
-    from goodteam_os.graph import _worker_job_fields, resolve_project_runtime_root
+    from goodteam_os.project_runtime import resolve_project_runtime_root
     from goodteam_os.projects import load_project_target
     from goodteam_os.state import create_initial_state
     from goodteam_os.web import resolve_project_model_profile, resolve_runtime_model_config
+    from goodteam_os.worker_routing import _worker_job_fields
 
     target = load_project_target(Path(project_config))
     configured = resolve_project_runtime_root(dict(target.get("repos", {})))
@@ -201,7 +202,7 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
         "constraints": (["Declared task paths: " + ", ".join(task["write_domains"])]
                         if task.get("write_domains") else []),
     } for task, proposal in zip(tasks, proposals)]
-    from goodteam_os.graph import SESSION_BACKENDS
+    from goodteam_os.session_runtimes import SESSION_BACKENDS
     from goodteam_os.web_search import search_policy
 
     for track in tracks:

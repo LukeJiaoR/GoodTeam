@@ -46,11 +46,8 @@ from goodteam_os.graph import (
     generate_prd,
     refine_artifact,
     render_downstream_artifact_markdown,
-    resolve_project_runtime_root,
-    resolve_role_adapter,
     run_architecture_until_gate,
     run_adoption_until_next_gate,
-    run_fix_until_next_gate,
     run_until_next_gate,
     should_generate_artifact_with_worker,
     sync_project_stage_tasks,
@@ -75,6 +72,7 @@ from goodteam_os.multi_reviewer_projection import (
 from goodteam_os.native_picker import choose_native_path
 from goodteam_os.nodes.review_gate import gate_next_node
 from goodteam_os.projects import DELIVERY_MODES, check_project_target, load_project_target, update_worker_backend_config
+from goodteam_os.project_runtime import resolve_project_runtime_root
 from goodteam_os.project_reviewer_profiles import normalize_reviewer_profile_config
 from goodteam_os.project_import import (
     ProjectImportError,
@@ -134,7 +132,7 @@ from goodteam_os.staging import (
 )
 from goodteam_os import state_documents
 from goodteam_os.database import database_configured
-from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, create_initial_state, normalize_project_key
+from goodteam_os.state import AgileDevState, ApprovalDecision, StateStore, normalize_project_key
 from goodteam_os.tasks import (
     LocalTaskStore,
     build_stage_task_snapshot,
@@ -155,6 +153,7 @@ from goodteam_os.workflow_table import (
     workflow_execution_plan_v2,
 )
 from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACKENDS, WorkerJobStore, discover_installed_agents
+from goodteam_os.worker_routing import resolve_role_adapter
 from goodteam_os.cross_project_memory import retrieve_report as retrieve_cross_project_memory
 from goodteam_os.workflow_mutations import (
     WorkflowBusyError, begin_transition, finish_transition, interrupt_transition,

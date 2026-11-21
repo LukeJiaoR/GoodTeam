@@ -7,13 +7,13 @@ from copy import deepcopy
 
 import pytest
 
-from goodteam_os.graph import worker_type_settings_for_role
 from goodteam_os.manager_execution import _manager_settings
 from goodteam_os.team_control_plane import (
     TeamControlPlaneError, TeamControlPlaneStore, build_team_capability_view,
     build_team_state_from_legacy_config, resolve_worker_from_state,
 )
 from goodteam_os.web import normalize_worker_type_settings
+from goodteam_os.worker_routing import worker_type_settings_for_role
 
 
 def test_real_manager_runtime_migrates_without_replacing_worker_backends(tmp_path, monkeypatch):

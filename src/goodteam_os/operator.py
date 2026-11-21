@@ -75,28 +75,6 @@ class OperatorActions(Protocol):
     def observe_ci(self, item: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
-def enqueue_github_issue(
-    *,
-    workspace: Path,
-    state_dir: Path,
-    issue_url: str,
-    github_client: GhCliGitHubClient | None = None,
-) -> tuple[dict[str, Any], bool]:
-    parsed = parse_github_issue_url(issue_url)
-    project = resolve_known_project(workspace, parsed.repository)
-    client = github_client or GhCliGitHubClient(cwd=project.project_root)
-    queue = DurableOperatorQueue(state_dir)
-    key = f"github_issue:{project.key}:{parsed.repository.lower()}#{parsed.issue_number}"
-    # Existing work keeps its original execution/PR/decision identity. Never
-    # create a competing Manager task for a historically accepted Operator item.
-    existing = next((item for item in queue.list_items() if item["idempotency_key"] == key), None)
-    if existing is not None and existing["status"] != "transferred":
-        return existing, False
-    from goodteam_os.operator_manager_intake import intake_issue
-
-    return intake_issue(workspace=workspace, project=project, parsed=parsed, client=client)
-
-
 def record_operator_decision(
     *,
     queue: DurableOperatorQueue,
@@ -146,13 +124,10 @@ class OperatorExecutionStateMachine:
         self.queue = queue
         self.actions = actions
 
-    def tick(self, *, allow_claim=True) -> dict[str, Any] | None:
+    def tick(self) -> dict[str, Any] | None:
         item = self.queue.active_item()
         if item is None:
-            if not allow_claim:
-                return None
-            item = self.queue.claim_next()
-            return item
+            return None
         phase = str(item["phase"])
         try:
             if phase == "hydrating":
@@ -488,7 +463,7 @@ class OperatorService:
     def tick(self) -> dict[str, Any] | None:
         # In-flight/ambiguous legacy effects retain their original reconciliation.
         if self.queue.active_item() is not None:
-            return self.machine.tick(allow_claim=False)
+            return self.machine.tick()
         if self.queue.summary()["desired_state"] != "running":
             return None
         pending = next((item for item in self.queue.list_items()

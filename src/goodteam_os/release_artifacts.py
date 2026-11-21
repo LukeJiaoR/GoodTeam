@@ -53,9 +53,9 @@ def _complete_release_result(content):
 
 def capture_release_candidate(state, workspace, project_config, results):
     from goodteam_os.artifact_revisions import current_job_artifact
+    from goodteam_os.project_runtime import resolve_project_runtime_root
     from goodteam_os.projects import load_project_target
     from goodteam_os.workers import WorkerJobStore
-    from goodteam_os.graph import resolve_project_runtime_root
 
     state.release_candidate = {}
     if project_config is None:

@@ -11,6 +11,10 @@ changes go to Planner; no extra Manager approval gate is introduced. This adapte
 does not add per-Worker or parallel environment versions. Environment changes are
 not implicit input-adapter or arbitrary Worker side effects.
 
+The CLI and Telegram submit through Manager intake, not the old Operator
+execution engine. The Operator state machine reconciles active executions;
+it does not claim queued Issues as new legacy runs.
+
 Use `goodteam task` or Telegram `/gt task` for new Issues. The retired
 `goodteam execution intake-github-issue` command and
 `POST /api/executions/github/issues/intake` did not configure a GitHub client.

@@ -423,8 +423,8 @@ class TaskAssistantService:
             # An injected turn callable owns classification (tests, harnesses).
             return False
         try:
-            from goodteam_os.graph import resolve_role_adapter
             from goodteam_os.projects import load_project_target
+            from goodteam_os.worker_routing import resolve_role_adapter
             from goodteam_os.workers import BUILTIN_WORKER_MODES
 
             adapter = resolve_role_adapter(load_project_target(self.project_config), MANAGER_ROLE)
