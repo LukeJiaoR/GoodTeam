@@ -8,7 +8,7 @@ from goodteam_os.goal_continuation import authority_snapshot
 from goodteam_os.manager_execution import _parse_team_commands
 from goodteam_os.team_control_plane import (
     TEAM_STATE_TARGET_KEY, TeamControlPlaneStore, TeamDispatchBlocked,
-    build_team_capability_view, build_team_execution_snapshot, ensure_team_state, execute_team_commands,
+    build_team_capability_view, ensure_team_state, execute_team_commands,
     resolve_worker_from_state,
 )
 from goodteam_os.workers import WorkerJobStore
@@ -38,7 +38,6 @@ def test_role_uses_explicit_runtime_source_without_inheriting_methods(tmp_path, 
     assert _parse_team_commands([selection]) == [selection]
     team = command(selection)
     assert authority_snapshot(tmp_path, 'DEMO', config, root) != before
-    assert build_team_execution_snapshot(team)['roles']['planner']['runtime_source_worker_id'] == 'research-a'
     # The ordinary discussion entry must use that same callable capability,
     # rather than requiring a fixed Planner member again at queue publication.
     from goodteam_os.task_assistant import TaskAssistantService

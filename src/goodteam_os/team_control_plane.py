@@ -64,7 +64,6 @@ from goodteam_os.workers import BUILTIN_WORKER_MODES, CLI_BACKENDS, SESSION_BACK
 
 TEAM_CONTROL_PLANE_SCHEMA_VERSION = "team_control_plane.v1"
 TEAM_CAPABILITY_VIEW_SCHEMA_VERSION = "team_capability_view.v1"
-TEAM_EXECUTION_SNAPSHOT_SCHEMA_VERSION = "team_execution_snapshot.v1"
 
 MANAGER_ROLE = "orchestrator"
 # project_intake is a workflow Role Definition, not a TeamRole. Its Worker
@@ -1708,41 +1707,6 @@ def build_team_capability_view(
             ),
             "updated_at": manager.get("updated_at", ""),
         },
-    }
-
-
-def build_team_execution_snapshot(state: dict[str, object]) -> dict[str, object]:
-    """Immutable execution-time truth for one durable run/execution epoch.
-
-    Later Team changes (runtime edits, lifecycle moves, role changes, renames,
-    deletes) must never rewrite what a historical run bound at start.
-    """
-    roles = {
-        role: {"state": str(dict(roles_state).get("state", "enabled")),
-               **({"runtime_source_worker_id": roles_state["runtime_source_worker_id"]}
-                  if roles_state.get("runtime_source_worker_id") else {})}
-        for role, roles_state in _roles(state).items()
-    }
-    workers = {
-        str(worker["id"]): {
-            "name": worker["name"],
-            "role": worker["role"],
-            "lifecycle": worker["lifecycle"],
-            "provider": dict(worker["runtime"]).get("provider", ""),
-            "model": dict(worker["runtime"]).get("model", ""),
-            "reasoning_depth": dict(worker["runtime"]).get("reasoning_depth", "default"),
-            "additional_prompt": dict(worker["runtime"]).get("additional_prompt", ""),
-        }
-        for worker in _workers(state)
-    }
-    manager = dict(state["manager"])  # type: ignore[arg-type]
-    return {
-        "schema_version": TEAM_EXECUTION_SNAPSHOT_SCHEMA_VERSION,
-        "revision": state["revision"],
-        "captured_at": _now(),
-        "roles": roles,
-        "workers": workers,
-        "manager": {"runtime": dict(manager.get("runtime", {}) or {})},
     }
 
 
