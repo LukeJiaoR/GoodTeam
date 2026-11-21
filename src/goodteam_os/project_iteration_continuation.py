@@ -563,7 +563,7 @@ def _require_clean_checkout(root, label):
 
 def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_commit, landed_commit):
     from goodteam_os.dispatch_workspace import (
-        _git, _read_git, dispatch_artifact_root, verify_dispatch_result,
+        _git, _read_git, dispatch_artifact_root, verify_dispatch_results,
     )
     from goodteam_os.project_iteration_execution import iteration_batch_report
     from goodteam_os.project_iteration_quality import accepted_batch_quality
@@ -577,8 +577,8 @@ def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_comm
     if not jobs or any(job.get("outcome") != "ok" for job in jobs):
         raise ValueError("Every task needs a successful retained Worker result before delivery review.")
     dispatch_id = report.get("run_id")
-    for job in jobs:
-        captured = verify_dispatch_result(root, {"dispatch_run_id": dispatch_id, **job})
+    results = verify_dispatch_results(root, ({"dispatch_run_id": dispatch_id, **job} for job in jobs))
+    for job, captured in zip(jobs, results, strict=True):
         if captured.get("result_commit") != job.get("result_commit"):
             raise ValueError("A Worker result changed after candidate integration.")
     candidate = Path(str(integration.get("candidate_path") or "")).absolute()
