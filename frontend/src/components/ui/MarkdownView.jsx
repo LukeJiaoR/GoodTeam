@@ -1,10 +1,9 @@
 /**
  * [INPUT]: 接收对话和项目概览的 Markdown，使用 ChatRichContent 渲染交互内容。
- * [OUTPUT]: 渲染 Markdown。显式链接交给浏览器解析。
+ * [OUTPUT]: 渲染 Markdown。显式链接交给 React 和浏览器处理。
  * [POS]: 工作台和项目概览共用的 Markdown 渲染器。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
-/* eslint-disable react-refresh/only-export-components -- renderInlineMarkdown is exported for the link tests. */
 import { useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import ChatRichContent, { InteractiveTable } from './ChatRichContent';
@@ -26,7 +25,7 @@ function isTableSeparatorRow(line) {
  * Parses inline markdown tokens (bold, italic, strikethrough, inline code, links).
  * Returns an array of React nodes.
  */
-export function renderInlineMarkdown(text) {
+function renderInlineMarkdown(text) {
   if (!text) return null;
 
   // Regex splitting on code `...`, bold **...**, italic *...*, strikethrough ~~...~~, and links [...](...)
@@ -76,20 +75,6 @@ export function renderInlineMarkdown(text) {
     const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (linkMatch) {
       const [, label, url] = linkMatch;
-      let protocol;
-      try {
-        protocol = new URL(url, 'https://goodteam.invalid').protocol;
-      } catch {
-        return label;
-      }
-      const isLocalReference = protocol === 'file:' || /^[A-Za-z]:[\\/]/.test(url);
-      if (isLocalReference || ['javascript:', 'vbscript:', 'data:'].includes(protocol)) {
-        return (
-          <span key={index} className="md-link-text">
-            {isLocalReference ? `${label} (${url}; preview unavailable)` : label}
-          </span>
-        );
-      }
       return (
         <a
           key={index}
