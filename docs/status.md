@@ -14,9 +14,11 @@ Projects → Work / Team / Knowledge
 - `/projects/<PROJECT_KEY>/work` is the primary Task Assistant / 任务助手 conversation for understanding, work intake, clarification, progress and explicit recovery.
 - Work keeps project/task identity and one next step visible. The context action locates existing controls; it does not independently approve or execute work.
 - The composer accepts project questions and task drafts. Confirm a draft to turn its exact revision into a batch.
+- Confirm a displayed Manager recommendation to queue and run it in one action.
 - Team exposes project-owned Roles and Worker configuration.
 - Knowledge exposes repository understanding and memory.
 - Settings exposes appearance and language controls in the workspace and project shell.
+- The dashboard can read historical server-action audits and execution evidence. The legacy launch and server-action POSTs are retired.
 
 ## Current control-plane model
 

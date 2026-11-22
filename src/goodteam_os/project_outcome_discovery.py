@@ -120,7 +120,7 @@ def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
     a discovery grant. Observation never grants follow-up execution authority.
     """
     from goodteam_os.dispatch_workspace import _git
-    from goodteam_os.project_iteration_continuation import _verify_landed_batch
+    from goodteam_os.project_iteration_continuation import DELIVERY_VERIFICATIONS, _verify_landed_batch
     from goodteam_os.tasks import project_task_intent
 
     batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
@@ -135,7 +135,7 @@ def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
     receipt = batch.get("delivery_receipt") or {}
     if (receipt.get("receipt_id") != _digest({key: item for key, item in receipt.items() if key != "receipt_id"})
             or receipt.get("producer") != "human_confirmed_candidate_delivery"
-            or receipt.get("verification") != "landed_git_ancestor_and_content"
+            or receipt.get("verification") not in DELIVERY_VERIFICATIONS
             or receipt.get("run_id") != batch["run_id"] or receipt.get("reviewed") is not True):
         raise ValueError("The accepted project delivery receipt cannot be verified.")
     known = {task["id"]: task for task in LocalTaskStore(root, project_key).list_tasks()}

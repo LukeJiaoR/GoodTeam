@@ -2,8 +2,9 @@
 
 ## Project-iteration-first task selection
 
-**One execution path for Manager work:** Manager recommendations are read-only
-until explicitly queued. Confirmed single tasks and batches use the same Task
+**One execution path for Manager work:** A Manager recommendation is read-only
+until the user queues it or confirms immediate execution. Both actions use the
+same Task Assistant queue. Confirmed single tasks and batches use the same Task
 Assistant batch adapter and `dispatch_tracks` isolated Worker pool (up to 10
 concurrently). The original LocalTaskStore card owns the task; the queue's
 immutable confirmation binds the batch run. Worker output and fan-in produce

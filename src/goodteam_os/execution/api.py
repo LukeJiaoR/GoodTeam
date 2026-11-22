@@ -1,3 +1,8 @@
+"""[INPUT]: 执行账本、GitHub 绑定和候选质量服务。
+[OUTPUT]: 执行证据读取、普通 PR 绑定及独立评审操作。
+[POS]: 为 CLI 和 Web 复用执行证据与候选服务。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import json
@@ -85,7 +90,7 @@ class ExecutionAPI:
                 selected = any(_read(root / name) is not None for name in
                     ("delivery-plan.json", "operator-candidate-configuration.json", "validation-current.json"))
         if selected or AutomaticCandidateReviewService(self.project_root).projection(execution_id) is not None:
-            raise ValueError("Automatic candidates require exact-SHA publication and PR binding through the local Operator")
+            raise ValueError("The ordinary PR action cannot publish a protected review candidate.")
         service = PullRequestBindingService(
             self.project_root,
             self.github_client,

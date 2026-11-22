@@ -1,10 +1,10 @@
 # Running a project task batch
 
-Manager compares existing project cards and proposes an iteration. In Work,
-choose **Add selected tasks to existing queue**, inspect the selected work,
-then **Confirm and run selected tasks (uses model)**. Confirmation authorizes
-the configured Workers for exactly those queued revisions. It does not
-authorize merging or deploying their output.
+Manager compares existing project cards and proposes an iteration. Review the
+recommendation in Work and choose **Run selected tasks now (uses model)** to
+queue and confirm the displayed tasks in one action. Choose **Add selected
+tasks to existing queue** to prepare or start the work later. Confirmation
+authorizes the configured Workers for those exact task revisions.
 
 The Task Assistant uses the existing `dispatch_tracks` pool, with at most ten
 simultaneous Workers and queued overflow. Tasks can share a Worker role; each
@@ -34,8 +34,10 @@ workspace. Quality views bind the displayed candidate and validation receipts
 to the same read; delivery independently checks the exact landed Git revision
 and the configured review policy.
 
-The API action is `start_queued_task_batch` on the existing project Task
-Assistant actions endpoint. It takes `proposal_ids`, an `expected_revisions`
+On the project Task Assistant actions endpoint, `start_iteration_choice` takes
+the displayed `expected_choice_event_id` and `confirmed: true`. Repeating the
+same confirmation uses the original batch after the backlog advances.
+`start_queued_task_batch` takes `proposal_ids`, an `expected_revisions`
 object mapping each proposal ID to its revision, and `confirmed: true`. HTTP
 execution runs in the background. Authorized project continuation calls the
 same `run_queued_iteration_batch` service in the background so Stop stays responsive. The session's batch

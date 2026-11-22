@@ -13,7 +13,7 @@ _trusted_system_executable.py: 校验系统可执行文件的身份与可信路�
 assistant_conversation.py: 围绕待确认草稿回复项目会话。
 assistant_drafts.py: 编辑草稿并确认提交任务批次。
 assistant_intake.py: Bound task discovery to the user's messages for the current, unstarted task.
-assistant_queue.py: 重新校验并保存待确认任务。
+assistant_queue.py: 保存待确认任务，按原建议版本生成队列标识。
 assistant_requests.py: 会话请求接收、停止与中断恢复。
 assistant_runtime.py: Manager 运行时快照、状态与安全失败信息。
 assistant_workspace.py: 投影项目会话、草稿、队列与 Manager 活动。
@@ -77,8 +77,8 @@ project_human_feedback.py: Bound a Human answer to an existing discovery decisio
 project_import.py: 项目导入、工作台入口、模式确认与 readiness 绑定。
 project_investigation_feedback.py: Observe settled investigation output without accepting it as delivery.
 project_iteration.py: Read-only, evidence-grounded starting point for project iteration planning.
-project_iteration_continuation.py: Bounded project continuation through the existing Assistant queue and dispatch.
-project_iteration_execution.py: 冻结批次输入并调用隔离 Worker 池。
+project_iteration_continuation.py: 复用任务队列续跑，核验候选内容与落地提交并保存交付凭据。
+project_iteration_execution.py: 通过同一队列确认原建议或待办批次，并调用隔离 Worker 池。
 project_iteration_planner.py: 从项目任务与授权上下文生成只读迭代建议。
 project_iteration_quality.py: Bind an existing project batch to the existing candidate quality services.
 project_iteration_recovery.py: Explicit recovery of the existing confirmed batch, never fresh task intake.
@@ -116,7 +116,7 @@ task_delegation.py: One task input contract shared by role dispatch entry points
 tasks.py: 保存任务身份、状态、证据和依赖。
 team_control_plane.py: 保存项目角色、Worker 和 Manager 运行配置，记录团队变更。
 team_workspace.py: 从会话和批次凭据投影 Worker 状态。
-web.py: 本地 Web 与项目 API 请求入口，校验 HTTP 请求。
+web.py: 校验本机项目请求，路由派工与交付操作，提供历史操作记录查询。
 web_search.py: Opt-in hosted search for an existing Pi job, never a new worker runtime.
 worker_capabilities.py: 定义 Manager 请求档位、持久化档位与 Worker 目录后备值。
 worker_output_context.py: Bounded, invocation-bound Worker output. Never a control/reply join.

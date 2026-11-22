@@ -1,11 +1,10 @@
 """[INPUT]: GoodTeam 请求、工作区与项目服务。
-[OUTPUT]: Web 服务、项目 API 和 HTTP 请求验证。
+[OUTPUT]: Web 服务、项目任务与交付 API、历史执行和操作记录查询。
 [POS]: 校验 HTTP 请求并路由至工作区和项目服务。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 import ipaddress
 import json
-import hmac
 import logging
 import os
 import re
@@ -122,7 +121,6 @@ WORKER_ADDITIONAL_PROMPT_MAX_CHARS = 4000
 WORKER_DESIRED_INSTANCES_MAX = 8
 PRE_REVIEW_REPORT_DIR = Path("/tmp")
 DEV_LOOP_SUBPROCESS_TIMEOUT_SECONDS = 10
-SERVER_ACTION_TIMEOUT_SECONDS = 600
 FS_LIST_MAX_ENTRIES = 500
 ARTIFACT_PREVIEW_MAX_CHARS = 8000
 FS_LIST_IGNORED_NAMES = {".git", ".github", ".venv", "__pycache__", "node_modules", ".next", "dist", "build"}
@@ -412,271 +410,8 @@ def _parse_gh_pull_requests(output: str, warnings: list[str]) -> list[dict[str, 
     return pull_requests
 
 
-def _land_command_for_pull_request(
-    number: int,
-    head_branch: str,
-    worktrees: list[dict[str, str]],
-    *,
-    review_rationale_path: str = "",
-) -> str:
-    matching_worktree = next((worktree for worktree in worktrees if worktree.get("branch") == head_branch), None)
-    command = f"scripts/land-pr.sh {number}"
-    if matching_worktree is None:
-        return command
-    command = f"{command} --worktree {matching_worktree['path']}"
-    if review_rationale_path:
-        command = f"{command} --review-rationale {review_rationale_path}"
-    return command
-
-
-def _review_rationale_path(root: Path, number: int) -> Path:
-    return root / ".goodteam" / "provenance" / f"pr-{number}" / "review-rationale.md"
-
-
-def _non_empty_file_exists(path: Path) -> bool:
-    try:
-        return path.is_file() and path.stat().st_size > 0
-    except OSError:
-        return False
-
-
-def _server_actions_enabled() -> bool:
-    return os.environ.get("GOODTEAM_SERVER_ACTIONS", "").strip() == "1"
-
-
-def _server_action_nonce() -> str:
-    return os.environ.get("GOODTEAM_SERVER_ACTION_NONCE", "").strip()
-
-
 def _server_action_audit_dir(root: Path) -> Path:
     return root / ".goodteam" / "server-actions"
-
-
-def _tail_text(value: str, *, max_chars: int = 2000) -> str:
-    text = str(value or "")
-    if len(text) <= max_chars:
-        return text
-    return text[-max_chars:]
-
-
-def _decode_subprocess_text(value: object) -> str:
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return str(value or "")
-
-
-def _positive_int(value: object, field: str) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field} must be a positive integer") from exc
-    if parsed <= 0:
-        raise ValueError(f"{field} must be a positive integer")
-    return parsed
-
-
-def _optional_absolute_path(value: object, field: str) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    path = Path(raw).expanduser()
-    if not path.is_absolute():
-        raise ValueError(f"{field} must be an absolute path")
-    return str(path)
-
-
-def _git_safe_ref(value: object, field: str = "ref") -> str:
-    ref = str(value or "").strip()
-    if not re.fullmatch(r"[A-Za-z0-9._/-]{7,80}", ref):
-        raise ValueError(f"{field} must be a git-safe ref or SHA")
-    if ref.startswith(("-", "/", ".")) or ref.endswith(("/", ".")):
-        raise ValueError(f"{field} must be a git-safe ref or SHA")
-    if ".." in ref or "//" in ref or "@{" in ref:
-        raise ValueError(f"{field} must be a git-safe ref or SHA")
-    for component in ref.split("/"):
-        if (
-            not component
-            or component in {".", ".."}
-            or component.startswith(("-", "."))
-            or component.endswith(".lock")
-        ):
-            raise ValueError(f"{field} must be a git-safe ref or SHA")
-    return ref
-
-
-def _git_safe_tag(value: object, field: str = "tag") -> str:
-    tag = str(value or "").strip()
-    if not re.fullmatch(r"[A-Za-z0-9._/-]{1,80}", tag):
-        raise ValueError(f"{field} must be a git-safe tag")
-    if tag.startswith(("-", "/", ".")) or tag.endswith(("/", ".")):
-        raise ValueError(f"{field} must be a git-safe tag")
-    if ".." in tag or "//" in tag or "@{" in tag:
-        raise ValueError(f"{field} must be a git-safe tag")
-    for component in tag.split("/"):
-        if (
-            not component
-            or component in {".", ".."}
-            or component.startswith(("-", "."))
-            or component.endswith(".lock")
-        ):
-            raise ValueError(f"{field} must be a git-safe tag")
-    return tag
-
-
-def _tag_release_safety_report() -> dict[str, object]:
-    return {
-        "server_execution": "report_only",
-        "blocked_by": [
-            "tag_name_policy",
-            "signed_tag_policy",
-            "remote_push_policy",
-            "rollback_policy",
-            "human_release_decision",
-        ],
-        "future_enablement_requires": [
-            "GOODTEAM_SERVER_ACTIONS=1",
-            "GOODTEAM_SERVER_ACTION_NONCE",
-            "typed confirmation: TAG RELEASE <tag>",
-            "argv allowlist with shell=False",
-            "audit record before any remote push",
-            "human-reviewed release notes and rollback plan",
-        ],
-    }
-
-
-def _server_action_expected_confirmation(action: str, request: dict[str, object]) -> str:
-    if action == "land_pr":
-        pr_number = _positive_int(request.get("pr"), "pr")
-        return f"LAND PR {pr_number}"
-    if action == "graduate_release":
-        ref = _git_safe_ref(request.get("ref", ""))
-        return f"GRADUATE RELEASE {ref}"
-    if action == "tag_release":
-        tag = _git_safe_tag(request.get("tag", ""), "tag")
-        return f"TAG RELEASE {tag}"
-    raise ValueError(f"Unsupported server action: {action}")
-
-
-def _land_pr_action_argv(root: Path, request: dict[str, object]) -> list[str]:
-    pr_number = _positive_int(request.get("pr"), "pr")
-    dev_loop = build_dev_loop(root)
-    readiness = dev_loop.get("land_tag_readiness", {})
-    candidates = readiness.get("pull_requests", []) if isinstance(readiness, dict) else []
-    matching = next(
-        (
-            item
-            for item in candidates
-            if isinstance(item, dict) and int(item.get("pr", 0) or 0) == pr_number
-        ),
-        None,
-    )
-    if matching is None:
-        raise ValueError(f"PR {pr_number} is not present in local land readiness")
-    if not matching.get("ready"):
-        missing = matching.get("missing", [])
-        missing_text = ", ".join(str(item) for item in missing) if isinstance(missing, list) else str(missing)
-        raise ValueError(f"PR {pr_number} is not ready to land: {missing_text}")
-    worktree = _optional_absolute_path(matching.get("worktree", ""), "worktree")
-    rationale = _optional_absolute_path(matching.get("review_rationale_path", ""), "review_rationale_path")
-    if not worktree or not rationale:
-        raise ValueError(f"PR {pr_number} is missing trusted land paths")
-    return [
-        "scripts/land-pr.sh",
-        str(pr_number),
-        "--worktree",
-        worktree,
-        "--review-rationale",
-        rationale,
-    ]
-
-
-def _server_action_argv(root: Path, action: str, request: dict[str, object]) -> list[str]:
-    if action == "land_pr":
-        return _land_pr_action_argv(root, request)
-    if action == "graduate_release":
-        ref = _git_safe_ref(request.get("ref", ""))
-        return ["scripts/graduate-release.sh", "--ref", ref, "--yes"]
-    if action == "tag_release":
-        raise ValueError("tag_release is report-only until tag safety design is complete")
-    raise ValueError(f"Unsupported server action: {action}")
-
-
-def run_gated_server_action(
-    root: Path,
-    request: dict[str, object],
-    *,
-    origin: str = "",
-    actor: str = "local-dashboard",
-) -> dict[str, object]:
-    if not _server_actions_enabled():
-        raise PermissionError("server action execution is disabled")
-    expected_nonce = _server_action_nonce()
-    supplied_nonce = str(request.get("nonce", ""))
-    if not expected_nonce or not hmac.compare_digest(supplied_nonce, expected_nonce):
-        raise PermissionError("server action nonce is missing or invalid")
-
-    action = str(request.get("action", "")).strip()
-    expected_confirmation = _server_action_expected_confirmation(action, request)
-    typed_confirmation = str(request.get("confirm", "")).strip()
-    if typed_confirmation != expected_confirmation:
-        raise ValueError(f"typed confirmation must exactly match: {expected_confirmation}")
-    argv = _server_action_argv(root, action, request)
-
-    started_at = datetime.now(UTC).isoformat()
-    timed_out = False
-    returncode: int | None
-    stdout = ""
-    stderr = ""
-    try:
-        result = subprocess.run(
-            argv,
-            cwd=root,
-            env=provider_environment(),
-            capture_output=True,
-            text=True,
-            timeout=SERVER_ACTION_TIMEOUT_SECONDS,
-            check=False,
-        )
-        returncode = result.returncode
-        stdout = result.stdout
-        stderr = result.stderr
-    except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        returncode = None
-        stdout = _decode_subprocess_text(exc.output)
-        stderr = _decode_subprocess_text(exc.stderr)
-    finished_at = datetime.now(UTC).isoformat()
-    audit = {
-        "id": f"server-action-{uuid4()}",
-        "timestamp": finished_at,
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "actor": actor,
-        "origin": origin,
-        "action": action,
-        "argv": argv,
-        "typed_confirmation": typed_confirmation,
-        "returncode": returncode,
-        "timed_out": timed_out,
-        "stdout_tail": _tail_text(stdout),
-        "stderr_tail": _tail_text(stderr),
-        "rollback_hint": "Use GitHub PR/release rollback guidance from the audit context; do not rerun blindly.",
-    }
-    audit_dir = _server_action_audit_dir(root)
-    audit_dir.mkdir(parents=True, exist_ok=True)
-    audit_path = audit_dir / f"{audit['id']}.json"
-    audit["audit_path"] = str(audit_path)
-    audit_path.write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return {
-        "status": "completed" if returncode == 0 else "failed",
-        "action": action,
-        "argv": argv,
-        "returncode": returncode,
-        "timed_out": timed_out,
-        "stdout_tail": audit["stdout_tail"],
-        "stderr_tail": audit["stderr_tail"],
-        "audit_path": str(audit_path),
-    }
 
 
 SERVER_ACTION_AUDIT_FIELDS = (
@@ -745,75 +480,6 @@ def build_server_action_audit_log(root: Path | None, *, limit: int = 25) -> dict
     }
 
 
-def _worktree_status_for_path(path: str, root: Path, warnings: list[str]) -> str:
-    if not path:
-        return "missing"
-    result = _run_readonly_command(["git", "-C", path, "status", "--short"], root, warnings)
-    if result is None:
-        return "unknown"
-    if result.returncode != 0:
-        warnings.append(f"git status failed for worktree {path}")
-        return "unknown"
-    return "dirty" if result.stdout.strip() else "clean"
-
-
-def build_land_tag_readiness(
-    pull_requests: list[dict[str, object]],
-    pre_review_presence_by_pr: dict[int, bool],
-    worktrees: list[dict[str, str]],
-    worktree_status_by_path: dict[str, str],
-    root: Path,
-) -> dict[str, object]:
-    readiness_items: list[dict[str, object]] = []
-    for pull_request in pull_requests:
-        number = int(pull_request["number"])
-        head_branch = str(pull_request.get("head_branch", ""))
-        ci = str(pull_request.get("ci", "unknown"))
-        pre_review = pre_review_presence_by_pr.get(number, False)
-        matching_worktree = next((worktree for worktree in worktrees if worktree.get("branch") == head_branch), None)
-        worktree_path = str(matching_worktree.get("path", "")) if matching_worktree else ""
-        worktree_status = worktree_status_by_path.get(worktree_path, "missing") if worktree_path else "missing"
-        rationale_path = _review_rationale_path(root, number)
-        review_rationale_present = _non_empty_file_exists(rationale_path)
-        missing: list[str] = []
-        if ci != "pass":
-            missing.append("ci_not_green")
-        if not pre_review:
-            missing.append("missing_pre_review")
-        if matching_worktree is None:
-            missing.append("missing_worktree")
-        elif worktree_status == "dirty":
-            missing.append("dirty_worktree")
-        elif worktree_status != "clean":
-            missing.append("worktree_status_unknown")
-        if not review_rationale_present:
-            missing.append("missing_rationale")
-        readiness_items.append(
-            {
-                "pr": number,
-                "ready": not missing,
-                "missing": missing,
-                "command": _land_command_for_pull_request(
-                    number,
-                    head_branch,
-                    worktrees,
-                    review_rationale_path=str(rationale_path) if review_rationale_present else "",
-                ),
-                "ci": ci,
-                "pre_review": pre_review,
-                "head_branch": head_branch,
-                "worktree": worktree_path,
-                "worktree_status": worktree_status,
-                "review_rationale": review_rationale_present,
-                "review_rationale_path": str(rationale_path),
-            }
-        )
-    return {
-        "server_execution": "disabled_by_default",
-        "pull_requests": readiness_items,
-    }
-
-
 def _release_dir_for_root(root: Path) -> Path:
     configured = os.environ.get("GOODTEAM_RELEASE_DIR", "").strip()
     if configured:
@@ -855,111 +521,6 @@ def build_release_readiness(root: Path, warnings: list[str]) -> dict[str, object
         "up_to_date": bool(dev_head and release_head and dev_head == release_head),
         "release_up_command": f"{command_prefix}scripts/release-up.sh --ref {ref}",
         "graduate_command": f"{command_prefix}scripts/graduate-release.sh --ref {ref}",
-    }
-
-
-def _server_action_capability(
-    *,
-    available: bool,
-    mode: str,
-    reason: str = "",
-    command: str = "",
-    readiness: dict[str, object] | None = None,
-) -> dict[str, object]:
-    capability: dict[str, object] = {
-        "available": available,
-        "mode": mode,
-        "reason": reason,
-    }
-    if command:
-        capability["command"] = command
-    if readiness is not None:
-        capability["readiness"] = readiness
-    return capability
-
-
-def build_server_action_execution_policy(root: Path | None) -> dict[str, object]:
-    env_gate_configured = _server_actions_enabled()
-    nonce_configured = bool(_server_action_nonce())
-    destructive_actions_available = bool(root is not None and env_gate_configured and nonce_configured)
-    audit_dir = str(_server_action_audit_dir(root.resolve())) if root is not None else ""
-    blocked_actions: dict[str, list[str]] = {
-        "tag_release": ["tag_release_safety_design_required"],
-    }
-    enabled_actions: list[str] = []
-    if destructive_actions_available:
-        enabled_actions = ["land_pr", "graduate_release"]
-    else:
-        blockers = []
-        if root is None:
-            blockers.append("no_project_selected")
-        if not env_gate_configured:
-            blockers.append("disabled_by_default")
-        if not nonce_configured:
-            blockers.append("missing_nonce")
-        blocked_actions["land_pr"] = blockers
-        blocked_actions["graduate_release"] = blockers
-    return {
-        "status": "guarded_execute" if destructive_actions_available else "disabled",
-        "destructive_actions_available": destructive_actions_available,
-        "env_gate_configured": env_gate_configured,
-        "nonce_configured": nonce_configured,
-        "same_origin_required": True,
-        "typed_confirmation_required": True,
-        "argv_allowlist_required": True,
-        "audit_required": True,
-        "audit_dir": audit_dir,
-        "timeout_seconds": SERVER_ACTION_TIMEOUT_SECONDS,
-        "enabled_actions": enabled_actions,
-        "blocked_actions": blocked_actions,
-    }
-
-
-def build_server_action_capabilities(
-    root: Path | None,
-    *,
-    release_readiness: dict[str, object] | None = None,
-    land_tag_readiness: dict[str, object] | None = None,
-    warnings: list[str] | None = None,
-) -> dict[str, object]:
-    capability_warnings: list[str] = [] if warnings is None else warnings
-    if release_readiness is None:
-        release_readiness = (
-            build_release_readiness(root, capability_warnings) if root is not None else {"available": False}
-        )
-    graduate_command = str(release_readiness.get("graduate_command", ""))
-    destructive_actions_available = bool(root is not None and _server_actions_enabled() and _server_action_nonce())
-    destructive_reason = "" if destructive_actions_available else "disabled_by_default"
-    destructive_mode = "guarded_execute" if destructive_actions_available else "human_command_only"
-    return {
-        "actions": {
-            "dispatch_track": _server_action_capability(
-                available=True,
-                mode="execute",
-            ),
-            "land_pr": _server_action_capability(
-                available=destructive_actions_available,
-                mode=destructive_mode,
-                reason=destructive_reason,
-                readiness=land_tag_readiness,
-            ),
-            "tag_release": _server_action_capability(
-                available=False,
-                mode="report_only",
-                reason="tag_release_safety_design_required",
-                readiness=_tag_release_safety_report(),
-            ),
-            "graduate_release": _server_action_capability(
-                available=destructive_actions_available,
-                mode=destructive_mode,
-                reason=destructive_reason,
-                command=graduate_command,
-            ),
-        },
-        "execution_policy": build_server_action_execution_policy(root),
-        "release_readiness": release_readiness,
-        "warnings": capability_warnings,
-        "generated_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -1013,12 +574,6 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
             worktrees = _parse_git_worktrees(git_result.stdout)
         else:
             warnings.append("git worktree list failed")
-    worktree_status_by_path = {
-        worktree["path"]: _worktree_status_for_path(worktree["path"], root, warnings)
-        for worktree in worktrees
-        if worktree.get("path")
-    }
-
     gh_result = _run_readonly_command(
         ["gh", "pr", "list", "--json", "number,title,headRefName,url,statusCheckRollup"],
         root,
@@ -1031,12 +586,10 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
             warnings.append("gh pr list failed")
 
     pre_reviews = []
-    pre_review_presence_by_pr: dict[int, bool] = {}
     for pull_request in pull_requests:
         number = int(pull_request["number"])
         report_path = PRE_REVIEW_REPORT_DIR / f"pre-review-{number}-report.md"
         present = report_path.is_file()
-        pre_review_presence_by_pr[number] = present
         pre_reviews.append(
             {
                 "pr": number,
@@ -1044,47 +597,12 @@ def build_dev_loop(root: Path | None) -> dict[str, object]:
                 "report_path": str(report_path),
             }
         )
-    for pull_request in pull_requests:
-        number = int(pull_request["number"])
-        head_branch = str(pull_request["head_branch"])
-        matching_worktree = next((worktree for worktree in worktrees if worktree.get("branch") == head_branch), None)
-        worktree_path = str(matching_worktree.get("path", "")) if matching_worktree else ""
-        rationale_path = _review_rationale_path(root, number)
-        rationale_present = _non_empty_file_exists(rationale_path)
-        worktree_status = worktree_status_by_path.get(worktree_path, "missing") if worktree_path else "missing"
-        pull_request["land_ready"] = (
-            pull_request["ci"] == "pass"
-            and pre_review_presence_by_pr.get(number, False)
-            and worktree_status == "clean"
-            and rationale_present
-        )
-        pull_request["land_command"] = _land_command_for_pull_request(
-            number,
-            head_branch,
-            worktrees,
-            review_rationale_path=str(rationale_path) if rationale_present else "",
-        )
-
-    release_readiness = build_release_readiness(root, warnings)
-    land_tag_readiness = build_land_tag_readiness(
-        pull_requests,
-        pre_review_presence_by_pr,
-        worktrees,
-        worktree_status_by_path,
-        root,
-    )
     return {
         "worktrees": worktrees,
         "pull_requests": pull_requests,
         "pre_reviews": pre_reviews,
         "is_git_repo": True,
-        "land_tag_readiness": land_tag_readiness,
-        "release_readiness": release_readiness,
-        "server_actions": build_server_action_capabilities(
-            root,
-            release_readiness=release_readiness,
-            land_tag_readiness=land_tag_readiness,
-        ),
+        "release_readiness": build_release_readiness(root, warnings),
         "warnings": warnings,
         "generated_at": datetime.now(UTC).isoformat(),
     }
@@ -2170,7 +1688,6 @@ def build_workspace_product_settings(workspace: Path) -> dict[str, object]:
             "workspace": str(workspace.expanduser().resolve()),
             "settings_path": str(_workspace_product_settings_path(workspace)),
             "project_count": len(overview),
-            "server_actions_enabled": os.getenv("GOODTEAM_SERVER_ACTIONS", "0") == "1",
         },
     }
 
@@ -2844,16 +2361,18 @@ def handle_project_api_post(
             except ValueError as exc:
                 raise ProjectApiError("iteration_queue_unavailable", str(exc), 409,
                                       recovery=["reload_project"]) from exc
-        if action == "start_queued_task_batch":
-            from goodteam_os.project_iteration_execution import run_queued_iteration_batch
+        if action in {"start_iteration_choice", "start_queued_task_batch"}:
+            from goodteam_os.project_iteration_execution import run_queued_iteration_batch, start_recommended_iteration
 
             try:
-                result = run_queued_iteration_batch(
-                    workspace=workspace, project_key=key, root=root,
-                    project_config=_project_config_for_key(workspace, key),
-                    proposal_ids=request.get("proposal_ids"), expected_revisions=request.get("expected_revisions"),
-                    confirmed=request.get("confirmed") is True, background=True,
-                )
+                inputs = dict(workspace=workspace, project_key=key, root=root,
+                    project_config=_project_config_for_key(workspace, key), confirmed=request.get("confirmed") is True)
+                if action == "start_iteration_choice":
+                    result = start_recommended_iteration(**inputs,
+                        expected_choice_event_id=request.get("expected_choice_event_id"))
+                else:
+                    result = run_queued_iteration_batch(**inputs, proposal_ids=request.get("proposal_ids"),
+                        expected_revisions=request.get("expected_revisions"), background=True)
                 return 202, result
             except ValueError as exc:
                 raise ProjectApiError("task_batch_unavailable", str(exc), 409, recovery=["reload_project"]) from exc
@@ -3515,14 +3034,12 @@ def handle_execution_post(path: str, request: dict[str, object]) -> tuple[int, d
         if decision_match is not None:
             return _record_review_workbench_decision(decision_match.group(1), request)
 
-        match = re.fullmatch(r"/executions/([^/]+)/(run|pr|ci)", path)
+        match = re.fullmatch(r"/executions/([^/]+)/(pr|ci)", path)
         if match is None:
             return None
         execution_id = match.group(1)
         api = ExecutionAPI(_execution_project_root_from_body(request))
         command = match.group(2)
-        if command == "run":
-            return 200, api.run_execution(execution_id)
         if command == "pr":
             return 200, api.create_or_reuse_pr(execution_id)
         return 200, api.observe_ci(execution_id)
@@ -4186,18 +3703,6 @@ def serve(
                         project_root = None
                 self._send_json(200, build_dev_loop(project_root))
                 return
-            if parsed.path == "/api/server-actions":
-                project_root = None
-                if project_key:
-                    try:
-                        project_config = _project_config_for_key(workspace, project_key)
-                        project_root = resolve_project_runtime_root(
-                            dict(load_project_target(project_config).get("repos", {}))
-                        )
-                    except Exception:
-                        project_root = None
-                self._send_json(200, build_server_action_capabilities(project_root))
-                return
             if parsed.path == "/api/server-actions/audit":
                 project_root = None
                 if project_key:
@@ -4373,14 +3878,14 @@ def serve(
             if normalized_path.startswith("/api/"):
                 normalized_path = normalized_path.removeprefix("/api")
             is_execution_path = bool(
-                re.fullmatch(r"/executions/[^/]+/(run|pr|ci|review-workbench/decision|correction/start|correction/stop|correction/prepare-worker)", normalized_path)
+                re.fullmatch(r"/executions/[^/]+/(pr|ci|review-workbench/decision|correction/start|correction/stop|correction/prepare-worker)", normalized_path)
             )
 
             if not is_project_path and not is_skill_path and not is_execution_path and normalized_path not in {
                 "/report-bug", "/context-estimate", "/context-generate",
                 "/project-config", "/project-delete", "/open-path",
                 "/fs/choose",
-                "/fs/mkdir", "/server-actions/run", "/git-init",
+                "/fs/mkdir", "/git-init",
             }:
                 self.send_error(404)
                 return
@@ -4531,15 +4036,6 @@ def serve(
                     )
                 elif normalized_path == "/git-init":
                     result = initialize_project_git_for_request(workspace, request)
-                elif normalized_path == "/server-actions/run":
-                    project_root = resolve_project_root_for_request(workspace, request)
-                    result = run_gated_server_action(
-                        project_root,
-                        request,
-                        origin=str(self.headers.get("Origin", "")),
-                    )
-                    self._send_json(202, result)
-                    return
                 # `/project-config` carries two operations: the worker-backends
                 # panel sends `project` + `workers` for an existing project; the
                 # create-config form sends neither. Route both explicitly so an

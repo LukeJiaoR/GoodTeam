@@ -1,5 +1,5 @@
 """[INPUT]: 项目任务账、任务摘要与会话。
-[OUTPUT]: 重新校验并保存待确认任务。
+[OUTPUT]: 队列提案标识、任务校验与待确认条目。
 [POS]: Manager 与人工请求共用的队列。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
@@ -139,6 +139,10 @@ def _project_task_request(task):
     return result
 
 
+def iteration_proposal_id(project_key, backlog_version, task_id):
+    return sha256(f"{project_key}:{backlog_version}:{task_id}".encode("utf-8")).hexdigest()[:32]
+
+
 def queue_manager_iteration_choice(*, workspace, project_key, root, expected_backlog_version,
                                    expected_choice_event_id=None, expected_task_ids=None):
     """One adapter: saved Manager picks become ordinary Task Assistant queue items.
@@ -190,9 +194,7 @@ def queue_manager_iteration_choice(*, workspace, project_key, root, expected_bac
             prepared = []
             for task in selected:
                 digest = task_evidence_digest(task)
-                proposal_id = sha256(
-                    f"{project_key}:{snapshot['version']}:{task['id']}".encode("utf-8")
-                ).hexdigest()[:32]
+                proposal_id = iteration_proposal_id(project_key, snapshot["version"], task["id"])
                 prepared.append({
                     "id": proposal_id,
                     "exact_request": _project_task_request(task),

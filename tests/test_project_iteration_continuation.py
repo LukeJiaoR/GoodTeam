@@ -118,23 +118,35 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Candidat
                     candidate_commit=report["integration"]["candidate_commit"], landed_commit=git(source, "rev-parse", "HEAD"),
                     reviewed=True, confirmed=True)
 
-    with pytest.raises(web.ProjectApiError, match="has not landed"):
+    with pytest.raises(web.ProjectApiError, match="landed project content differs"):
         action(delivery_request(first_run, first_report))
     assert ledger.get_task(first_task["id"])["status"] == "review"
 
-    def land(report):
+    def land(report, *, squash=False):
         integration = report["integration"]
         git(source, "fetch", "--quiet", integration["candidate_path"], integration["candidate_commit"])
-        git(source, "merge", "--quiet", "--no-edit", "--no-ff", integration["candidate_commit"])
+        if squash:
+            git(source, "merge", "--quiet", "--squash", integration["candidate_commit"])
+            git(source, "commit", "-qm", "Land reviewed batch")
+        else:
+            git(source, "merge", "--quiet", "--no-edit", "--no-ff", integration["candidate_commit"])
 
-    land(first_report)
+    land(first_report, squash=True)
     first_acceptance = delivery_request(first_run, first_report)
+    assert first_acceptance["candidate_commit"] not in git(source, "rev-list", "HEAD").splitlines()
     candidate_file = Path(first_report["integration"]["candidate_path"]) / "unit-1.txt"
     original_content = candidate_file.read_text()
     candidate_file.write_text("Uncommitted candidate edit after review\n")
     with pytest.raises(web.ProjectApiError, match="candidate contains uncommitted"):
         action(first_acceptance)
     candidate_file.write_text(original_content)
+    landed_file = source / "unit-1.txt"
+    landed_file.write_text("Uncommitted edit to a delivered path\n")
+    with pytest.raises(web.ProjectApiError, match="project contains uncommitted"):
+        action(first_acceptance)
+    landed_file.write_text(original_content)
+    unrelated_file = source / "local-notes.txt"
+    unrelated_file.write_text("Uncommitted notes unrelated to this batch\n")
     verify = continuation._verify_landed_batch
 
     def concurrent_edit(**kwargs):
@@ -175,6 +187,7 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Candidat
     code, visible = web.handle_project_api_get(tmp_path, f"/api/projects/DEMO/iteration-batches/{second_run}")
     assert code == 200 and visible["integration"] == second_report["integration"]
 
+    unrelated_file.unlink()
     land(second_report)
     action(delivery_request(second_run, second_report))
     assert action(first_acceptance)["reused"] is True  # HEAD has moved since batch 1.

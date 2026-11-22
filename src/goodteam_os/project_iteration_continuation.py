@@ -1,4 +1,9 @@
-"""Bounded project continuation through the existing Assistant queue and dispatch.
+"""[INPUT]: 项目续跑授权、原任务、Worker 结果和 Git 内容。
+[OUTPUT]: 续跑状态及绑定已审候选和落地提交的交付凭据。
+[POS]: 使用现有任务队列续跑，并核验交付内容。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Bounded project continuation through the existing Assistant queue and dispatch.
 
 The Assistant session retains the owner's scope/budget and pending queue IDs.
 LocalTaskStore remains task truth; dispatch receipts remain execution truth.
@@ -9,6 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import re
 
@@ -25,6 +31,8 @@ from goodteam_os.tasks import LocalTaskStore, project_task_intent, task_evidence
 
 
 _FIELD = "project_continuation"
+_DELIVERY_VERIFICATION = "landed_git_content"
+DELIVERY_VERIFICATIONS = (_DELIVERY_VERIFICATION, "landed_git_ancestor_and_content")
 
 
 def _digest(value):
@@ -536,19 +544,22 @@ def _tree(root, commit):
     from goodteam_os.dispatch_workspace import _read_git
 
     result = {}
-    for item in _read_git(root, ["ls-tree", "-r", "-z", "--full-tree", commit]).split(b"\0"):
+    for item in _read_git(root, ["ls-tree", "-r", "-t", "-z", "--full-tree", commit]).split(b"\0"):
         if item:
             entry, path = item.split(b"\t", 1)
             result[path] = entry
     return result
 
 
-def _require_clean_checkout(root, label):
+def _require_clean_checkout(root, label, *, paths=None):
     from goodteam_os.dispatch_workspace import _metadata_path, _read_git
 
-    dirty = _read_git(root, ["diff", "--name-only", "--no-ext-diff", "-z", "HEAD", "--"])
-    dirty += _read_git(root, ["ls-files", "--others", "--exclude-standard", "-z"])
-    if any(not _metadata_path(path.decode()) for path in dirty.split(b"\0") if path):
+    if paths is not None and not paths:
+        return
+    pathspecs = [":(top,literal)" + os.fsdecode(path) for path in paths or ()]
+    status = _read_git(root, ["status", "--porcelain=v1", "--untracked-files=all",
+        "--no-renames", "-z", "--", *pathspecs])
+    if any(not _metadata_path(os.fsdecode(entry[3:])) for entry in status.split(b"\0") if entry):
         raise ValueError(f"The {label} contains uncommitted edits; review and commit the exact delivery first.")
 
 
@@ -593,14 +604,14 @@ def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_comm
         _require_clean_checkout(candidate, "reviewed candidate")
     if _read_git(root, ["rev-parse", "HEAD"]).strip().decode() != landed_commit:
         raise ValueError("The project is not at the exact confirmed landed commit.")
-    if _git(root, ["merge-base", "--is-ancestor", candidate_commit, landed_commit], check=False).returncode != 0:
-        raise ValueError("The reviewed candidate has not landed in the project's current Git history.")
-    _require_clean_checkout(root, "project")
-    changed = _read_git(candidate, ["diff", "--name-only", "--no-renames", "-z",
-                                    integration["baseline_commit"], candidate_commit]).split(b"\0")
+    changed = [path for path in _read_git(candidate, ["diff", "--name-only", "--no-renames", "-z",
+        integration["baseline_commit"], candidate_commit]).split(b"\0") if path]
+    if not changed and _git(root, ["merge-base", "--is-ancestor", candidate_commit, landed_commit], check=False).returncode:
+        raise ValueError("The unchanged candidate has not landed in the project's current Git history.")
     expected, actual = _tree(candidate, candidate_commit), _tree(root, landed_commit)
-    if any(expected.get(path) != actual.get(path) for path in changed if path):
+    if any(expected.get(path) != actual.get(path) for path in changed):
         raise ValueError("The landed project content differs from the reviewed candidate.")
+    _require_clean_checkout(root, "project", paths=changed)
     return report, quality
 
 
@@ -640,19 +651,19 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
         receipt = {"producer": "human_confirmed_candidate_delivery", "run_id": run_id,
                    "dispatch_run_id": batch.get("current_dispatch_run_id", batch["dispatch_run_id"]), "candidate_commit": _commit(request.get("candidate_commit")),
                    "landed_commit": _commit(request.get("landed_commit")), "reviewed": True,
-                   "verification": "landed_git_ancestor_and_content"}
-        receipt["receipt_id"] = _digest(receipt)
+                   "verification": _DELIVERY_VERIFICATION}
         with tasks._lock():
             before = [task for task in tasks._read()["tasks"] if task.get("run_id") == run_id]
-            # A historical quality receipt remains the same receipt after a
-            # later batch advances HEAD, without re-running old quality work.
-            previous_quality = (before[0].get("delivery_receipt") or {}).get("quality") if before else None
-            if previous_quality:
-                receipt["quality"] = previous_quality
-                receipt["receipt_id"] = _digest({key: value for key, value in receipt.items() if key != "receipt_id"})
+            # 保留原凭据的验证方式和质量记录，重放不依赖当前 HEAD。
+            previous = (before[0].get("delivery_receipt") or {}) if before else {}
+            replayed = {**receipt, "verification": previous.get("verification")}
+            if previous.get("quality"):
+                replayed["quality"] = previous["quality"]
+            replayed["receipt_id"] = _digest(replayed)
             replay = (before and len(before) == len(batch["task_ids"])
+                      and replayed["verification"] in DELIVERY_VERIFICATIONS
                       and all(task["status"] == "done" and task.get("delivery_verified") is True
-                              and task.get("delivery_receipt") == receipt for task in before))
+                              and task.get("delivery_receipt") == replayed for task in before))
             originals = {item["task_id"]: item.get("task_intent") for item in batch["task_bindings"]}
             if not replay and (not before or len(before) != len(originals)
                     or any(project_task_intent(task) != originals.get(task["id"])
@@ -662,7 +673,7 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
         if replay:
             # Finish a potentially interrupted session projection without
             # requiring HEAD to remain at a historical accepted revision.
-            return {**_record_delivery(store, run_id, receipt, [task["id"] for task in before]), "reused": True}
+            return {**_record_delivery(store, run_id, replayed, [task["id"] for task in before]), "reused": True}
         report, quality = _verify_landed_batch(
             workspace=workspace, project_key=project_key, root=root, run_id=run_id,
             candidate_commit=request.get("candidate_commit"), landed_commit=request.get("landed_commit"),
@@ -670,7 +681,7 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
         if quality:
             receipt["quality"] = {key: quality[key] for key in (
                 "input_digest", "execution_id", "validation_receipt_id", "review_receipt_id", "candidate_commit")}
-            receipt["receipt_id"] = _digest({key: value for key, value in receipt.items() if key != "receipt_id"})
+        receipt["receipt_id"] = _digest(receipt)
         with tasks._lock():
             from goodteam_os.dispatch_workspace import _read_git
 
