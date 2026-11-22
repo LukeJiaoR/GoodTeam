@@ -52,7 +52,6 @@ conversationReading.vitest.js: 会话阅读位置检查。
 currentWorkContext.css: 当前任务上下文样式。
 currentWorkContext.js: 当前任务上下文投影。
 currentWorkContext.vitest.js: 当前任务上下文检查。
-deliverySummary.css: 交付摘要样式。
 goalContinuation.css: Goal 持续执行面板样式。
 presentationUtils.js: 工作台状态展示工具。
 projectConversation.css: 项目会话样式。

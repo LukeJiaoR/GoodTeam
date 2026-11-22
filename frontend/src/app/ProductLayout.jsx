@@ -1,8 +1,14 @@
+/**
+ * [INPUT]: React Router 路由、项目侧栏与外观偏好。
+ * [OUTPUT]: ProductLayout 渲染工作区外壳并提供子路由上下文。
+ * [POS]: 项目页面与全局设置共用的导航布局。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
+
 import { BookOpen, ChevronRight, Users, Workflow } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import ProjectSidebar from './ProjectSidebar';
 import { Outlet, useLocation } from 'react-router-dom';
-import { ToastProvider } from '../components/ui/ToastProvider';
 import { useAppearancePreferences } from '../hooks/useAppearancePreferences';
 import { projectNavigationDestinations, rememberProjectLocation } from '../lib/routing/projectNavigation';
 
@@ -49,17 +55,15 @@ export default function ProductLayout() {
     });
   };
   return (
-    <ToastProvider>
-      <div data-sidebar={sidebarExpanded ? 'expanded' : 'collapsed'} className={`product-shell product-shell--workspace product-shell--studio${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}`}>
-        <a className="product-skip-link" href="#main-content">{t('product.navigation.skipToContent')}</a>
-        <ProjectSidebar projectKey={projectKey} workRoute={workRoute} destinations={destinations} settingsDestination={settingsDestination}
-          preferences={preferences} navigationHost={projectNavigationHost} setNavigationHost={setProjectNavigationHost}
-          query={workQuery} setQuery={setWorkQuery} expanded={sidebarExpanded} setExpanded={setSidebarExpanded} />
-        <div className="studio-main">
-          <header className="studio-topbar"><span>{projectKey || t('product.studio.workspace')}</span><ChevronRight size={13} aria-hidden="true" /><strong>{sectionTitle}</strong><span className="studio-topbar__label">{t('product.studio.localFirst')}</span></header>
-          <Outlet context={{ language, t, preferences, projectNavigationHost, workQuery, openProjectNavigation, closeProjectNavigation: () => { if (globalThis.matchMedia?.('(max-width: 767px)').matches) setSidebarExpanded(false); } }} />
-        </div>
+    <div data-sidebar={sidebarExpanded ? 'expanded' : 'collapsed'} className={`product-shell product-shell--workspace product-shell--studio${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}`}>
+      <a className="product-skip-link" href="#main-content">{t('product.navigation.skipToContent')}</a>
+      <ProjectSidebar projectKey={projectKey} workRoute={workRoute} destinations={destinations} settingsDestination={settingsDestination}
+        preferences={preferences} navigationHost={projectNavigationHost} setNavigationHost={setProjectNavigationHost}
+        query={workQuery} setQuery={setWorkQuery} expanded={sidebarExpanded} setExpanded={setSidebarExpanded} />
+      <div className="studio-main">
+        <header className="studio-topbar"><span>{projectKey || t('product.studio.workspace')}</span><ChevronRight size={13} aria-hidden="true" /><strong>{sectionTitle}</strong><span className="studio-topbar__label">{t('product.studio.localFirst')}</span></header>
+        <Outlet context={{ language, t, preferences, projectNavigationHost, workQuery, openProjectNavigation, closeProjectNavigation: () => { if (globalThis.matchMedia?.('(max-width: 767px)').matches) setSidebarExpanded(false); } }} />
       </div>
-    </ToastProvider>
+    </div>
   );
 }
