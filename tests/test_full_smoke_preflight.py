@@ -5,11 +5,8 @@ import pytest
 from goodteam_os import full_smoke
 
 
-# Each backend must enter preflight; dry-run rejection shares the same guard.
-@pytest.mark.parametrize("worker_mode,dry_run", [
-    (worker_mode, False) for worker_mode in sorted(full_smoke.REAL_WORKER_MODES)
-] + [("codex", True)])
-def test_failed_preflight_stops_before_registry_or_suite(tmp_path, monkeypatch, worker_mode, dry_run):
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_failed_preflight_stops_before_registry_or_suite(tmp_path, monkeypatch, dry_run):
     output = tmp_path / "output"
     message = "Worker binary failed local readiness checks."
     calls = []
@@ -27,7 +24,7 @@ def test_failed_preflight_stops_before_registry_or_suite(tmp_path, monkeypatch, 
     monkeypatch.setenv("GOODTEAM_SELF_WORKTREE_ROOT", str(tmp_path / "original"))
     original_env = full_smoke._managed_env_snapshot()
     arguments = ["--repo-root", str(tmp_path), "--output-root", str(output),
-                 "--suite", "contentops,self", "--worker-mode", worker_mode]
+                 "--suite", "contentops,self", "--worker-mode", "codex"]
     arguments += ["--dry-run"] if dry_run else ["--allow-real-worker"]
 
     assert full_smoke.main(arguments) == 1

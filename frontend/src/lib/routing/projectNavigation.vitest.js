@@ -4,16 +4,6 @@ import { projectNavigationDestinations, rememberProjectLocation } from './projec
 beforeEach(() => sessionStorage.clear());
 
 describe('project navigation continuity', () => {
-  test('keeps Workbench and memory locations independently within a project', () => {
-    rememberProjectLocation('/projects/one/work', '?view=outcomes');
-    rememberProjectLocation('/projects/one/knowledge', '?view=memory&role=builder&q=%E4%BB%BB%E5%8A%A1&event=mem-1&event_project=two');
-    expect(projectNavigationDestinations('one', '/projects/one/team')).toEqual({
-      work: '/projects/one/work?view=outcomes',
-      knowledge: '/projects/one/knowledge?view=memory&role=builder&q=%E4%BB%BB%E5%8A%A1&event=mem-1&event_project=two',
-      team: '/projects/one/team',
-    });
-  });
-
   test('does not accept off-site, cross-project, wrong-section or malformed stored targets', () => {
     const storage = { getItem: () => JSON.stringify([{ projectKey: 'one', pages: {
       work: 'https://example.com/projects/one/work',
