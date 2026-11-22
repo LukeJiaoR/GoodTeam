@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 接收对话和项目概览的 Markdown，使用 ChatRichContent 渲染交互内容。
- * [OUTPUT]: 渲染 Markdown。HTTP(S) 地址和锚点可点击。
+ * [OUTPUT]: 渲染 Markdown。显式链接交给浏览器解析。
  * [POS]: 工作台和项目概览共用的 Markdown 渲染器。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
@@ -76,10 +76,21 @@ export function renderInlineMarkdown(text) {
     const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (linkMatch) {
       const [, label, url] = linkMatch;
-      const isWebLink = /^https?:\/\//i.test(url) || url.startsWith('#');
-      const isLocalReference = url.startsWith('/') || /^file:/i.test(url)
-        || /^[A-Za-z]:[\\/]/.test(url);
-      return isWebLink ? (
+      let protocol;
+      try {
+        protocol = new URL(url, 'https://goodteam.invalid').protocol;
+      } catch {
+        return label;
+      }
+      const isLocalReference = protocol === 'file:' || /^[A-Za-z]:[\\/]/.test(url);
+      if (isLocalReference || ['javascript:', 'vbscript:', 'data:'].includes(protocol)) {
+        return (
+          <span key={index} className="md-link-text">
+            {isLocalReference ? `${label} (${url}; preview unavailable)` : label}
+          </span>
+        );
+      }
+      return (
         <a
           key={index}
           href={url}
@@ -89,10 +100,6 @@ export function renderInlineMarkdown(text) {
         >
           {label}
         </a>
-      ) : (
-        <span key={index} className="md-link-text">
-          {isLocalReference ? `${label} (${url}; preview unavailable)` : label}
-        </span>
       );
     }
 
