@@ -60,13 +60,13 @@ flowchart TD
 ## Example: Dashboard Smoke
 
 ```text
-Goal: verify dashboard renders current gate and evidence correctly.
+Goal: verify Work shows the current task state and evidence.
 
 Steps:
 1. Start server in isolated workspace.
-2. Open /?project=<KEY>.
-3. Confirm current gate is visible.
-4. Confirm CI/evidence panel matches latest run.
+2. Open /projects/<KEY>/work.
+3. Confirm the task state and next step are visible.
+4. When a batch has run, confirm Work shows its evidence.
 5. No console errors.
 ```
 
@@ -74,7 +74,7 @@ Evidence to capture:
 
 - URL used
 - project key
-- visible gate state
+- visible task state
 - evidence snapshot summary
 - console logs (if any)
 

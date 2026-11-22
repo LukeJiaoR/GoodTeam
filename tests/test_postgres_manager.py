@@ -1,6 +1,7 @@
-"""Run only against a dedicated disposable GOODTEAM_TEST_DATABASE_URL.
-
-The CLI/model responses are offline fixtures, not real-provider acceptance.
+"""[INPUT]: 一次性 GOODTEAM_TEST_DATABASE_URL、项目准备 API 与离线模型夹具。
+[OUTPUT]: 验证 PostgreSQL 持久化、目录身份和跨进程迭代。
+[POS]: 通过 GoodTeam 的项目入口验证数据库存储契约。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 import json
 import os
@@ -96,15 +97,16 @@ def test_legacy_import_preserves_authority_identity_and_rejects_overwrite(tmp_pa
         session.read()
 
 
-def test_pg_preparation_keeps_gate_and_directory_identity_checks(tmp_path, monkeypatch, postgres):
+def test_pg_preparation_keeps_directory_identity_checks(tmp_path, monkeypatch, postgres):
     from test_project_readiness_web import (
-        synchronous_ready_executor, test_existing_readiness_api_runs_confirms_and_unlocks_real_workflow_bridge,
+        synchronous_ready_executor,
+        test_existing_readiness_api_confirms_commands_and_constraints,
     )
     from goodteam_os import state_documents
 
     postgres()
     synchronous_ready_executor.__wrapped__(monkeypatch)
-    test_existing_readiness_api_runs_confirms_and_unlocks_real_workflow_bridge(tmp_path, None)
+    test_existing_readiness_api_confirms_commands_and_constraints(tmp_path, None)
     workspace = tmp_path / "workspace"
     path = state_documents.paths(workspace / "state" / "projects", "*/readiness.json")[0]
     assert not path.exists()

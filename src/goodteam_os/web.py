@@ -3246,9 +3246,9 @@ def _project_api_error_response(
 
 def is_product_spa_path(path: str) -> bool:
     return bool(
-        path in {"/", "/legacy", "/projects", "/inbox", "/activity", "/settings"}
+        path in {"/", "/projects", "/settings"}
         or re.fullmatch(
-            r"/projects/[^/]+/(?:home|work|knowledge|team|settings(?:/[^/]+)?)",
+            r"/projects/[^/]+/(?:work|knowledge|team|settings)",
             path,
         )
     )

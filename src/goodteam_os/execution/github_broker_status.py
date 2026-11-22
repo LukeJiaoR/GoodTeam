@@ -1,7 +1,15 @@
+"""[INPUT]: 执行账本中的 GitHub 事件与共享 PR 编号规则。
+[OUTPUT]: github_broker_status_manifest 投影 PR、CI、评审和合并状态。
+[POS]: 证据清单的 GitHub 状态视图，根据账本记录计算就绪状态。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
+
 from __future__ import annotations
 
 import json
 from typing import Any
+
+from goodteam_os.execution.evidence_manifest_extractors import first_pr_number
 
 
 GITHUB_BROKER_STATUS_SCHEMA_VERSION = "github_broker_status.v1"
@@ -74,13 +82,11 @@ def _pr_status(run: Any, events: list[Any]) -> dict[str, Any]:
         pr_payload.get("branch_name"),
         getattr(run, "branch_name", ""),
     )
-    number = _int_or_none(
-        _first_non_empty(
-            merge_payload.get("pr_number"),
-            pr_payload.get("pr_number"),
-            getattr(run, "pr_number", None),
-        )
-    )
+    number = first_pr_number((
+        merge_payload.get("pr_number"),
+        pr_payload.get("pr_number"),
+        getattr(run, "pr_number", None),
+    ))
     merged = bool(merge_payload)
     state = "merged" if merged else _pr_state(pr_payload)
     return {
@@ -187,12 +193,12 @@ def _merge_readiness(
     ci: dict[str, Any],
     review: dict[str, Any],
 ) -> dict[str, Any]:
-    if pr.get("merged"):
-        state = "ready"
-        reason = "merged"
-    elif not pr.get("number"):
+    if not pr.get("number"):
         state = "blocked"
         reason = "pr_missing"
+    elif pr.get("merged"):
+        state = "ready"
+        reason = "merged"
     elif ci.get("observed_state") in BLOCKING_CI_STATES:
         state = "blocked"
         reason = "ci_failed"
@@ -377,16 +383,6 @@ def _first_non_empty(*values: object) -> str:
         if normalized:
             return normalized
     return ""
-
-
-def _int_or_none(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value.strip())
-    return None
 
 
 def _bool_or_none(value: object) -> bool | None:

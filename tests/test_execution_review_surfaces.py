@@ -1,3 +1,9 @@
+"""[INPUT]: 临时执行账本与 GitHub 夹具。
+[OUTPUT]: 验证 CLI、HTTP 和记忆归档使用的执行证据。
+[POS]: 通过执行证据入口验证账本回放与只读查询。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
+
 from __future__ import annotations
 
 import json
@@ -41,11 +47,12 @@ def test_cli_review_is_read_only_for_ledger_and_memory(tmp_path, capsys):
     assert exit_code == 0
     assert payload["execution_id"] == execution_id
 
-    # Provenance and the CLI review must report the same observed CI, review
-    # and merge facts through their shared pure extractors.
     provenance = ExecutionEvidenceService(tmp_path).build_provenance(execution_id)
-    for field in ("ci_summary", "review_summary", "merge_summary"):
+    for field in ("ci_summary", "review_summary", "merge_summary", "final_status"):
         assert provenance[field] == payload["evidence"][field]
+    assert provenance["final_status"] == "completed"
+    assert provenance["pr"] == payload["evidence"]["pr"]["ref"] == "LukeJiaoR/GoodTeam#2160"
+    assert payload["evidence"]["github_broker_status"]["pr"]["number"] == 2160
     assert provenance["ci_summary"]["state"] == "success"
     assert provenance["review_summary"] == {"reviews": 1, "comments": 1, "states": ["APPROVED"]}
     assert provenance["merge_summary"]["merged"] is True

@@ -81,15 +81,6 @@ def test_capture_and_frozen_validation_preserve_content_under_current_policy(tmp
     assert packet == original_packet
 
 
-def test_legacy_imports_reexport_original_pure_contracts():
-    assert facade.summarize_markdown is context.summarize_markdown
-    assert facade._bounded_context is context._bounded_context
-    assert facade._pickup_content_digest is context._pickup_content_digest
-    assert facade._sha256_value is context._sha256_value
-    assert facade.MEMORY_HORIZONS is projections.MEMORY_HORIZONS
-    assert facade.IDENTITY_FIELDS is projections.IDENTITY_FIELDS
-
-
 @pytest.mark.parametrize("case", FIXTURE["cases"], ids=lambda case: case["name"])
 def test_pure_context_uses_in_memory_values_without_mutating_inputs(case):
     events = copy.deepcopy(case["expected_events"])

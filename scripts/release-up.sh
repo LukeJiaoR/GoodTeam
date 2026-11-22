@@ -148,21 +148,6 @@ if [ ! -f "$WS/projects/demo.local.yaml" ]; then
   env PYTHONPATH="$RELEASE_DIR/src" "$PY" -m goodteam_os.cli init \
     --key DEMO --name "Release Demo" --repo "$WS/target" \
     --worker-mode fake --projects-dir "$WS/projects" --force >/dev/null
-  env PYTHONPATH="$RELEASE_DIR/src" "$PY" -m goodteam_os.cli start \
-    "Bootstrap release dashboard health check" \
-    --project-key DEMO \
-    --project-config "$WS/projects/demo.local.yaml" \
-    --workspace "$WS" >/dev/null || true
-  env PYTHONPATH="$RELEASE_DIR/src" "$PY" - "$WS" <<'PYEOF' || true
-import sys
-from pathlib import Path
-from goodteam_os.smoke import _approve_until_complete
-try:
-    _approve_until_complete(Path(sys.argv[1]), "DEMO")
-    print("[release-up] DEMO run advanced to complete")
-except Exception as exc:
-    print(f"[release-up] note: could not fully advance DEMO run: {exc}")
-PYEOF
 fi
 
 # The release server resolves React assets from $RELEASE_DIR, not from $WS.
@@ -172,7 +157,6 @@ echo "[release-up] release instance ready:"
 echo "  repo    : $RELEASE_DIR"
 echo "  ref     : $REF ($TARGET_COMMIT)"
 echo "  serve   : http://localhost:$PORT/"
-echo "  demo    : http://localhost:$PORT/?project=DEMO"
 echo ""
 
 env PYTHONPATH="$RELEASE_DIR/src" "$PY" -m goodteam_os.cli serve --workspace "$WS" --port "$PORT"

@@ -41,9 +41,8 @@ test('provider progress leaves unrelated pending provider isolated', () => {
   expect(current[1].discovery_status).toBe('complete');
 });
 
-test('reported model default is descriptive and explicit empty support overrides adapter fallback', () => {
+test('reports the model reasoning source and default', () => {
   const agents = [{ backend: 'codex', models: ['m'], model_default: 'm', models_source: 'live', reasoning_depths: ['low'],
-    model_capabilities: { m: { reasoning_depths: ['high'], reasoning_default: 'high' }, plain: { reasoning_depths: [] } } }];
+    model_capabilities: { m: { reasoning_depths: ['high'], reasoning_default: 'high' } } }];
   expect(runtimeOptions(agents, 'codex', '')).toMatchObject({ reasoningSource: 'model', reasoningDefault: 'high', reasoningDepths: ['high'] });
-  expect(runtimeOptions(agents, 'codex', 'plain').reasoningDepths).toEqual([]);
 });

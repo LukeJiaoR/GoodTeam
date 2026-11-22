@@ -25,14 +25,15 @@ beforeEach(() => {
 
 test('navigation returns to Workbench and exact memory source after visiting another page', async () => {
   const user = userEvent.setup();
+  const memorySearch = `?view=memory&role=builder&q=${encodeURIComponent('任务')}&event=event-1&event_project=two`;
   const router = openRoute('/projects/one/work?view=outcomes');
   await user.click(screen.getByRole('link', { name: 'Knowledge base' }));
-  await act(() => router.navigate('/projects/one/knowledge?view=memory&role=builder&q=source&event=event-1&event_project=two'));
+  await act(() => router.navigate(`/projects/one/knowledge${memorySearch}`));
   await user.click(screen.getByRole('link', { name: 'Team' }));
   await user.click(screen.getByRole('link', { name: 'Workbench' }));
   expect(router.state.location.pathname + router.state.location.search).toBe('/projects/one/work?view=outcomes');
   await user.click(screen.getByRole('link', { name: 'Knowledge base' }));
-  expect(router.state.location.search).toBe('?view=memory&role=builder&q=source&event=event-1&event_project=two');
+  expect(router.state.location.search).toBe(memorySearch);
 });
 
 test('workspace breadcrumb identifies the route rather than words in the project key', () => {

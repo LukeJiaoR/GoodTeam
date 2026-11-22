@@ -142,10 +142,6 @@
 .work-workspace-shell[data-workspace] .team-outcome-card__index { width: 1.6rem; height: 1.6rem; border: 1px solid var(--work-border); font-size: 12px; }
 .work-workspace-shell[data-workspace] .team-outcome-list__title strong { font-size: 13px; }
 .work-workspace-shell[data-workspace] .team-outcome-card__owner { margin-top: .5rem; }
-.work-workspace-shell[data-workspace] .team-execution-evidence { padding: .9rem 1rem; border-bottom: 1px solid var(--work-border); }
-.work-workspace-shell[data-workspace] .team-execution-evidence h3 { margin: 0 0 .4rem; font-size: 13px; font-weight: 650; }
-.work-workspace-shell[data-workspace] .team-execution-evidence p { margin: .4rem 0 0; color: var(--work-text-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
-.work-workspace-shell[data-workspace] .team-execution-evidence a { display: inline-flex; gap: .4rem; align-items: center; color: var(--work-accent-strong); font-size: 13px; text-underline-offset: 3px; }
 .work-workspace-shell[data-workspace] .product-button { border-radius: 10px; }
 .work-workspace-shell[data-workspace] .product-button--secondary { border-color: var(--work-border); box-shadow: none; }
 .work-workspace-shell[data-workspace] .team-workspace.team-workspace--composing { grid-template-areas: 'tasks center'; grid-template-columns: minmax(11rem, .72fr) minmax(22rem, 2.8fr); }

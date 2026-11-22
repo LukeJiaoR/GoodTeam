@@ -4,7 +4,7 @@
 Manager 与 Goal 共用任务队列和隔离 Worker 池。
 
 AGENTS.md: 本目录的成员与职责边界。
-execution/: 执行身份、证据、审批与 Reviewer 服务。
+execution/: 执行身份、PR 绑定、审批与 Reviewer 服务。证据清单和记忆归档共用回放规则，GitHub 状态共用 PR 编号校验。
 memory_core/: 角色记忆的纯投影与上下文规则。
 skills/: Skill 包、绑定、快照与运行时。
 __init__.py: GoodTeam Python 包入口。
@@ -74,7 +74,7 @@ project_candidate_handoff.py: Bind an authorized continuation to an existing, un
 project_continuation_notice.py: Presentation of existing continuation state; never an execution authority.
 project_environment.py: Bind existing project dependencies to source worktrees.
 project_human_feedback.py: Bound a Human answer to an existing discovery decision, not new authority.
-project_import.py: 项目导入、模式确认与 readiness 绑定。
+project_import.py: 项目导入、工作台入口、模式确认与 readiness 绑定。
 project_investigation_feedback.py: Observe settled investigation output without accepting it as delivery.
 project_iteration.py: Read-only, evidence-grounded starting point for project iteration planning.
 project_iteration_continuation.py: Bounded project continuation through the existing Assistant queue and dispatch.

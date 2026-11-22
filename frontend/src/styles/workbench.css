@@ -521,8 +521,6 @@
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .team-outcomes-scroll { padding-bottom: 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-outcomes-scroll > :is(.work-context-disclosure, .goal-continuation) { margin: 10px 12px; padding: 10px 12px; border-radius: 8px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-outcomes-scroll > .work-context-disclosure { padding: 0; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes :is(.team-execution-evidence, .delivery-summary) { padding: 10px 12px; }
-.product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .skill-review-executions { margin-block: 8px; padding-inline: 12px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane--outcomes .team-outcome-list { padding: 8px 12px; gap: 8px; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane[hidden] { display: none; }
 .product-shell--studio .work-workspace-shell[data-workspace] .team-pane-backdrop { display: none; }

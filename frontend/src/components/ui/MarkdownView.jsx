@@ -1,4 +1,9 @@
-/* eslint-disable react-refresh/only-export-components -- parsing utilities are exported for unit tests. */
+/**
+ * [INPUT]: 接收对话和项目概览的 Markdown，使用 ChatRichContent 渲染交互内容。
+ * [OUTPUT]: 渲染 Markdown。显式链接交给 React 和浏览器处理。
+ * [POS]: 工作台和项目概览共用的 Markdown 渲染器。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import ChatRichContent, { InteractiveTable } from './ChatRichContent';
@@ -7,7 +12,7 @@ import { parseChatRichContent } from './chatRichContentParser';
 /**
  * Validates whether a line is a GFM table separator row (e.g. |---|:---:|---:|).
  */
-export function isTableSeparatorRow(line) {
+function isTableSeparatorRow(line) {
   if (!line) return false;
   const trimmed = line.trim();
   if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return false;
@@ -20,24 +25,7 @@ export function isTableSeparatorRow(line) {
  * Parses inline markdown tokens (bold, italic, strikethrough, inline code, links).
  * Returns an array of React nodes.
  */
-// Match product navigation routes without interpreting arbitrary host paths as URLs.
-function isProductLink(url) {
-  const path = url.split(/[?#]/, 1)[0];
-  let parts;
-  try {
-    parts = path.split('/').slice(1).map(decodeURIComponent);
-  } catch {
-    return false;
-  }
-  if (!url.startsWith('/') || parts.some((part) => (
-    part === '.' || part === '..' || /[\\/%]/.test(part) || [...part].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
-  ))) return false;
-  return /^\/(?:legacy|projects|inbox|activity|settings)?$/.test(path)
-    || /^\/projects\/[^/]+\/(?:home|team|work|review|knowledge|settings)$/.test(path)
-    || /^\/projects\/[^/]+\/(?:work\/runs|review|settings)\/[^/]+$/.test(path);
-}
-
-export function renderInlineMarkdown(text, resolveLink) {
+function renderInlineMarkdown(text) {
   if (!text) return null;
 
   // Regex splitting on code `...`, bold **...**, italic *...*, strikethrough ~~...~~, and links [...](...)
@@ -60,7 +48,7 @@ export function renderInlineMarkdown(text, resolveLink) {
     if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
       return (
         <strong key={index} className="md-bold">
-          {renderInlineMarkdown(part.slice(2, -2), resolveLink)}
+          {renderInlineMarkdown(part.slice(2, -2))}
         </strong>
       );
     }
@@ -69,7 +57,7 @@ export function renderInlineMarkdown(text, resolveLink) {
     if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
       return (
         <em key={index} className="md-italic">
-          {renderInlineMarkdown(part.slice(1, -1), resolveLink)}
+          {renderInlineMarkdown(part.slice(1, -1))}
         </em>
       );
     }
@@ -78,7 +66,7 @@ export function renderInlineMarkdown(text, resolveLink) {
     if (part.startsWith('~~') && part.endsWith('~~') && part.length >= 4) {
       return (
         <del key={index} className="md-del">
-          {renderInlineMarkdown(part.slice(2, -2), resolveLink)}
+          {renderInlineMarkdown(part.slice(2, -2))}
         </del>
       );
     }
@@ -87,29 +75,16 @@ export function renderInlineMarkdown(text, resolveLink) {
     const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (linkMatch) {
       const [, label, url] = linkMatch;
-      // Worker reports may contain absolute host paths. A leading slash does
-      // not make those files web resources (nor authorize a filesystem read).
-      const href = resolveLink ? resolveLink(url) : url;
-      const isArtifactRoute = typeof href === 'string' && (/^\/(?:api\/)?artifact\?/.test(href)
-        || /^\/api\/delivery-artifact\?/.test(href));
-      const isSafe = typeof href === 'string' && (/^https?:\/\//i.test(href)
-        || isArtifactRoute || isProductLink(href) || href.startsWith('#'));
-      const isLocalReference = url.startsWith('/') || /^file:/i.test(url)
-        || /^[A-Za-z]:[\\/]/.test(url);
-      return isSafe ? (
+      return (
         <a
           key={index}
-          href={href}
+          href={url}
           target="_blank"
           rel="noopener noreferrer"
           className="md-link"
         >
           {label}
         </a>
-      ) : (
-        <span key={index} className="md-link-text">
-          {isLocalReference ? `${label} (${url}; preview unavailable)` : label}
-        </span>
       );
     }
 
@@ -120,7 +95,7 @@ export function renderInlineMarkdown(text, resolveLink) {
 /**
  * Parses markdown blocks and returns structured AST items.
  */
-export function parseMarkdownBlocks(markdown) {
+function parseMarkdownBlocks(markdown) {
   if (!markdown || typeof markdown !== 'string') return [];
 
   const rawLines = markdown.split('\n');
@@ -287,7 +262,7 @@ export function parseMarkdownBlocks(markdown) {
   return blocks;
 }
 
-function MarkdownList({ block, resolveLink }) {
+function MarkdownList({ block }) {
   const ListTag = block.ordered ? 'ol' : 'ul';
   return (
     <ListTag start={block.ordered ? block.start : undefined} className={`md-list ${block.ordered ? 'md-ol' : 'md-ul'}`}>
@@ -298,11 +273,11 @@ function MarkdownList({ block, resolveLink }) {
           )}
           <div>
             <span className={item.checked ? 'md-task-done' : undefined}>
-              {renderInlineMarkdown(item.content, resolveLink)}
+              {renderInlineMarkdown(item.content)}
             </span>
             {item.children.map((child, childIndex) => child.type === 'continuation'
-              ? <div key={childIndex}>{renderInlineMarkdown(child.content, resolveLink)}</div>
-              : <MarkdownList key={childIndex} block={child} resolveLink={resolveLink} />)}
+              ? <div key={childIndex}>{renderInlineMarkdown(child.content)}</div>
+              : <MarkdownList key={childIndex} block={child} />)}
           </div>
         </li>
       ))}
@@ -344,51 +319,51 @@ function CodeBlock({ lang, content }) {
   );
 }
 
-export default function MarkdownView({ content, className = '', resolveLink, interactive = false, language = 'en' }) {
+export default function MarkdownView({ content, interactive = false, language = 'en' }) {
   const blocks = useMemo(() => parseMarkdownBlocks(content), [content]);
 
   if (!content) return null;
 
   return (
-    <div className={`md-renderer ${className}`}>
+    <div className="md-renderer">
       {blocks.map((block, idx) => {
         switch (block.type) {
           case 'heading': {
             const Tag = `h${block.level}`;
             return (
               <Tag key={idx} className={`md-h${block.level}`}>
-                {renderInlineMarkdown(block.content, resolveLink)}
+                {renderInlineMarkdown(block.content)}
               </Tag>
             );
           }
           case 'paragraph': {
             return (
               <p key={idx} className="md-p">
-                {renderInlineMarkdown(block.content, resolveLink)}
+                {renderInlineMarkdown(block.content)}
               </p>
             );
           }
           case 'code': {
             const rich = interactive && block.lang === 'goodteam-ui' ? parseChatRichContent(block.content) : null;
-            if (rich) return <ChatRichContent key={`${idx}:${block.content}`} value={rich} language={language} renderCell={value => renderInlineMarkdown(value, resolveLink)} />;
+            if (rich) return <ChatRichContent key={`${idx}:${block.content}`} value={rich} language={language} renderCell={renderInlineMarkdown} />;
             return <CodeBlock key={idx} lang={block.lang} content={block.content} />;
           }
           case 'blockquote': {
             return (
               <blockquote key={idx} className="md-blockquote">
-                {renderInlineMarkdown(block.content, resolveLink)}
+                {renderInlineMarkdown(block.content)}
               </blockquote>
             );
           }
           case 'table': {
-            if (interactive) return <InteractiveTable key={`${idx}:${JSON.stringify(block)}`} headers={block.headers} rows={block.rows} language={language} renderCell={value => renderInlineMarkdown(value, resolveLink)} />;
+            if (interactive) return <InteractiveTable key={`${idx}:${JSON.stringify(block)}`} headers={block.headers} rows={block.rows} language={language} renderCell={renderInlineMarkdown} />;
             return (
               <div key={idx} className="md-table-wrap">
                 <table className="md-table">
                   <thead>
                     <tr>
                       {block.headers.map((h, hIdx) => (
-                        <th key={hIdx}>{renderInlineMarkdown(h, resolveLink)}</th>
+                        <th key={hIdx}>{renderInlineMarkdown(h)}</th>
                       ))}
                     </tr>
                   </thead>
@@ -396,7 +371,7 @@ export default function MarkdownView({ content, className = '', resolveLink, int
                     {block.rows.map((row, rIdx) => (
                       <tr key={rIdx}>
                         {row.map((cell, cIdx) => (
-                          <td key={cIdx}>{renderInlineMarkdown(cell, resolveLink)}</td>
+                          <td key={cIdx}>{renderInlineMarkdown(cell)}</td>
                         ))}
                       </tr>
                     ))}
@@ -406,7 +381,7 @@ export default function MarkdownView({ content, className = '', resolveLink, int
             );
           }
           case 'list': {
-            return <MarkdownList key={idx} block={block} resolveLink={resolveLink} />;
+            return <MarkdownList key={idx} block={block} />;
           }
           case 'hr': {
             return <hr key={idx} className="md-hr" />;

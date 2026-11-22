@@ -51,7 +51,8 @@ are projections from those events:
 - Review observations come from `review_recorded` and `pr_comment_recorded`
   events.
 - Merge summary comes from the latest `merge_completed` event.
-- PR identity is reconstructed from the stored run and PR lifecycle events.
+- The manifest and finalization share PR identity and final status rules.
+  A PR number is a positive integer from the stored run or execution events.
 - Memory provenance refs are rebuilt from existing `provenance_written` ledger
   closure events plus existing memory WAL events with source
   `execution:<execution_id>:final_provenance`.

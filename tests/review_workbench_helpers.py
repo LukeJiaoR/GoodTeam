@@ -1,10 +1,15 @@
+"""[INPUT]: ExecutionAPI 与离线 GitHub 响应。
+[OUTPUT]: 已完成的执行账本、PR 差异与角色记忆文件快照。
+[POS]: 为 CLI 和 HTTP 评审查询构造相同的证据来源。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 from goodteam_os.execution import GitHubBinding, GitHubIssueNotFound, GitHubIssueSnapshot
 from goodteam_os.execution.api import ExecutionAPI
-from goodteam_os.execution.models import LedgerEvent
 
 
 class FakeClock:
@@ -152,12 +157,6 @@ def full_lifecycle(tmp_path: Path) -> tuple[ExecutionAPI, str]:
     return execution_api, execution_id
 
 
-def warning_codes(workbench: dict[str, object]) -> set[str]:
-    warnings = workbench["warnings"]
-    assert isinstance(warnings, list)
-    return {str(item["code"]) for item in warnings}
-
-
 def memory_event_files(tmp_path: Path) -> dict[str, str]:
     root = tmp_path / ".goodteam" / "memory"
     if not root.is_dir():
@@ -166,15 +165,3 @@ def memory_event_files(tmp_path: Path) -> dict[str, str]:
         str(path.relative_to(root)): path.read_text(encoding="utf-8")
         for path in sorted(root.rglob("events.jsonl"))
     }
-
-
-def failed_event(execution_id: str) -> LedgerEvent:
-    return LedgerEvent(
-        event_id=f"{execution_id}:0001:failed:execution_failed",
-        execution_id=execution_id,
-        task_id="task_failed",
-        event_type="failed",
-        actor="orchestrator",
-        payload={"transition": "execution_failed", "failure_class": "worker_failed"},
-        created_at="2026-07-06T02:31:00Z",
-    )
