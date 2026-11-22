@@ -26,7 +26,7 @@ ProjectContinuationControls.test.jsx: 持续迭代授权与控制检查。
 ProjectContinuationHandoff.test.jsx: 持续迭代交接状态检查。
 ProjectConversation.jsx: 项目会话、草稿及任务准备。
 ProjectConversation.priority.test.jsx: 回复期间追加输入与停止检查。
-ProjectIterationSuggestion.jsx: 项目下一轮建议与入口。
+ProjectIterationSuggestion.jsx: 展示项目下一轮建议，提供立即执行和稍后排队入口。
 ProjectIterationSuggestion.test.jsx: 迭代建议展示检查。
 ProjectQuestionBoard.jsx: 项目问题与回答入口。
 ProjectQuestionBoard.test.jsx: 项目问题板检查。

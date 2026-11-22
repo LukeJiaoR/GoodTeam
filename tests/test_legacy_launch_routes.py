@@ -4,7 +4,7 @@ from http.client import HTTPConnection
 from goodteam_os import web
 
 
-def test_direct_launch_post_routes_are_not_served(tmp_path, monkeypatch):
+def test_retired_write_routes_are_not_served(tmp_path, monkeypatch):
     server_type = web.ThreadingHTTPServer
 
     class TestServer(server_type):
@@ -18,6 +18,8 @@ def test_direct_launch_post_routes_are_not_served(tmp_path, monkeypatch):
                     for route, body in (
                         ("/dispatch-track", "{}"),
                         ("/smoke-run", '{"suite":"not-a-suite"}'),
+                        ("/server-actions/run", "{}"),
+                        ("/executions/retired/run", "{}"),
                     ):
                         connection = HTTPConnection(host, port, timeout=5)
                         try:
@@ -26,6 +28,12 @@ def test_direct_launch_post_routes_are_not_served(tmp_path, monkeypatch):
                             assert connection.getresponse().status == 404, path
                         finally:
                             connection.close()
+                connection = HTTPConnection(host, port, timeout=5)
+                try:
+                    connection.request("GET", "/api/server-actions/audit")
+                    assert connection.getresponse().status == 200
+                finally:
+                    connection.close()
             finally:
                 self.shutdown()
                 thread.join()

@@ -50,8 +50,9 @@ created still checks the original seeds; it cannot widen the grant or reset coun
 ## What Manager actually receives
 
 The host reads the current project HEAD and verifies the original delivered task
-intents, receipt identity, effective dispatch/job results, retained candidate,
-landed ancestry, clean project content and unchanged delivered files. If candidate
+intents, receipt identity, effective dispatch/job results and retained candidate.
+The accepted landed commit must remain in the current history. Paths changed by
+the candidate must still match the verified result. If candidate
 quality was configured, its original passed check and protected independent-review
 receipts must still match. A legacy delivery without configured quality remains
 explicitly `not_configured` / `human_attested`; delivery does not invent machine

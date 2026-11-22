@@ -1,6 +1,6 @@
-"""[INPUT]: 已确认的任务队列、项目任务与运行配置。
+"""[INPUT]: 用户确认的 Manager 建议或队列任务、项目任务与运行配置。
 [OUTPUT]: 隔离 Worker 的执行输入、结果与批次记录。
-[POS]: 将既有队列的确认状态传给隔离派工流程。
+[POS]: 使用同一任务队列确认 Manager 建议和已排队任务，再交给隔离派工流程。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 
 Task Assistant batch adapter over the existing isolated dispatch pool.
@@ -553,6 +553,34 @@ def _execute_batch(*, workspace, project_key, root, batch):
             _settle_batch(workspace, project_key, root, batch, error=str(exc))
             raise
         return _settle_batch(workspace, project_key, root, batch, report=report)
+
+
+def start_recommended_iteration(*, workspace, project_key, root, project_config, expected_choice_event_id,
+                                confirmed=False):
+    """确认一次原始建议，复用队列与批次记录。"""
+    from goodteam_os.assistant_queue import iteration_proposal_id, queue_manager_iteration_choice
+
+    if confirmed is not True:
+        raise ValueError("Confirm starting the recommended tasks; configured Workers may use model credits.")
+    if not isinstance(expected_choice_event_id, str) or not expected_choice_event_id:
+        raise ValueError("The displayed Manager recommendation is required.")
+    session = TaskAssistantSessionStore(workspace, project_key).read()
+    choice = next((item.get("details", {}).get("choice") for item in reversed(session["timeline"])
+                   if item.get("message_id") == expected_choice_event_id
+                   and item.get("event") == "project_iteration_choice_recorded"), None)
+    if not isinstance(choice, dict) or choice.get("status") != "recommended":
+        raise ValueError("The displayed Manager recommendation is unavailable.")
+    version, task_ids = choice["backlog_version"], choice["selected_task_ids"]
+    proposals = [iteration_proposal_id(project_key, version, task_id) for task_id in task_ids]
+    revisions = dict.fromkeys(proposals, 1)
+    run_id, _ = _identity(proposals, revisions)
+    if run_id not in session.get("project_task_batches", {}):
+        queue_manager_iteration_choice(workspace=workspace, project_key=project_key, root=root,
+            expected_backlog_version=version, expected_choice_event_id=expected_choice_event_id,
+            expected_task_ids=task_ids)
+    return run_queued_iteration_batch(workspace=workspace, project_key=project_key, root=root,
+        project_config=project_config, proposal_ids=proposals, expected_revisions=revisions,
+        confirmed=True, background=True)
 
 
 def run_queued_iteration_batch(*, workspace, project_key, root, project_config, proposal_ids,

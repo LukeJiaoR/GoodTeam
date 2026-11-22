@@ -22,7 +22,6 @@ const child = spawn(process.env.GOODTEAM_E2E_PYTHON || '../.venv/bin/python', [
     GOODTEAM_DISABLE_TG_NETWORK: '1',
     GOODTEAM_TG_BOT_TOKEN: '',
     GOODTEAM_TG_CHAT_ID: '',
-    GOODTEAM_SERVER_ACTIONS: '0',
     PYTHONPATH: path.resolve('../src'),
   },
 });

@@ -42,6 +42,7 @@ test_goal_continuation.py: 验证 Goal 权限与真实批次证据。
 test_goal_continuation_http.py: Real HTTP/background service/run/Worker evidence, with synthetic local models.
 test_greenfield_recovery.py: Representative regressions from the real StockFlow greenfield trial.
 test_init.py: 验证 init 的行为。
+test_legacy_launch_routes.py: 验证已退役的写入口返回 404，历史操作记录仍可读取。
 test_iteration_context_inputs.py: Representative continuity, complete-prompt budget and planner replay contracts.
 test_manager_app_server_lifecycle.py: 验证 Manager 原生请求、并发控制、角色记忆与只读对话回退。
 test_manager_assignment.py: Native Manager tools traverse the real queue and isolated subprocess pool.
@@ -85,7 +86,7 @@ test_project_discovery_multiple.py: One decision publishes a bounded set through
 test_project_discovery_planner.py: Planner uses existing discovery/ledger contracts without widening old grants.
 test_project_investigation_feedback.py: One report-to-decision contract with deterministic storage/dispatch seams.
 test_project_iteration.py: First-vertical-slice checks for project-level next-iteration facts.
-test_project_iteration_continuation.py: Two distinct project batches through public actions and the service tick.
+test_project_iteration_continuation.py: 验证等价 Git 落地、相关文件核验和交付后的下一轮派工。
 test_project_iteration_execution.py: One real subprocess batch proves queue -> isolated pool -> original cards.
 test_project_iteration_planner.py: Project-level Manager selection should be replayable, bounded and advisory.
 test_project_iteration_quality.py: One offline batch exercises real checks, protected review and correction.

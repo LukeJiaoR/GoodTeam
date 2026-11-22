@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 项目待办、Manager 建议、任务队列和任务助手操作。
+ * [OUTPUT]: ProjectIterationSuggestion 组件。
+ * [POS]: Work 展示项目建议，提供立即执行和稍后排队入口。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { useState } from 'react';
 import TaskSearchConfiguration from './TaskSearchConfiguration';
 import TaskDelegationSummary from './TaskDelegationSummary';
@@ -143,11 +149,18 @@ export default function ProjectIterationSuggestion({
         })}>{zh ? '确认并执行所选任务（可能消耗模型额度）' : 'Confirm and run selected tasks (uses model)'}</button>}
       </div>
     ) : (
-      <button type="button" disabled={disabled} onClick={() => onQueue?.({
-        action: 'queue_iteration_choice',
-        expected_backlog_version: snapshot.version,
-        confirmed: true,
-      })}>{zh ? '将 Manager 选择加入现有任务队列' : 'Add selected tasks to existing queue'}</button>
+      <div>
+        {queuedCount === 0 && chosen.source_event_id && <button type="button" disabled={disabled || activeBatch} onClick={() => onQueue?.({
+          action: 'start_iteration_choice',
+          expected_choice_event_id: chosen.source_event_id,
+          confirmed: true,
+        })}>{zh ? '立即执行所选任务（可能消耗模型额度）' : 'Run selected tasks now (uses model)'}</button>}
+        <button type="button" disabled={disabled} onClick={() => onQueue?.({
+          action: 'queue_iteration_choice',
+          expected_backlog_version: snapshot.version,
+          confirmed: true,
+        })}>{zh ? '将 Manager 选择加入现有任务队列' : 'Add selected tasks to existing queue'}</button>
+      </div>
     ))}
     {!current && <button
       type="button" disabled={disabled || unavailable || activeBatch} onClick={submit}>

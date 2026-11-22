@@ -37,10 +37,11 @@ the execution evidence. Viewing the Work page or report never starts a Worker.
    separately recorded correction of the initial integration.
 5. In **Confirm landed delivery**, enter the full current project HEAD and
    confirm the review. GoodTeam verifies the retained candidate and Worker
-   identities, candidate ancestry in current HEAD, clean non-metadata project
-   files, and matching candidate/landed blob identities for every changed path.
-   A squash/cherry-pick without the retained candidate in its ancestry cannot
-   satisfy this proof. Changed task scope also prevents acceptance.
+   identities and checks that the landed commit has the same Git entries for
+   every path changed by the candidate. A squash or cherry-pick can satisfy
+   this check. Uncommitted edits to those paths block acceptance. An unchanged
+   candidate still needs an ancestry match. Changed task scope also prevents
+   acceptance.
 6. Accepted cards become `done` with a bound delivery receipt. On its next
    service tick, GoodTeam automatically makes a fresh Manager choice and starts
    the next approved batch. No per-task Pick or Start click is needed.
