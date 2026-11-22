@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 接收对话和项目概览的 Markdown，使用 ChatRichContent 渲染交互内容。
- * [OUTPUT]: 渲染 Markdown 和 Web 链接，将非路由的文件路径显示为文本。
+ * [OUTPUT]: 渲染 Markdown。HTTP(S) 地址和锚点可点击。
  * [POS]: 工作台和项目概览共用的 Markdown 渲染器。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
@@ -20,22 +20,6 @@ function isTableSeparatorRow(line) {
   const cells = trimmed.slice(1, -1).split('|').map((s) => s.trim());
   if (!cells.length) return false;
   return cells.every((cell) => /^:?-+:?$/.test(cell));
-}
-
-function isProductLink(url) {
-  if (!url.startsWith('/')) return false;
-  const path = url.split(/[?#]/, 1)[0];
-  let parts;
-  try {
-    parts = path.split('/').slice(1).map(decodeURIComponent);
-  } catch {
-    return false;
-  }
-  if (parts.some((part) => (
-    part === '.' || part === '..' || /[\\/%]/.test(part) || [...part].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
-  ))) return false;
-  return /^\/(?:legacy|projects|inbox|activity|settings)?$/.test(path)
-    || /^\/projects\/[^/]+\/(?:home|team|work|knowledge|settings(?:\/[^/]+)?)$/.test(path);
 }
 
 /**
@@ -92,8 +76,7 @@ export function renderInlineMarkdown(text) {
     const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (linkMatch) {
       const [, label, url] = linkMatch;
-      // 报告中的绝对文件路径显示为文本。站内链接须对应现行路由。
-      const isWebLink = /^https?:\/\//i.test(url) || url.startsWith('#') || isProductLink(url);
+      const isWebLink = /^https?:\/\//i.test(url) || url.startsWith('#');
       const isLocalReference = url.startsWith('/') || /^file:/i.test(url)
         || /^[A-Za-z]:[\\/]/.test(url);
       return isWebLink ? (
