@@ -4,12 +4,6 @@ from importlib import import_module
 import pytest
 
 
-def _claim_from_process(workspace, proposal_id, claim_id, gate, results):
-    gate.wait()
-    claimed = session_store(workspace).claim_workflow_start(proposal_id, claim_id, f"task-assistant:{proposal_id}")
-    results.put(claimed["proposed_task"]["start_claim_id"])
-
-
 def session_store(tmp_path, project_key="DEMO"):
     store_type = import_module("goodteam_os.task_assistant_session").TaskAssistantSessionStore
     return store_type(tmp_path, project_key)

@@ -48,12 +48,12 @@ deployment require their own explicitly scoped authorization and evidence.
 | Manager and task history | `tests/test_manager_execution.py`, `test_task_assistant_session.py` |
 | Whole-project iteration and parallel planning | `tests/test_project_iteration.py`, `test_project_iteration_planner.py` |
 | Authorized project batches and continuation | `tests/test_project_iteration_execution.py`, `test_project_iteration_continuation.py` |
-| Project candidate quality and failed-task recovery | `tests/test_project_iteration_quality.py`, `test_project_iteration_recovery.py` |
+| Candidate quality, independent review, delivery and failed-task recovery | `tests/test_project_iteration_quality.py`, `test_project_iteration_recovery.py` |
 | Bounded outcome discovery through the real planner interface | `tests/test_project_outcome_discovery.py` |
 | Real Worker dispatch and isolation | `tests/test_dispatch_isolation.py`, `test_dispatch_capacity.py` |
 | Goal authority and service scanning | `tests/test_goal_continuation.py`, `test_goal_continuation_http.py` |
 | Execution state and safe paths | `tests/test_execution_idempotency.py`, `test_execution_path_claims.py` |
-| Independent review and delivery | `tests/test_review_policy.py`, `test_delivery_review_truth.py` |
+| CLI and HTTP review evidence | `tests/test_execution_review_surfaces.py` |
 | Project memory | `tests/test_memory_core.py` |
 | Skill installation and provider connections | `tests/test_skill_library.py`, `test_providers.py` |
 | Frontend project and Work surfaces | `frontend/src/features/projects/ProjectsPage.search.test.jsx` and retained Work/Review tests |

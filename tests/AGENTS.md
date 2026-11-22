@@ -10,7 +10,7 @@ execution_fixture.py: Minimal execution fixtures shared by the retained sandbox 
 http_transport_helpers.py: HTTP transport objects for handler-unit fixtures using in-memory bodies.
 native_observation_fixtures.py: A native receipt fixture at the Manager transport seam; no provider execution.
 pi_worker_fixtures.py: Shared offline native Pi Worker fixtures, independent of retired Manager tests.
-review_workbench_helpers.py: review workbench helpers 的测试辅助设施。
+review_workbench_helpers.py: 为 CLI 和 HTTP 评审查询准备执行账本与记忆快照。
 test_assistant_recovery_api.py: 验证 assistant recovery api 的行为。
 test_backlog_board.py: Real grant/ledger/question/answer/queue path; Manager and capability are fixtures.
 test_backlog_wait_receipt.py: Committed waiting decisions reconcile their own lost acknowledgement only.
@@ -75,7 +75,7 @@ test_pi_rpc.py: 验证 pi rpc 的行为。
 test_pi_skill_resources.py: Actual locked broker and Pi extension contract; no Pi/model/HTTP acceptance.
 test_pi_terminal_contract.py: Official RPC contract, exercised with free local subprocess fixtures.
 test_planning_context_refresh.py: Real grant/queue/planning consumer with deterministic Manager output, no Worker.
-test_postgres_manager.py: Run only against a dedicated disposable GOODTEAM_TEST_DATABASE_URL.
+test_postgres_manager.py: 使用一次性 PostgreSQL 验证项目准备、目录身份与迭代状态。
 test_project_batch_feedback.py: One report-to-decision contract with deterministic storage/dispatch seams.
 test_project_blocked_judgment.py: Bounded Manager judgment over blocked facts, not an execution bypass.
 test_project_conflict_wait.py: Real Manager/queue/claim/thread locks; execution output is an offline seam.
