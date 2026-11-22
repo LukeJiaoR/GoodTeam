@@ -4,7 +4,7 @@
 Manager 与 Goal 共用任务队列和隔离 Worker 池。
 
 AGENTS.md: 本目录的成员与职责边界。
-execution/: 执行身份、PR 绑定、审批与 Reviewer 服务。证据清单和记忆归档共用回放规则。
+execution/: 执行身份、PR 绑定、审批与 Reviewer 服务。证据清单和记忆归档共用回放规则，GitHub 状态共用 PR 编号校验。
 memory_core/: 角色记忆的纯投影与上下文规则。
 skills/: Skill 包、绑定、快照与运行时。
 __init__.py: GoodTeam Python 包入口。

@@ -1,5 +1,5 @@
 """[INPUT]: 执行账本中的任务、运行记录和事件。
-[OUTPUT]: 提取来源、PR、CI、评审、合并和最终状态。
+[OUTPUT]: 提取来源、正整数 PR 编号、CI、评审、合并和最终状态。
 [POS]: 证据清单和记忆归档共用的回放规则。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
+from itertools import chain
 from typing import Any
 
 from goodteam_os.execution.memory_provenance import PROVENANCE_TRANSITION
@@ -38,13 +40,16 @@ def pr_identity(
     fallback_repo: str,
 ) -> tuple[str, int | None]:
     repo = _repo_from_events(events) or fallback_repo
-    if run is not None and run.pr_number is not None:
-        return repo, int(run.pr_number)
-    for event in reversed(events):
-        number = _int_or_none(event.payload.get("pr_number"))
-        if number is not None:
-            return repo, number
-    return repo, None
+    run_number = run.pr_number if run is not None else None
+    event_numbers = (event.payload.get("pr_number") for event in reversed(events))
+    return repo, first_pr_number(chain((run_number,), event_numbers))
+
+
+def first_pr_number(values: Iterable[object]) -> int | None:
+    for value in values:
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    return None
 
 
 def pr_ref(repo: str, pr_number: int | None) -> str:
