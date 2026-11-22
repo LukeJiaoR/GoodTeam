@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 接收项目键。
+ * [OUTPUT]: 生成项目列表和项目页面的站内地址。
+ * [POS]: 为导航组件统一编码项目键。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 const segment = (value) => encodeURIComponent(String(value || '').trim());
 
 export const routes = Object.freeze({
@@ -6,15 +12,3 @@ export const routes = Object.freeze({
   projectWork: (projectKey) => `/projects/${segment(projectKey)}/work`,
   projectKnowledge: (projectKey) => `/projects/${segment(projectKey)}/knowledge`,
 });
-
-export function legacyDestination(search = '') {
-  const params = new URLSearchParams(search);
-  const projectKey = params.get('project')?.trim();
-  if (!projectKey) return routes.projects();
-  const tab = params.get('tab')?.trim().toLowerCase();
-  if (['artifacts', 'docs', 'memory', 'agents_memory'].includes(tab)) {
-    return routes.projectKnowledge(projectKey);
-  }
-  if (['system', 'agents', 'overview'].includes(tab)) return routes.projectTeam(projectKey);
-  return routes.projectWork(projectKey);
-}

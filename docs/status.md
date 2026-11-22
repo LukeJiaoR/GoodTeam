@@ -16,7 +16,7 @@ Projects → Work / Team / Knowledge
 - The composer accepts project questions and task drafts. Confirm a draft to turn its exact revision into a batch.
 - Team exposes project-owned Roles and Worker configuration.
 - Knowledge exposes repository understanding and memory.
-- Legacy `/inbox`, `/activity`, `/settings`, and project Home routes are compatibility redirects only.
+- Settings exposes appearance and language controls in the workspace and project shell.
 
 ## Current control-plane model
 

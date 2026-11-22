@@ -56,7 +56,7 @@
   outline: 2px solid var(--product-focus);
   outline-offset: 3px;
 }
-.product-shell--workspace :is(.projects-import-dialog, .team-dialog, .team-history, .workspace-panel) {
+.product-shell--workspace :is(.projects-import-dialog, .team-dialog, .team-history) {
   border-color: var(--product-border);
   color: var(--product-text);
   background: var(--product-surface);

@@ -1,35 +1,19 @@
-/* eslint-disable react-refresh/only-export-components -- route factories are exported for router tests. */
-import { Navigate, useLocation, useParams } from 'react-router-dom';
+/**
+ * [INPUT]: 依赖 React Router 和当前产品页面。
+ * [OUTPUT]: 提供浏览器路由和未找到页面。
+ * [POS]: 连接统一项目入口与工作台、团队和知识库。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
+import { Navigate } from 'react-router-dom';
 import KnowledgePage from '../features/knowledge/KnowledgePage';
 import ProjectsPage from '../features/projects/ProjectsPage';
 import WorkPage from '../features/runs/WorkPage';
 import WorkWorkspaceRoute from '../features/runs/workspace/WorkWorkspaceShell';
 import TeamPage from '../features/team/TeamPage';
-import { legacyDestination, routes } from '../lib/routing/routes';
+import { routes } from '../lib/routing/routes';
 import NotFoundPage from './NotFoundPage';
 import ProductLayout from './ProductLayout';
 import SettingsPage from '../features/settings/SettingsPage';
-
-function RootRedirect() {
-  const { search } = useLocation();
-  const projectKey = new URLSearchParams(search).get('project')?.trim();
-  return <Navigate to={projectKey ? routes.projectWork(projectKey) : routes.projects()} replace />;
-}
-
-function LegacyRedirect() {
-  const { search } = useLocation();
-  return <Navigate to={legacyDestination(search)} replace />;
-}
-
-function ProjectTeamRedirect() {
-  const { projectKey = '' } = useParams();
-  return <Navigate to={routes.projectTeam(projectKey)} replace />;
-}
-
-function ProjectWorkRedirect() {
-  const { projectKey = '' } = useParams();
-  return <Navigate to={routes.projectWork(projectKey)} replace />;
-}
 
 export function createProductRoutes({
   ProjectsComponent = ProjectsPage,
@@ -38,16 +22,12 @@ export function createProductRoutes({
   TeamComponent = TeamPage,
 } = {}) {
   return [
-    { path: '/', element: <RootRedirect /> },
-    { path: '/legacy', element: <LegacyRedirect /> },
+    { path: '/', element: <Navigate to={routes.projects()} replace /> },
     {
       element: <ProductLayout />,
       children: [
         { path: '/projects', element: <ProjectsComponent /> },
-        { path: '/inbox', element: <Navigate to={routes.projects()} replace /> },
-        { path: '/activity', element: <Navigate to={routes.projects()} replace /> },
         { path: '/settings', element: <SettingsPage /> },
-        { path: '/projects/:projectKey/home', element: <ProjectWorkRedirect /> },
         { path: '/projects/:projectKey/team', element: <TeamComponent /> },
         {
           path: '/projects/:projectKey/work',
@@ -55,7 +35,6 @@ export function createProductRoutes({
         },
         { path: '/projects/:projectKey/knowledge', element: <KnowledgeComponent /> },
         { path: '/projects/:projectKey/settings', element: <SettingsPage /> },
-        { path: '/projects/:projectKey/settings/:section', element: <ProjectTeamRedirect /> },
       ],
     },
     { path: '*', element: <NotFoundPage /> },

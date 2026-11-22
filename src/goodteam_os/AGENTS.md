@@ -74,7 +74,7 @@ project_candidate_handoff.py: Bind an authorized continuation to an existing, un
 project_continuation_notice.py: Presentation of existing continuation state; never an execution authority.
 project_environment.py: Bind existing project dependencies to source worktrees.
 project_human_feedback.py: Bound a Human answer to an existing discovery decision, not new authority.
-project_import.py: 项目导入、模式确认与 readiness 绑定。
+project_import.py: 项目导入、工作台入口、模式确认与 readiness 绑定。
 project_investigation_feedback.py: Observe settled investigation output without accepting it as delivery.
 project_iteration.py: Read-only, evidence-grounded starting point for project iteration planning.
 project_iteration_continuation.py: Bounded project continuation through the existing Assistant queue and dispatch.

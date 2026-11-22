@@ -1,3 +1,8 @@
+"""[INPUT]: 项目根目录、项目配置和准备状态。
+[OUTPUT]: 导入结果、工作台地址和项目模式确认。
+[POS]: 注册项目并绑定准备状态。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import errno
@@ -11,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable
 from typing import Iterator
+from urllib.parse import quote
 
 from goodteam_os.project_readiness import ProjectReadinessStore, build_capabilities
 from goodteam_os.projects import build_registered_project_config, load_project_target
@@ -892,5 +898,5 @@ def _result(
         "project": project,
         "readiness": readiness,
         "capabilities": build_capabilities(readiness),
-        "home_url": f"/projects/{key}/home",
+        "home_url": f"/projects/{quote(key, safe='')}/work",
     }

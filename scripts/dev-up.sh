@@ -56,9 +56,6 @@ if [ ! -f "$WS/projects/demo.local.yaml" ]; then
   mkdir -p "$WS/target"
   run init --key DEMO --name "Demo Project" --repo "$WS/target" \
       --worker-mode fake --projects-dir "$WS/projects" --force >/dev/null
-  # Start a run so the dashboard shows a real gate / roles / workflow waterfall.
-  run start "Build a small demo task tracker app" --project-key DEMO \
-      --project-config "$WS/projects/demo.local.yaml" --workspace "$WS" >/dev/null || true
   # Seed a few memory events so retrieval (and the future memory panel) have content.
   env PYTHONPATH="$ROOT/src" "$PY" - "$WS" <<'PYEOF' || true
 import sys
@@ -77,22 +74,6 @@ else
   echo "[dev-up] workspace already seeded ($WS); use --reset to rebuild"
 fi
 
-# 2b. Drive the DEMO run to completion (fake workers) so every artifact stage
-# (PRD, RFC, QA, review, release) is populated — otherwise the dashboard only
-# shows the PRD and everything downstream looks empty. Idempotent: returns
-# immediately if the run is already complete. This is the isolated demo
-# workspace, NOT the `smoke` CLI, and never touches real projects.
-env PYTHONPATH="$ROOT/src" "$PY" - "$WS" <<'PYEOF' || true
-import sys
-from pathlib import Path
-from goodteam_os.smoke import _approve_until_complete
-try:
-    _approve_until_complete(Path(sys.argv[1]), "DEMO")
-    print("[dev-up] DEMO run advanced through its gates (artifacts populated)")
-except Exception as exc:
-    print(f"[dev-up] note: could not fully advance DEMO run: {exc}")
-PYEOF
-
 # 3. serve resolves application assets from this checkout, independently of $WS.
 
 # Free the port so a leftover previous dev-up instance can't shadow this one
@@ -107,7 +88,7 @@ fi
 echo ""
 echo "[dev-up] GoodTeam dev instance is alive:"
 echo "          Dashboard    : http://localhost:$PORT/"
-echo "          DEMO detail  : http://localhost:$PORT/?project=DEMO"
+echo "          DEMO Work    : http://localhost:$PORT/projects/DEMO/work"
 echo "          (Ctrl-C to stop. FE hot-reload: cd frontend && npm run dev → :8790)"
 echo ""
 run serve --workspace "$WS" --port "$PORT"

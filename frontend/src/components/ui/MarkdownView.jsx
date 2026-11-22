@@ -319,13 +319,13 @@ function CodeBlock({ lang, content }) {
   );
 }
 
-export default function MarkdownView({ content, className = '', interactive = false, language = 'en' }) {
+export default function MarkdownView({ content, interactive = false, language = 'en' }) {
   const blocks = useMemo(() => parseMarkdownBlocks(content), [content]);
 
   if (!content) return null;
 
   return (
-    <div className={`md-renderer ${className}`}>
+    <div className="md-renderer">
       {blocks.map((block, idx) => {
         switch (block.type) {
           case 'heading': {

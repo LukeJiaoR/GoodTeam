@@ -155,39 +155,6 @@
   to { transform: rotate(360deg); }
 }
 
-.product-shell .review-processing-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  padding: 0.85rem 1rem;
-  margin-bottom: 1rem;
-  background: rgba(59, 130, 246, 0.12);
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  border-radius: var(--product-radius, 8px);
-  color: var(--product-text, #f4f4f5);
-}
-
-.product-shell .review-processing-spinner {
-  animation: product-button-spin 0.9s linear infinite;
-  color: #60a5fa;
-  margin-top: 0.15rem;
-  flex-shrink: 0;
-}
-
-.product-shell .review-processing-banner strong {
-  display: block;
-  font-size: 0.88rem;
-  color: #93c5fd;
-  margin-bottom: 0.2rem;
-}
-
-.product-shell .review-processing-banner p {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--product-text-muted, #a1a1aa);
-  line-height: 1.4;
-}
-
 .product-shell .product-inline-notice {
   display: flex;
   align-items: flex-start;
@@ -882,7 +849,6 @@
   justify-content: flex-end;
 }
 
-.product-shell .review-queue a:focus-visible,
 .product-shell .knowledge-artifacts button:focus-visible,
 .product-shell .knowledge-memory button:focus-visible {
   outline: 3px solid var(--product-focus);
@@ -929,9 +895,7 @@
   border-radius: var(--product-radius);
 }
 
-.product-shell .review-workspace h2,
 .product-shell .knowledge-overview h2 { margin: 0; font-size: 1.25rem; letter-spacing: -0.025em; }
-.product-shell .review-decision-panel label,
 .product-shell .knowledge-memory label { display: grid; gap: 0.4rem; color: var(--product-text-muted); font-size: 0.82rem; font-weight: 600; }
 
 .product-shell textarea,
@@ -1180,53 +1144,9 @@
 
 /* Approval Section */
 
-@media (max-width: 640px) {
-}
-
 .product-shell pre { max-width: 100%; overflow: auto; padding: 0.8rem; background: var(--product-surface-muted); border-radius: 6px; font-size: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
-
-.product-shell .review-workspace { display: grid; grid-template-columns: minmax(14rem, 0.68fr) minmax(20rem, 1.45fr) minmax(17rem, 0.85fr); gap: 1.25rem; align-items: start; }
-.product-shell .review-queue { position: sticky; top: 8.5rem; }
-.product-shell .review-queue > h2 { margin-bottom: 0.8rem; }
-.product-shell .review-queue ol { margin: 0; padding: 0; border-top: 1px solid var(--product-border); list-style: none; }
-.product-shell .review-queue a { display: flex; gap: 0.6rem; align-items: center; justify-content: space-between; padding: 0.75rem 0.45rem; color: var(--product-text); border-bottom: 1px solid var(--product-border); text-decoration: none; }
-.product-shell .review-queue a.is-active { background: var(--product-surface-muted); }
-.product-shell .review-queue a > span { display: grid; min-width: 0; }
-.product-shell .review-queue small { overflow: hidden; color: var(--product-text-muted); text-overflow: ellipsis; white-space: nowrap; }
-.product-shell .review-artifact { min-width: 0; }
-.product-shell .review-recovery { display: grid; grid-column: span 2; gap: 1rem; min-width: 0; padding: clamp(1.15rem, 3vw, 2rem); background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
-.product-shell .review-recovery > h2 { font-size: clamp(1.55rem, 3vw, 2.35rem); line-height: 1.05; }
-.product-shell .review-recovery > p:not(.product-eyebrow):not(.product-boundary-note) { max-width: 58ch; margin: 0; color: var(--product-text-muted); line-height: 1.65; }
-.product-shell .review-recovery label { display: grid; gap: 0.4rem; max-width: 52rem; color: var(--product-text-muted); font-size: 0.82rem; font-weight: 600; }
-.product-shell .review-recovery textarea { width: 100%; }
-.product-shell .review-artifact header { display: flex; gap: 1rem; align-items: end; justify-content: space-between; margin-bottom: 0.8rem; }
-.product-shell .review-view-switcher { display: flex; }
-.product-shell .review-view-switcher button { padding: 0.45rem 0.7rem; color: var(--product-text-muted); background: transparent; border: 1px solid var(--product-border); cursor: pointer; }
-.product-shell .review-view-switcher button.is-active { color: var(--product-text); background: var(--product-surface-muted); }
-.product-shell .review-diff { min-height: 60dvh; overflow: auto; color: var(--product-text); background: var(--product-surface-muted); font-size: 0.8rem; line-height: 1.55; white-space: pre-wrap; padding: 1rem; border-radius: var(--product-radius); border: 1px solid var(--product-border); }
-.product-shell .review-editor textarea { width: 100%; min-height: 60dvh; padding: 1rem; font-family: "Geist Mono Variable", monospace; font-size: 0.84rem; line-height: 1.6; resize: vertical; border-radius: var(--product-radius); border: 1px solid var(--product-border); }
-.product-shell .review-brief-preview { min-height: 60dvh; padding: clamp(1.15rem, 3vw, 2rem); background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
-.product-shell .review-brief-preview h3 { margin: 1.8rem 0 0.6rem; font-size: 1.1rem; }
-.product-shell .review-brief-preview h3:first-child { margin-top: 0; }
-.product-shell .review-brief-preview p { max-width: 68ch; margin: 0.55rem 0; color: var(--product-text-muted); line-height: 1.65; }
-.product-shell .review-brief-preview__item { padding-left: 1.2rem; position: relative; }
-.product-shell .review-brief-preview__item::before { content: "•"; position: absolute; left: 0; color: var(--product-accent-strong); }
-.product-shell .review-rendered-container { min-height: 60dvh; max-height: 80dvh; overflow-y: auto; padding: 1.25rem 1.5rem; background: var(--product-surface-muted); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
-.product-shell .review-proposal-content { margin: 0.5rem 0; padding: 1rem; background: var(--product-surface-muted); border: 1px solid var(--product-border); border-radius: var(--product-radius); max-height: 20rem; overflow-y: auto; }
 .product-shell .knowledge-artifact-rendered-wrap { min-height: 50dvh; max-height: 80dvh; overflow-y: auto; padding: 1.25rem 1.5rem; background: var(--product-surface-muted); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
 .product-shell .repository-overview-raw-wrap { margin-bottom: 1.5rem; padding: 1.25rem 1.5rem; background: var(--product-surface-muted); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
-.product-shell .review-inspector { display: grid; gap: 1rem; }
-.product-shell .review-inspector > section,
-.product-shell .review-inspector > details,
-.product-shell .review-decision-panel { padding: 0.9rem; background: var(--product-surface); border: 1px solid var(--product-border); border-radius: var(--product-radius); }
-.product-shell .review-inspector summary { font-weight: 650; cursor: pointer; }
-.product-shell .review-verdict { color: var(--product-accent-strong); font-size: 1.15rem; font-weight: 650; }
-.product-shell .review-editor-actions { display: flex; gap: 0.5rem; }
-.product-shell .review-decision-panel { display: grid; gap: 0.6rem; }
-.product-shell .review-decision-panel textarea { width: 100%; }
-.product-shell .review-question-list { display: grid; gap: 0.8rem; margin-top: 0.8rem; }
-.product-shell .review-question-list label { display: grid; gap: 0.35rem; color: var(--product-text-muted); font-size: 0.82rem; }
-.product-shell .review-question-list textarea { width: 100%; }
 
 .product-shell .knowledge-intro dl,
 .product-shell .settings-data-list { display: grid; margin: 1rem 0 2rem; border-top: 1px solid var(--product-border); }
@@ -1267,60 +1187,19 @@
 .product-shell .knowledge-cross-memory ol { border-top: 1px solid var(--product-border); }
 .product-shell .knowledge-cross-memory li { padding: 0.8rem 0; }
 
-@media (max-width: 1000px) {
-  .product-shell .review-workspace { grid-template-columns: minmax(13rem, 0.65fr) minmax(0, 1.35fr); }
-  .product-shell .review-inspector { grid-column: 2; }
-  .product-shell .review-recovery { grid-column: 2; }
-}
-
 @media (max-width: 767px) {
   .product-shell .product-page { width: min(100% - 2rem, 42rem); padding: 2rem 0 3rem; }
   .product-shell .product-page-header { flex-direction: column; }
   .product-shell .product-page-header__meta { justify-content: flex-start; }
   .product-shell .product-workspace-skeleton,
-  .product-shell .review-workspace,
   .product-shell .knowledge-artifacts,
   .product-shell .knowledge-memory,
   .product-shell .knowledge-confirmed-grid { grid-template-columns: minmax(0, 1fr); }
-  .product-shell .review-queue { position: static; }
-  .product-shell .review-inspector { grid-column: auto; }
-  .product-shell .review-editor textarea { min-height: 48dvh; }
 }
-
-@media (max-width: 480px) {
-  .product-shell .review-editor-actions,
-  .product-shell .review-decision-panel .product-button { width: 100%; }
-  .product-shell .review-editor-actions { flex-direction: column; }
-}
-
-.product-shell .review-pipeline-position { margin: 0.35rem 0 0; color: var(--product-text-muted); font-size: 0.8rem; }
 
 /* ---- Review evidence summary (track C2) ---- */
-.product-shell .review-evidence-summary { margin-bottom: 0.6rem; }
-.product-shell .review-evidence-summary h2 { margin: 0 0 0.4rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--product-text-muted); }
-.product-shell .review-evidence-badges { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 
 /* ---- Review decision result (track B) ---- */
-.product-shell .review-decision-result {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  margin: 0.75rem 0;
-  padding: 0.65rem 0.75rem;
-  border: 1px solid var(--product-success);
-  border-radius: 8px;
-  background: var(--product-surface-muted);
-}
-.product-shell .review-decision-result a { color: var(--product-accent-strong); font-size: 0.85rem; }
-.product-shell .review-decision-dismiss {
-  margin-top: 0.4rem;
-  border: none;
-  background: none;
-  color: var(--product-text-muted);
-  font-size: 0.75rem;
-  text-decoration: underline;
-  cursor: pointer;
-}
 
 /* ---- Dirty-state dialog (track A) ---- */
 .product-shell .product-dialog-backdrop {
@@ -1346,34 +1225,9 @@
 
 /* ---- D/E/F track styles ---- */
 .product-shell .product-data-age { margin: 0.3rem 0 0; color: var(--product-text-muted); font-size: 0.8rem; }
-.product-shell .review-questions-submitted { margin: 0.6rem 0 0; color: var(--product-success); font-size: 0.85rem; }
 .product-shell .knowledge-scope-hint { margin: 0.4rem 0 0; color: var(--product-warning); font-size: 0.8rem; }
 
 /* ---- Decision Snippets & Keyboard Hints ---- */
-.product-shell .review-decision-snippets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-bottom: 0.45rem;
-}
-
-.product-shell .review-snippet-pill {
-  padding: 0.25rem 0.55rem;
-  background: var(--product-surface-muted);
-  color: var(--product-text-muted);
-  border: 1px dashed var(--product-border);
-  border-radius: 6px;
-  font-size: 0.76rem;
-  font-weight: 520;
-  cursor: pointer;
-  transition: all 160ms ease;
-}
-
-.product-shell .review-snippet-pill:hover {
-  background: var(--product-surface);
-  color: var(--product-accent-strong);
-  border-color: var(--product-accent);
-}
 
 .product-shell .product-kbd-hint {
   display: inline-block;
@@ -1385,79 +1239,6 @@
   border: 1px solid currentColor;
   border-radius: 3px;
 }
-
-/* ---- Markdown TOC ---- */
-.product-shell .markdown-toc {
-  margin: 0 0 0.85rem;
-  background: var(--product-surface-muted);
-  border: 1px solid var(--product-border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.product-shell .markdown-toc__toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.45rem 0.75rem;
-  background: transparent;
-  border: none;
-  color: var(--product-text-muted);
-  font-size: 0.78rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.product-shell .markdown-toc__toggle:hover {
-  color: var(--product-text);
-  background: var(--product-surface);
-}
-
-.product-shell .markdown-toc__label {
-  display: inline-flex;
-  min-width: 0;
-  gap: 0.4rem;
-  align-items: center;
-}
-
-.product-shell .markdown-toc__label small {
-  display: grid;
-  min-width: 1.3rem;
-  height: 1.3rem;
-  place-items: center;
-  color: var(--product-text-muted);
-  background: var(--product-surface);
-  border: 1px solid var(--product-border);
-  border-radius: 5px;
-  font-size: 0.66rem;
-}
-
-.product-shell .markdown-toc__arrow {
-  flex: none;
-  transition: transform 150ms ease;
-}
-
-.product-shell .markdown-toc__toggle[aria-expanded='true'] .markdown-toc__arrow {
-  transform: rotate(180deg);
-}
-
-.product-shell .markdown-toc__list {
-  margin: 0;
-  padding: 0.4rem 0.75rem 0.6rem 1.75rem;
-  list-style: disc;
-  display: grid;
-  gap: 0.25rem;
-  border-top: 1px solid var(--product-border);
-}
-
-.product-shell .markdown-toc__item {
-  font-size: 0.76rem;
-  color: var(--product-text-muted);
-}
-.product-shell .markdown-toc__item--level-1 { font-weight: 600; color: var(--product-text); }
-.product-shell .markdown-toc__item--level-2 { margin-left: 0.5rem; }
-.product-shell .markdown-toc__item--level-3 { margin-left: 1rem; opacity: 0.85; }
 
 /* Shared project chrome and material: workspaceSurface.css. */
 
@@ -1801,18 +1582,11 @@
   .projects-import-dialog__footer > .product-button { flex: 1; }
 }
 
-/* Review and Knowledge are first-class workspaces in the new project UI. */
-.product-shell--work .product-review-page {
-  width: min(100% - 2rem, 1640px);
-  padding: 2rem 0 4rem;
-}
-
 .product-shell--work .product-knowledge-page {
   width: min(100% - 2rem, 1320px);
   padding: 2rem 0 4rem;
 }
 
-.review-page-header,
 .knowledge-page-header {
   display: flex;
   gap: 2rem;
@@ -1821,7 +1595,6 @@
   margin-bottom: 1.5rem;
 }
 
-.review-page-header h1,
 .knowledge-page-header h1 {
   margin: 0;
   font-size: clamp(2rem, 4vw, 3.2rem);
@@ -1830,7 +1603,6 @@
   line-height: 1;
 }
 
-.review-page-header > div > p:last-child,
 .knowledge-page-header > div > p:last-child {
   max-width: 64ch;
   margin: 0.65rem 0 0;
@@ -1838,53 +1610,6 @@
   line-height: 1.5;
 }
 
-.review-page-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(6.8rem, auto));
-  margin: 0;
-  overflow: hidden;
-  background: var(--product-surface);
-  border: 1px solid var(--product-border);
-  border-radius: 8px;
-}
-
-.review-page-summary > div {
-  display: grid;
-  gap: 0.2rem;
-  padding: 0.75rem 0.9rem;
-  border-left: 1px solid var(--product-border);
-}
-
-.review-page-summary > div:first-child { border-left: 0; }
-.review-page-summary dt { color: var(--product-text-muted); font-size: 0.7rem; font-weight: 620; }
-.review-page-summary dd { margin: 0; font-size: 1.05rem; font-weight: 700; }
-
-.product-shell--work .review-workspace {
-  display: grid;
-  grid-template-columns: minmax(13.5rem, 0.72fr) minmax(32rem, 2fr) minmax(18rem, 0.92fr);
-  gap: 0.8rem;
-  align-items: start;
-}
-
-.product-shell--work .review-queue,
-.product-shell--work .review-artifact,
-.product-shell--work .review-inspector {
-  min-width: 0;
-  background: var(--product-surface);
-  border: 1px solid var(--product-border);
-  border-radius: 8px;
-}
-
-.product-shell--work .review-queue,
-.product-shell--work .review-inspector {
-  position: sticky;
-  top: 5.6rem;
-  max-height: calc(100dvh - 7rem);
-  overflow-y: auto;
-}
-
-.review-queue__header,
-.review-inspector__header,
 .knowledge-artifacts > aside > header,
 .knowledge-memory > aside > header {
   display: flex;
@@ -1896,8 +1621,6 @@
   border-bottom: 1px solid var(--product-border);
 }
 
-.review-queue__header > span,
-.review-inspector__header > span,
 .knowledge-artifacts > aside > header > span,
 .knowledge-memory > aside > header > span {
   display: grid;
@@ -1910,7 +1633,6 @@
   border-radius: 7px;
 }
 
-.review-queue__header > div,
 .knowledge-artifacts > aside > header > div {
   display: flex;
   min-width: 0;
@@ -1919,8 +1641,6 @@
   justify-content: space-between;
 }
 
-.review-queue__header h2,
-.review-inspector__header h2,
 .knowledge-artifacts > aside > header h2,
 .knowledge-memory > aside > header h2 {
   margin: 0;
@@ -1929,119 +1649,10 @@
   letter-spacing: 0;
 }
 
-.review-queue__header small,
 .knowledge-artifacts > aside > header small {
   color: var(--product-text-muted);
   font-size: 0.72rem;
 }
-
-.product-shell--work .review-queue ol {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.product-shell--work .review-queue a {
-  min-height: 4.35rem;
-  padding: 0.72rem 0.8rem;
-  border-bottom: 1px solid var(--product-border);
-  transition: background 150ms ease;
-}
-
-.product-shell--work .review-queue li:last-child a { border-bottom: 0; }
-.product-shell--work .review-queue a:hover { background: var(--product-surface-muted); }
-.product-shell--work .review-queue a.is-active { background: var(--product-accent-soft); box-shadow: inset 3px 0 0 var(--product-accent); }
-.product-shell--work .review-queue a strong { font-size: 0.82rem; }
-.product-shell--work .review-queue a small { margin-top: 0.25rem; font-size: 0.7rem; }
-.product-shell--work .review-queue .product-status-badge { padding: 0.17rem 0.35rem; font-size: 0.65rem; }
-
-.product-shell--work .review-artifact {
-  overflow: hidden;
-}
-
-.product-shell--work .review-artifact__header {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 4.4rem;
-  margin: 0;
-  padding: 0.85rem 1rem;
-  background: color-mix(in srgb, var(--product-surface-muted) 34%, var(--product-surface));
-  border-bottom: 1px solid var(--product-border);
-}
-
-.product-shell--work .review-artifact__header h2 { margin: 0; font-size: 1rem; letter-spacing: 0; }
-.product-shell--work .review-artifact__header .product-eyebrow { margin-bottom: 0.2rem; }
-
-.product-shell--work .review-view-switcher {
-  display: inline-flex;
-  gap: 0.2rem;
-  padding: 0.2rem;
-  background: var(--product-surface-muted);
-  border-radius: 7px;
-}
-
-.product-shell--work .review-view-switcher button {
-  display: inline-flex;
-  min-height: 2rem;
-  gap: 0.35rem;
-  align-items: center;
-  padding: 0 0.55rem;
-  border: 0;
-  border-radius: 5px;
-  font-size: 0.72rem;
-  font-weight: 620;
-}
-
-.product-shell--work .review-view-switcher button.is-active {
-  color: var(--product-accent-strong);
-  background: var(--product-surface);
-  box-shadow: 0 1px 3px color-mix(in srgb, #102044 12%, transparent);
-}
-
-.product-shell--work .review-artifact > .markdown-toc { margin: 0; border-width: 0 0 1px; border-radius: 0; }
-.product-shell--work .review-rendered-container,
-.product-shell--work .review-editor textarea,
-.product-shell--work .review-diff,
-.product-shell--work .review-brief-preview {
-  min-height: calc(100dvh - 14rem);
-  max-height: none;
-  margin: 0;
-  padding: clamp(1.2rem, 2vw, 2rem);
-  background: var(--product-surface);
-  border: 0;
-  border-radius: 0;
-}
-
-.product-shell--work .review-editor { display: block; }
-.product-shell--work .review-editor textarea { width: 100%; resize: vertical; }
-
-.product-shell--work .review-inspector {
-  display: block;
-}
-
-.review-inspector__header { position: sticky; z-index: 1; top: 0; }
-.review-inspector__header p { margin: 0 0 0.15rem; color: var(--product-text-muted); font-size: 0.66rem; font-weight: 650; text-transform: uppercase; }
-.product-shell--work .review-inspector > section,
-.product-shell--work .review-inspector > details,
-.product-shell--work .review-inspector > .review-evidence-summary,
-.product-shell--work .review-inspector > .review-decision-panel {
-  margin: 0;
-  padding: 0.85rem 0.9rem;
-  background: var(--product-surface);
-  border: 0;
-  border-bottom: 1px solid var(--product-border);
-  border-radius: 0;
-}
-
-.product-shell--work .review-inspector > details > summary { font-size: 0.78rem; }
-.product-shell--work .review-inspector > details > pre { margin-bottom: 0; }
-.product-shell--work .review-verdict { margin: 0.4rem 0; font-size: 1rem; }
-.product-shell--work .review-inspector p { font-size: 0.78rem; line-height: 1.5; }
-.product-shell--work .review-evidence-badges { gap: 0.3rem; }
-.product-shell--work .review-evidence-badges .product-status-badge { font-size: 0.66rem; }
-.product-shell--work .review-decision-panel .product-button { width: 100%; }
 
 .knowledge-page-count {
   display: grid;
@@ -2205,54 +1816,24 @@
 .product-shell--work .knowledge-memory-inspector,
 .product-shell--work .knowledge-cross-memory { border-radius: 7px; }
 
-@media (max-width: 1180px) {
-  .product-shell--work .review-workspace { grid-template-columns: minmax(13rem, 0.6fr) minmax(0, 1.4fr); }
-  .product-shell--work .review-inspector { position: static; grid-column: 2; max-height: none; }
-}
-
 @media (max-width: 820px) {
-  .review-page-header,
   .knowledge-page-header { align-items: flex-start; flex-direction: column; }
 
-  .review-page-summary { width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-
-  .product-shell--work .review-workspace,
   .product-shell--work .knowledge-overview,
   .product-shell--work .knowledge-artifacts,
   .product-shell--work .knowledge-memory { grid-template-columns: minmax(0, 1fr); }
 
-  .product-shell--work .review-queue,
-  .product-shell--work .review-inspector,
   .product-shell--work .knowledge-artifacts > aside,
   .product-shell--work .knowledge-memory > aside { position: static; grid-column: auto; max-height: none; }
-
-  .product-shell--work .review-queue ol {
-    display: flex;
-    overflow-x: auto;
-    scrollbar-width: thin;
-  }
-
-  .product-shell--work .review-queue li { min-width: min(17rem, 82vw); }
-  .product-shell--work .review-queue a { border-right: 1px solid var(--product-border); border-bottom: 0; }
-  .product-shell--work .review-queue a.is-active { box-shadow: inset 0 -3px 0 var(--product-accent); }
 
   .product-shell--work .knowledge-overview > .repository-overview,
   .product-shell--work .knowledge-overview > .product-empty-copy { grid-column: auto; }
 }
 
 @media (max-width: 540px) {
-  .product-shell--work .product-review-page,
   .product-shell--work .product-knowledge-page { width: min(100% - 1rem, 42rem); padding-top: 1.25rem; }
 
-  .review-page-header h1,
   .knowledge-page-header h1 { font-size: 2.25rem; }
-
-  .review-page-summary dt { font-size: 0.62rem; }
-  .review-page-summary > div { padding: 0.65rem 0.55rem; }
-
-  .product-shell--work .review-artifact__header { align-items: flex-start; flex-direction: column; }
-  .product-shell--work .review-view-switcher { width: 100%; }
-  .product-shell--work .review-view-switcher button { flex: 1; justify-content: center; padding-inline: 0.3rem; }
 
   .knowledge-page-count { width: 100%; }
   .knowledge-view-switcher { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
