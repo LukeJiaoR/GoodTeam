@@ -1,3 +1,9 @@
+"""[INPUT]: 执行账本、角色记忆和共享证据规则。
+[OUTPUT]: build_evidence_manifest 生成执行证据清单。
+[POS]: 汇总执行回放、候选检查和记忆归档链接供只读查询。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,16 +13,21 @@ from goodteam_os.execution.correction_loop import correction_evidence
 from goodteam_os.execution.evidence_manifest_extractors import (
     ci_observations,
     ci_summary,
+    final_status,
     json_ready,
     merge_summary,
+    pr_identity,
+    pr_ref,
     review_observations,
     review_summary,
+    source_events,
+    source_manifest,
 )
 from goodteam_os.execution.execution_replay_graph import execution_replay_graph_manifest
 from goodteam_os.execution.github_broker_status import github_broker_status_manifest
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.memory_provenance import build_memory_provenance_projection
-from goodteam_os.execution.models import ExecutionRunStatus, LedgerEvent
+from goodteam_os.execution.models import ExecutionRun, ExecutionRunStatus, LedgerEvent
 from goodteam_os.execution.runtime_policy import runtime_policy_manifest
 from goodteam_os.execution.task_input_evidence import task_input_evidence
 from goodteam_os.memory import RoleMemoryStore
@@ -30,17 +41,21 @@ def build_evidence_manifest(
     replay = ledger.replay(execution_id)
     task = replay["task"]
     run = replay["run"]
-    events = replay["events"]
-    source = _source_manifest(task, events)
-    pr_number = _pr_number_from_replay(run, events)
-    pr_repo = _repo_from_events(events) or source["repo"]
-    final_status = _manifest_final_status(run, pr_number, events)
-    incomplete_reason = _incomplete_reason(run, pr_number, events)
+    ledger_events = replay["events"]
+    events = source_events(ledger_events)
+    source = source_manifest(task, events)
+    pr_repo, pr_number = pr_identity(run, events, fallback_repo=source["repo"])
+    ci = ci_summary(events)
+    merge = merge_summary(events)
+    ci_state = ci.get("state")
+    merged = merge["merged"]
+    status = final_status(run, pr_number, ci_state=ci_state, merged=merged)
+    incomplete_reason = _incomplete_reason(run, pr_number, events, ci_state=ci_state, merged=merged)
     memory_provenance = build_memory_provenance_projection(
         memory_store,
-        events,
+        ledger_events,
         execution_id,
-        final_status=final_status,
+        final_status=status,
         incomplete_reason=incomplete_reason,
     )
     input_evidence = task_input_evidence(ledger.project_root, execution_id,
@@ -61,7 +76,7 @@ def build_evidence_manifest(
     manifest = {
         "schema_version": "execution_evidence_manifest.v1",
         "execution_id": execution_id,
-        "task_id": _task_id_from_replay(execution_id, task, run, events),
+        "task_id": _task_id_from_replay(execution_id, task, run, ledger_events),
         "source": source,
         "source_issue": source["issue_ref"],
         "github_ref": source["github_ref"],
@@ -69,18 +84,18 @@ def build_evidence_manifest(
         "task_input": input_evidence,
         "candidate_validation": validation,
         "correction_loop": correction_evidence(ledger.project_root, execution_id),
-        "runtime_policy": runtime_policy_manifest(events),
-        "github_broker_status": github_broker_status_manifest(run, events),
+        "runtime_policy": runtime_policy_manifest(ledger_events),
+        "github_broker_status": github_broker_status_manifest(run, ledger_events),
         "pr": _pr_manifest(pr_repo, pr_number, run, events),
-        "ledger_events": [json_ready(event) for event in events],
+        "ledger_events": [json_ready(event) for event in ledger_events],
         "ci_observations": ci_observations(events),
-        "ci_summary": ci_summary(events),
+        "ci_summary": ci,
         "review_observations": review_observations(events),
         "review_summary": review_summary(events),
-        "merge_summary": merge_summary(events),
+        "merge_summary": merge,
         "memory_provenance_refs": memory_provenance["refs"],
         "memory_provenance_integrity": memory_provenance["integrity"],
-        "final_status": final_status,
+        "final_status": status,
         "incomplete_reason": incomplete_reason,
     }
     manifest["execution_replay_graph"] = execution_replay_graph_manifest(manifest)
@@ -118,20 +133,6 @@ def _task_contract_manifest(task: Any, *, captured: dict[str, Any] | None = None
     }
 
 
-def _source_manifest(task: Any, events: list[LedgerEvent]) -> dict[str, Any]:
-    repo = task.repo if task is not None else _repo_from_events(events)
-    issue_number = task.issue_number if task is not None else _issue_number_from_events(events)
-    issue_ref = f"{repo}#{issue_number}" if repo and issue_number is not None else ""
-    source_type = task.source_type if task is not None else ("github_issue" if issue_ref else "")
-    return {
-        "type": source_type,
-        "repo": repo,
-        "issue_number": issue_number,
-        "issue_ref": issue_ref,
-        "github_ref": f"github:{issue_ref}" if issue_ref else "",
-    }
-
-
 def _task_id_from_replay(
     execution_id: str,
     task: Any,
@@ -157,46 +158,10 @@ def _pr_manifest(
     return {
         "repo": repo,
         "number": pr_number,
-        "ref": _pr_ref(repo, pr_number),
+        "ref": pr_ref(repo, pr_number),
         "branch_name": _branch_name(run, events),
         "commit_sha": _pr_commit_sha(events),
     }
-
-
-def _pr_ref(repo: str, pr_number: int | None) -> str:
-    return f"{repo}#{pr_number}" if repo and pr_number is not None else ""
-
-
-def _repo_from_events(events: list[LedgerEvent]) -> str:
-    for event in events:
-        repo = event.payload.get("repo")
-        if isinstance(repo, str) and repo.strip():
-            return repo.strip()
-    return ""
-
-
-def _issue_number_from_events(events: list[LedgerEvent]) -> int | None:
-    return _int_or_none(_first_payload_value(events, "issue_number"))
-
-
-def _int_or_none(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value.strip())
-    return None
-
-
-def _pr_number_from_replay(run: Any, events: list[LedgerEvent]) -> int | None:
-    if run is not None and run.pr_number is not None:
-        return int(run.pr_number)
-    for event in reversed(events):
-        value = _int_or_none(event.payload.get("pr_number"))
-        if value is not None:
-            return value
-    return None
 
 
 def _branch_name(run: Any, events: list[LedgerEvent]) -> str:
@@ -219,47 +184,27 @@ def _pr_commit_sha(events: list[LedgerEvent]) -> str:
     return ""
 
 
-def _first_payload_value(events: list[LedgerEvent], key: str) -> object | None:
-    for event in events:
-        if key in event.payload:
-            return event.payload[key]
-    return None
-
-
-def _manifest_final_status(run: Any, pr_number: int | None, events: list[LedgerEvent]) -> str:
-    if run is None:
-        return "incomplete"
-    return _final_status(run, pr_number, events)
-
-
-def _final_status(run: Any, pr_number: int | None, events: list[LedgerEvent]) -> str:
-    if run.status is ExecutionRunStatus.FAILED:
-        return "failed"
-    if pr_number is None:
-        return "pending"
-    ci = ci_summary(events)
-    if ci.get("state") == "failure":
-        return "failed"
-    if run.status is ExecutionRunStatus.SUCCEEDED and merge_summary(events)["merged"]:
-        return "completed"
-    return "pending"
-
-
-def _incomplete_reason(run: Any, pr_number: int | None, events: list[LedgerEvent]) -> str:
+def _incomplete_reason(
+    run: ExecutionRun | None,
+    pr_number: int | None,
+    events: list[LedgerEvent],
+    *,
+    ci_state: object,
+    merged: bool,
+) -> str:
     if run is None:
         return "execution_run_missing"
     if run.status is ExecutionRunStatus.FAILED:
         return _failure_reason(events)
-    ci = ci_summary(events)
-    if ci.get("state") == "failure":
+    if ci_state == "failure":
         return "ci_failed"
     if pr_number is None:
         return "pr_missing"
-    if ci.get("state") == "pending":
+    if ci_state == "pending":
         return "ci_pending"
-    if ci.get("state") == "unavailable":
+    if ci_state == "unavailable":
         return "ci_unavailable"
-    if not merge_summary(events)["merged"]:
+    if not merged:
         return "merge_missing"
     return ""
 

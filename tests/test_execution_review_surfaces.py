@@ -1,3 +1,9 @@
+"""[INPUT]: 临时执行账本与 GitHub 夹具。
+[OUTPUT]: 验证 CLI、HTTP 和记忆归档使用的执行证据。
+[POS]: 通过执行证据入口验证账本回放与只读查询。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +14,7 @@ from urllib.parse import quote
 from goodteam_os import cli, web
 from goodteam_os.execution.evidence import ExecutionEvidenceService
 from goodteam_os.execution.ledger import ExecutionLedger
+from goodteam_os.execution.models import ExecutionRun, LedgerEvent
 from tests.review_workbench_helpers import (
     full_lifecycle as _full_lifecycle,
     memory_event_files as _memory_event_files,
@@ -51,6 +58,41 @@ def test_cli_review_is_read_only_for_ledger_and_memory(tmp_path, capsys):
     assert provenance["merge_summary"]["merged"] is True
     assert ledger.read_events(execution_id) == before_events
     assert _memory_event_files(tmp_path) == before_memory
+
+
+def test_review_and_finalization_agree_on_historical_pr_number(tmp_path):
+    service = ExecutionEvidenceService(tmp_path)
+    execution_id = "legacy-pr"
+    timestamp = "2026-07-06T03:10:00Z"
+    run = ExecutionRun(
+        execution_id=execution_id,
+        task_id="legacy-task",
+        worker_job_id="legacy-job",
+        adapter="fake",
+        status="succeeded",
+        branch_name="",
+        pr_number=None,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+    service.ledger.create_run(run)
+    service.ledger.append_event(LedgerEvent(
+        event_id=f"{execution_id}:0001:completed:merge_completed",
+        execution_id=execution_id,
+        task_id=run.task_id,
+        event_type="completed",
+        actor="github",
+        payload={"transition": "merge_completed", "repo": "example/project", "pr_number": "2160"},
+        created_at=timestamp,
+    ))
+
+    manifest = service.get_evidence(execution_id)
+    finalized = service.finalize_provenance(execution_id)
+
+    assert manifest["final_status"] == finalized["evidence"]["final_status"] == "completed"
+    assert manifest["pr"]["ref"] == finalized["evidence"]["pr"] == "example/project#2160"
+    assert finalized["memory_written"] is True
+    assert service.get_evidence(execution_id)["memory_provenance_integrity"]["complete"] is True
 
 
 def test_http_review_returns_json_but_not_the_standalone_page(tmp_path, monkeypatch):

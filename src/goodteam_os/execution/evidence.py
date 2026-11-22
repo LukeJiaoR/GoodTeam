@@ -1,13 +1,29 @@
+"""[INPUT]: 执行账本、角色记忆与共享证据规则。
+[OUTPUT]: ExecutionEvidenceService 查询证据并写入归档链接。
+[POS]: 按执行状态归档记忆，读取证据清单供评审使用。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
+
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from goodteam_os.execution.evidence_manifest import build_evidence_manifest
-from goodteam_os.execution.evidence_manifest_extractors import ci_summary, merge_summary, review_summary
+from goodteam_os.execution.evidence_manifest_extractors import (
+    ci_summary,
+    final_status,
+    first_payload_value,
+    json_ready,
+    merge_summary,
+    pr_identity,
+    pr_ref,
+    review_summary,
+    source_events,
+    source_manifest,
+)
 from goodteam_os.execution.ledger import ExecutionLedger
 from goodteam_os.execution.memory_provenance import (
     PROVENANCE_HORIZON,
@@ -15,7 +31,7 @@ from goodteam_os.execution.memory_provenance import (
     PROVENANCE_TRANSITION,
     memory_source,
 )
-from goodteam_os.execution.models import ExecutionRunStatus, LedgerEvent
+from goodteam_os.execution.models import LedgerEvent
 from goodteam_os.execution.provenance_closure import ledger_event, memory_text
 from goodteam_os.memory import RoleMemoryStore
 
@@ -74,24 +90,28 @@ class ExecutionEvidenceService:
         if run is None:
             raise ValueError(f"Execution run not found: {execution_id}")
 
-        events = _source_events(replay["events"])
-        issue = _issue_ref(task, events)
-        pr_number = _pr_number(run, events)
-        pr_repo = _repo_from_events(events) or (task.repo if task is not None else "")
-        method_refs = {key: _first_payload_value(events, key) for key in ("task_skill_context", "skill_execution_snapshot_ref")
-                       if _first_payload_value(events, key) is not None}
+        events = source_events(replay["events"])
+        source = source_manifest(task, events)
+        pr_repo, pr_number = pr_identity(run, events, fallback_repo=source["repo"])
+        ci = ci_summary(events)
+        merge = merge_summary(events)
+        method_refs = {
+            key: value
+            for key in ("task_skill_context", "skill_execution_snapshot_ref")
+            if (value := first_payload_value(events, key)) is not None
+        }
         return {
             **({"skill_execution": {"schema_version": "skill_execution_evidence.v1", "state": "captured", **method_refs}}
                if method_refs else {}),
             "execution_id": execution_id,
             "task_id": run.task_id,
-            "issue": issue,
-            "pr": _pr_ref(pr_repo, pr_number),
-            "events": [_json_ready(event) for event in events],
-            "ci_summary": ci_summary(events),
+            "issue": source["issue_ref"],
+            "pr": pr_ref(pr_repo, pr_number),
+            "events": [json_ready(event) for event in events],
+            "ci_summary": ci,
             "review_summary": review_summary(events),
-            "merge_summary": merge_summary(events),
-            "final_status": _final_status(run, pr_number, events),
+            "merge_summary": merge,
+            "final_status": final_status(run, pr_number, ci_state=ci.get("state"), merged=merge["merged"]),
             "timestamp": _evidence_timestamp(run, events),
         }
 
@@ -151,58 +171,6 @@ def _finalize_result(
     }
 
 
-def _source_events(events: list[LedgerEvent]) -> list[LedgerEvent]:
-    return [event for event in events if event.payload.get("transition") != PROVENANCE_TRANSITION]
-
-def _issue_ref(task: Any, events: list[LedgerEvent]) -> str:
-    if task is not None:
-        return f"{task.repo}#{task.issue_number}"
-    repo = _repo_from_events(events)
-    issue_number = _first_payload_value(events, "issue_number")
-    if repo and issue_number is not None:
-        return f"{repo}#{issue_number}"
-    return ""
-
-
-def _pr_ref(repo: str, pr_number: int | None) -> str:
-    return f"{repo}#{pr_number}" if repo and pr_number is not None else ""
-
-def _repo_from_events(events: list[LedgerEvent]) -> str:
-    for event in events:
-        repo = event.payload.get("repo")
-        if isinstance(repo, str) and repo.strip():
-            return repo.strip()
-    return ""
-
-
-def _pr_number(run: Any, events: list[LedgerEvent]) -> int | None:
-    if run.pr_number is not None:
-        return int(run.pr_number)
-    for event in reversed(events):
-        value = event.payload.get("pr_number")
-        if isinstance(value, int):
-            return value
-    return None
-
-def _first_payload_value(events: list[LedgerEvent], key: str) -> object | None:
-    for event in events:
-        if key in event.payload:
-            return event.payload[key]
-    return None
-
-def _final_status(run: Any, pr_number: int | None, events: list[LedgerEvent]) -> str:
-    if run.status is ExecutionRunStatus.FAILED:
-        return "failed"
-    if pr_number is None:
-        return "pending"
-    ci = ci_summary(events)
-    if ci.get("state") == "failure":
-        return "failed"
-    if run.status is ExecutionRunStatus.SUCCEEDED and merge_summary(events)["merged"]:
-        return "completed"
-    return "pending"
-
-
 def _evidence_timestamp(run: Any, events: list[LedgerEvent]) -> str:
     if events:
         return events[-1].created_at
@@ -211,12 +179,6 @@ def _evidence_timestamp(run: Any, events: list[LedgerEvent]) -> str:
 
 def _memory_source(execution_id: str) -> str:
     return memory_source(execution_id)
-
-
-def _json_ready(value: Any) -> Any:
-    if hasattr(value, "to_dict"):
-        value = value.to_dict()
-    return json.loads(json.dumps(value))
 
 
 def _utc_now() -> str:

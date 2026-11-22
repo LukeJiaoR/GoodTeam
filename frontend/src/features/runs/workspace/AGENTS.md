@@ -44,7 +44,6 @@ TeamWorkspace.jsx: 排列项目会话、Worker 状态与 Goal 记录。
 WorkWorkspaceShell.jsx: 工作台路由与外层布局。
 WorkWorkspaceShell.test.jsx: 工作台外层布局检查。
 assistantControls.css: 助手操作与请求恢复样式。
-attemptMemory.js: 解析指定尝试关联的记忆。
 continuationActivity.js: 持续迭代活动的展示数据。
 conversationFeedback.js: 会话发送反馈与时间线投影。
 conversationFeedback.vitest.js: 会话发送反馈检查。
@@ -58,7 +57,6 @@ goalContinuation.css: Goal 持续执行面板样式。
 presentationUtils.js: 工作台状态展示工具。
 projectConversation.css: 项目会话样式。
 projectQuestionBoard.css: 项目问题板样式。
-skillReviewExecutions.css: Skill 审查执行记录样式。
 taskWorkspace.css: 任务工作区样式。
 timelineCopy.js: 会话事件的本地化文案。
 useConversationAttachments.js: 会话附件选择与上传状态。

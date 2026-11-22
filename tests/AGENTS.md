@@ -33,7 +33,7 @@ test_execution_cli.py: 验证 execution cli 的行为。
 test_execution_idempotency.py: 验证 execution idempotency 的行为。
 test_execution_ledger.py: 验证 execution ledger 的行为。
 test_execution_path_claims.py: 验证 execution path claims 的行为。
-test_execution_review_surfaces.py: CLI/HTTP review reads retain evidence without the standalone browser page.
+test_execution_review_surfaces.py: 验证 CLI/HTTP 证据查询与旧账本的记忆归档。
 test_execution_sandbox_integration.py: 验证 execution sandbox integration 的行为。
 test_feedback_recovery_handoff.py: Explicit recovery rejoins released feedback ownership; execution is a fixture.
 test_full_smoke_preflight.py: 验证 full smoke preflight 的行为。
