@@ -1,8 +1,7 @@
-"""Non-activated S5 content contract; preparation is never Runtime execution.
-
-The production factory is closed until #440 selects and verifies an adapter.
-Tests inject a control-plane-owned authority, not a job/config/user allow flag.
-This module has no process, HTTP, script execution or model invocation channel.
+"""[INPUT]: 不可变 Worker 快照、Skill 包和运行授权。
+[OUTPUT]: 上下文校验、方法投影和固定资源读取。
+[POS]: 为读取代理和作业私有目录提供同一版本的内容。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from __future__ import annotations
 
@@ -60,11 +59,11 @@ class ContentSession:
     verification_kind: str
 
     def __post_init__(self):
-        for value in asdict(self).values():
-            bounded_text(value)
+        for field, value in asdict(self).items():
+            bounded_text(value, empty=field == "model")
         identifier(self.binary_digest, "sha256:")
         identifier(self.config_digest, "sha256:")
-        if self.verification_kind not in {"contract_fixture", "verified_runtime", "local_cli", "ordinary_pi_methods"}:
+        if self.verification_kind not in {"contract_fixture", "verified_runtime", "local_cli", "ordinary_pi_methods", "ordinary_codex_methods"}:
             raise SkillError("runtime_unverified", "Unknown Runtime verification provenance.")
 
 
@@ -292,7 +291,7 @@ class SkillContextProvider:
             raise SkillError("snapshot_scope_mismatch", "Content authority changed before input return.")
         return record["input"]  # Freshly decoded value, never shared mutable state.
 
-    def worker_input(self, ref) -> bytes:
+    def worker_input(self, ref, *, package_root=None) -> bytes:
         """Prepare ordinary-Role input; never proof of delivery or execution.
 
         An independently admitted adapter must bind its optional read channel
@@ -302,7 +301,20 @@ class SkillContextProvider:
         from .worker_input import render_worker_input
 
         private = self.private_input(ref)  # Current authority, scope and revocation.
-        return render_worker_input(private, maximum=self.limits.max_input_bytes)
+        return render_worker_input(private, maximum=self.limits.max_input_bytes, package_root=package_root)
+
+    def materialize(self, ref, directory):
+        """Copy fixed package bytes to an empty host-owned directory for one invocation."""
+        from .library import _copy_package
+
+        private = self.private_input(ref)
+        _operator, packages, _snapshot, _record = self._read(ref)
+        for item in private["catalog"]:
+            package = packages.read_package(item["skill_id"], item["version_id"])
+            if package.digest != item["package_digest"]:
+                raise SkillError("snapshot_corrupt", "Package changed before resource preparation.")
+            _copy_package(package, directory / item["skill_id"])
+        self.private_input(ref)
 
     def read_resource(self, ref, *, skill_id: str, relative: str, call_id: str) -> bytes:
         """Controlled broker read, not proof a model read/used the returned bytes.
@@ -359,6 +371,6 @@ class SkillContextProvider:
         return {"schema_version": "skill_content_detail.v1", "context_ref": self._reference(record),
                 "status": "prepared_only", "runtime_verification": record["runtime_session"]["verification_kind"],
                 "stages": {name: "unobserved" for name in OBSERVED_STAGES},
-                "items": [{key: item[key] for key in ("skill_id", "version_id", "package_digest", "activation")}
+                "items": [{key: item[key] for key in ("skill_id", "version_id", "package_digest", "activation", "name")}
                           for item in record["input"]["catalog"]]}
 

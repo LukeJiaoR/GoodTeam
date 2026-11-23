@@ -252,7 +252,7 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
         raise ValueError("A stable answer message ID is required.")
     message_id = message_id.strip()
     from goodteam_os.assistant_requests import response
-    from goodteam_os.goal_continuation import authority_snapshot
+    from goodteam_os.goal_continuation import same_continuation_project
     from goodteam_os.project_iteration_continuation import _scope_tasks
     from goodteam_os.project_outcome_discovery import _current, _digest
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
@@ -289,8 +289,7 @@ def handle_answer_message(service, *, project_key, root, text, message_id,
             raise ValueError("The original project configuration is unavailable.")
         _scope_tasks(value, LocalTaskStore(root, project_key).list_tasks())
         if (record["planning"]["packet"]["project_key"] != project_key
-                or value["authority"] != authority_snapshot(service.workspace, project_key,
-                                                            Path(service.project_config), Path(root))):
+                or not same_continuation_project(value["authority"], Path(service.project_config), Path(root))):
             raise ValueError("The question's project or current authority changed.")
         question = record["planning"]["selection"]["human_question"]
         now = datetime.now(UTC).isoformat()

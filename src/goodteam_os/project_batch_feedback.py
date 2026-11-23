@@ -200,7 +200,7 @@ def can_observe_pending_write_review(value, tasks):
 
 
 def observe_pending_batch(*, workspace, project_key, root, project_config, value):
-    from goodteam_os.goal_continuation import authority_snapshot
+    from goodteam_os.goal_continuation import same_continuation_project
     from goodteam_os.project_outcome_discovery import _current
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
@@ -217,7 +217,7 @@ def observe_pending_batch(*, workspace, project_key, root, project_config, value
     def retain(session):
         current = _current(session, value)
         if (current.get("pending_batch") != pending or current.get("discovery_pending")
-                or current["authority"] != authority_snapshot(workspace, project_key, Path(project_config), Path(root))):
+                or not same_continuation_project(current["authority"], Path(project_config), Path(root))):
             raise ValueError("Batch continuation changed before feedback capture.")
         history = dict(current.get("batch_observations") or {})
         previous = history.get(receipt["observation_key"])

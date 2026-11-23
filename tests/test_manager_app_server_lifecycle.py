@@ -46,6 +46,7 @@ for line in sys.stdin:
         threads[thread] = []
         result = {"thread":{"id":thread}}
     elif method == "thread/resume":
+        threads.setdefault(params["threadId"], [])
         result = {"thread":{"id":params["threadId"]}}
     elif method == "thread/read":
         result = {"thread":{"id":params["threadId"], "turns":[turns[t] for t in threads[params["threadId"]]]}}
@@ -62,6 +63,9 @@ for line in sys.stdin:
         counts[text] = counts.get(text,0)+1
         if text == "unauthorized":
             turns[turn]["error"] = {"message": "Unexpected status 401 Unauthorized", "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 401}}}
+            finish(thread, turn, "failed", "")
+        elif text == "model-context-too-small":
+            turns[turn]["error"] = {"codexErrorInfo": "contextWindowExceeded", "message": "fixture input"}
             finish(thread, turn, "failed", "")
         elif text == "fail-once" and counts[text] == 1:
             finish(thread, turn, "failed", "partial response")
@@ -410,3 +414,32 @@ def test_provider_failure_keeps_authentication_category_and_diagnostics(runtime)
     assert safe_failure(failure.value)["code"] == "authentication_failed"
     assert not native.active and not native.by_request
     assert native.client.stderr_path == native.store.path.with_name("manager-app-server.stderr.log")
+
+
+
+def test_background_model_context_error_keeps_native_thread(runtime, monkeypatch):
+    native, log = runtime
+    runtime_config = native._runtime_config
+    def changed_runtime():
+        command, env, public, fingerprint = runtime_config()
+        return command, env, {**public, "model": "smaller"}, fingerprint + "-smaller"
+
+    # Use the same logical request and original input on the explicit retry.
+    request = dict(logical_id="background-context", text="model-context-too-small",
+                   context="fixture context", background=True)
+    errors = []
+    for attempt in ("first", "second"):
+        with pytest.raises(ManagerExecutionError) as error:
+            native.run(**request, attempt_id=attempt)
+        errors.append(error.value)
+        monkeypatch.setattr(native, "_runtime_config", changed_runtime)
+        # Make native readback available on reconnect in the subprocess fixture.
+        if attempt == "first":
+            monkeypatch.setattr(native, "reconcile", lambda _: {"native_status": "failed"})
+    assert [error.code for error in errors] == ["context_window_exceeded"] * 2
+    requests = [json.loads(line) for line in log.read_text().splitlines()]
+    initial = next(record for record in requests if record["method"] == "turn/start")
+    resumed = next(record for record in requests if record["method"] == "thread/resume")
+    assert resumed["params"]["model"] == "smaller"
+    assert resumed["params"]["threadId"] == initial["params"]["threadId"]
+    assert all(record["method"] != "turn/interrupt" for record in requests)

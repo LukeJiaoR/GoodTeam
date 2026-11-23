@@ -28,7 +28,7 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
     config = tmp_path / "project.yaml"
     config.write_text("key: DEMO\n")
     run_id, dispatch_id = "task-batch-" + "a" * 64, "dispatch-" + "b" * 64
-    head, authority = "c" * 40, {"fixture": "original-authority"}
+    head, authority = "c" * 40, {"project_root": str(root), "project_config": str(config)}
     seed = dict(id="DEMO-1", title="Delivered seed", description="The first real delivery is a supplied fixture.",
                 role="implementation", dependencies=[], acceptance_criteria=["Seed exists"],
                 write_domains=["src"], execution_policy="workspace_write", external_refs=[],
@@ -107,7 +107,7 @@ def test_mixed_terminal_results_reenter_manager_without_acceptance_or_retry(tmp_
         monkeypatch.setattr(module, "TaskAssistantSessionStore", Session)
     for module in (continuation, discovery, tasks):
         monkeypatch.setattr(module, "LocalTaskStore", Ledger)
-    for module in (continuation, discovery, goal_continuation):
+    for module in (continuation, goal_continuation):
         monkeypatch.setattr(module, "authority_snapshot", lambda *_: deepcopy(authority))
     from contextlib import nullcontext
     monkeypatch.setattr(continuation, "goal_guard", lambda *_: nullcontext())

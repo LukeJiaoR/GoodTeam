@@ -104,10 +104,10 @@ def _require_execution_slot(workspace, project_key, run_id, *, task_ids=None):
 def _require_authority(workspace, project_key, root, project_config, expected):
     if expected is None:
         return
-    from goodteam_os.goal_continuation import authority_snapshot
+    from goodteam_os.goal_continuation import same_continuation_project
 
-    if expected != authority_snapshot(workspace, project_key, Path(project_config), root):
-        raise ValueError("Project configuration, Team or model settings changed after automatic execution was authorized.")
+    if not same_continuation_project(expected, Path(project_config), root):
+        raise ValueError("The original automatic execution project source changed.")
 
 
 def _require_goal_source(workspace, project_key, source, run_id):

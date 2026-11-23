@@ -1,3 +1,8 @@
+"""[INPUT]: 本地 Worker 作业、隔离工作区、运行配置和任务锁。
+[OUTPUT]: WorkerJobStore、CLI 与会话执行入口。
+[POS]: 保存作业引用，调用原生运行器并记录结果。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 import fcntl
 import json
 import os
@@ -17,6 +22,9 @@ from shutil import copy2, which
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
+from goodteam_os.skills.pi_methods import (
+    METHOD_MODES, ORDINARY_METHODS, ORDINARY_PI_METHODS, READONLY_CODEX_METHODS, RoleMethodInput,
+)
 from goodteam_os.web_search import search_policy
 from goodteam_os.database import provider_environment
 from goodteam_os.skills.worker_creation_lock import serialized_worker_creation
@@ -25,7 +33,9 @@ from goodteam_os.memory_handoff import MemoryHandoffStore, PreparedMemoryRecord,
 from goodteam_os.roles import role_definition, stable_role_prompt
 from goodteam_os.pi_rpc import PiRpcError
 from goodteam_os.worker_capabilities import BACKEND_REASONING_DEPTHS, REASONING_DEPTHS
-from goodteam_os.providers import ProviderStore, ProviderError, PROVIDER_KEY_ENV, codex_connection_arguments
+from goodteam_os.providers import (
+    ProviderStore, ProviderError, PROVIDER_KEY_ENV, codex_connection_arguments,
+)
 from goodteam_os.provider_usage import record_codex_usage
 from goodteam_os.native_worker_events import NativeWorkerAborted
 from goodteam_os.session_runtimes import (
@@ -1122,29 +1132,24 @@ class WorkerJobStore:
         web_search = search_policy(web_search)
         if web_search is not None and (adapter not in SESSION_BACKENDS
                 or (task_skill_context is not _NO_TASK_SKILL_CONTEXT
-                    and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}) or task_input is not None):
+                    and method_loading_mode not in ORDINARY_PI_METHODS) or task_input is not None):
             raise ValueError("Web Search is opt-in for ordinary Pi jobs only")
         associations = {"project_task_id": project_task_id, "track_id": track_id}
         if any(not isinstance(value, str) or value != value.strip() or len(value) > 256
                for value in associations.values()):
             raise ValueError("Worker task associations must be exact task/track identifiers.")
         if any(associations.values()) and (task_input is not None or
-                task_skill_context is not _NO_TASK_SKILL_CONTEXT and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}):
+                task_skill_context is not _NO_TASK_SKILL_CONTEXT and method_loading_mode not in ORDINARY_METHODS):
             raise ValueError("Protected Workers retain their original task association protocol.")
         if task_skill_context is not _NO_TASK_SKILL_CONTEXT:
-            if provider_connection is not _CAPTURE_PROVIDER_CONNECTION:
-                raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
             if task_input is not None:
                 from goodteam_os.execution.task_snapshot import TaskInputError
                 raise TaskInputError("task_input_protocol_conflict")
             skill_request = locals().copy()
-            skill_request.pop("provider_connection")
             if web_search is None:
                 skill_request.pop("web_search")
             skill_request.pop("associations")
-            from goodteam_os.skills.worker_requests import create_skill_worker_job
-
-            return create_skill_worker_job(self, skill_request)[0]
+            return self._create_skill_job(skill_request)[0]
         if review_target is not None or skill_subject or required_skill_ids or skill_loader_version != "goodteam.worker-metadata.v1":
             raise ValueError("Skill Worker input requires an explicit task Skill context; legacy fallback is forbidden.")
         if idempotency_key:
@@ -1207,11 +1212,14 @@ class WorkerJobStore:
         if max_attempts is not None:
             job["max_attempts"] = max_attempts
             job["cli_timeout_seconds"] = cli_timeout
-        if adapter == "codex" and not job_id.startswith("job-correction-"):
+        if (adapter == "codex" and not job_id.startswith("job-correction-")
+                or adapter in SESSION_BACKENDS and task_input is None):
             # Only new requests capture the active provider. Explicit None is
             # the original local configuration, including pre-provider jobs.
-            job["provider_connection"] = (ProviderStore().capture()
-                if provider_connection is _CAPTURE_PROVIDER_CONNECTION else provider_connection)
+            reference = (ProviderStore().capture("codex" if adapter == "codex" else "pi")
+                         if provider_connection is _CAPTURE_PROVIDER_CONNECTION else provider_connection)
+            if reference is not None or adapter == "codex":
+                job["provider_connection"] = reference
         for key, value in {
             "pi_path": pi_path,
             "pi_provider": pi_provider,
@@ -1298,6 +1306,18 @@ class WorkerJobStore:
             MemoryHandoffStore(self.project_root).capture(job, packet_bytes)
         return job
 
+    def _create_skill_job(self, values):
+        from goodteam_os.skills.worker_requests import create_skill_worker_job
+
+        reference = values.pop("provider_connection")
+        ordinary = values.get("method_loading_mode") in ORDINARY_METHODS
+        if ordinary:
+            if reference is not _CAPTURE_PROVIDER_CONNECTION:
+                values["provider_connection"] = reference
+        elif reference is not _CAPTURE_PROVIDER_CONNECTION:
+            raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
+        return create_skill_worker_job(self, values, capture_provider=ordinary and reference is _CAPTURE_PROVIDER_CONNECTION)
+
     @serialized_worker_creation
     def create_or_reuse_job(self, **job_spec: Any) -> tuple[dict[str, Any], bool]:
         if job_spec.get("task_input") is not None:
@@ -1312,20 +1332,16 @@ class WorkerJobStore:
             return self.create_job(**job_spec), not existed
         if job_spec.get("task_skill_context") is not None:
             import inspect
-            from goodteam_os.skills.worker_requests import create_skill_worker_job
-
             bound = inspect.signature(type(self).create_job).bind(self, **job_spec)
             bound.apply_defaults()
             values = dict(bound.arguments)
             if values.get("web_search") is None:
                 values.pop("web_search")
-            elif values.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
+            elif values.get("method_loading_mode") not in ORDINARY_PI_METHODS:
                 raise ValueError("Protected Skill workers cannot acquire search authority")
-            if (values.get("project_task_id") or values.get("track_id")) and values.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
+            if (values.get("project_task_id") or values.get("track_id")) and values.get("method_loading_mode") not in ORDINARY_METHODS:
                 raise ValueError("Protected Workers retain their original task association protocol.")
-            if values.pop("provider_connection") is not _CAPTURE_PROVIDER_CONNECTION:
-                raise ValueError("Provider connections cannot replace the protected Skill execution protocol.")
-            return create_skill_worker_job(self, values)
+            return self._create_skill_job(values)
         from goodteam_os.skills.worker_requests import has_skill_fields, is_skill_job_id
 
         if has_skill_fields(job_spec) or job_spec.get("required_skill_ids"):
@@ -1412,6 +1428,9 @@ class WorkerJobStore:
                             "skill_preflight_attempt_id",
                             "skill_error_code",
                             "skill_runtime_status",
+                            "method_input_status",
+                            "method_packages_status",
+                            "method_items",
                             "sandbox_context",
                             "runtime_cwd",
                             "runtime_adapter",
@@ -1518,7 +1537,9 @@ class WorkerJobStore:
             raise ValueError("This job has no supported native Worker event/control channel.")
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
-        reject_unverified_runtime_entry(job_root, job)
+        method_input = (RoleMethodInput(self, job_id, prepare=False)
+                        if job.get("method_loading_mode") == READONLY_CODEX_METHODS else None)
+        reject_unverified_runtime_entry(job_root, job, method_input=method_input)
         return job_root, job
 
     def run_job(self, job_id: str, *, sandbox_context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1526,7 +1547,7 @@ class WorkerJobStore:
 
         if is_skill_job_id(job_id):
             job = self._read_json(self.root / job_id / "job.json")
-            if job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
+            if job.get("method_loading_mode") in METHOD_MODES:
                 from goodteam_os.skills.pi_methods import ordinary_execution_slot
                 with ordinary_execution_slot(self, job_id):
                     return self._run_job(job_id, sandbox_context=sandbox_context)
@@ -1706,7 +1727,7 @@ class WorkerJobStore:
                 "status_path": str(retained / "status.json")}
 
     def _ordinary_memory_handoff(self, job_root: Path, job: dict[str, Any]) -> MemoryHandoffStore | None:
-        if job_root.name.startswith(("job-input-", "job-correction-")):
+        if job_root.name.startswith(("job-input-", "job-correction-")) or job.get("method_loading_mode") == READONLY_CODEX_METHODS:
             return None
         if job_root.name != job.get("id"):
             raise ValueError("memory_handoff_job_root_mismatch")
@@ -1743,7 +1764,10 @@ class WorkerJobStore:
         self._admit_input_dispatch(job_root, job)
         runtime_context = (method_input.runtime_context() if method_input is not None
                            else self._worker_runtime_cwd(job))
-        config = pi_runtime_config(self.project_root, job)
+        from goodteam_os.session_runtimes import pi_connection_config
+
+        connection = ProviderStore().resolve_worker(job.get("provider_connection"), agent="pi")
+        config = pi_connection_config(pi_runtime_config(self.project_root, job), job, connection)
         preflight = pi_backend_doctor(self.project_root, job)
         if preflight.get("command_path"):
             # Execute the binary the existing doctor checked, not a namesake
@@ -1765,6 +1789,7 @@ class WorkerJobStore:
                 runtime_context,
                 pythonpath_workspace_src=(runtime_context.runtime_cwd / "src").is_dir(),
             ),
+            **({"provider_connection": {key: connection[key] for key in ("id", "revision")}} if connection else {}),
             "runtime_adapter": "pi",
             "runtime_kind": "persistent_session",
             "runtime_binary": str(preflight.get("command_path") or config.binary),
@@ -1789,6 +1814,8 @@ class WorkerJobStore:
             "result_path": str(result_path),
         }
         base_extra = {
+            **({"method_items": method_input.provider.describe(method_input.ref)["items"],
+                "method_input_status": "prepared"} if method_input is not None else {}),
             "command": command,
             "model": config.model or "auto",
             "preflight": preflight,
@@ -1844,7 +1871,7 @@ class WorkerJobStore:
                                "pid": runtime.rpc.pid if runtime.rpc else None, "heartbeat_at": self._now()})
                     startup_heartbeat = time.monotonic()
                 self._process_pi_controls(job_root, job, runtime)
-            state = runtime.start_or_resume(tick=startup_tick)
+            state = runtime.start_or_resume(tick=startup_tick, connection=connection)
             session_extra = {
                 **base_extra,
                 "started_at": started_at,
@@ -1857,6 +1884,9 @@ class WorkerJobStore:
                 "isCompacting": bool(state.get("isCompacting")),
                 "pendingMessageCount": int(state.get("pendingMessageCount") or 0),
             }
+            if method_input is not None:
+                base_extra["method_packages_status"] = "broker_available"
+                session_extra.update(method_packages_status="broker_available")
             self._write_status(job_root, job, "running", running_summary, extra=session_extra)
             heartbeat_thread = threading.Thread(
                 target=self._heartbeat_until_stopped,
@@ -1876,6 +1906,9 @@ class WorkerJobStore:
                     runtime.send_resume_prompt(prompt)
                 else:
                     runtime.send_prompt(prompt)
+                if method_input is not None:
+                    base_extra["method_input_status"] = "prompt_acknowledged"
+                    session_extra["method_input_status"] = "prompt_acknowledged"
 
             def tick() -> None:
                 self._process_pi_controls(job_root, job, runtime)
@@ -2575,29 +2608,49 @@ class WorkerJobStore:
         summary = "Fill result.md manually, then update status.json when ready."
         return self._write_status(job_root, job, "needs_review", summary)
 
+    def _run_role_codex(self, job_root, job, *, method_input):
+        method_input.validate(job_root, job)
+        with tempfile.TemporaryDirectory(prefix="goodteam-codex-methods-") as directory:
+            package_root = Path(directory).resolve()
+            method_input.provider.materialize(method_input.ref, package_root)
+            return self._run_cli_backend(job_root, job, CLI_BACKENDS["codex"],
+                                         method_input=method_input, package_root=package_root)
+
     def _run_cli_backend(
         self,
         job_root: Path,
         job: dict[str, Any],
         spec: "CliBackendSpec",
+        *,
+        method_input=None,
+        package_root: Path | None = None,
     ) -> dict[str, Any]:
         """Run any registered agentic coding CLI (codex, claude, ...). Adding a
         new CLI means adding a CliBackendSpec to CLI_BACKENDS — no new branch."""
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
-        reject_unverified_runtime_entry(job_root, job)
+        reject_unverified_runtime_entry(job_root, job, method_input=method_input)
+        if method_input is not None and (job.get("method_loading_mode") != READONLY_CODEX_METHODS
+                                         or spec is not CLI_BACKENDS["codex"] or package_root is None):
+            raise ValueError("Role method input requires its original read-only Codex runtime.")
         task_input = self._admit_input_dispatch(job_root, job)
         binary = which(spec.which_name) or spec.default_path()
-        connection = ProviderStore().resolve(job.get("provider_connection")) if spec.which_name == "codex" else None
+        connection = None
+        if spec.which_name == "codex":
+            providers = ProviderStore()
+            resolve = providers.resolve_worker if task_input is None else providers.resolve
+            connection = resolve(job.get("provider_connection"))
         raw = str(job.get("model", ""))
         bare = raw.split(":", 1)[1].strip() if ":" in raw else raw.strip()
         model = bare or (connection or {}).get("model") or spec.model_default
         result_path = job_root / "result.md"
-        runtime_context = self._worker_runtime_cwd(job)
+        runtime_context = (method_input.runtime_context() if method_input is not None
+                           else self._worker_runtime_cwd(job))
         worker_env = self._worker_env(job_root, spec, runtime_context.runtime_cwd)
         from goodteam_os.project_environment import runtime_environment
 
-        worker_env = runtime_environment((job.get("sandbox_context") or {}).get("project_environment"),
+        binding = (method_input.workspace_context if method_input is not None else job.get("sandbox_context")) or {}
+        worker_env = runtime_environment(binding.get("project_environment"),
                                          worker_env or provider_environment(), workspace=runtime_context.runtime_cwd)
         pythonpath_workspace_src = (runtime_context.runtime_cwd / "src").is_dir()
         preflight = _cli_preflight(spec, binary, model)
@@ -2687,6 +2740,8 @@ class WorkerJobStore:
             runtime_context=runtime_context,
             runtime_evidence=runtime_evidence,
             use_pty=spec.needs_pty,
+            method_input=method_input,
+            package_root=package_root,
             timeout_seconds=(CLI_WORKER_TIMEOUT_SECONDS if task_input is not None else
                              _cli_worker_timeout_seconds(job.get("cli_timeout_seconds", CLI_WORKER_TIMEOUT_SECONDS))),
         )
@@ -2797,6 +2852,8 @@ class WorkerJobStore:
         runtime_evidence: dict[str, Any] | None = None,
         timeout_seconds: int = 1800,
         use_pty: bool = False,
+        method_input=None,
+        package_root: Path | None = None,
     ) -> dict[str, Any]:
         """Run an agentic coding CLI (codex/claude) over the job protocol files.
 
@@ -2805,7 +2862,10 @@ class WorkerJobStore:
         the final message is printed to stdout (claude ``-p``)."""
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
-        reject_unverified_runtime_entry(job_root, job)
+        reject_unverified_runtime_entry(job_root, job, method_input=method_input)
+        if method_input is not None and (job.get("method_loading_mode") != READONLY_CODEX_METHODS
+                                         or package_root is None or use_pty):
+            raise ValueError("Role method input requires the read-only Codex pipe transport.")
         task_input = self._admit_input_dispatch(job_root, job)
         from goodteam_os.execution.correction_input import CorrectionAttemptInput
         correction = isinstance(task_input, CorrectionAttemptInput)
@@ -2846,7 +2906,8 @@ class WorkerJobStore:
             **runtime_evidence,
             **_runtime_artifact_paths(stdout_path=stdout_path, stderr_path=stderr_path, result_path=result_path),
         }
-        prompt = self._worker_prompt(job_root, job, model=model)
+        prompt = (method_input.prompt(package_root=package_root) if method_input is not None
+                  else self._worker_prompt(job_root, job, model=model))
         process_command = _command_with_prompt(command, prompt, prompt_via=prompt_via)
         process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
@@ -2865,6 +2926,9 @@ class WorkerJobStore:
         running_summary = f"{label} is running."
         native_events = job.get("adapter") == "codex" and "--json" in command and not correction
         base_extra = {
+            **({"method_items": method_input.provider.describe(method_input.ref)["items"],
+                "method_packages_status": "materialized", "method_input_status": "prepared"}
+               if method_input is not None else {}),
             "command": process_command,
             "model": model,
             "started_at": started_at,
@@ -2929,11 +2993,15 @@ class WorkerJobStore:
                 if correction:
                     authority.check_native_current(task_input)
                 def launch():
+                    if method_input is not None:
+                        method_input.provider.private_input(method_input.ref)
                     return subprocess.Popen(
                         process_command, cwd=runtime_context.runtime_cwd, env=worker_env,
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                         text=True, start_new_session=True)
                 process = self._launch_authorizer(job, launch) if self._launch_authorizer is not None else launch()
+                if method_input is not None:
+                    base_extra["method_input_status"] = "transport_attempted"
                 running_extra = {**base_extra, "exit_code": None, "timeout_seconds": timeout_seconds, "pid": process.pid}
                 self._write_status(
                     job_root,
@@ -3323,13 +3391,14 @@ class WorkerJobStore:
             **_invocation_evidence(job, summary=summary, extra=status_payload),
             **provided_evidence,
         }
-        if job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
+        method_mode = job.get("method_loading_mode")
+        if method_mode in METHOD_MODES:
             # This request is immutable; Runtime evidence belongs in status only.
-            from goodteam_os.skills.pi_methods import PiMethodInput
-            PiMethodInput(self, job["id"], prepare=False)
-            status_payload.update(method_loading_mode=job["method_loading_mode"],
-                skill_runtime_status="manager_pi_methods" if job["method_loading_mode"] == "manager_pi_methods.v1" else "readonly_pi_methods" if job["method_loading_mode"] == "readonly_pi_methods.v1" else "ordinary_pi_methods", strict_isolation_verified=False,
-                method_input_status="see_original_pi_prompt_receipt")
+            RoleMethodInput(self, job["id"], prepare=False)
+            status_payload.update(method_loading_mode=method_mode,
+                task_skill_context=job["task_skill_context"],
+                skill_execution_snapshot_ref=job["skill_execution_snapshot_ref"],
+                skill_runtime_status=method_mode.removesuffix(".v1"), strict_isolation_verified=False)
         else:
             self._write_json(job_root / "job.json", job)
         self._write_json(job_root / "status.json", status_payload)

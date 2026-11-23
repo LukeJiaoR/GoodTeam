@@ -1,6 +1,27 @@
 # Ordinary Role Skill input preparation (#445)
 
-## Implemented boundary
+## Ordinary QA dispatch
+
+A new isolated `read_only` QA track uses the Role binding with Codex or Pi.
+The default QA binding loads `qa-browser-evidence`. Browser cases require
+screenshots of the observed result, linked from the report. A case awaiting
+its screenshot remains unverified. Custom bindings select their own packages. The immutable Worker request holds the Provider reference and the Role
+snapshot. Edits to Role bindings or Skill versions affect new task locks.
+Queued jobs and retries use the original Skill versions. Each launch reads
+the current configuration of the captured Provider ID.
+
+Codex receives complete required instructions over stdin. GoodTeam places only
+the locked packages in a private temporary directory and gives each catalog
+entry its own resource base. The read-only Codex command can read files using
+their original relative paths. The directory is removed when the process ends.
+
+Pi receives the required instructions over RPC. Its existing read-only tool
+policy makes the context-bound resource broker available for textual resources.
+The Worker detail shows the adapter, Provider revision used at launch, Skill version
+references and preparation or prompt-transport stage. Resource use and task
+acceptance require their own evidence.
+
+## Content projection
 
 `SkillContextProvider.worker_input(reference)` projects an already captured,
 verified content context into a bounded private adapter input. It preserves the
@@ -16,24 +37,14 @@ and revocation checks. The complete rendered input has its own byte limit and
 fails rather than truncating. No lookup of current Team settings happens at this
 point. Code Review retains its dedicated protocol and cannot use this projection.
 
-An admitted adapter must bind the existing `read_resource` operation to this
-same content reference; model arguments may select only a listed skill/resource,
-not another task or content reference. A broker receipt is not proof of runtime
-read or method compliance. This change adds no tool, runtime, scheduler, provider
-call or permission switch.
+Each broker read validates the original content reference and checks the
+requested Skill and resource against the captured catalog. A broker receipt
+records the bytes returned by that operation.
 
-## Remaining activation work
+## Verification scope
 
-Ordinary production dispatch still returns `skill_runtime_not_connected`. This
-is a preparation-layer increment, **not completion of #445**. A real adapter's
-#440 isolation/admission evidence, actual required-content delivery and observed
-optional reads remain necessary before activation. Default Role base packages,
-Manager base methods and generic runtime resource selection also remain follow-up
-work; this patch does not reinterpret legacy prompts as loaded Skills.
-
-The regression test uses actual immutable stores and Worker publication with a
-model-free `contract_fixture` authority. It covers two Roles using the same
-versioned packages without mixing task Context; required versus on-demand bytes;
-repeat input stability; context/path rejection; and default admission/budget
-failure. No native runtime, paid model or full continuous-project Loop was run.
-CI stays paused. The composed project path remains separate acceptance in #419.
+The combined QA regression runs the original dispatcher and immutable stores in
+isolated Git worktrees. It checks both Provider adapters, required instructions,
+relative resources, disabled packages and the Worker result. The native smoke
+uses Codex 0.171.0 and Pi 1.1.0 against a loopback Responses endpoint. StockFlow
+browser acceptance and real-model evidence are tracked in #419.

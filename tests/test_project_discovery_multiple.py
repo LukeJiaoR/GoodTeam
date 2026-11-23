@@ -23,7 +23,7 @@ def test_multiple_followups_publish_once_after_partial_write_and_lost_queue_repl
     store = TaskAssistantSessionStore(tmp_path, "APP")
     outcome = {"batch_run_id": "seed-run", "delivery": {"receipt_id": "seed"}}
     value = dict(id="grant", status="active", seed_task_ids=[], seed_task_intents={},
-        approved_backlog_version="baseline", task_ids=[], task_intents={}, authority={},
+        approved_backlog_version="baseline", task_ids=[], task_intents={}, authority={"project_root": str(root), "project_config": str(config)},
         max_batches=3, max_manager_calls=3, manager_calls=1, batches_started=0,
         new_tasks_created=0, discovered_task_ids=[], discovery_consumed=[],
         discovery=dict(objective="Improve two independent parts of the delivered project.",
@@ -47,7 +47,6 @@ def test_multiple_followups_publish_once_after_partial_write_and_lost_queue_repl
         store._mutate(lambda session: {**session, "project_continuation": deepcopy(value)})
 
     reset(value)
-    monkeypatch.setattr(discovery, "authority_snapshot", lambda *_: {})
     monkeypatch.setattr(discovery, "verified_outcome", lambda **_: deepcopy(outcome))
 
     def run():

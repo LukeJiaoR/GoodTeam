@@ -55,6 +55,8 @@ function getSystemEventMeta(event, kind) {
   switch (event) {
     case 'project_continuation_authorized':
     case 'project_continuation_batch_started':
+    case 'project_continuation_environment_changed':
+    case 'project_continuation_environment_unavailable':
       return { Icon: Layers, tone: 'info', category: 'continuation' };
     case 'work_dispatched':
     case 'work_progressed':

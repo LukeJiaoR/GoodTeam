@@ -1,12 +1,21 @@
-# Codex API providers in GoodTeam
+# Shared API providers in GoodTeam
 
 ## Outcome and scope
 
-A project Manager and its ordinary Codex Workers can use a connection configured
-inside GoodTeam across successive iterations. The existing Agent selector still
-means `codex`, `claude`, etc.; an API provider is a separate connection owned by
-that Agent. The initial supported Agent is Codex and its native OpenAI Responses
-protocol. There is no protocol-conversion proxy or additional dispatcher.
+A saved API connection can serve Codex and Pi through each client's native
+OpenAI Responses configuration. **Use provider** selects the Codex default.
+**Pi connection** selects a saved connection or local Pi configuration. Both
+defaults can point to the same Provider ID.
+
+Each job captures the selected Provider ID and revision. A project batch retry
+preserves that reference. An ordinary Worker reads the current settings for
+that ID at launch and records the revision used. Explicit job model choices
+take precedence over the saved default.
+
+Pi requires an API key and a selected model for a shared connection. GoodTeam
+passes a job-private `models.json` and an environment reference to the key.
+The Pi process reports the actual Provider alias and model before sending its
+first prompt. The local Pi choice uses the existing native configuration.
 
 The previous gap was that Worker execution and model discovery relied on the
 machine's Codex configuration, while Settings had no connection-management or
@@ -19,10 +28,12 @@ Worker, model-profile, task-binding and PostgreSQL services from merged PR #670
 1. Configure the existing GoodTeam `GOODTEAM_DATABASE_URL` connection.
 2. Open **Settings → Agent providers → Add provider**.
 3. Enter a name, Responses Base URL (usually ending in `/v1`), optional API Key
-   and default model. **Fetch models** requests `<base_url>/models`; manual model
-   IDs remain available when the endpoint is unsupported or unavailable.
-4. Save and choose **Use provider**. Choose **Local Codex configuration** to
-   restore the previous machine-owned connection behavior.
+   and default model. **Fetch models** requests `<base_url>/models`. Editing an
+   existing URL refreshes the list when focus leaves the address field. A failed
+   refresh shows the error and keeps the previous list and model selection.
+   Manual model IDs remain available.
+4. Save and choose **Use provider** for Codex. Select the same connection under
+   **Pi connection** to share it. The local choices restore machine configuration.
 
 Provider defaults replace bundled Codex model-profile defaults. Explicit Team,
 role and individual job models retain precedence. Model discovery for the Team
@@ -30,9 +41,9 @@ page uses the active provider, with no invented reasoning capabilities when
 `/models` supplies only model IDs.
 
 Each new ordinary Codex job captures the provider ID and revision. Switching the
-active provider affects new jobs. A queued job keeps its captured connection;
-editing/removing that connection causes dispatch to reject it before invocation.
-An already running subprocess keeps its captured environment. Protected task
+active provider affects new jobs. A queued job uses updates to the captured
+connection, including key rotation. Deleting that connection prevents launch.
+An already running subprocess keeps its launch environment. Protected task
 receipts bind the optional provider reference without changing historical
 receipts that predate this field. Manager runtime verification also includes the
 connection identity.
@@ -40,9 +51,9 @@ connection identity.
 Explicit legacy Manager and Reviewer retries replay the original provider ID and
 revision, even after the active provider changes. An explicit local connection
 (`null`) or a historical job without this field stays on the local Codex path;
-retry does not acquire a newly activated GoodTeam provider. Edited or removed
-connections still fail before invocation. This preserves the connection boundary
-while an existing project recovers and continues its next iteration.
+retry does not acquire a newly activated GoodTeam provider. Ordinary retries
+read current settings for the original Provider ID. Deleted connections fail
+before invocation.
 
 Explicitly admitted native Reviewer/Correction and protected Skill runtimes keep
 their existing independently authorized connections. Settings do not replace their
@@ -60,7 +71,10 @@ admission policies or grant new execution/review authority.
   previous local Codex behavior remains available on an unmigrated installation.
   A missing DB configuration on a bound store fails closed.
 - API reads expose `has_api_key`, never the saved value. An omitted key on edit
-  preserves it; an explicit empty value removes it. Keys are passed in a dedicated
+  preserves it only when the normalized API base URL is unchanged. A new URL
+  uses an explicitly supplied key or makes an unauthenticated model discovery
+  request. Saving a new URL without a key clears the old key where keyless
+  operation is supported. An explicit empty value removes the key. Keys are passed in a dedicated
   child-process environment variable, never command arguments or job metadata.
   Provider keys are redacted from captured output; the existing database
   environment filter still removes controller DB credentials from Workers.

@@ -5,7 +5,7 @@
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
 import ProjectConversation from './ProjectConversation';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   PanelRightClose,
@@ -74,6 +74,7 @@ function ExecutionPane({ actors, onClose, onSwitchToOutcomes, reducedMotion, sec
       const status = statusText(actor.state, t);
       const expanded = selectedId === actor.id;
       const detailId = `${workerListId}-worker-${index}`;
+      const methods = actor.method_details;
       return <li key={actor.id} data-state={actor.state}>
         <button type="button" className="team-worker-summary" aria-expanded={expanded} aria-controls={detailId}
           onClick={() => setSelectedId(expanded ? '' : actor.id)}>
@@ -88,6 +89,18 @@ function ExecutionPane({ actors, onClose, onSwitchToOutcomes, reducedMotion, sec
           {expanded ? <>
             <dl>
               <dt>{t('work.navigation.assignment')}</dt><dd>{actor.task_id || actor.id}</dd>
+              {methods?.adapter ? <><dt>{t('work.team.methodAgent')}</dt><dd>{methods.adapter}</dd></> : null}
+              {methods?.provider_connection ? <><dt>Provider</dt><dd title={methods.provider_connection.id}>
+                {methods.provider_connection.id.slice(0, 17)} · r{methods.provider_connection.revision}
+              </dd></> : null}
+              {methods?.method_items?.map((item) => <Fragment key={item.skill_id}>
+                <dt title={item.skill_id}>{item.name || item.skill_id.slice(0, 18)}</dt>
+                <dd title={item.version_id}>{item.version_id.slice(0, 20)}</dd>
+              </Fragment>)}
+              {methods?.method_packages_status ? <><dt>{t('work.team.methodResources')}</dt>
+                <dd>{t(`work.team.methodStage.${methods.method_packages_status}`)}</dd></> : null}
+              {methods?.method_input_status ? <><dt>{t('work.team.methodInput')}</dt>
+                <dd>{t(`work.team.methodStage.${methods.method_input_status}`)}</dd></> : null}
               {actor.dependency_task_title ? <><dt>{t('work.navigation.waitingFor')}</dt><dd>{actor.dependency_task_title}</dd></> : null}
             </dl>
           </> : null}

@@ -12,7 +12,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 
-from goodteam_os.goal_continuation import authority_snapshot
+from goodteam_os.goal_continuation import same_continuation_project
 from goodteam_os.project_iteration import (
     normalize_write_domains, rank_project_backlog, validate_iteration_choice, write_domains_within_scope,
 )
@@ -615,8 +615,8 @@ def _revalidate(workspace, project_key, root, config, value, pending):
         raise ValueError("The historical investigation Context changed during discovery.")
     if packet["packet_digest"] != _digest({key: item for key, item in packet.items() if key != "packet_digest"}):
         raise ValueError("The frozen discovery input changed.")
-    if value["authority"] != authority_snapshot(workspace, project_key, Path(config), Path(root)):
-        raise ValueError("Discovery configuration or runtime authority changed.")
+    if not same_continuation_project(value["authority"], Path(config), Path(root)):
+        raise ValueError("The original discovery project source changed.")
     if packet.get("backlog_judgment_source") is not None:
         if packet.get("verified_outcome") is not None or packet.get("undelivered_source") is not None:
             raise ValueError("Backlog facts cannot be substituted for another source type.")
@@ -678,8 +678,8 @@ def _retain_changed_discovery(store, root, project_key, config, value, pending, 
             or pending.get("packet_digest") != packet.get("packet_digest")
             or packet.get("authorization_digest") != value.get("authorization_digest")):
         raise ValueError("The frozen discovery input changed.")
-    if value["authority"] != authority_snapshot(store.workspace, project_key, Path(config), Path(root)):
-        raise ValueError("Discovery configuration or runtime authority changed.")
+    if not same_continuation_project(value["authority"], Path(config), Path(root)):
+        raise ValueError("The original discovery project source changed.")
     before = _current(store.read(), value)
     try:
         _revalidate(store.workspace, project_key, root, config, before, pending)

@@ -434,7 +434,7 @@ class ManagerAppServer:
                             if not explicit_retry or native_status not in {"failed", "interrupted", "rejected"}:
                                 raise _error("Original Manager turn needs reconciliation; it was not replayed.", "manager_interrupted")
                             _command, _env, retry_runtime, _fingerprint = self._runtime_config()
-                            if previous.get("runtime") != retry_runtime:
+                            if not background and previous.get("runtime") != retry_runtime:
                                 raise _error("Retry must keep the original Manager provider and runtime.", "manager_runtime_changed")
                             # The UI's new attempt explicitly permits another turn;
                             # original inputs, tool receipts and history stay bound.
@@ -447,6 +447,12 @@ class ManagerAppServer:
                             turn = self.by_request[logical_id]
                     if may_start:
                         command, env, public, fingerprint = self._runtime_config()
+                        if (background and self.client is not None and self.fingerprint != fingerprint
+                                and any(not item.done.is_set() for item in self.active.values())):
+                            from goodteam_os.manager_execution import ManagerResourceBusy
+
+                            raise ManagerResourceBusy("The current Manager turn is still finishing.",
+                                                      code="manager_resource_busy")
                         self._connect(command, env, fingerprint)
                         thread_key = "background:" + logical_id if background else "conversation"
                         turn = self.active.get(thread_key)
@@ -490,7 +496,10 @@ class ManagerAppServer:
                                       "developerInstructions": instructions}
                             if public["model"]:
                                 params["model"] = public["model"]
-                            if (saved and saved.get("fingerprint") == thread_fingerprint and memory_revision is not None
+                            saved_fingerprint = saved.get("fingerprint", "")
+                            same_thread_mode = saved_fingerprint.endswith(":chat-only") == tools.skill_storage_unavailable
+                            if (saved and (saved_fingerprint == thread_fingerprint or background and same_thread_mode)
+                                    and memory_revision is not None
                                     and saved.get("memory_revision") == memory_revision):
                                 native = self.client.resume_thread(saved["thread_id"], **params)
                             else:
@@ -530,6 +539,12 @@ class ManagerAppServer:
                     turn.error = exc
                     self._cancel_native(turn)
                     self._finish(turn, error=exc)
+                if isinstance(exc, CodexAppServerRejected):
+                    from goodteam_os.assistant_runtime import safe_failure
+
+                    failure = safe_failure(exc)
+                    if failure["code"] == "context_window_exceeded":
+                        raise _error(failure["message"], failure["code"]) from exc
                 raise
             if wait_for is None:
                 break

@@ -7,6 +7,11 @@ test('coding and memory models persist independently in PG and reuse saved crede
   const modelRequests = [];
   const provider = http.createServer((req, res) => {
     modelRequests.push({ path: req.url, authorization: req.headers.authorization });
+    if (req.url === '/unavailable/models') {
+      res.writeHead(503);
+      res.end();
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ data: [{ id: 'fixture-model' }] }));
   });
@@ -24,13 +29,25 @@ test('coding and memory models persist independently in PG and reuse saved crede
     const card = page.getByRole('article', { name: 'Browser fixture' });
     await card.getByRole('button', { name: 'Use provider' }).click();
     await expect(card.getByText('Active', { exact: true })).toBeVisible();
+    const providerId = (await (await request.get('/api/providers')).json()).active.codex;
+    await page.getByLabel('Pi connection').selectOption(providerId);
+    await expect.poll(async () => (await (await request.get('/api/providers')).json()).active.pi).toBe(providerId);
     await page.reload();
+    await expect(page.getByLabel('Pi connection')).toHaveValue(providerId);
     await expect(card.getByText('Active', { exact: true })).toBeVisible();
     await card.getByRole('button', { name: 'Edit provider' }).click();
     await expect(page.locator('input[type="password"]')).toHaveValue('');
     await page.getByRole('form', { name: 'Edit provider' }).getByRole('button', { name: 'Fetch models' }).click();
     await expect(page.getByLabel('Choose a fetched model')).toBeVisible();
     expect(modelRequests).toEqual(Array(2).fill({ path: '/v1/models', authorization: 'Bearer browser-fixture-key' }));
+    const editedProvider = page.getByRole('form', { name: 'Edit provider' });
+    const address = editedProvider.getByLabel('Base URL', { exact: false });
+    await address.fill(`http://127.0.0.1:${provider.address().port}/unavailable`);
+    await address.press('Tab');
+    await expect(page.getByText('Model discovery failed. Check the Base URL and API Key.')).toBeVisible();
+    await expect(editedProvider.getByLabel('Choose a fetched model')).toHaveValue('fixture-model');
+    expect(modelRequests.at(-1)).toEqual({ path: '/unavailable/models', authorization: undefined });
+    await page.screenshot({ path: 'test-results/providers-model-refresh-error.png', fullPage: true });
     const publicState = await (await request.get('/api/providers')).json();
     expect(JSON.stringify(publicState)).not.toContain('browser-fixture-key');
     expect(publicState.storage).toBe('postgresql');

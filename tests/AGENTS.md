@@ -99,7 +99,7 @@ test_project_question_board.py: One lifecycle through real file stores/locks, wi
 test_project_readiness_web.py: 验证 project readiness web 的行为。
 test_project_running_observation.py: Observation input contract, not autonomous model/provider acceptance.
 test_project_worker_follow_up.py: Manager decision -> durable original Pi queue; no external model requests.
-test_providers.py: Provider configuration in disposable PG; local HTTP/CLI fixtures only.
+test_providers.py: 隔离 PostgreSQL 中的共用 Provider，以及原派工的 QA Skill 和重试凭据。
 test_queued_web_search.py: Explicit queue search authority reaches the original Worker, no paid transport.
 test_readonly_pi_dispatch.py: Read-only Role dispatch producer, exact methods and unchanged old contracts.
 test_readonly_pi_runtime.py: New production dispatch producer + broker + Runtime with explicit workspace/listener doubles. Not real Git baseline, installed Pi SDK, or model acceptance.

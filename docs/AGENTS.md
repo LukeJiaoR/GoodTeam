@@ -29,7 +29,7 @@ blocked-project-judgment.md: Project judgment when no authorized task is ready�
 bounded-goal-continuation.md: Bounded Goal continuation (first vertical slice)。
 candidate-check-receipts.md: Explicit candidate checks and acceptance visibility。
 candidate-validation.md: Merge Candidate Validation。
-codex-providers.md: Codex API providers in GoodTeam。
+codex-providers.md: Codex 和 Pi 共用 Provider 的设置、锁定与原生适配。
 compact-settings-knowledge.md: #677 Settings and Knowledge implementation candidate。
 config-reference.md: Project Config Reference。
 confirmed-scope-additions.md: Human-confirmed later work in the existing project grant。
@@ -121,7 +121,7 @@ role-capability-intake.md: Ordinary Manager intake follows the configured Role c
 role-capability-routing.md: Runtime source governs artifact routing。
 role-loop-composition.md: Connect the existing ordinary Role methods to the Manager task loop。
 role-runtime-source.md: Role Runtime configuration source (#445)。
-role-skill-input-contract.md: Ordinary Role Skill input preparation (#445)。
+role-skill-input-contract.md: 普通 QA 的 Role Skill、资源与运行证据。
 running-human-board.md: Running Manager judgment to the existing Human board。
 running-manager-observation.md: Running-period Manager advice consumer。
 runtime-catalog.md: Runtime catalog and reasoning selection。

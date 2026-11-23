@@ -29,12 +29,15 @@ def setup(tmp_path):
     return tmp_path, root, config, store, create
 
 
-def test_changed_runtime_scope_or_stop_prevents_dispatch(setup):
+def test_changed_project_source_or_stop_prevents_dispatch(setup, tmp_path):
     workspace, root, config, store, create = setup
     goal = create()
-    config.write_text(config.read_text() + "delivery_mode: custom\n")
+    other = tmp_path / "other"
+    other.mkdir()
+    config.write_text(config.read_text().replace(str(root), str(other)))
     result = tick_goal(workspace, "DEMO", goal["id"])
-    assert result["status"] == "blocked"
+    assert result["status"] == "blocked" and "project source changed" in result["stop_reason"]
+    config.write_text(config.read_text().replace(str(other), str(root)))
     stopped = handle_goal_action(workspace, "DEMO", root, dict(action="stop_goal", goal_id=goal["id"],
         expected_revision=result["revision"], idempotency_key="stop"))["goal"]
     assert stopped["status"] == "stopped"
@@ -52,7 +55,7 @@ def test_assessment_requires_literal_quotes():
 
 
 @pytest.mark.parametrize("source", ["batch", "manager"])
-def test_changed_effective_model_catalog_cannot_expand_confirmed_routing(setup, monkeypatch, source):
+def test_changed_effective_model_catalog_notifies_and_keeps_goal(setup, monkeypatch, source):
     from pathlib import Path
     workspace, _, _, _, create = setup
     catalog_text = (Path(__file__).resolve().parents[1] / "models.yaml").read_text()
@@ -67,6 +70,35 @@ def test_changed_effective_model_catalog_cannot_expand_confirmed_routing(setup, 
     catalog.write_text(catalog_text)
     goal = create()
     catalog.write_text(catalog_text.replace("codex:gpt-5.6-sol", "codex:changed-model"))
+    from goodteam_os.manager_execution import ManagerResourceBusy
+    from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+
+    starts = []
+    def starter(**kwargs):
+        starts.append(kwargs)
+        raise ManagerResourceBusy("Offline fixture leaves original work pending.")
+    monkeypatch.setattr("goodteam_os.project_iteration_execution.run_queued_iteration_batch", starter)
     result = tick_goal(workspace, "DEMO", goal["id"])
-    assert result["status"] == "blocked"
-    assert "configuration changed" in result["stop_reason"]
+    assert starts and result["status"] == "active"
+    assert result["authority_snapshot"] == goal["authority_snapshot"]
+    timeline = TaskAssistantSessionStore(workspace, "DEMO").read()["timeline"]
+    assert sum(item["event"] == "project_continuation_environment_changed" for item in timeline) == 1
+
+
+
+def test_goal_context_pause_preserves_original_work(setup, monkeypatch):
+    from goodteam_os.assistant_runtime import safe_failure
+    from goodteam_os.manager_execution import ManagerExecutionError
+
+    workspace, _, _, store, create = setup
+    goal = create()
+    failure = safe_failure(RuntimeError('{"codexErrorInfo":"contextWindowExceeded"}'))
+    def exhausted_context(*args, **kwargs):
+        raise ManagerExecutionError(failure["message"], code=failure["code"])
+    monkeypatch.setattr("goodteam_os.goal_continuation._tick_task_goal", exhausted_context)
+    tick_goal(workspace, "DEMO", goal["id"])
+    saved = store.get_goal(goal["id"])
+    assert saved["status"] == "blocked" and saved["runtime_paused"]
+    assert "larger context window" in saved["stop_reason"]
+    assert saved["work_units"] == goal["work_units"]
+    assert saved["continuation_stopped"] is False

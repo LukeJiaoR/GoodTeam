@@ -17,11 +17,12 @@ def test_blocked_context_is_judged_once_then_reconsidered_within_original_budget
     task=ledger.create_task(title='Wait for evidence',description='Bounded work requires an unresolved dependency.',
         role='implementation',dependencies=['APP-missing'])
     store=TaskAssistantSessionStore(tmp_path,'APP')
+    environment = {'project_root': str(root), 'project_config': str(config), 'provider_sha256': 'initial'}
     value=dict(id='grant',status='active',task_ids=[task['id']],task_intents={task['id']:continuation._intent(task)},
-        authority={},max_batches=2,max_manager_calls=2,batches_started=0,manager_calls=0,pending_batch=None,
+        authority=environment,max_batches=2,max_manager_calls=2,batches_started=0,manager_calls=0,pending_batch=None,
         planning_backlog_version='',reason='authorized')
     store._mutate(lambda session:{**session,'project_continuation':value})
-    monkeypatch.setattr(continuation,'authority_snapshot',lambda *_:{})
+    monkeypatch.setattr(continuation,'authority_snapshot',lambda *_: environment)
     calls=[]
     def manager(**kwargs):
         calls.append(kwargs)
@@ -70,21 +71,20 @@ def test_blocked_context_is_judged_once_then_reconsidered_within_original_budget
         validate_iteration_choice(snapshot,{'selected_task_ids':[],'compared_task_ids':[task['id']],
                                             'rationale':'Waiting for an actual dependency to become available.'})
 
-    # A result arriving after authority changes is not activated as current advice.
+    # The original planning reservation can settle after Provider rotation.
     store._mutate(lambda session: deepcopy(checkpoint))
-    store.append_message('authority-change', 'user', 'A new fact needs judgment under the existing authorization.')
-    before_choices = sum(e.get('event') == 'project_iteration_choice_recorded' for e in store.read()['timeline'])
-    def changed_authority(**kwargs):
-        response = manager(**kwargs)
-        monkeypatch.setattr(continuation, 'authority_snapshot', lambda *_: {'changed': True})
-        return response
-    rejected = continuation.tick_project_continuation(workspace=tmp_path,project_key='APP',root=root,
-        project_config=config,manager_runner=changed_authority)
-    assert rejected['status'] == 'blocked' and rejected['planning_backlog_version']
-    assert sum(e.get('event') == 'project_iteration_choice_recorded' for e in store.read()['timeline']) == before_choices
+    store.append_message('environment-change', 'user', 'A new fact needs judgment under the existing authorization.')
+    updated = {**environment, 'provider_sha256': 'rotated'}
+    monkeypatch.setattr(continuation, 'authority_snapshot', lambda *_: updated)
+    continued = tick()
+    assert continued['status'] == 'active' and continued['authority'] == environment
+    assert continued['manager_calls'] == 2 and continued['pending_batch'] is None
+    tick()
+    timeline = store.read()['timeline']
+    assert sum(item.get('event') == 'project_continuation_environment_changed' for item in timeline) == 1
 
     store._mutate(lambda session: deepcopy(checkpoint))
-    monkeypatch.setattr(continuation, 'authority_snapshot', lambda *_: {})
+    monkeypatch.setattr(continuation, 'authority_snapshot', lambda *_: environment)
     store.append_message('stop-during-call', 'user', 'Consider new facts, with Stop still authoritative.')
     def stopped_during_call(**kwargs):
         response = manager(**kwargs)

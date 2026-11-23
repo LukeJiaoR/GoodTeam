@@ -10,12 +10,15 @@ from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
 def test_conversation_capture_defers_but_independent_manager_work_can_overlap(tmp_path, monkeypatch):
     store = TaskAssistantSessionStore(tmp_path, "DEMO")
-    grant = dict(id="grant", status="active", authority="authority", task_ids=["task"],
+    config = tmp_path / "project.yaml"
+    config.write_text("key: DEMO\n")
+    authority = {"project_root": str(tmp_path), "project_config": str(config)}
+    grant = dict(id="grant", status="active", authority=authority, task_ids=["task"],
                  manager_calls=0, max_manager_calls=2, batches_started=0, max_batches=2,
                  pending_batch=None)
     row = dict(id="task", status="todo")
     snapshot = dict(version="sha256:" + "a" * 64, candidates=[dict(task_id="task", eligible_to_plan=True)])
-    monkeypatch.setattr(continuation, "authority_snapshot", lambda *a: "authority")
+    monkeypatch.setattr(continuation, "authority_snapshot", lambda *a: authority)
     monkeypatch.setattr(continuation, "_scope_tasks", lambda *a: ({"task": row}, [row]))
     monkeypatch.setattr(continuation, "project_iteration_backlog", lambda *a, **k: snapshot)
     calls = []

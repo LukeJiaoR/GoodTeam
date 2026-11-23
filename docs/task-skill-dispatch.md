@@ -17,12 +17,11 @@ confirmed inputs on replay, including historical captures with wider inventories
 They are not narrowed or downgraded to legacy work by this change.
 
 Role-to-Skill is already many-to-many; `required` / `on_demand` are binding
-properties. The default mode's empty item list currently selects legacy behavior,
-not a fully materialized base-Skill package for every role. Ordinary custom-Skill
-Runtime delivery remains #445; an actual participating custom role still reaches
-its original unsupported boundary. The separately admitted Code Review path is
-described in `skills/review-protocol.md`. The historical S4b snapshot below does
-not establish current all-role Runtime support.
+properties. Default mode uses built-in packages for supported Pi roles and
+legacy behavior for other roles. The [Role Skill input
+contract](role-skill-input-contract.md) describes ordinary read-only Codex and Pi
+QA dispatch. The independently admitted Code Review path is described in
+`skills/review-protocol.md`.
 
 ## Historical S4b boundary
 
@@ -35,9 +34,9 @@ authorized live Runtime conformance, and #446 is actual custom-method review.
 A custom-method task obtains its method lock at a real bounded start. It does not
 obtain provider permission. `WorkerJobStore.run_job` validates the registered
 snapshot, original bytes, scope, pins, digest, metadata-loader version and current
-revocation. Every Skill-backed adapter currently stops at that boundary with
-`skill_runtime_not_connected`, including fake/noop/human. No fake result may
-stand in for content delivery, a resource read, or successful Skill execution.
+revocation. A supported ordinary method invocation enters its original
+runtime after preflight. Unsupported paths, including fake/noop/human, stop at
+`skill_runtime_not_connected`.
 The existing **Saved only · execution not connected** disclosure stays intact.
 
 The task can preserve a nonempty context and a blocked Worker result. It cannot

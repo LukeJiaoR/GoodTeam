@@ -59,7 +59,10 @@ def test_existing_tick_collects_candidate_without_new_manager_call(tmp_path, mon
     from goodteam_os import project_iteration_continuation as c
     from contextlib import nullcontext
     store = TaskAssistantSessionStore(tmp_path, "DEMO")
-    value = {"id": "grant", "status": "active", "authority": "fixed", "manager_calls": 1, "max_manager_calls": 2,
+    config = tmp_path / "demo.yaml"
+    config.write_text("key: DEMO\n")
+    authority = {"project_root": str(tmp_path), "project_config": str(config)}
+    value = {"id": "grant", "status": "active", "authority": authority, "manager_calls": 1, "max_manager_calls": 2,
         "task_ids": ["task-a"], "batches_started": 1, "max_batches": 1,
         "pending_batch": {"run_id": "batch", "task_ids": ["task-a"], "proposal_ids": ["proposal"], "expected_revisions": [1]}}
     batch = {"run_id": "batch", "status": "running", "confirmed": True, "expected_continuation_id": "grant",
@@ -67,7 +70,7 @@ def test_existing_tick_collects_candidate_without_new_manager_call(tmp_path, mon
     store._mutate(lambda s: {**s, "project_continuation": value, "project_task_batches": {"batch": batch},
         "queued_task_proposals": [{"id": "proposal", "project_task_id": "task-a"}]})
     monkeypatch.setattr(c, "goal_guard", lambda *a: nullcontext())
-    monkeypatch.setattr(c, "authority_snapshot", lambda *a: "fixed")
+    monkeypatch.setattr(c, "authority_snapshot", lambda *a: authority)
     task = {"id": "task-a", "status": "in_progress", "run_id": "batch"}
     monkeypatch.setattr(c, "_scope_tasks", lambda *a: ({"task-a": task}, [task]))
     monkeypatch.setattr(c, "LocalTaskStore", lambda *a: SimpleNamespace(list_tasks=lambda: [task]))

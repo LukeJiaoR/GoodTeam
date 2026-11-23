@@ -1,7 +1,7 @@
-"""GoodTeam-owned API connections. Agent names and API providers are separate.
-
-Credentials stay in the operator store; jobs carry only an ID and revision.
-The initial adapter is Codex's native Responses API, without a routing proxy.
+"""[INPUT]: PostgreSQL 文档存储与 OpenAI SDK。
+[OUTPUT]: Provider 引用、精确版本与 Worker 启动解析、原生连接配置。
+[POS]: Codex 和 Pi 共用连接。保存和模型发现仅在原 API 地址继承密钥。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from __future__ import annotations
 
@@ -19,7 +19,10 @@ from goodteam_os import state_documents
 from goodteam_os.service import service_state_dir
 
 PROVIDER_KEY_ENV = "GOODTEAM_CODEX_PROVIDER_API_KEY"
-_PUBLIC_FIELDS = ("id", "revision", "agent", "name", "protocol", "base_url", "model")
+PI_PROVIDER_KEY_ENV = "GOODTEAM_PI_PROVIDER_API_KEY"
+PI_PROVIDER_ALIAS = "goodteam_api"
+_AGENT_PROTOCOLS = {"codex": ("responses",), "pi": ("responses",)}
+_PUBLIC_FIELDS = ("id", "revision", "name", "protocol", "base_url", "model")
 
 
 class ProviderError(ValueError):
@@ -39,8 +42,8 @@ def _text(value, label, maximum, *, optional=False):
 
 def normalize_connection(request, previous=None):
     previous = previous or {}
-    if request.get("agent", "codex") != "codex" or request.get("protocol", "responses") != "responses":
-        raise ProviderError("unsupported_provider_protocol", "Codex currently supports the OpenAI Responses protocol.")
+    if request.get("protocol", "responses") not in _AGENT_PROTOCOLS["codex"]:
+        raise ProviderError("unsupported_provider_protocol", "Saved connections currently support the OpenAI Responses protocol.")
     base_url = _text(request.get("base_url", ""), "Base URL", 2048)
     try:
         url = urlsplit(base_url)
@@ -53,15 +56,24 @@ def normalize_connection(request, previous=None):
     path = url.path.rstrip("/") or "/v1"
     if path.endswith(("/responses", "/chat/completions", "/models", "/embeddings")):
         raise ProviderError("invalid_provider_url", "Enter the API base URL, such as https://api.example.com/v1.")
+    base_url = urlunsplit((url.scheme, url.netloc, path, "", ""))
+    saved_key = previous.get("api_key", "") if base_url == previous.get("base_url") else ""
     model = _text(request.get("model", ""), "Model", 200, optional=True)
     if model and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", model) is None:
         raise ProviderError("invalid_provider_model", "Enter a model identifier without spaces.")
     return {
-        "agent": "codex", "protocol": "responses",
+        "protocol": "responses",
         "name": _text(request.get("name", ""), "Provider name", 100),
-        "base_url": urlunsplit((url.scheme, url.netloc, path, "", "")), "model": model,
-        "api_key": _text(request.get("api_key", previous.get("api_key", "")), "API Key", 8192, optional=True),
+        "base_url": base_url, "model": model,
+        "api_key": _text(request.get("api_key", saved_key), "API Key", 8192, optional=True),
     }
+
+
+def check_agent_connection(agent, connection):
+    if connection["protocol"] not in _AGENT_PROTOCOLS.get(agent, ()):
+        raise ProviderError("unsupported_provider_protocol", f"{agent} does not support this connection protocol.")
+    if agent == "pi" and not connection["api_key"]:
+        raise ProviderError("pi_provider_key_required", "Pi requires an API key for a shared Responses connection.")
 
 
 def public_connection(value):
@@ -87,7 +99,7 @@ class ProviderStore:
                 assert type(item["revision"]) is int and item["revision"] > 0
                 assert normalize_connection(item) == {k: item[k] for k in normalize_connection(item)}
                 ids.add(item["id"])
-            assert all(k == "codex" and v in ids for k, v in data["active"].items())
+            assert all(k in _AGENT_PROTOCOLS and v in ids for k, v in data["active"].items())
             embedding = data.get("embeddings")
             if embedding is not None:
                 assert set(embedding) == {"provider_id", "model", "revision"}
@@ -106,12 +118,16 @@ class ProviderStore:
             return self._read()
 
     def view(self):
-        data = self.read()
-        return {"configured": database_configured(), "storage": "postgresql",
+        return self._view(self.read(), configured=database_configured())
+
+    @staticmethod
+    def _view(data, *, configured):
+        return {"configured": configured, "storage": "postgresql",
                 "revision": data["revision"], "active": data["active"],
                 "embeddings": data.get("embeddings"),
                 "providers": [public_connection(p) for p in data["providers"]],
-                "agents": [{"id": "codex", "protocols": ["responses"]}]}
+                "agents": [{"id": agent, "protocols": list(protocols)}
+                           for agent, protocols in _AGENT_PROTOCOLS.items()]}
 
     def active(self, agent="codex"):
         data = self.read()
@@ -141,18 +157,23 @@ class ProviderStore:
                 item = normalize_connection(request, previous)
                 item.update(id=identifier or "provider-" + uuid4().hex,
                             revision=(previous["revision"] + 1 if previous else 1))
+                for agent, active_id in data["active"].items():
+                    if active_id == identifier:
+                        check_agent_connection(agent, item)
                 data["providers"] = [item if p["id"] == identifier else p for p in data["providers"]]
                 if previous is None:
                     if len(data["providers"]) >= 100:
                         raise ProviderError("provider_limit", "At most 100 providers can be saved.")
                     data["providers"].append(item)
             elif action == "activate":
-                if request.get("agent", "codex") != "codex":
+                agent = request.get("agent", "codex")
+                if not isinstance(agent, str) or agent not in _AGENT_PROTOCOLS:
                     raise ProviderError("invalid_provider", "Unknown agent.")
                 if previous is None:
-                    data["active"].pop("codex", None)
+                    data["active"].pop(agent, None)
                 else:
-                    data["active"]["codex"] = identifier
+                    check_agent_connection(agent, previous)
+                    data["active"][agent] = identifier
             elif action == "delete" and previous:
                 if identifier in data["active"].values() or identifier == (data.get("embeddings") or {}).get("provider_id"):
                     raise ProviderError("provider_in_use", "Switch the active provider before deleting it.", 409)
@@ -176,21 +197,32 @@ class ProviderStore:
                 raise ProviderError("invalid_provider_action", "Unknown provider action.")
             data["revision"] += 1
             state_documents.write_json(self.path, data, storage_root=self.root)
-            return {"configured": True, "storage": "postgresql", "revision": data["revision"], "active": data["active"],
-                    "embeddings": data.get("embeddings"),
-                    "providers": [public_connection(p) for p in data["providers"]]}
+            return self._view(data, configured=True)
 
-    def capture(self):
-        current = self.active()
+    def capture(self, agent="codex"):
+        current = self.active(agent)
         return {"id": current["id"], "revision": current["revision"]} if current else None
 
-    def resolve(self, reference):
+    def resolve_worker(self, reference, *, agent="codex"):
+        """Use the current configuration of the connection selected for this Worker."""
+        return self._resolve(reference, agent=agent, require_revision=False)
+
+    def resolve(self, reference, *, agent="codex"):
+        return self._resolve(reference, agent=agent, require_revision=True)
+
+    def _resolve(self, reference, *, agent, require_revision):
         if reference is None:
             return None  # Historical/local jobs never acquire a newly activated connection.
         data = self.read()
         for item in data["providers"]:
-            if reference == {"id": item["id"], "revision": item["revision"]}:
+            if (isinstance(reference, dict) and set(reference) == {"id", "revision"}
+                    and type(reference["revision"]) is int and reference["revision"] > 0
+                    and reference["id"] == item["id"]
+                    and (not require_revision or reference["revision"] == item["revision"])):
+                check_agent_connection(agent, item)
                 return item
+        if not require_revision:
+            raise ProviderError("provider_not_found", "This job's provider is unavailable. Choose another provider for a new task.", 409)
         raise ProviderError("provider_connection_changed", "This job's provider was edited or removed. Create a new task.", 409)
 
     def fetch_models(self, request):
@@ -199,7 +231,8 @@ class ProviderStore:
             previous = next((p for p in self.read()["providers"] if p["id"] == request["id"]), None)
             if previous is None:
                 raise ProviderError("provider_not_found", "Provider no longer exists.", 404)
-        connection = normalize_connection({**(previous or {}), **request})
+        defaults = {key: previous[key] for key in ("protocol", "name", "base_url", "model")} if previous else {}
+        connection = normalize_connection({**defaults, **request}, previous)
         return fetch_models(connection)
 
 
@@ -244,3 +277,13 @@ def codex_connection_arguments(connection):
     provider = options.pop(f"model_providers.{alias}")
     encoded = "{ " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in provider.items()) + " }"
     return ["-c", f'model_provider={json.dumps(alias)}', "-c", f"model_providers.{alias}={encoded}"]
+
+
+def pi_connection_configuration(connection, model):
+    check_agent_connection("pi", connection)
+    if not model:
+        raise ProviderError("pi_provider_model_required", "Choose a Pi model or set a default model on the shared connection.")
+    return {"providers": {PI_PROVIDER_ALIAS: {
+        "baseUrl": connection["base_url"], "api": "openai-responses",
+        "apiKey": "$" + PI_PROVIDER_KEY_ENV, "models": [{"id": model}],
+    }}}

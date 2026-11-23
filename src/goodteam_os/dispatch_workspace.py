@@ -638,13 +638,13 @@ def dispatch_job_terminal(project_root: Path, result: dict) -> tuple[dict, str]:
     if (isinstance(job, dict) and isinstance(status, dict) and job.get("status") == "queued"
             and job.get("method_loading_mode") and status.get("method_loading_mode") == job["method_loading_mode"]
             and status.get("task_skill_context") == job.get("task_skill_context")):
-        # Ordinary Pi keeps job.json immutable. Validate that request against
+        # Ordinary Role method jobs keep job.json immutable. Validate that request against
         # its existing captured input, rather than treating its queued label as
         # a still-running process. The exit checks below remain unchanged.
-        from goodteam_os.skills.pi_methods import PiMethodInput
+        from goodteam_os.skills.pi_methods import RoleMethodInput
         from goodteam_os.workers import WorkerJobStore
 
-        PiMethodInput(WorkerJobStore(project_root), job_id, prepare=False)
+        RoleMethodInput(WorkerJobStore(project_root), job_id, prepare=False)
         immutable_request = True
     if (not isinstance(status, dict) or not isinstance(job, dict)
             or job.get("id") != job_id or job.get("run_id") != source_id

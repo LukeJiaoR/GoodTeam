@@ -55,6 +55,9 @@ def safe_failure(error):
         return {"code": "manager_resource_busy", "message": "The Manager is processing another request. Retry this saved message when it is available."}
     raw = str(error).lower()
     categories = (
+        ("context_window_exceeded", ("contextwindowexceeded", "context_window_exceeded",
+                                     "context_length_exceeded", "maximum context length",
+                                     "exceeds the context window")),
         ("model_unavailable", ("model is not supported", "unsupported model", "model_not_found", "model not found", "does not exist")),
         ("authentication_failed", ("unauthorized", "authentication", "not logged in", "401", "login")),
         ("connection_failed", ("connection", "network", "dns")),
@@ -73,4 +76,8 @@ def safe_failure(error):
         }[supplied]}
     if supplied in {name for name, _terms in categories}:
         code = supplied
+    if code == "context_window_exceeded":
+        return {"code": code, "message": (
+            "The current model cannot fit this session's context. The session is retained. "
+            "Choose a model with a larger context window before retrying.")}
     return {"code": code, "message": "Task Assistant request failed. Check the runtime configuration and retry."}

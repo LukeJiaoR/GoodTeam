@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 from goodteam_os.assistant_workspace import is_assistant_activity
+from goodteam_os.skills.pi_methods import ORDINARY_METHODS
+from goodteam_os.skills.worker_requests import public_skill_job_fields
 from goodteam_os.conversation_projection import (
     assistant_timeline as _task_assistant_timeline,
 )
@@ -178,8 +180,17 @@ def _task_actors(
             if dependency_task_id in outcomes_by_id
             else ""
         )
+        method_details = {}
+        if current_attempt and current_attempt.get("method_loading_mode") in ORDINARY_METHODS:
+            details = public_skill_job_fields(current_attempt)
+            method_details = {"method_details": {
+                "adapter": _text(current_attempt.get("adapter")),
+                **{key: details[key] for key in ("provider_connection", "method_items", "method_input_status",
+                                                 "method_packages_status") if key in details},
+            }}
         actors.append(
             {
+                **method_details,
                 "id": actor_id,
                 "role": role,
                 "state": state,

@@ -1,4 +1,9 @@
-"""Transactional authority for explicitly confirmed, bounded delivery goals.
+"""[INPUT]: 明确确认的 Goal 范围、执行绑定和证据。
+[OUTPUT]: Goal 状态、运行时暂停和任务投影。
+[POS]: 使用既有台账保存 Goal 与原任务身份。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Transactional authority for explicitly confirmed, bounded delivery goals.
 
 The SQLite ledger owns continuation. Kanban is an idempotent outbox projection,
 never a second scheduler. Worker/model output may provide evidence and criterion
@@ -547,6 +552,15 @@ class GoalStore:
         return self._mutate(goal_id, "gate_decided", expected_revision, idempotency_key,
                             dict(gate_id=gate_id, decision=decision), change)
 
+    def pause_for_runtime(self, goal_id, *, reason, expected_revision, idempotency_key):
+        reason = _text(reason, "reason")
+        def change(db, goal):
+            if goal["status"] != "active":
+                raise GoalConflict("Only active Goal work can pause.")
+            goal.update(status="blocked", stop_reason=reason, runtime_paused=True)
+        return self._mutate(goal_id, "goal_runtime_paused", expected_revision,
+                            idempotency_key, {"reason": reason}, change)
+
     def block_goal(self, goal_id: str, *, reason: str, expected_revision: int,
                    idempotency_key: str) -> dict[str, Any]:
         return self._stop(goal_id, "blocked", reason, expected_revision, idempotency_key)
@@ -562,6 +576,7 @@ class GoalStore:
         def change(db, goal):
             if goal["status"] in {"complete", "stopped", "canceled"}:
                 raise GoalConflict("A terminal goal cannot be advanced.")
+            goal.pop("runtime_paused", None)
             goal.update(status=status, stop_reason=reason, continuation_stopped=True, assessment_retry_target=None)
             if goal["gate"] and goal["gate"]["status"] == "pending":
                 goal["gate"]["status"] = "canceled"
@@ -848,7 +863,11 @@ class GoalStore:
                 _require(goal["criterion_evidence"][str(index)] == expected_refs)
             _require(set(goal["criterion_evidence"]) == {str(index) for index in accepted})
             _require(len(active) <= 1)
-            _require(goal["status"] not in TERMINAL_STATUSES or not any(work["status"] == "pending" for work in works))
+            paused = goal.get("runtime_paused", False)
+            _require(type(paused) is bool and (not paused or goal["status"] == "blocked"
+                     and not goal["continuation_stopped"] and len(active) == 1))
+            _require(paused or goal["status"] not in TERMINAL_STATUSES
+                     or not any(work["status"] == "pending" for work in works))
             _require(goal["status"] != "complete" or not active)
             _require(goal["status"] != "complete" or set(accepted) == indices)
             _require(goal["status"] != "active" or len(active) == 1)

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
+from goodteam_os.skills.pi_methods import ORDINARY_METHODS, ORDINARY_PI_METHODS
+
 from goodteam_os.database import provider_environment
 from goodteam_os.models import _parse_simple_yaml
 from goodteam_os.parallel_capacity import DEFAULT_MAX_CONCURRENT_WORKERS, dispatch_pool_size
@@ -280,12 +282,21 @@ def _dispatch_tracks(
     context = {}
     key = ""
     ordinary_method_mode = ""
+    parent_report = None
+    retained = []
+    if recovery_source is not None:
+        from goodteam_os.dispatch_workspace import read_dispatch_recovery
+
+        if not require_isolation or set(track_ids) != set(recovery_source["retry_task_ids"]):
+            raise ValueError("Recovery must execute only its explicitly confirmed failed task subset.")
+        parent_report = read_dispatch_recovery(project_root, recovery_source)
+        retained = [job for job in parent_report["jobs"] if job["project_task_id"] not in track_ids]
     per_track_methods = None
     if scope is not None and track_methods is not None:
         from goodteam_os.dispatch_methods import capture_plan
         key = scope[1]
         per_track_methods = capture_plan(track_methods, scope=scope, root=project_root,
-            logical_id=logical_id, tracks=tracks, confirmed_input={
+            logical_id=logical_id, tracks=tracks, parent_report=parent_report, confirmed_input={
                 "tracks": tracks, "constraints": constraints, "verify_commands": verify_commands or {},
                 "constraints_source": str(constraints_file) if constraints_file else "",
                 "research_report_source": str(research_report_file) if research_report_file else ""})
@@ -344,15 +355,6 @@ def _dispatch_tracks(
         raise ValueError("Project batches require ordinary isolated Workers; protected Skill work uses its original execution contract.")
     if candidate_source is not None and (not require_isolation or recovery_source is not None):
         raise ValueError("A continuation candidate requires a new isolated project batch.")
-    parent_report = None
-    retained = []
-    if recovery_source is not None:
-        from goodteam_os.dispatch_workspace import read_dispatch_recovery
-
-        if not require_isolation or set(track_ids) != set(recovery_source["retry_task_ids"]):
-            raise ValueError("Recovery must execute only its explicitly confirmed failed task subset.")
-        parent_report = read_dispatch_recovery(project_root, recovery_source)
-        retained = [job for job in parent_report["jobs"] if job["project_task_id"] not in track_ids]
     if require_isolation or worker_setup:
         from goodteam_os.project_environment import environment_for_task, worker_environment_instructions
 
@@ -374,7 +376,7 @@ def _dispatch_tracks(
     ]
     isolated = None
     if all(not job.get("skill_execution_snapshot_ref")
-           or job.get("method_loading_mode") in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"} for job in jobs_by_role):
+           or job.get("method_loading_mode") in ORDINARY_METHODS for job in jobs_by_role):
         from goodteam_os.dispatch_workspace import prepare_dispatch_workspace
 
         isolated = prepare_dispatch_workspace(project_root, run_id, [str(job["id"]) for job in jobs_by_role],
@@ -522,7 +524,7 @@ def _create_track_job(
               "track_id": str(track.get("track_id") or track["role"]),
               "project_task_id": str(track.get("project_task_id") or "")}
     if method_context:
-        if method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
+        if method_loading_mode not in ORDINARY_METHODS:
             fields.pop("track_id", None)
             fields.pop("project_task_id", None)
         fields = {**fields, "task_skill_context": method_context, "skill_subject": subject_for_role(str(track["role"])),
@@ -530,16 +532,21 @@ def _create_track_job(
                   "idempotency_key": command_key}
         if method_loading_mode:
             fields.update(method_loading_mode=method_loading_mode, method_workspace_mode="dispatch_isolated")
+    if track.get("required_skill_ids") is not None:
+        required = track["required_skill_ids"]
+        if not isinstance(required, list) or not all(isinstance(item, str) for item in required) or not method_context:
+            raise ValueError("Task-required Skills must be selected from the captured Role binding.")
+        fields["required_skill_ids"] = tuple(required)
     if track.get("web_search") is not None:
         from goodteam_os.session_runtimes import SESSION_BACKENDS
         from goodteam_os.web_search import search_policy
 
-        if (method_context and method_loading_mode not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}
+        if (method_context and method_loading_mode not in ORDINARY_PI_METHODS
                 or track.get("adapter") not in SESSION_BACKENDS
                 or track.get("execution_policy", "standard") != ("read_only" if method_loading_mode == "readonly_pi_methods.v1" else "standard")):
             raise ValueError("Task Web Search requires an explicitly authorized supported Pi Worker.")
         fields["web_search"] = search_policy(track["web_search"])
-    fields.update({key: track[key] for key in ("original_failed_job_id", "retry_attempt", "retry_of_idempotency_key") if key in track})
+    fields.update({key: track[key] for key in ("original_failed_job_id", "retry_attempt", "retry_of_idempotency_key", "provider_connection") if key in track})
     from goodteam_os.skills.review_protocol import review_execution_fields
 
     fields.update(review_execution_fields(store, method_context, role=str(track["role"])))
@@ -559,7 +566,7 @@ def _create_track_job(
         constraints=[*constraints, *[str(item) for item in track.get("constraints", [])]],
         expected_artifacts=[str(item) for item in track.get("expected_artifacts", [])],
         execution_policy=str(track.get("execution_policy", "standard")),
-        **{key: track[key] for key in ("reasoning_depth", "additional_prompt", "pi_thinking_level",
+        **{key: track[key] for key in ("reasoning_depth", "additional_prompt", "pi_thinking_level", "pi_model",
                                       "worker_id", "worker_name") if key in track},
     )
     return job
@@ -684,7 +691,8 @@ def _job_report(
     job_root = project_root / ".goodteam" / "workers" / "jobs" / str(job["id"])
     return {
         **{key: job[key] for key in ("task_skill_context", "skill_execution_snapshot_ref") if key in job},
-        **{key: status[key] for key in ("skill_error_code", "skill_preflight_status", "skill_runtime_status", "invocation_evidence") if key in status},
+        **{key: status[key] for key in ("skill_error_code", "skill_preflight_status", "skill_runtime_status", "invocation_evidence",
+                                        "method_items", "method_input_status", "method_packages_status") if key in status},
         **({"project_environment_setup": {
             key: value for key, value in status["worker_setup"].items()
             if key in {"exit_code", "cwd", "stdout_path", "stderr_path", "seconds", "error"}

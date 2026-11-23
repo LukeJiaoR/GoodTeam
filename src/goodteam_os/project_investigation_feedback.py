@@ -167,7 +167,7 @@ def observe_pending_investigation(*, workspace, project_key, root, project_confi
     Called under the original continuation guard, not by GET/polling. Return
     None for other task types. Review/task state and all counters stay untouched.
     """
-    from goodteam_os.goal_continuation import authority_snapshot
+    from goodteam_os.goal_continuation import same_continuation_project
     from goodteam_os.project_outcome_discovery import _current
     from goodteam_os.task_assistant_session import TaskAssistantSessionStore
     from goodteam_os.tasks import LocalTaskStore
@@ -187,7 +187,7 @@ def observe_pending_investigation(*, workspace, project_key, root, project_confi
     def retain(session):
         current = _current(session, value)
         if (current.get("pending_batch") != pending or current.get("discovery_pending")
-                or current["authority"] != authority_snapshot(workspace, project_key, Path(project_config), Path(root))):
+                or not same_continuation_project(current["authority"], Path(project_config), Path(root))):
             raise ValueError("Investigation continuation changed before its report could be recorded.")
         observations = dict(current.get("investigation_observations") or {})
         previous = observations.get(ids[0])

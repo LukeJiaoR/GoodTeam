@@ -1,8 +1,7 @@
-"""First-party methods, independent of identity prompts and Runtime configuration.
-
-Accessors have no installation/binding side effects. Producers may publish these
-standard packages through the existing store, then capture exact version refs.
-Unsupported Roles have no invented fallback. Custom bindings remain authoritative.
+"""[INPUT]: 内置 Skill 包及版本固定规则。
+[OUTPUT]: Role 默认方法与不可变发布引用。
+[POS]: 由任务开始边界为默认绑定选择基础方法。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from importlib.resources import files
 from .models import SkillError, SkillSource
@@ -10,12 +9,14 @@ from .package import PackageFile, package_from_files
 
 ROLE_METHODS_VERSION = 'role-methods.v1'
 REFERENCES = {'bounded-work': 'handoff', 'manager-coordination': 'continuation',
-              'evidence-research': 'evidence', 'planning-handoff': 'plan-review'}
+              'evidence-research': 'evidence', 'planning-handoff': 'plan-review',
+              'qa-browser-evidence': 'screenshots'}
 ROLE_PACKAGES = {
     'orchestrator': ('bounded-work', 'manager-coordination'),
     'implementation': ('bounded-work',),
     'research': ('bounded-work', 'evidence-research'),
     'planner': ('bounded-work', 'planning-handoff'),
+    'qa': ('qa-browser-evidence',),
 }
 
 
