@@ -1,6 +1,6 @@
 """[INPUT]: PostgreSQL 文档存储与 OpenAI SDK。
 [OUTPUT]: Provider 引用、精确版本与 Worker 启动解析、原生连接配置。
-[POS]: Codex 和 Pi 共用连接。Worker 只持久化 ID 与 revision。
+[POS]: Codex 和 Pi 共用连接。保存和模型发现仅在原 API 地址继承密钥。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from __future__ import annotations
@@ -56,14 +56,16 @@ def normalize_connection(request, previous=None):
     path = url.path.rstrip("/") or "/v1"
     if path.endswith(("/responses", "/chat/completions", "/models", "/embeddings")):
         raise ProviderError("invalid_provider_url", "Enter the API base URL, such as https://api.example.com/v1.")
+    base_url = urlunsplit((url.scheme, url.netloc, path, "", ""))
+    saved_key = previous.get("api_key", "") if base_url == previous.get("base_url") else ""
     model = _text(request.get("model", ""), "Model", 200, optional=True)
     if model and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", model) is None:
         raise ProviderError("invalid_provider_model", "Enter a model identifier without spaces.")
     return {
         "protocol": "responses",
         "name": _text(request.get("name", ""), "Provider name", 100),
-        "base_url": urlunsplit((url.scheme, url.netloc, path, "", "")), "model": model,
-        "api_key": _text(request.get("api_key", previous.get("api_key", "")), "API Key", 8192, optional=True),
+        "base_url": base_url, "model": model,
+        "api_key": _text(request.get("api_key", saved_key), "API Key", 8192, optional=True),
     }
 
 
@@ -229,7 +231,8 @@ class ProviderStore:
             previous = next((p for p in self.read()["providers"] if p["id"] == request["id"]), None)
             if previous is None:
                 raise ProviderError("provider_not_found", "Provider no longer exists.", 404)
-        connection = normalize_connection({**(previous or {}), **request})
+        defaults = {key: previous[key] for key in ("protocol", "name", "base_url", "model")} if previous else {}
+        connection = normalize_connection({**defaults, **request}, previous)
         return fetch_models(connection)
 
 

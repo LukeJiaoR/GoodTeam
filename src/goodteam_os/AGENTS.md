@@ -95,7 +95,7 @@ project_running_observation.py: Deduplicated observation input on an existing co
 project_worker_follow_up.py: Consume bounded Manager follow-up decisions through the original Pi queue.
 projects.py: 项目配置加载、初始化与运行时配置。
 provider_usage.py: Observed Codex invocation usage, separate from execution/approval authority.
-providers.py: 共用 API 连接、精确版本核验、Worker 启动解析和原生协议配置。
+providers.py: 共用 API 连接、地址绑定密钥、Worker 启动解析和原生协议配置。
 repository_access.py: 受限仓库路径、文本与字节读取。
 repository_context.py: 读取项目文档、仓库结构和项目记忆。
 repository_inventory.py: 仓库清单及其内容摘要。

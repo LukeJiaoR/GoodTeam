@@ -40,7 +40,7 @@ export const en = {
   "providers.urlHint": "API base path, usually ending in /v1. Codex uses the Responses protocol.",
   "providers.keyStored": "API Key saved",
   "providers.noKey": "No API Key",
-  "providers.keyPlaceholder": "Leave blank to keep the saved key",
+  "providers.keyPlaceholder": "Keeps the saved key only at the same API address",
   "providers.keyOptional": "Optional for local services without authentication",
   "providers.keyHint": "Stored in GoodTeam PostgreSQL. The saved key is never returned to the browser.",
   "providers.clearKey": "Remove the saved API Key",

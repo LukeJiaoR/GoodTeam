@@ -40,7 +40,7 @@ export const zhCN = {
   "providers.urlHint": "填写 API 基础地址，通常以 /v1 结尾。Codex 使用 Responses 协议。",
   "providers.keyStored": "已保存 API Key",
   "providers.noKey": "未设置 API Key",
-  "providers.keyPlaceholder": "留空保留已保存的密钥",
+  "providers.keyPlaceholder": "API 地址不变时，留空保留已保存的密钥",
   "providers.keyOptional": "无鉴权的本地服务可留空",
   "providers.keyHint": "保存在 GoodTeam PostgreSQL 中，已保存的密钥不会返回浏览器。",
   "providers.clearKey": "清除已保存的 API Key",

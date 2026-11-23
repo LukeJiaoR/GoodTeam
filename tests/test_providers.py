@@ -76,6 +76,13 @@ def test_pg_connections_restart_revision_and_secret_boundary(provider_store, tmp
     assert resolve_project_model_profile(profile, {})[1]["implementation"]["primary"] == "codex:test-model"
     assert resolve_project_model_profile(profile, {"role_model_overrides": {
         "implementation": "codex:explicit"}})[1]["implementation"]["primary"] == "codex:explicit"
+    changed_url = "http://127.0.0.1:2/v1"
+    save(store, id=saved["id"], base_url=changed_url)
+    assert store.active()["base_url"] == changed_url
+    assert store.active()["api_key"] == ""
+    save(store, id=saved["id"], base_url=changed_url + "/", api_key="new-endpoint-key")
+    save(store, id=saved["id"], base_url=changed_url)
+    assert store.active()["api_key"] == "new-endpoint-key"
     activate(store, "")
     store.update({"action": "delete", "id": saved["id"], "expected_revision": store.view()["revision"]})
     assert not store.view()["providers"] and store.resolve(None) is None
@@ -84,7 +91,7 @@ def test_pg_connections_restart_revision_and_secret_boundary(provider_store, tmp
         store.view()
 
 
-def test_model_fetch_uses_saved_key_and_rejects_redirects():
+def test_model_fetch_only_reuses_saved_key_at_original_address_and_rejects_redirects(monkeypatch):
     requests = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -93,7 +100,7 @@ def test_model_fetch_uses_saved_key_and_rejects_redirects():
 
         def do_GET(self):
             requests.append((self.path, self.headers.get("Authorization")))
-            if len(requests) == 1:
+            if self.path != "/redirect/models":
                 raw = json.dumps({"data": [{"id": "model-z"}, {"id": "model-a"}, {"id": "model-a"}]}).encode()
                 self.send_response(200)
                 self.end_headers()
@@ -107,15 +114,24 @@ def test_model_fetch_uses_saved_key_and_rejects_redirects():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        from goodteam_os.providers import fetch_models
-
-        connection = {"base_url": f"http://127.0.0.1:{server.server_port}/v1", "api_key": "fixture-key"}
-        assert fetch_models(connection)["models"] == ["model-a", "model-z"]
-        connection["api_key"] = ""
+        base = f"http://127.0.0.1:{server.server_port}"
+        saved = {"id": "saved-provider", "protocol": "responses", "name": "Fixture", "model": "",
+                 "base_url": base + "/v1", "api_key": "fixture-key"}
+        monkeypatch.setattr(ProviderStore, "read", lambda _: {"providers": [saved]})
+        store = ProviderStore()
+        request = {"id": saved["id"]}
+        expected = ["model-a", "model-z"]
+        assert store.fetch_models(request)["models"] == expected
+        assert store.fetch_models({**request, "base_url": base + "/v1/"})["models"] == expected
+        changed = {**request, "base_url": base + "/v2"}
+        assert store.fetch_models(changed)["models"] == expected
+        assert store.fetch_models({**changed, "api_key": "replacement-key"})["models"] == expected
         with pytest.raises(ProviderError) as error:
-            fetch_models(connection)
+            store.fetch_models({**request, "base_url": base + "/redirect"})
         assert "fixture-key" not in str(error.value)
-        assert requests == [("/v1/models", "Bearer fixture-key"), ("/v1/models", None)]
+        assert requests == [("/v1/models", "Bearer fixture-key"), ("/v1/models", "Bearer fixture-key"),
+                            ("/v2/models", None), ("/v2/models", "Bearer replacement-key"),
+                            ("/redirect/models", None)]
     finally:
         server.shutdown()
         thread.join(5)

@@ -69,7 +69,10 @@ admission policies or grant new execution/review authority.
   previous local Codex behavior remains available on an unmigrated installation.
   A missing DB configuration on a bound store fails closed.
 - API reads expose `has_api_key`, never the saved value. An omitted key on edit
-  preserves it; an explicit empty value removes it. Keys are passed in a dedicated
+  preserves it only when the normalized API base URL is unchanged. A new URL
+  uses an explicitly supplied key or makes an unauthenticated model discovery
+  request. Saving a new URL without a key clears the old key where keyless
+  operation is supported. An explicit empty value removes the key. Keys are passed in a dedicated
   child-process environment variable, never command arguments or job metadata.
   Provider keys are redacted from captured output; the existing database
   environment filter still removes controller DB credentials from Workers.
