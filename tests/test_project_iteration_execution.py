@@ -69,7 +69,7 @@ event('end')
         proposal_ids=queued["queued_proposal_ids"], expected_revisions={key: 1 for key in queued["queued_proposal_ids"]})
     with pytest.raises(ValueError, match="Confirm"):
         run_queued_iteration_batch(**request)
-    with pytest.raises(ValueError, match="settings changed"):
+    with pytest.raises(ValueError, match="project source changed"):
         run_queued_iteration_batch(**request, confirmed=True, expected_authority={})
     # Revocation during runtime capture shares admission's session lock; the
     # final atomic confirmation must refuse it before any task/Worker claim.
