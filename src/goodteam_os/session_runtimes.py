@@ -1,4 +1,8 @@
-"""Persistent worker-session contract and Pi RPC implementation."""
+"""[INPUT]: Worker 作业、共享 Provider 引用与 Pi RPC。
+[OUTPUT]: Pi 会话配置、启动、接续和控制。
+[POS]: 在 Worker 会话内生成原生 Provider 配置。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ from shutil import which
 from typing import Any, Protocol
 from uuid import uuid4
 
+from goodteam_os.providers import PI_PROVIDER_ALIAS, PI_PROVIDER_KEY_ENV, ProviderStore, pi_connection_configuration
 from goodteam_os.pi_rpc import PiRpcError, PiRpcExited, PiRpcProcess, PiRpcRejected, monotonic_deadline, redact_pi_text
 from goodteam_os.database import provider_environment
 
@@ -130,6 +135,16 @@ def pi_runtime_config(project_root: Path, overrides: Mapping[str, object] | None
     session_dir = Path(configured_dir).expanduser() if configured_dir else project_root / ".goodteam" / "pi" / "sessions"
     request_timeout = float(values.get("pi_request_timeout") or os.getenv("GOODTEAM_PI_REQUEST_TIMEOUT") or 30.0)
     return PiRuntimeConfig(binary, provider, model, thinking, session_dir.resolve(), request_timeout)
+
+
+def pi_connection_config(config, job, connection):
+    if connection is None:
+        return config
+    requested = str(job.get("pi_model") or job.get("model") or "").strip()
+    if requested.startswith(("pi:", "pi-rpc:")):
+        requested = requested.split(":", 1)[1].strip()
+    model = ("" if requested.lower() == "auto" else requested) or connection["model"] or config.model
+    return replace(config, provider=PI_PROVIDER_ALIAS, model=model)
 
 
 def pi_backend_doctor(project_root: Path | None = None, overrides: Mapping[str, object] | None = None) -> dict[str, Any]:
@@ -316,6 +331,7 @@ class PiSessionRuntime:
         self.tool_contract_key = ""
         self.web_search = None
         self._entries_pending = threading.Event()
+        self._provider_directory = None
 
     def start_or_resume(self, *, tick: Callable[[], None] | None = None) -> dict[str, Any]:
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
@@ -324,6 +340,8 @@ class PiSessionRuntime:
         # Keep the check at the actual start/resume boundary too: callers must
         # not bypass Worker preflight by constructing this Runtime directly.
         reject_unverified_runtime_entry(self.job_root, self.job, method_input=self.method_input)
+        if self.method_input is not None and self.job.get("adapter") not in SESSION_BACKENDS:
+            raise PiSessionMismatch("Role method input belongs to another runtime.")
         if self.job.get("role") == "orchestrator" or (
                 self.method_input is not None and self.method_input.manager_tools):
             raise PiSessionMismatch("Manager execution has moved to Codex app-server; the retained Pi job cannot restart.")
@@ -351,6 +369,11 @@ class PiSessionRuntime:
             source = json.loads(source_path.read_text(encoding="utf-8"))
             self._validate_lineage(source)
             resume = True
+        reference = self.job.get("provider_connection")
+        if source is not None and source.get("provider_connection") != reference:
+            raise PiSessionMismatch("Pi session belongs to a different Provider reference")
+        connection = ProviderStore().resolve(reference, agent="pi") if reference else None
+        self.config = pi_connection_config(self.config, self.job, connection)
         command = [self.config.binary, "--mode", "rpc", "--name", f"goodteam-{self.job['id']}", "--session-dir", str(self.config.session_dir)]
         if self.config.provider:
             command.extend(["--provider", self.config.provider])
@@ -414,6 +437,15 @@ class PiSessionRuntime:
         project_environment = runtime_binding.get("project_environment")
         environment = runtime_environment(
             project_environment, environment or provider_environment(), workspace=self.runtime_cwd)
+        if connection:
+            configuration = pi_connection_configuration(connection, self.config.model)
+            self._provider_directory = tempfile.TemporaryDirectory(prefix="goodteam-pi-provider-")
+            directory = Path(self._provider_directory.name)
+            (directory / "models.json").write_text(json.dumps(configuration), encoding="utf-8")
+            environment.update(PI_CODING_AGENT_DIR=str(directory))
+            environment[PI_PROVIDER_KEY_ENV] = connection["api_key"]
+            if "--no-extensions" not in command:
+                command.append("--no-extensions")
         self.rpc = PiRpcProcess(command, cwd=self.runtime_cwd, stderr_path=self.stderr_path,
                                 on_record=self._on_record, **({"env": environment} if environment else {}),
                                 **({"request_guard": self._restricted_rpc_guard} if self.tool_policy else {}),
@@ -433,6 +465,7 @@ class PiSessionRuntime:
             "session_file": "",
             "session_id": "",
             "provider": self.config.provider,
+            **({"provider_connection": reference} if reference else {}),
             "model": self.config.model or "auto",
             "thinking_level": self.config.thinking_level or "default",
             "last_entry_id": "",
@@ -479,6 +512,9 @@ class PiSessionRuntime:
                 {"type": "set_thinking_level", "level": self.config.thinking_level}, timeout=startup_timeout
             )
         state = self.get_state(timeout=startup_timeout)
+        if connection and (_model_value(state, "provider"), _model_value(state, "id")) != (
+                self.config.provider, self.config.model):
+            raise PiSessionMismatch("Pi did not select the captured Provider and model.")
         if self.tool_policy:
             self.tool_policy.require_ready(self.tool_policy.nonce, startup_timeout)
             self.store.append_event(self.tool_contract_key + "_witnessed", {
@@ -706,10 +742,14 @@ class PiSessionRuntime:
             self.method_resources.close()
         if self.web_search:
             self.web_search.close()
-        if self.rpc is not None:
-            abort = self.metadata.get("status") == "running"
-            self._closing_abort = abort
-            self.rpc.close(abort=abort)
+        try:
+            if self.rpc is not None:
+                abort = self.metadata.get("status") == "running"
+                self._closing_abort = abort
+                self.rpc.close(abort=abort)
+        finally:
+            if self._provider_directory is not None:
+                self._provider_directory.cleanup()
 
     def _restricted_rpc_guard(self, command):
         self.tool_policy.guard(command)

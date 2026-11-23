@@ -1,20 +1,26 @@
-"""Explicit ordinary Pi method input, not a strict isolation admission.
-
-Only newly captured requests selecting this mode can use this consumer. Existing
-strict jobs, read-only tasks and cross-job resumed sessions cannot be downgraded.
-Methods reuse the immutable task/Role/package broker and ordinary Pi lifecycle.
+"""[INPUT]: 任务锁、不可变作业、Skill 内容与隔离工作区凭据。
+[OUTPUT]: 普通 Role 方法输入与执行锁。
+[POS]: 核验 Codex 和 Pi 的原派工身份。Pi 会话继续使用资源代理。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from copy import deepcopy
 from contextlib import contextmanager
 import fcntl
 import os
 
-from .content import ContentSession, SkillContextProvider
 from .models import SkillError, content_digest, canonical_json
 
 
-class PiMethodInput:
+READONLY_CODEX_METHODS = "readonly_codex_methods.v1"
+ORDINARY_PI_METHODS = frozenset({"ordinary_pi_methods.v1", "readonly_pi_methods.v1"})
+ORDINARY_METHODS = ORDINARY_PI_METHODS | {READONLY_CODEX_METHODS}
+METHOD_MODES = ORDINARY_METHODS | {"manager_pi_methods.v1"}
+
+
+class RoleMethodInput:
     def __init__(self, workers, job_id, *, prepare=True):
+        from .content import SkillContextProvider
+
         self.workers, self.job_id = workers, job_id
         self.provider = SkillContextProvider(workers, job_id, authority=self)
         _, snapshot = self._identity()
@@ -29,13 +35,15 @@ class PiMethodInput:
     def _check(request):
         mode = request.get("method_loading_mode")
         manager = mode == "manager_pi_methods.v1"
-        readonly = mode == "readonly_pi_methods.v1"
-        if (mode not in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}
-                or request.get("adapter") not in {"pi", "pi-rpc"}
+        codex = mode == READONLY_CODEX_METHODS
+        readonly = mode == "readonly_pi_methods.v1" or codex
+        readonly_roles = {"qa"} if codex else {"research", "planner", "qa"}
+        if (mode not in METHOD_MODES
+                or request.get("adapter") not in ({"codex"} if codex else {"pi", "pi-rpc"})
                 or request.get("execution_policy") != ("read_only" if manager or readonly else "standard")
                 or request.get("role") == "code_review"
                 or request.get("session_policy") != "new" or request.get("worker_session_ref")
-                or readonly and (request.get("role") not in {"research", "planner"}
+                or readonly and (request.get("role") not in readonly_roles
                     or request.get("review_target") is not None
                     or request.get("method_workspace_mode") != "dispatch_isolated"
                     or not request.get("project_task_id") or not request.get("track_id"))
@@ -43,9 +51,11 @@ class PiMethodInput:
                     or request.get("web_search") is not None or request.get("method_workspace_mode")
                     or request.get("review_target") is not None
                     or request.get("project_task_id") or request.get("track_id"))):
-            raise SkillError("ordinary_method_mode_unsupported", "This original request is not a supported Pi method invocation.")
+            raise SkillError("ordinary_method_mode_unsupported", "This original request is not a supported Role method invocation.")
 
     def authorize(self, snapshot, *, context_id, operation):
+        from .content import ContentSession
+
         request = snapshot["job_input"]["request"]
         self._check(request)
         if request != self.request or context_id != self.context_id:
@@ -55,7 +65,8 @@ class PiMethodInput:
         return ContentSession(request["adapter"], request["method_loading_mode"], "unverified",
             content_digest(b"unverified"), request["model"],
             content_digest(canonical_json(request).encode()), context_id,
-            "ordinary-method-input; no-isolation-claim", "ordinary_pi_methods")
+            "ordinary-method-input; no-isolation-claim",
+            "ordinary_codex_methods" if request["adapter"] == "codex" else "ordinary_pi_methods")
 
     def validate(self, job_root, job):
         from .worker_requests import _metadata
@@ -79,9 +90,8 @@ class PiMethodInput:
                          or snapshot.get("task", {}).get("kind") != "manager_message")):
                 raise SkillError("manager_method_identity_invalid", "Manager methods require the original Manager task binding.")
             request = snapshot["job_input"]["request"]
-            if (request.get("method_loading_mode") == "readonly_pi_methods.v1"
+            if (request.get("method_loading_mode") in {"readonly_pi_methods.v1", READONLY_CODEX_METHODS}
                     and (snapshot.get("task", {}).get("kind") != "direct_task"
-                         or request.get("role") not in {"research", "planner"}
                          or snapshot.get("subject") != "role:" + request["role"])):
                 raise SkillError("readonly_method_identity_invalid", "Read-only methods require the original direct task Role binding.")
             if snapshot["job_input"].get("worker_root") != str(root):
@@ -170,8 +180,8 @@ class PiMethodInput:
                 if saved != encoded:
                     raise SkillError("ordinary_method_session_mismatch", "Cannot resume another method session.")
 
-    def prompt(self):
-        prompt = self.provider.worker_input(self.ref).decode("utf-8")
+    def prompt(self, *, package_root=None):
+        prompt = self.provider.worker_input(self.ref, package_root=package_root).decode("utf-8")
         context = getattr(self, "workspace_context", None)
         if context and context.get("project_environment"):
             from goodteam_os.project_environment import worker_environment_instructions
@@ -203,6 +213,10 @@ class PiMethodInput:
         return PiResourceChannel(self.provider, self.ref, active=active, startup_policy=startup_policy)
 
 
+
+
+# Historical Pi callers and receipts keep their existing entry name.
+PiMethodInput = RoleMethodInput
 
 
 @contextmanager

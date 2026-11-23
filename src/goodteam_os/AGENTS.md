@@ -6,7 +6,7 @@ Manager 与 Goal 共用任务队列和隔离 Worker 池。
 AGENTS.md: 本目录的成员与职责边界。
 execution/: 执行身份、PR 绑定、审批与 Reviewer 服务。证据清单和记忆归档共用回放规则，GitHub 状态共用 PR 编号校验。
 memory_core/: 角色记忆的纯投影与上下文规则。
-skills/: Skill 包、绑定、快照与运行时。
+skills/: Skill 包、绑定和快照。普通 Role 方法给 Codex 提供固定文件，给 Pi 提供读取代理。
 __init__.py: GoodTeam Python 包入口。
 _repository_content_policy.py: 仓库内容的敏感路径拒绝与观察值脱敏。
 _trusted_system_executable.py: 校验系统可执行文件的身份与可信路径。
@@ -30,7 +30,7 @@ database_migration.py: 离线导入任务、会话、项目准备和 Goal 记录
 debate.py: 审批门的 Reviewer 讨论与调度。
 dispatch.py: 隔离派工、并发限制和结果报告。
 dispatch_capacity.py: Shared project Worker capacity; original jobs remain the execution ledger.
-dispatch_methods.py: Per-track method capture for new mixed batches, using original Skill stores.
+dispatch_methods.py: 为轨道锁定 Role 方法。重试复用原 Skill 锁。
 dispatch_workspace.py: 捕获项目 Git 工作树并排除运行时目录，为派工保留隔离工作区。
 failure_patterns.py: 失败模式归一化、匹配与路由记录。
 frontend_assets.py: 本地 Web 前端构建目录定位。
@@ -63,7 +63,7 @@ operator_manager_intake.py: 按来源版本写入输入并交给 Manager。
 parallel_capacity.py: One bounded default for real simultaneous Worker execution.
 pi_read_only.mjs: Pi Worker 的只读工具策略。
 pi_read_only.py: Explicit Pi tool-level read-only policy, NOT an OS sandbox admission.
-pi_rpc.py: Strict JSONL subprocess client for Pi RPC mode.
+pi_rpc.py: Pi 子进程的 JSONL 通信与凭据脱敏。
 pi_skill_resources.mjs: Pi Worker 的 Skill 资源读取工具。
 pi_web_search.mjs: Pi Worker 的可选网页搜索工具。
 postgres_goals.py: PostgreSQL adapter for the existing bounded-Goal ledger and invariants.
@@ -82,7 +82,7 @@ project_iteration_execution.py: 通过同一队列确认原建议或待办批次
 project_iteration_planner.py: 用自然语言把候选与授权上下文交给 Manager 判断，保存只读建议。
 project_iteration_quality.py: 统一读取 Manager 接受凭据与专项质量凭据。
 project_candidate_acceptance.py: 将 Manager 决定和观察来源绑定到候选及修正链。
-project_iteration_recovery.py: 复用原批次，执行 Manager 或用户选定的失败重试，保留执行凭据。
+project_iteration_recovery.py: 重试原批次中的失败任务，保留 Provider 引用与 Skill 锁。
 project_observation_judgment.py: Budgeted, read-only advice contract shared with the bounded production consumer.
 project_observation_runtime.py: Bounded running-period Manager judgments over native app-server threads.
 project_outcome_discovery.py: 冻结交付证据，按授权范围创建 Manager 选定的后续任务。
@@ -95,7 +95,7 @@ project_running_observation.py: Deduplicated observation input on an existing co
 project_worker_follow_up.py: Consume bounded Manager follow-up decisions through the original Pi queue.
 projects.py: 项目配置加载、初始化与运行时配置。
 provider_usage.py: Observed Codex invocation usage, separate from execution/approval authority.
-providers.py: GoodTeam-owned API connections. Agent names and API providers are separate.
+providers.py: 共用 API 连接、运行器默认引用和原生协议配置。
 repository_access.py: 受限仓库路径、文本与字节读取。
 repository_context.py: 读取项目文档、仓库结构和项目记忆。
 repository_inventory.py: 仓库清单及其内容摘要。
@@ -104,7 +104,7 @@ role_prompts.json: 内置角色提示词。
 roles.py: 读取 Worker 角色提示词与项目上下文来源。
 service.py: 查询、启动和停止 Supervisor。
 service_timeouts.py: Nested shutdown deadlines: outer supervisors must outlive the web drain.
-session_runtimes.py: Persistent worker-session contract and Pi RPC implementation.
+session_runtimes.py: Pi RPC 会话在作业内生成原生 Provider 配置。
 smoke.py: 报告实际执行阶段和产物。
 source_preview.py: 从已核验的 Git 捕获生成来源摘要。
 staging.py: 读取部署配置与交付约定的诊断信息。

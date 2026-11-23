@@ -21,10 +21,10 @@ test('fetches a model, saves and activates a provider, and preserves an undisclo
   fetchProviderModels.mockResolvedValue({ models: ['model-a', 'model-b'] });
   updateProvider.mockImplementation(async (request) => {
     if (request.action === 'save') state = { ...state, revision: state.revision + 1, providers: [{
-      id: 'provider-test', name: request.name, agent: 'codex', protocol: 'responses', base_url: request.base_url,
+      id: 'provider-test', name: request.name, protocol: 'responses', base_url: request.base_url,
       model: request.model, has_api_key: true,
     }] };
-    if (request.action === 'activate') state = { ...state, revision: state.revision + 1, active: { codex: request.id } };
+    if (request.action === 'activate') state = { ...state, revision: state.revision + 1, active: { ...state.active, [request.agent]: request.id } };
     return state;
   });
   render(<ProviderSettings t={t} />);
@@ -42,6 +42,9 @@ test('fetches a model, saves and activates a provider, and preserves an undisclo
   const card = screen.getByRole('article', { name: 'Test API' });
   await user.click(within(card).getByRole('button', { name: 'Use provider' }));
   await screen.findByText('Provider switched. Existing jobs keep their captured connection.');
+  expect(within(card).getByText('Active')).toBeVisible();
+  await user.selectOptions(screen.getByLabelText('Pi connection'), 'provider-test');
+  expect(updateProvider.mock.lastCall[0]).toMatchObject({ action: 'activate', agent: 'pi', id: 'provider-test' });
   expect(within(card).getByText('Active')).toBeVisible();
   await user.click(within(card).getByRole('button', { name: 'Edit provider' }));
   expect(screen.getByLabelText('API Key', { exact: false, selector: 'input[type="password"]' })).toHaveValue('');

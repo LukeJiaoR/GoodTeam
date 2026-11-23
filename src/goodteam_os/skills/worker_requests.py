@@ -1,8 +1,7 @@
-"""Bind actual Worker requests to registered task snapshots before publication.
-
-S4b is metadata integration, not S5 Runtime activation. Every Skill-backed run
-currently stops after trusted preflight, including fake/noop: no copied Markdown,
-model self-report, or fake result is represented as a loaded or executed Skill.
+"""[INPUT]: 已注册任务锁、Worker 请求与 Skill 版本。
+[OUTPUT]: 不可变 Worker 快照、预检与运行入口。
+[POS]: 普通 Role 方法和专用 Reviewer 分别进入各自的运行检查。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from __future__ import annotations
 
@@ -21,6 +20,7 @@ from uuid import uuid4
 from .availability import SkillAvailabilityStore
 from .filesystem import directory, open_lock_file, regular_file, subdirectory, write_new
 from .library import LOCAL_SCOPE_OWNER, SkillLibraryService
+from .pi_methods import METHOD_MODES, ORDINARY_METHODS, ORDINARY_PI_METHODS, READONLY_CODEX_METHODS, RoleMethodInput
 from .models import SkillConflict, SkillError, SkillScope, canonical_json, content_digest
 from .task_context import task_skill_context, validate_task_skill_context
 from .task_locks import MAX_REGISTRY_BYTES, MAX_RESOURCE_BYTES, REGISTRY_SCHEMA, SNAPSHOT_SCHEMA, TaskSkillIdentity, TaskSkillLockStore
@@ -145,18 +145,25 @@ def _request(values: dict[str, Any]) -> dict[str, Any]:
     if not request.get("method_loading_mode"):
         request.pop("method_loading_mode", None)
     else:
-        from .pi_methods import PiMethodInput
-        PiMethodInput._check(request)
+        RoleMethodInput._check(request)
+    reference = request.get("provider_connection")
+    if reference is None:
+        request.pop("provider_connection", None)
+    elif (request.get("method_loading_mode") not in ORDINARY_METHODS
+          or not isinstance(reference, dict) or set(reference) != {"id", "revision"}
+          or not isinstance(reference["id"], str) or not re.fullmatch(r"provider-[a-f0-9]{32}", reference["id"])
+          or type(reference["revision"]) is not int or reference["revision"] < 1):
+        raise SkillError("worker_provider_reference_invalid", "An ordinary Pi method request needs a valid Provider reference.")
     if not request.get("method_workspace_mode"):
         request.pop("method_workspace_mode", None)
-    elif (request.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}
+    elif (request.get("method_loading_mode") not in ORDINARY_METHODS
           or request["method_workspace_mode"] != "dispatch_isolated"):
         raise SkillError("ordinary_method_workspace_unsupported", "Method workspace must retain the original isolated dispatcher.")
     if request.get("web_search") is None:
         request.pop("web_search", None)  # Preserve historical request digests.
     else:
         from goodteam_os.web_search import search_policy
-        if request.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}:
+        if request.get("method_loading_mode") not in ORDINARY_PI_METHODS:
             raise SkillError("ordinary_method_search_unsupported", "Search is not authorized for this strict method request.")
         request["web_search"] = search_policy(request["web_search"])
     # Ordinary method-bearing batch jobs keep the same task/track attribution.
@@ -167,7 +174,7 @@ def _request(values: dict[str, Any]) -> dict[str, Any]:
             raise SkillError("worker_skill_input_invalid", "Task associations require exact task/track identifiers.")
         if not value:
             request.pop(key, None)  # Old request digests remain unchanged.
-        elif (request.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "readonly_pi_methods.v1"}
+        elif (request.get("method_loading_mode") not in ORDINARY_METHODS
                 or request.get("method_workspace_mode") != "dispatch_isolated"):
             raise SkillError("ordinary_method_association_unsupported", "Task associations require the original ordinary isolated dispatch.")
     # Adding an optional source field must not alter historical request digests.
@@ -328,7 +335,7 @@ def _publish_job(root: Path, job_id: str, expected: dict[str, Any], snapshot: di
     return expected, True
 
 
-def create_skill_worker_job(store, values: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+def create_skill_worker_job(store, values: dict[str, Any], *, capture_provider=False) -> tuple[dict[str, Any], bool]:
     """Capture/register before atomic job publication; exact replay uses old bytes."""
     context = validate_task_skill_context(values["task_skill_context"])
     task = TaskSkillIdentity(**context["task"])
@@ -342,8 +349,8 @@ def create_skill_worker_job(store, values: dict[str, Any]) -> tuple[dict[str, An
     if (request.get("method_loading_mode") == "manager_pi_methods.v1"
             and (task.kind != "manager_message" or subject != "manager:orchestrator")):
         raise SkillError("manager_method_identity_invalid", "Manager methods require the original Manager producer task.")
-    if (request.get("method_loading_mode") == "readonly_pi_methods.v1"
-            and (task.kind != "direct_task" or subject not in {"role:research", "role:planner"})):
+    if (request.get("method_loading_mode") in {"readonly_pi_methods.v1", READONLY_CODEX_METHODS}
+            and task.kind != "direct_task"):
         raise SkillError("readonly_method_identity_invalid", "Read-only methods require their original Role dispatch.")
     if task.kind == "issue_execution" and request.get("execution_id") != task.logical_id:
         raise SkillError("snapshot_scope_mismatch", "Issue Worker needs its explicit execution identity.")
@@ -355,11 +362,23 @@ def create_skill_worker_job(store, values: dict[str, Any]) -> tuple[dict[str, An
         raise SkillError("review_retry_identity", "A Reviewer retry cannot be its own original job.")
     with _request_lock(operator, job_id) as authority_fd:
         previous = locks.find_snapshot(command_key=job_id)
+        if capture_provider:
+            from goodteam_os.providers import ProviderStore
+
+            reference = (previous["snapshot"]["job_input"]["request"].get("provider_connection")
+                         if previous else ProviderStore().capture("codex" if request["adapter"] == "codex" else "pi"))
+            if reference is not None:
+                request["provider_connection"] = reference
         if previous is None:
             if store.find_job_by_idempotency_key(request["idempotency_key"]) is not None:
                 raise SkillConflict("operation_conflict", "Worker command key already belongs to an existing job.")
             lock = locks.read(context["task_lock_ref"], task=task)
-            binding = lock.get("start_input", {}).get("request", {}).get("confirmed_input", {}).get("producer_binding")
+            confirmed = lock.get("start_input", {}).get("request", {}).get("confirmed_input", {})
+            mode = request.get("method_loading_mode")
+            if mode == READONLY_CODEX_METHODS or mode == "readonly_pi_methods.v1" and request["role"] == "qa":
+                if confirmed.get("method_loading_mode") != mode:
+                    raise SkillError("readonly_method_identity_invalid", "QA methods require the original Role dispatch mode.")
+            binding = confirmed.get("producer_binding")
             if binding is not None and binding.get("worker_root") != str(root):
                 raise SkillError("snapshot_scope_mismatch", "Worker root differs from the authorized task start.")
             methods = lock["subjects"].get(subject)
@@ -448,7 +467,7 @@ def _write_status(fd: int, payload: dict[str, Any]) -> None:
 
 
 def run_skill_worker_job(store, job_id: str, *, sandbox_context=None) -> dict[str, Any]:
-    """Every explicit attempt verifies trusted metadata; S5 Runtime stays closed."""
+    """Verify each explicit attempt before selecting its original Runtime."""
     root, operator, locks, status = _services(store)
     with _request_lock(operator, job_id) as authority_fd:
         registered = locks.find_snapshot(command_key=job_id)
@@ -497,11 +516,11 @@ def run_skill_worker_job(store, job_id: str, *, sandbox_context=None) -> dict[st
                 # Preserve the immutable job request even when a caller tampers
                 # with it. Failure reporting must not silently repair job.json.
                 _write_status(fd, result)
-    if checked == "verified" and snapshot["job_input"]["request"].get("method_loading_mode") in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"}:
-        from .pi_methods import PiMethodInput
-
-        method_input = PiMethodInput(store, job_id)
+    if checked == "verified" and expected.get("method_loading_mode") in METHOD_MODES:
+        method_input = RoleMethodInput(store, job_id)
         method_input.bind_workspace(sandbox_context)
+        if expected["method_loading_mode"] == READONLY_CODEX_METHODS:
+            return store._run_role_codex(store.root / job_id, expected, method_input=method_input)
         return store._run_session_backend(store.root / job_id, expected, method_input=method_input)
     if checked == "verified":
         from .review_execution import continue_review_worker
@@ -513,10 +532,9 @@ def run_skill_worker_job(store, job_id: str, *, sandbox_context=None) -> dict[st
 
 
 def reject_unverified_runtime_entry(job_root: Path, job: dict[str, Any], *, method_input=None) -> None:
-    """S5 has not opened any Skill-backed lower-level Runtime entrypoint."""
+    """Require the original registered method at lower-level Runtime entry."""
     if method_input is not None:
-        from .pi_methods import PiMethodInput
-        if type(method_input) is PiMethodInput:
+        if type(method_input) is RoleMethodInput:
             method_input.validate(job_root, job)
             return
         raise SkillError("ordinary_method_identity_invalid", "Method input is not a registered invocation.")
@@ -535,8 +553,20 @@ def public_skill_job_fields(job) -> dict[str, Any]:
         return {}
     fields = ("run_id", "project_key", "skill_subject", "skill_loader_version",
               "skill_preflight_status", "skill_preflight_attempt_id",
-              "skill_error_code", "skill_runtime_status")
+              "skill_error_code", "skill_runtime_status", "method_input_status", "method_packages_status")
     result = {key: job[key] for key in fields if key in job and isinstance(job[key], str)}
+    reference = job.get("provider_connection")
+    if (job.get("method_loading_mode") in ORDINARY_METHODS and isinstance(reference, dict)
+            and isinstance(reference.get("id"), str) and re.fullmatch(r"provider-[a-f0-9]{32}", reference["id"])
+            and type(reference.get("revision")) is int):
+        result["provider_connection"] = {"id": reference["id"], "revision": reference["revision"]}
+    items = job.get("method_items")
+    if isinstance(items, list):
+        result["method_items"] = [
+            {key: item[key] for key in ("skill_id", "version_id", "package_digest", "activation", "name")
+             if key in item and isinstance(item[key], str)}
+            for item in items if isinstance(item, dict)
+        ]
     context = job.get("task_skill_context")
     if context is not None:
         try:

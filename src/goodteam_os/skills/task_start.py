@@ -1,8 +1,7 @@
-"""Explicit producer-side task capture; never a job-time latest resolver.
-
-This connects bounded starts to the existing Team/Library service. Unconfigured
-legacy projects stay legacy. Once a custom task has been captured, later default
-restoration or Team loss cannot turn its replay into a legacy task.
+"""[INPUT]: 明确的任务确认、项目 Team 绑定与 Skill 库。
+[OUTPUT]: 任务快照与已注册项目范围校验。
+[POS]: 在派工边界锁定原 Role 与 Skill 版本。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from __future__ import annotations
 
@@ -48,9 +47,11 @@ def capture_task_start(
     if (confirmed_input.get("method_loading_mode") == "manager_pi_methods.v1"
             and (task.kind != "manager_message" or subjects != ("manager:orchestrator",))):
         raise SkillError("task_scope_unknown", "Manager methods require the original Manager producer.")
-    if (confirmed_input.get("method_loading_mode") == "readonly_pi_methods.v1"
-            and (task.kind != "direct_task" or subjects not in (("role:research",), ("role:planner",)))):
-        raise SkillError("task_scope_unknown", "Read-only methods require an explicit Researcher or Planner dispatch.")
+    readonly_subjects = {"readonly_pi_methods.v1": (("role:research",), ("role:planner",), ("role:qa",)),
+                         "readonly_codex_methods.v1": (("role:qa",),)}
+    supported_subjects = readonly_subjects.get(confirmed_input.get("method_loading_mode"))
+    if supported_subjects and (task.kind != "direct_task" or subjects not in supported_subjects):
+        raise SkillError("task_scope_unknown", "Read-only methods require an explicit supported Role dispatch.")
     confirmed = deepcopy(confirmed_input)
     if "producer_binding" in confirmed:
         raise SkillError("invalid_snapshot", "Producer identity cannot come from the caller's confirmation payload.")

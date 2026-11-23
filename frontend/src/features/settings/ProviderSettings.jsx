@@ -1,10 +1,16 @@
+/**
+ * [INPUT]: Provider 与使用量 API。
+ * [OUTPUT]: ProviderSettings 连接与运行器默认值表单。
+ * [POS]: 设置页统一维护 Codex、Pi 与记忆检索的连接。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { useEffect, useState } from 'react';
 import { Cable, Plus, RefreshCw } from 'lucide-react';
 import { fetchProviderModels, getProviders, getProviderUsage, updateProvider } from './providerApi';
 import './providerSettings.css';
 import './settingsCompact.css';
 
-const emptyDraft = () => ({ id: '', agent: 'codex', protocol: 'responses', name: '', base_url: '', api_key: '', model: '' });
+const emptyDraft = () => ({ id: '', protocol: 'responses', name: '', base_url: '', api_key: '', model: '' });
 const number = (value) => value == null ? '—' : new Intl.NumberFormat().format(value);
 
 function MemoryRetrievalSettings({ settings, disabled, label, onSave }) {
@@ -76,7 +82,7 @@ export default function ProviderSettings({ t }) {
     setClearKey(false); setModels(null); setError(''); setNotice(''); setDeleting('');
   };
   const formPayload = () => {
-    const fields = Object.fromEntries(['id', 'agent', 'protocol', 'name', 'base_url', 'api_key', 'model'].map((key) => [key, draft[key]]));
+    const fields = Object.fromEntries(['id', 'protocol', 'name', 'base_url', 'api_key', 'model'].map((key) => [key, draft[key]]));
     if (draft.id && !draft.api_key && !clearKey) delete fields.api_key;
     if (clearKey) fields.api_key = '';
     return fields;
@@ -94,7 +100,7 @@ export default function ProviderSettings({ t }) {
   const fetchModels = async () => {
     setPending('models'); setError(''); setModels(null);
     try {
-      const result = await fetchProviderModels({ ...formPayload(), name: draft.name || 'Codex' });
+      const result = await fetchProviderModels({ ...formPayload(), name: draft.name || 'OpenAI Responses' });
       setModels(result.models);
     } catch (failure) { setError(failure.message); }
     finally { setPending(''); }
@@ -105,12 +111,13 @@ export default function ProviderSettings({ t }) {
   };
   const disabled = Boolean(pending) || !settings?.configured;
   const active = settings?.active?.codex || '';
+  const activePi = settings?.active?.pi || '';
 
   return <section className="studio-settings-section provider-settings provider-settings--compact" aria-labelledby="settings-providers">
     <div className="provider-settings__heading">
     <header><Cable size={19} aria-hidden="true" /><div><h2 id="settings-providers">{label('title')}</h2><p>{label('description')}</p></div></header>
     <div className="provider-settings__toolbar">
-      <span className="provider-settings__agent">Codex</span>
+      <span className="provider-settings__agent">Codex · Pi</span>
       <button className="product-button product-button--secondary" type="button" disabled={Boolean(pending)} onClick={() => { setPending('load'); setError(''); reload(); }}><RefreshCw size={14} aria-hidden="true" />{label('refresh')}</button>
       <button className="product-button" type="button" disabled={disabled} onClick={() => edit()}><Plus size={14} aria-hidden="true" />{label('add')}</button>
     </div>
@@ -120,11 +127,19 @@ export default function ProviderSettings({ t }) {
     {error ? <p className="provider-settings__error" role="alert">{error}</p> : null}
     {notice ? <p role="status">{notice}</p> : null}
     {settings ? <div className="provider-settings__list">
+      <label className="provider-settings__model-picker">{label('piConnection')}
+        <select value={activePi} disabled={disabled} onChange={(event) => mutate('activate', { id: event.target.value, agent: 'pi' })}>
+          <option value="">{label('piLocal')}</option>
+          {settings.providers.map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.has_api_key}>
+            {provider.name}{provider.has_api_key ? '' : ` · ${label('piKeyRequired')}`}
+          </option>)}
+        </select>
+      </label>
       {[{ id: '', name: label('local'), base_url: label('localHint') }, ...settings.providers].map((provider) => <article key={provider.id || 'local'} className="provider-settings__connection" aria-label={provider.name}>
         <div className="provider-settings__identity"><strong>{provider.name}</strong>{active === provider.id ? <span className="provider-settings__badge">{label('active')}</span> : null}<p>{provider.base_url}</p>{provider.id ? <small>OpenAI Responses · {provider.model || label('inheritModel')} · {label(provider.has_api_key ? 'keyStored' : 'noKey')}</small> : null}</div>
         <div className="provider-settings__actions">
           {active !== provider.id ? <button type="button" className="product-button product-button--secondary" disabled={disabled} onClick={() => mutate('activate', { id: provider.id, agent: 'codex' })}>{label('activate')}</button> : null}
-          {provider.id ? <><button type="button" className="product-button product-button--secondary" disabled={disabled} onClick={() => edit(provider)}>{label('edit')}</button><button type="button" className="provider-settings__text-button" disabled={disabled || active === provider.id || settings.embeddings?.provider_id === provider.id} onClick={() => setDeleting(provider.id)}>{label('delete')}</button></> : null}
+          {provider.id ? <><button type="button" className="product-button product-button--secondary" disabled={disabled} onClick={() => edit(provider)}>{label('edit')}</button><button type="button" className="provider-settings__text-button" disabled={disabled || active === provider.id || activePi === provider.id || settings.embeddings?.provider_id === provider.id} onClick={() => setDeleting(provider.id)}>{label('delete')}</button></> : null}
         </div>
         {deleting === provider.id && provider.id ? <div className="provider-settings__delete"><p>{label('deleteHint')}</p><button className="product-button" type="button" disabled={disabled} onClick={() => mutate('delete', { id: provider.id })}>{label('confirmDelete')}</button><button className="product-button product-button--secondary" type="button" onClick={() => setDeleting('')}>{label('cancel')}</button></div> : null}
       </article>)}

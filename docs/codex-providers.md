@@ -1,12 +1,21 @@
-# Codex API providers in GoodTeam
+# Shared API providers in GoodTeam
 
 ## Outcome and scope
 
-A project Manager and its ordinary Codex Workers can use a connection configured
-inside GoodTeam across successive iterations. The existing Agent selector still
-means `codex`, `claude`, etc.; an API provider is a separate connection owned by
-that Agent. The initial supported Agent is Codex and its native OpenAI Responses
-protocol. There is no protocol-conversion proxy or additional dispatcher.
+A saved API connection can serve Codex and Pi through each client's native
+OpenAI Responses configuration. **Use provider** selects the Codex default.
+**Pi connection** selects a saved connection or local Pi configuration. Both
+defaults can point to the same Provider ID.
+
+Each job captures the selected Provider ID and revision. A project batch retry
+preserves that reference. An edited or deleted Provider stops the next launch
+with a revision error. Explicit job model choices take precedence over the
+saved default.
+
+Pi requires an API key and a selected model for a shared connection. GoodTeam
+passes a job-private `models.json` and an environment reference to the key.
+The Pi process reports the actual Provider alias and model before sending its
+first prompt. The local Pi choice uses the existing native configuration.
 
 The previous gap was that Worker execution and model discovery relied on the
 machine's Codex configuration, while Settings had no connection-management or
@@ -21,8 +30,8 @@ Worker, model-profile, task-binding and PostgreSQL services from merged PR #670
 3. Enter a name, Responses Base URL (usually ending in `/v1`), optional API Key
    and default model. **Fetch models** requests `<base_url>/models`; manual model
    IDs remain available when the endpoint is unsupported or unavailable.
-4. Save and choose **Use provider**. Choose **Local Codex configuration** to
-   restore the previous machine-owned connection behavior.
+4. Save and choose **Use provider** for Codex. Select the same connection under
+   **Pi connection** to share it. The local choices restore machine configuration.
 
 Provider defaults replace bundled Codex model-profile defaults. Explicit Team,
 role and individual job models retain precedence. Model discovery for the Team

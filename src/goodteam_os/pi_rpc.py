@@ -1,4 +1,8 @@
-"""Strict JSONL subprocess client for Pi RPC mode."""
+"""[INPUT]: Pi 子进程的 JSONL 与 stderr。
+[OUTPUT]: RPC 请求、事件与已脱敏的运行日志。
+[POS]: 在会话持久化前移除连接凭据。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 from __future__ import annotations
 
@@ -73,7 +77,10 @@ class PiRpcProcess:
         self.prompt_authorizer = prompt_authorizer
         from goodteam_os.database import provider_environment
 
+        from goodteam_os.providers import PI_PROVIDER_KEY_ENV
+
         self.env = provider_environment(env)
+        self._provider_key = (self.env or {}).get(PI_PROVIDER_KEY_ENV, "")
         self.process: subprocess.Popen[bytes] | None = None
         self._write_lock = threading.Lock()
         self._pending_lock = threading.Lock()
@@ -268,14 +275,15 @@ class PiRpcProcess:
         try:
             record = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            sample = redact_pi_text(raw.decode("utf-8", errors="replace"), limit=512)
+            sample = redact_pi_text(self._safe_text(raw.decode("utf-8", errors="replace")), limit=512)
             self._set_protocol_error(PiRpcError(f"Malformed Pi RPC JSON: {sample!r}: {exc}"))
             return
         if not isinstance(record, dict):
             self._set_protocol_error(PiRpcError("Pi RPC record must be a JSON object"))
             return
+        safe_record = self._safe_record(record) if self._provider_key else record
         if self.on_record is not None:
-            self.on_record(record)
+            self.on_record(safe_record)
         if record.get("type") == "response":
             request_id = record.get("id")
             if not isinstance(request_id, str):
@@ -287,7 +295,7 @@ class PiRpcProcess:
                 self._set_protocol_error(PiRpcError(f"Unknown Pi RPC response id: {request_id}"))
                 return
             event, holder = pending
-            holder["response"] = record
+            holder["response"] = safe_record
             event.set()
         elif record.get("type") == "agent_settled":
             self._settled.set()
@@ -306,6 +314,19 @@ class PiRpcProcess:
         for event, _holder in pending:
             event.set()
 
+    def _safe_record(self, value):
+        if isinstance(value, dict):
+            return {key: item if key in {"type", "id", "command"} else self._safe_record(item)
+                    for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._safe_record(item) for item in value]
+        if isinstance(value, str) and (len(self._provider_key) >= 8 or value == self._provider_key):
+            return self._safe_text(value)
+        return value
+
+    def _safe_text(self, text):
+        return text.replace(self._provider_key, "[REDACTED]") if self._provider_key else text
+
     def _read_stderr(self) -> None:
         process = self.process
         if process is None or process.stderr is None:
@@ -315,7 +336,7 @@ class PiRpcProcess:
                 chunk = process.stderr.read(4096)
                 if not chunk:
                     break
-                handle.write(redact_pi_text(chunk.decode("utf-8", errors="replace")))
+                handle.write(redact_pi_text(self._safe_text(chunk.decode("utf-8", errors="replace"))))
                 handle.flush()
 
 

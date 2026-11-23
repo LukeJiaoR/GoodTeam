@@ -1,6 +1,11 @@
-"""Provider configuration in disposable PG; local HTTP/CLI fixtures only."""
+"""[INPUT]: 隔离 PostgreSQL、Git 工作区与本地进程替身。
+[OUTPUT]: Provider 和 Role Skill 组合回归。
+[POS]: 覆盖原派工、运行启动与失败重试。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -38,6 +43,11 @@ def activate(store, identifier):
 
 def test_pg_connections_restart_revision_and_secret_boundary(provider_store, tmp_path, monkeypatch):
     store = provider_store
+    keyless = save(store, name="Local Codex")
+    with pytest.raises(ProviderError, match="Pi requires an API key"):
+        store.update({"action": "activate", "id": keyless["id"], "agent": "pi",
+                      "expected_revision": store.view()["revision"]})
+    store.update({"action": "delete", "id": keyless["id"], "expected_revision": store.view()["revision"]})
     saved = save(store, api_key="synthetic-provider-secret")
     activate(store, saved["id"])
     original = store.capture()
@@ -208,3 +218,132 @@ def test_provider_bound_pg_project_can_pick_execute_learn_and_pick_again(provide
     monkeypatch.setattr(WorkerJobStore, "_run_cli_backend", run)
     test_verified_delivery_automatically_replans_next_scoped_batch_and_survives_replay(tmp_path, monkeypatch)
     assert len(observed) == 2 and set(observed) == {current["id"]}
+
+
+def test_readonly_qa_dispatch_uses_one_provider_and_binding_across_codex_and_pi(provider_store, tmp_path, monkeypatch):
+    from hashlib import sha256
+    from goodteam_os.dispatch import dispatch_tracks
+    from goodteam_os.dispatch_workspace import dispatch_artifact_root
+    from goodteam_os.service import service_state_dir
+    from goodteam_os.skills.library import SkillLibraryService
+    from goodteam_os.skills.pi_resources import PiResourceChannel
+    from goodteam_os.team_control_plane import TeamControlPlaneStore
+    from test_pi_method_dispatch import configured
+
+    source, workspace = configured(tmp_path)
+    team = TeamControlPlaneStore(workspace, "DEMO")
+    current = team.read()
+    items = [{key: item[key] for key in ("skill_id", "version_id", "activation", "enabled")}
+             for item in current["skill_bindings"]["role:implementation"]["items"]]
+    library = SkillLibraryService(service_state_dir())
+    for name in ("optional", "disabled"):
+        folder = tmp_path / name
+        (folder / "references").mkdir(parents=True)
+        (folder / "SKILL.md").write_text(f"---\nname: {name}\ndescription: QA fixture\n---\n{name} body\n")
+        (folder / "references" / "guide.txt").write_text(f"{name} reference")
+        installed = library.install(library.preview_local(str(folder), command_key=name)["proposal_id"])["installed"]
+        items.append({key: installed[key] for key in ("skill_id", "version_id")} |
+                     {"activation": "on_demand", "enabled": name == "optional"})
+    team.execute([{"kind": "set_role_skills", "role": "qa", "mode": "custom",
+                   "expected_binding_revision": current["skill_bindings"]["role:qa"]["binding_revision"],
+                   "bindings": items}],
+                 actor="user", surface="team_ui", expected_revision=current["revision"], command_key="bind-qa")
+    connection = save(provider_store, api_key="fixture-shared-qa-key")
+    for agent in ("codex", "pi"):
+        provider_store.update({"action": "activate", "id": connection["id"], "agent": agent,
+                               "expected_revision": provider_store.view()["revision"]})
+    reference = {"id": connection["id"], "revision": connection["revision"]}
+    assert provider_store.capture("codex") == provider_store.capture("pi") == reference
+
+    bin_root = tmp_path / "bin"
+    bin_root.mkdir()
+    codex = bin_root / "codex"
+    codex.write_text(f"#!{sys.executable}\n" + r'''import json, os, sys
+from pathlib import Path
+if '--version' in sys.argv:
+    print('codex 0.171.0')
+    raise SystemExit(0)
+assert sys.argv[sys.argv.index('--sandbox') + 1] == 'read-only'
+assert '--ignore-user-config' in sys.argv and '--ignore-rules' in sys.argv
+assert 'wire_api = "responses"' in ' '.join(sys.argv)
+assert os.environ['GOODTEAM_CODEX_PROVIDER_API_KEY'] == 'fixture-shared-qa-key'
+payload = json.loads(sys.stdin.read().split('\n\n', 1)[0])
+assert 'ORIGINAL ROLE METHOD' in payload['required_methods'][0]['text']
+catalog = {item['name']: Path(item['resource_base']) for item in payload['method_catalog']}
+assert set(catalog) == {'task-method', 'optional'}
+assert 'optional body' not in json.dumps(payload)
+assert 'ORIGINAL ROLE METHOD' in (catalog['task-method'] / 'SKILL.md').read_text()
+assert (catalog['optional'] / 'references' / 'guide.txt').read_text() == 'optional reference'
+print(catalog['optional'])
+if os.environ.get('GOODTEAM_438_FAIL_QA'):
+    raise SystemExit(1)
+Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Codex QA returned.')
+''')
+    codex.chmod(0o755)
+    pi = bin_root / "pi"
+    script = (Path(__file__).parent / "fixtures/fake_pi_rpc.py").read_text()
+    script = script.replace("thinking = ", r'''private_dir = Path(os.environ['PI_CODING_AGENT_DIR'])
+provider_config = json.loads((private_dir / 'models.json').read_text())['providers'][provider]
+assert provider_config == {'baseUrl': 'http://127.0.0.1:1/v1', 'api': 'openai-responses',
+    'apiKey': '$GOODTEAM_PI_PROVIDER_API_KEY', 'models': [{'id': 'test-model'}]}
+assert model == 'test-model' and '--no-extensions' in args
+print(os.environ['GOODTEAM_PI_PROVIDER_API_KEY'], file=sys.stderr)
+thinking = ''', 1)
+    script = script.replace("    global streaming\n",
+        "    global streaming\n    assert 'ORIGINAL ROLE METHOD' in message and 'optional body' not in message\n", 1)
+    pi.write_text(script)
+    pi.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_root) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("GOODTEAM_PI_PATH", str(pi))
+    monkeypatch.setenv("GOODTEAM_PI_SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setattr("goodteam_os.workers.default_embedder", lambda: None)
+
+    def witness(channel):
+        policy = channel.startup_policy
+        assert channel.call({"operation": "tool_policy_witness", "version": policy.version, "nonce": policy.nonce,
+                             "active": list(policy.tools), "available": list(policy.tools)})["status"] == "policy_witness_received"
+        assert channel.call({"skill_id": items[1]["skill_id"], "relative": "references/guide.txt",
+                             "call_id": "optional-example"})["text"] == "optional reference"
+        assert channel.call({"skill_id": items[2]["skill_id"], "relative": "SKILL.md",
+                             "call_id": "disabled-example"})["status"] == "resource_unavailable"
+        return {}
+
+    monkeypatch.setattr(PiResourceChannel, "start", witness)
+    tracks = [{"role": "qa", "adapter": agent, "execution_policy": "read_only", "task": "Read the baseline.",
+               "track_id": f"qa-{agent}", "project_task_id": f"qa-{agent}"} for agent in ("codex", "pi")]
+    report = dispatch_tracks(project_root=source, logical_task_id="qa-cross-agent", require_isolation=True, tracks=tracks)
+    assert report["all_ok"], [(row["adapter"], row["summary"]) for row in report["jobs"]]
+    workers = WorkerJobStore(source)
+    for row in report["jobs"]:
+        root = workers.root / row["job_id"]
+        job = json.loads((root / "job.json").read_text())
+        assert job["provider_connection"] == reference
+        assert job["status"] == "queued" and row["status"] == "completed"
+        assert row["invocation_evidence"]["provider_connection"]["id"] == connection["id"]
+        assert {item["version_id"] for item in row["method_items"]} == {item["version_id"] for item in items[:2]}
+        assert row["method_input_status"] in {"transport_attempted", "prompt_acknowledged"}
+        if row["adapter"] == "codex":
+            assert not Path((root / "stdout.txt").read_text().strip()).exists()
+        for name in ("job.json", "status.json", "stdout.txt", "stderr.txt", "result.md"):
+            assert "fixture-shared-qa-key" not in (root / name).read_text()
+
+    monkeypatch.setenv("GOODTEAM_438_FAIL_QA", "1")
+    failed = dispatch_tracks(project_root=source, logical_task_id="qa-failed", require_isolation=True, tracks=tracks[:1])
+    failed_job = failed["jobs"][0]
+    assert failed_job["status"] == "failed"
+    old = json.loads((workers.root / failed_job["job_id"] / "job.json").read_text())
+    monkeypatch.delenv("GOODTEAM_438_FAIL_QA")
+    activate(provider_store, save(provider_store, name="New default", api_key="new-default")["id"])
+    current = team.read()
+    team.execute([{"kind": "set_role_skills", "role": "qa", "mode": "custom", "bindings": [],
+                   "expected_binding_revision": current["skill_bindings"]["role:qa"]["binding_revision"]}],
+                 actor="user", surface="team_ui", expected_revision=current["revision"], command_key="empty-qa")
+    receipt = dispatch_artifact_root(source, failed["run_id"]) / "report.json"
+    retry = dispatch_tracks(project_root=source, logical_task_id="qa-retry", require_isolation=True,
+        tracks=[{**tracks[0], "original_failed_job_id": old["id"], "retry_of_idempotency_key": old["idempotency_key"],
+                 "retry_attempt": 1, "retry_method_mode": old["method_loading_mode"], "provider_connection": reference}],
+        recovery_source={"run_id": failed["run_id"], "report_digest": sha256(receipt.read_bytes()).hexdigest(),
+                         "retry_task_ids": ["qa-codex"]})
+    assert retry["all_ok"], [(row["adapter"], row["summary"]) for row in retry["jobs"]]
+    assert retry["jobs"][0]["task_skill_context"] == failed_job["task_skill_context"]
+    assert retry["jobs"][0]["invocation_evidence"]["provider_connection"]["id"] == connection["id"]

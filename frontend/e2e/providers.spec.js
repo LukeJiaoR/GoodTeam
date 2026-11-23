@@ -24,7 +24,11 @@ test('coding and memory models persist independently in PG and reuse saved crede
     const card = page.getByRole('article', { name: 'Browser fixture' });
     await card.getByRole('button', { name: 'Use provider' }).click();
     await expect(card.getByText('Active', { exact: true })).toBeVisible();
+    const providerId = (await (await request.get('/api/providers')).json()).active.codex;
+    await page.getByLabel('Pi connection').selectOption(providerId);
+    await expect.poll(async () => (await (await request.get('/api/providers')).json()).active.pi).toBe(providerId);
     await page.reload();
+    await expect(page.getByLabel('Pi connection')).toHaveValue(providerId);
     await expect(card.getByText('Active', { exact: true })).toBeVisible();
     await card.getByRole('button', { name: 'Edit provider' }).click();
     await expect(page.locator('input[type="password"]')).toHaveValue('');

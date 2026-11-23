@@ -38,7 +38,7 @@ TaskNavigation.test.jsx: 任务导航检查。
 TaskSearchConfiguration.jsx: 任务搜索配置与授权入口。
 TaskSearchConfiguration.test.jsx: 任务搜索配置检查。
 TeamDecisionPreview.jsx: 待确认团队变更预览。
-TeamWorkspace.jsx: 排列项目会话、Worker 状态与 Goal 记录。
+TeamWorkspace.jsx: 排列项目会话、Worker 状态与 Goal 记录。展开行显示原作业的 Provider 和 Skill 凭据。
 WorkWorkspaceShell.jsx: 工作台路由与外层布局。
 WorkWorkspaceShell.test.jsx: 工作台外层布局检查。
 assistantControls.css: 助手操作与请求恢复样式。
