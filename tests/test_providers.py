@@ -136,7 +136,8 @@ if '--version' in sys.argv:
     raise SystemExit(0)
 prompt = sys.stdin.read()
 key = os.environ['GOODTEAM_CODEX_PROVIDER_API_KEY']
-assert key == 'fixture-secret' and key not in prompt and key not in str(sys.argv)
+assert key == os.environ.get('GOODTEAM_TEST_EXPECTED_KEY', 'fixture-secret')
+assert key not in prompt and key not in str(sys.argv)
 assert '--json' in sys.argv
 config = {}
 for i, item in enumerate(sys.argv):
@@ -194,10 +195,12 @@ if count == 1:
                       "cached_input_tokens": 80, "output_tokens": 10, "total_tokens": 210}
     assert usage_summary()["totals"] == totals
     queued = new_job()
-    save(store, id=first["id"], api_key="rotated")
-    with pytest.raises(ProviderError, match="edited or removed"):
-        workers.run_job(queued["id"])
-    assert usage_summary()["totals"] == totals
+    save(store, id=first["id"], name="First", api_key="rotated")
+    monkeypatch.setenv("GOODTEAM_TEST_EXPECTED_KEY", "rotated")
+    status = workers.run_job(queued["id"])
+    assert status["status"] == "completed"
+    assert status["provider_connection"]["revision"] == queued["provider_connection"]["revision"] + 1
+    assert usage_summary()["totals"]["invocations"] == totals["invocations"] + 1
 
 
 def test_provider_bound_pg_project_can_pick_execute_learn_and_pick_again(provider_store, tmp_path, monkeypatch):
@@ -222,6 +225,8 @@ def test_provider_bound_pg_project_can_pick_execute_learn_and_pick_again(provide
 
 def test_readonly_qa_dispatch_uses_one_provider_and_binding_across_codex_and_pi(provider_store, tmp_path, monkeypatch):
     from hashlib import sha256
+    from threading import Lock
+    from goodteam_os import dispatch
     from goodteam_os.dispatch import dispatch_tracks
     from goodteam_os.dispatch_workspace import dispatch_artifact_root
     from goodteam_os.service import service_state_dir
@@ -266,7 +271,7 @@ if '--version' in sys.argv:
 assert sys.argv[sys.argv.index('--sandbox') + 1] == 'read-only'
 assert '--ignore-user-config' in sys.argv and '--ignore-rules' in sys.argv
 assert 'wire_api = "responses"' in ' '.join(sys.argv)
-assert os.environ['GOODTEAM_CODEX_PROVIDER_API_KEY'] == 'fixture-shared-qa-key'
+assert os.environ['GOODTEAM_CODEX_PROVIDER_API_KEY'] == 'updated-qa-key'
 payload = json.loads(sys.stdin.read().split('\n\n', 1)[0])
 assert 'ORIGINAL ROLE METHOD' in payload['required_methods'][0]['text']
 catalog = {item['name']: Path(item['resource_base']) for item in payload['method_catalog']}
@@ -287,6 +292,7 @@ provider_config = json.loads((private_dir / 'models.json').read_text())['provide
 assert provider_config == {'baseUrl': 'http://127.0.0.1:1/v1', 'api': 'openai-responses',
     'apiKey': '$GOODTEAM_PI_PROVIDER_API_KEY', 'models': [{'id': 'test-model'}]}
 assert model == 'test-model' and '--no-extensions' in args
+assert os.environ['GOODTEAM_PI_PROVIDER_API_KEY'] == 'updated-qa-key'
 print(os.environ['GOODTEAM_PI_PROVIDER_API_KEY'], file=sys.stderr)
 thinking = ''', 1)
     script = script.replace("    global streaming\n",
@@ -311,6 +317,18 @@ thinking = ''', 1)
     monkeypatch.setattr(PiResourceChannel, "start", witness)
     tracks = [{"role": "qa", "adapter": agent, "execution_policy": "read_only", "task": "Read the baseline.",
                "track_id": f"qa-{agent}", "project_task_id": f"qa-{agent}"} for agent in ("codex", "pi")]
+    run_job = dispatch._run_dispatched_job
+    pending_edit = Lock()
+    updated = None
+
+    def edit_before_start(project_root, job, verify_commands, **kwargs):
+        nonlocal updated
+        with pending_edit:
+            if updated is None:
+                updated = save(provider_store, id=connection["id"], api_key="updated-qa-key")
+        return run_job(project_root, job, verify_commands, **kwargs)
+
+    monkeypatch.setattr(dispatch, "_run_dispatched_job", edit_before_start)
     report = dispatch_tracks(project_root=source, logical_task_id="qa-cross-agent", require_isolation=True, tracks=tracks)
     assert report["all_ok"], [(row["adapter"], row["summary"]) for row in report["jobs"]]
     workers = WorkerJobStore(source)
@@ -319,13 +337,15 @@ thinking = ''', 1)
         job = json.loads((root / "job.json").read_text())
         assert job["provider_connection"] == reference
         assert job["status"] == "queued" and row["status"] == "completed"
-        assert row["invocation_evidence"]["provider_connection"]["id"] == connection["id"]
+        used = row["invocation_evidence"]["provider_connection"]
+        assert (used["id"], used["revision"]) == (connection["id"], updated["revision"])
         assert {item["version_id"] for item in row["method_items"]} == {item["version_id"] for item in items[:2]}
         assert row["method_input_status"] in {"transport_attempted", "prompt_acknowledged"}
         if row["adapter"] == "codex":
             assert not Path((root / "stdout.txt").read_text().strip()).exists()
         for name in ("job.json", "status.json", "stdout.txt", "stderr.txt", "result.md"):
-            assert "fixture-shared-qa-key" not in (root / name).read_text()
+            captured = (root / name).read_text()
+            assert "fixture-shared-qa-key" not in captured and "updated-qa-key" not in captured
 
     monkeypatch.setenv("GOODTEAM_438_FAIL_QA", "1")
     failed = dispatch_tracks(project_root=source, logical_task_id="qa-failed", require_isolation=True, tracks=tracks[:1])
@@ -334,14 +354,21 @@ thinking = ''', 1)
     old = json.loads((workers.root / failed_job["job_id"] / "job.json").read_text())
     monkeypatch.delenv("GOODTEAM_438_FAIL_QA")
     activate(provider_store, save(provider_store, name="New default", api_key="new-default")["id"])
+    package = tmp_path / "method"
+    skill = package / "SKILL.md"
+    skill.write_text(skill.read_text().replace("ORIGINAL ROLE METHOD", "UPDATED ROLE METHOD"))
+    replacement = library.install(library.preview_local(str(package), command_key="edit-qa-method")["proposal_id"])["installed"]
+    assert replacement["version_id"] != items[0]["version_id"]
     current = team.read()
-    team.execute([{"kind": "set_role_skills", "role": "qa", "mode": "custom", "bindings": [],
+    team.execute([{"kind": "set_role_skills", "role": "qa", "mode": "custom",
+                   "bindings": [{**items[0], "skill_id": replacement["skill_id"], "version_id": replacement["version_id"]}],
                    "expected_binding_revision": current["skill_bindings"]["role:qa"]["binding_revision"]}],
                  actor="user", surface="team_ui", expected_revision=current["revision"], command_key="empty-qa")
     receipt = dispatch_artifact_root(source, failed["run_id"]) / "report.json"
     retry = dispatch_tracks(project_root=source, logical_task_id="qa-retry", require_isolation=True,
         tracks=[{**tracks[0], "original_failed_job_id": old["id"], "retry_of_idempotency_key": old["idempotency_key"],
-                 "retry_attempt": 1, "retry_method_mode": old["method_loading_mode"], "provider_connection": reference}],
+                 "retry_attempt": 1, "retry_method_mode": old["method_loading_mode"],
+                 "provider_connection": old["provider_connection"]}],
         recovery_source={"run_id": failed["run_id"], "report_digest": sha256(receipt.read_bytes()).hexdigest(),
                          "retry_task_ids": ["qa-codex"]})
     assert retry["all_ok"], [(row["adapter"], row["summary"]) for row in retry["jobs"]]

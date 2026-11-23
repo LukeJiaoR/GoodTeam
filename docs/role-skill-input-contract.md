@@ -6,8 +6,9 @@ A new isolated `read_only` QA track uses the Role binding with Codex or Pi.
 The default QA binding loads `qa-browser-evidence`. Browser cases require
 screenshots of the observed result, linked from the report. A case awaiting
 its screenshot remains unverified. Custom bindings select their own packages. The immutable Worker request holds the Provider reference and the Role
-snapshot. Retries of ordinary method jobs use the original task lock and
-Provider reference.
+snapshot. Edits to Role bindings or Skill versions affect new task locks.
+Queued jobs and retries use the original Skill versions. Each launch reads
+the current configuration of the captured Provider ID.
 
 Codex receives complete required instructions over stdin. GoodTeam places only
 the locked packages in a private temporary directory and gives each catalog
@@ -16,7 +17,7 @@ their original relative paths. The directory is removed when the process ends.
 
 Pi receives the required instructions over RPC. Its existing read-only tool
 policy makes the context-bound resource broker available for textual resources.
-The Worker detail shows the adapter, saved Provider revision, Skill version
+The Worker detail shows the adapter, Provider revision used at launch, Skill version
 references and preparation or prompt-transport stage. Resource use and task
 acceptance require their own evidence.
 

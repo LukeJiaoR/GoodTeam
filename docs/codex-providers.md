@@ -8,9 +8,9 @@ OpenAI Responses configuration. **Use provider** selects the Codex default.
 defaults can point to the same Provider ID.
 
 Each job captures the selected Provider ID and revision. A project batch retry
-preserves that reference. An edited or deleted Provider stops the next launch
-with a revision error. Explicit job model choices take precedence over the
-saved default.
+preserves that reference. An ordinary Worker reads the current settings for
+that ID at launch and records the revision used. Explicit job model choices
+take precedence over the saved default.
 
 Pi requires an API key and a selected model for a shared connection. GoodTeam
 passes a job-private `models.json` and an environment reference to the key.
@@ -39,9 +39,9 @@ page uses the active provider, with no invented reasoning capabilities when
 `/models` supplies only model IDs.
 
 Each new ordinary Codex job captures the provider ID and revision. Switching the
-active provider affects new jobs. A queued job keeps its captured connection;
-editing/removing that connection causes dispatch to reject it before invocation.
-An already running subprocess keeps its captured environment. Protected task
+active provider affects new jobs. A queued job uses updates to the captured
+connection, including key rotation. Deleting that connection prevents launch.
+An already running subprocess keeps its launch environment. Protected task
 receipts bind the optional provider reference without changing historical
 receipts that predate this field. Manager runtime verification also includes the
 connection identity.
@@ -49,9 +49,9 @@ connection identity.
 Explicit legacy Manager and Reviewer retries replay the original provider ID and
 revision, even after the active provider changes. An explicit local connection
 (`null`) or a historical job without this field stays on the local Codex path;
-retry does not acquire a newly activated GoodTeam provider. Edited or removed
-connections still fail before invocation. This preserves the connection boundary
-while an existing project recovers and continues its next iteration.
+retry does not acquire a newly activated GoodTeam provider. Ordinary retries
+read current settings for the original Provider ID. Deleted connections fail
+before invocation.
 
 Explicitly admitted native Reviewer/Correction and protected Skill runtimes keep
 their existing independently authorized connections. Settings do not replace their

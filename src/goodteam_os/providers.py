@@ -1,5 +1,5 @@
 """[INPUT]: PostgreSQL 文档存储与 OpenAI SDK。
-[OUTPUT]: Provider 引用、兼容校验与原生连接配置。
+[OUTPUT]: Provider 引用、精确版本与 Worker 启动解析、原生连接配置。
 [POS]: Codex 和 Pi 共用连接。Worker 只持久化 ID 与 revision。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
@@ -201,14 +201,26 @@ class ProviderStore:
         current = self.active(agent)
         return {"id": current["id"], "revision": current["revision"]} if current else None
 
+    def resolve_worker(self, reference, *, agent="codex"):
+        """Use the current configuration of the connection selected for this Worker."""
+        return self._resolve(reference, agent=agent, require_revision=False)
+
     def resolve(self, reference, *, agent="codex"):
+        return self._resolve(reference, agent=agent, require_revision=True)
+
+    def _resolve(self, reference, *, agent, require_revision):
         if reference is None:
             return None  # Historical/local jobs never acquire a newly activated connection.
         data = self.read()
         for item in data["providers"]:
-            if reference == {"id": item["id"], "revision": item["revision"]}:
+            if (isinstance(reference, dict) and set(reference) == {"id", "revision"}
+                    and type(reference["revision"]) is int and reference["revision"] > 0
+                    and reference["id"] == item["id"]
+                    and (not require_revision or reference["revision"] == item["revision"])):
                 check_agent_connection(agent, item)
                 return item
+        if not require_revision:
+            raise ProviderError("provider_not_found", "This job's provider is unavailable. Choose another provider for a new task.", 409)
         raise ProviderError("provider_connection_changed", "This job's provider was edited or removed. Create a new task.", 409)
 
     def fetch_models(self, request):

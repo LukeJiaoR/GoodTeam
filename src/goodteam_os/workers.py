@@ -1766,7 +1766,7 @@ class WorkerJobStore:
                            else self._worker_runtime_cwd(job))
         from goodteam_os.session_runtimes import pi_connection_config
 
-        connection = ProviderStore().resolve(job.get("provider_connection"), agent="pi")
+        connection = ProviderStore().resolve_worker(job.get("provider_connection"), agent="pi")
         config = pi_connection_config(pi_runtime_config(self.project_root, job), job, connection)
         preflight = pi_backend_doctor(self.project_root, job)
         if preflight.get("command_path"):
@@ -1789,7 +1789,7 @@ class WorkerJobStore:
                 runtime_context,
                 pythonpath_workspace_src=(runtime_context.runtime_cwd / "src").is_dir(),
             ),
-            **({"provider_connection": job["provider_connection"]} if connection else {}),
+            **({"provider_connection": {key: connection[key] for key in ("id", "revision")}} if connection else {}),
             "runtime_adapter": "pi",
             "runtime_kind": "persistent_session",
             "runtime_binary": str(preflight.get("command_path") or config.binary),
@@ -1871,7 +1871,7 @@ class WorkerJobStore:
                                "pid": runtime.rpc.pid if runtime.rpc else None, "heartbeat_at": self._now()})
                     startup_heartbeat = time.monotonic()
                 self._process_pi_controls(job_root, job, runtime)
-            state = runtime.start_or_resume(tick=startup_tick)
+            state = runtime.start_or_resume(tick=startup_tick, connection=connection)
             session_extra = {
                 **base_extra,
                 "started_at": started_at,
@@ -2635,7 +2635,11 @@ class WorkerJobStore:
             raise ValueError("Role method input requires its original read-only Codex runtime.")
         task_input = self._admit_input_dispatch(job_root, job)
         binary = which(spec.which_name) or spec.default_path()
-        connection = ProviderStore().resolve(job.get("provider_connection")) if spec.which_name == "codex" else None
+        connection = None
+        if spec.which_name == "codex":
+            providers = ProviderStore()
+            resolve = providers.resolve_worker if task_input is None else providers.resolve
+            connection = resolve(job.get("provider_connection"))
         raw = str(job.get("model", ""))
         bare = raw.split(":", 1)[1].strip() if ":" in raw else raw.strip()
         model = bare or (connection or {}).get("model") or spec.model_default

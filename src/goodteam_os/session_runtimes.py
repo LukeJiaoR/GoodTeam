@@ -1,4 +1,4 @@
-"""[INPUT]: Worker 作业、共享 Provider 引用与 Pi RPC。
+"""[INPUT]: Worker 作业、启动时解析的 Provider 配置与 Pi RPC。
 [OUTPUT]: Pi 会话配置、启动、接续和控制。
 [POS]: 在 Worker 会话内生成原生 Provider 配置。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
@@ -333,7 +333,7 @@ class PiSessionRuntime:
         self._entries_pending = threading.Event()
         self._provider_directory = None
 
-    def start_or_resume(self, *, tick: Callable[[], None] | None = None) -> dict[str, Any]:
+    def start_or_resume(self, *, tick: Callable[[], None] | None = None, connection=None) -> dict[str, Any]:
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
         # This is the ordinary Pi transport, not an admitted Skill envelope.
@@ -372,7 +372,8 @@ class PiSessionRuntime:
         reference = self.job.get("provider_connection")
         if source is not None and source.get("provider_connection") != reference:
             raise PiSessionMismatch("Pi session belongs to a different Provider reference")
-        connection = ProviderStore().resolve(reference, agent="pi") if reference else None
+        if connection is None and reference:
+            connection = ProviderStore().resolve_worker(reference, agent="pi")
         self.config = pi_connection_config(self.config, self.job, connection)
         command = [self.config.binary, "--mode", "rpc", "--name", f"goodteam-{self.job['id']}", "--session-dir", str(self.config.session_dir)]
         if self.config.provider:
