@@ -1,4 +1,6 @@
-# Backlog — no actionable projects remain
+# Historical backlog
+
+See [current status and open Issues](status.md) for the active scope.
 
 Durable list of feature ideas / follow-ups that aren't on the active plan yet.
 Promote an item to a PRD under `docs/plans/` when it's picked up. Newest first.

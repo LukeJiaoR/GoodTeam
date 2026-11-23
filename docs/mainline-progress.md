@@ -1,4 +1,6 @@
-# Mainline Progress
+# Historical mainline progress
+
+See [current status and open Issues](status.md) for the active scope.
 
 This file is the execution ledger for the remaining GoodTeam mainlines. It mirrors
 `docs/current-progress.md`: each completed increment gets a dated entry, commit

@@ -22,7 +22,7 @@ architecture.md: 项目、任务队列、Worker 和候选证据的职责。
 automatic-candidate-review.md: Automatic exact-candidate review。
 backlog-human-board.md: Backlog judgment through the existing Human board。
 backlog-wait-receipt.md: Recover a committed waiting decision after acknowledgement loss。
-backlog.md: Backlog — no actionable projects remain。
+backlog.md: 历史待办与当时的决策。
 batch-result-context.md: Known terminal mixed-batch feedback。
 beautiful-ui-product-redesign.md: 产品界面改版的范围、实现与历史验证。
 blocked-project-judgment.md: Project judgment when no authorized task is ready。
