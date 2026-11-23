@@ -247,7 +247,10 @@ def test_competing_manual_recommendation_cannot_replace_authorized_queue_handoff
     request = {"task_ids": [allowed["id"]], "max_batches": 1, "confirmed": True, "billing_acknowledged": True}
     selection = {"selection": {"selected_task_ids": [allowed["id"]], "compared_task_ids": [allowed["id"]],
                   "rationale": "Only the approved existing project task can execute."}}
-    for command in ("stop-during-planning", "configuration-during-planning"):
+    original_config = config.read_text()
+    other_root = tmp_path / "other-project"
+    other_root.mkdir()
+    for command in ("stop-during-planning", "project-source-during-planning"):
         ledger.update_task(allowed["id"], priority="low")  # a fresh source revision, with the same task scope
         request["expected_backlog_version"] = project_iteration_backlog(source, "DEMO")["version"]
         authorization = continuation.configure_project_continuation(workspace=tmp_path, project_key="DEMO", root=source,
@@ -257,7 +260,7 @@ def test_competing_manual_recommendation_cannot_replace_authorized_queue_handoff
             if command == "stop-during-planning":
                 continuation.stop_project_continuation(workspace=tmp_path, project_key="DEMO", continuation_id=authorization["id"])
             else:
-                config.write_text(config.read_text() + "delivery_mode: custom\n")
+                config.write_text(original_config.replace(str(source), str(other_root)))
             return selection
 
         result = continuation.tick_project_continuation(workspace=tmp_path, project_key="DEMO", root=source,
@@ -265,6 +268,7 @@ def test_competing_manual_recommendation_cannot_replace_authorized_queue_handoff
             batch_runner=lambda **_: pytest.fail("Revoked or changed authority must never dispatch"))
         assert result["status"] == ("stopped" if command == "stop-during-planning" else "blocked")
         assert all(task["status"] == "todo" for task in ledger.list_tasks())
+    config.write_text(original_config)
     replacement = continuation.configure_project_continuation(workspace=tmp_path, project_key="DEMO", root=source,
         project_config=config, request={**request, "idempotency_key": "after-unclaimed-configuration-block"})
     assert replacement["status"] == "active" and replacement["pending_batch"] is None

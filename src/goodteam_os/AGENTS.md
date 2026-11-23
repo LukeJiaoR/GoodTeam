@@ -36,9 +36,9 @@ failure_patterns.py: 失败模式归一化、匹配与路由记录。
 frontend_assets.py: 本地 Web 前端构建目录定位。
 full_smoke.py: 隔离工作区的完整 smoke 命令入口。
 goal_assessment.py: 评估 Goal 所绑定的批次和候选证据。
-goal_continuation.py: 推进已绑定批次并评估交付。
+goal_continuation.py: 推进已绑定批次、评估交付并提示自动续跑的环境变更。
 goal_review_evidence.py: 从批次绑定读取 Worker 结果和独立 Reviewer 证据。
-goals.py: Transactional authority for explicitly confirmed, bounded delivery goals.
+goals.py: 保存已确认的 Goal、工作证据与可保留原任务的模型上下文暂停。
 http_transport.py: Finite resource boundaries for GoodTeam's local dashboard HTTP transport.
 manager_app_server.py: Manager 运行时准入、原生会话、记忆快照与执行恢复。
 manager_assignment.py: Manager callable assignment adapter; existing task cards and queue own work.
@@ -78,7 +78,7 @@ project_import.py: 项目导入、工作台入口、模式确认与 readiness �
 project_investigation_feedback.py: Observe settled investigation output without accepting it as delivery.
 project_iteration.py: 从任务账投影候选。校验执行选择，保留 Manager 的比较与理由。
 project_iteration_continuation.py: 复用队列续跑，核对接受凭据和候选，登记 Git 交付。
-project_iteration_execution.py: 通过同一队列确认原建议或待办批次，并调用隔离 Worker 池。
+project_iteration_execution.py: 通过同一队列核对项目身份和原批准，调用隔离 Worker 池。
 project_iteration_planner.py: 用自然语言把候选与授权上下文交给 Manager 判断，保存只读建议。
 project_iteration_quality.py: 统一读取 Manager 接受凭据与专项质量凭据。
 project_candidate_acceptance.py: 将 Manager 决定和观察来源绑定到候选及修正链。

@@ -9,7 +9,7 @@ from goodteam_os.goals import GoalStore
 from goodteam_os.team_control_plane import TeamControlPlaneStore, ensure_team_state
 
 
-def test_display_edits_preserve_grant_but_execution_changes_do_not(tmp_path, monkeypatch):
+def test_display_edits_preserve_snapshot_and_runtime_edits_are_observable(tmp_path, monkeypatch):
     from goodteam_os import web
     from goodteam_os.providers import ProviderStore
 
@@ -27,7 +27,7 @@ def test_display_edits_preserve_grant_but_execution_changes_do_not(tmp_path, mon
     monkeypatch.setattr(web, "resolve_runtime_model_config", lambda _: models)
     connection = dict(id="fixture", agent="codex", protocol="responses", name="Display", revision=1,
                       base_url="https://example.invalid/v1", model="first", api_key="test-only-secret")
-    monkeypatch.setattr(ProviderStore, "active", lambda _: deepcopy(connection))
+    monkeypatch.setattr(ProviderStore, "active", lambda _, agent="codex": deepcopy(connection) if agent == "codex" else None)
     team_store = TeamControlPlaneStore(tmp_path, "DEMO")
     team = team_store.read()
     def snapshot():

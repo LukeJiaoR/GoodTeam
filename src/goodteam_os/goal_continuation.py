@@ -1,5 +1,5 @@
 """[INPUT]: Goal 授权、任务账、批次交付证据。
-[OUTPUT]: 推进已绑定批次并评估交付。
+[OUTPUT]: 项目身份核对、环境变更提示、批次推进与交付评估。
 [POS]: Goal 服务同时扫描 Manager 外部输入。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
@@ -61,12 +61,21 @@ def goal_guard(workspace, project_key, *, goal_id=None, blocking=True):
         lock.release()
 
 
-def authority_snapshot(workspace, project_key, config, root):
-    """Bind execution semantics, not display labels or serialization/audit churn.
+def continuation_project_identity(config, root, *, target=None):
+    from goodteam_os.models import _parse_simple_yaml
+    from goodteam_os.project_runtime import resolve_project_runtime_root
 
-    Unknown project settings remain bound. Old byte-based snapshots are not
-    migrated: their scope cannot be reconstructed safely from their hashes.
-    """
+    config = Path(config)
+    if target is None:
+        target = _parse_simple_yaml(config)
+    repos = target.get("repos") or {}
+    configured = resolve_project_runtime_root(repos) if repos else Path(root)
+    return {"project_root": str(configured.resolve()) if configured is not None else "",
+            "project_config": str(config.resolve())}
+
+
+def authority_snapshot(workspace, project_key, config, root):
+    """Record project identity and the execution environment for comparison and notices."""
     from goodteam_os.models import _parse_simple_yaml, load_model_profile
     from goodteam_os.providers import ProviderStore
     from goodteam_os.team_control_plane import TeamControlPlaneStore
@@ -107,15 +116,46 @@ def authority_snapshot(workspace, project_key, config, root):
             "skill_bindings": team["skill_bindings"],
         }
     connection = ProviderStore().active()
-    # The actual endpoint/account/model must stay bound even when catalog text
-    # is unchanged. Only a digest is persisted, never provider credentials.
+    # Only a digest is persisted, so a Key rotation can be observed without exposing it.
     provider = ({key: value for key, value in connection.items() if key not in {"name", "revision"}}
                 if connection else None)
+    pi_connection = ProviderStore().active("pi")
+    pi_provider = ({key: value for key, value in pi_connection.items() if key not in {"name", "revision"}}
+                   if pi_connection else None)
     return {"schema_version": "execution_authority.v2",
-            "project_root": str(Path(root).resolve()), "project_config": str(config.resolve()),
+            **({"pi_provider_sha256": digest(pi_provider)} if pi_provider else {}),
+            **continuation_project_identity(config, root, target=target),
             "config_sha256": digest(target), "team_sha256": digest(team),
             "model_catalogs": {"batch": catalog(batch_catalog), "manager": catalog(manager_catalog)},
             "provider_sha256": digest(provider), "billing_acknowledged": True}
+
+
+def same_continuation_project(expected, config, root):
+    """Keep the authorized project identity independent of runtime settings."""
+    if not isinstance(expected, dict):
+        return False
+    current = continuation_project_identity(config, root)
+    return (current["project_root"] == str(Path(root).resolve())
+            and all(expected.get(key) == value for key, value in current.items()))
+
+
+def _continuation_environment_event(store, event_id, event, content):
+    if not any(item.get("message_id") == event_id for item in store.read()["timeline"]):
+        store.append_event(event_id, event, actor="system", content=content)
+
+
+def notify_continuation_environment(store, identifier, expected, current):
+    if expected != current:
+        fingerprint = hashlib.sha256(json.dumps(current, sort_keys=True).encode()).hexdigest()
+        _continuation_environment_event(store, f"continuation-environment:{identifier}:{fingerprint}",
+            "project_continuation_environment_changed",
+            "The execution environment changed. Automatic continuation will use the current settings.")
+
+
+def notify_continuation_environment_unavailable(store, identifier):
+    _continuation_environment_event(store, f"continuation-environment-unavailable:{identifier}",
+        "project_continuation_environment_unavailable",
+        "GoodTeam could not read the current execution environment. Check the project and runtime settings.")
 
 
 def stop_goal_action(workspace, project_key, request):
@@ -183,8 +223,8 @@ def handle_goal_action(workspace, project_key, root, request):
                 raise ValueError("Confirm the exact assessment retry and its potential provider charge.")
             def validate_retry(goal, work, failure):
                 config = _project_config_for_key(workspace, project_key)
-                if goal.get("authority_snapshot") != authority_snapshot(workspace, project_key, config, root):
-                    raise ValueError("Goal configuration or model catalog changed; retry is blocked.")
+                if not same_continuation_project(goal.get("authority_snapshot"), config, root):
+                    raise ValueError("The original project source is unavailable for assessment retry.")
                 execution = work.get("execution")
                 if not execution:
                     raise ValueError("Only a delivered Goal batch can retry assessment.")
@@ -355,6 +395,7 @@ def _tick_task_goal(workspace, key, root, config, store, goal, tasks, assessor):
 def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking=True):
     """One serialized decision/execution step; no polling reads call this."""
     from goodteam_os.web import _project_target_and_root, _project_config_for_key
+    from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 
     workspace = Path(workspace)
     project_key = normalize_project_key(project_key)
@@ -365,23 +406,30 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking
         if work and not work.get("execution"):
             return goal_view(workspace, goal)
         try:
-            key, target, root = _project_target_and_root(workspace, project_key)
+            key, _target, root = _project_target_and_root(workspace, project_key)
             config = _project_config_for_key(workspace, key)
-            authority = authority_snapshot(workspace, key, config, root)
+            project_matches = same_continuation_project(goal.get("authority_snapshot"), config, root)
         except Exception:
-            # No target filesystem or Worker action is safe without resolving
-            # the original configuration. The workspace ledger remains usable.
+            # Keep the existing Goal available while its project configuration
+            # is unreadable. A later scan can pick up the repaired environment.
             if goal["status"] == "active":
-                return _block(store, goal, "Project configuration or authorization snapshot is unavailable. Automatic continuation stopped.")
+                notify_continuation_environment_unavailable(TaskAssistantSessionStore(workspace, project_key), goal_id)
+            return goal
+        if not project_matches:
+            if goal["status"] == "active":
+                return _block(store, goal, "The original project source changed. Inspect the project configuration.")
             return goal
         tasks = LocalTaskStore(root, key)
         store.sync_tasks(goal_id, tasks)
         if goal["status"] != "active":
             return goal_view(workspace, goal)
-        if goal.get("authority_snapshot") != authority:
-            goal = _block(store, goal, "Project, Team or runtime configuration changed since Goal confirmation. Reconfirm a new Goal.")
-            store.sync_tasks(goal_id, tasks)
-            return goal
+        session = TaskAssistantSessionStore(workspace, key)
+        try:
+            environment = authority_snapshot(workspace, key, config, root)
+        except (OSError, ValueError):
+            notify_continuation_environment_unavailable(session, goal_id)
+        else:
+            notify_continuation_environment(session, goal_id, goal["authority_snapshot"], environment)
         from goodteam_os.project_iteration_execution import ProjectBatchResourceBusy
         from goodteam_os.project_batch_lock import ProjectBatchBusyError
         from goodteam_os.state_documents import DocumentLockBusy
@@ -395,7 +443,11 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking
         except Exception as exc:
             goal = store.get_goal(goal_id)
             if goal["status"] == "active":
-                goal = _block(store, goal, f"Goal task continuation stopped: {exc}")
+                if getattr(exc, "code", "") == "context_window_exceeded":
+                    goal = store.pause_for_model_context(goal_id, reason=str(exc),
+                        expected_revision=goal["revision"], idempotency_key=f"context:{goal_id}:{goal['revision']}")
+                else:
+                    goal = _block(store, goal, f"Goal task continuation could not proceed: {exc}")
         store.sync_tasks(goal_id, tasks)
         return goal_view(workspace, goal)
 

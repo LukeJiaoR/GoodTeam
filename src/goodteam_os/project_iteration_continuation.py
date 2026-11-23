@@ -19,7 +19,10 @@ from pathlib import Path
 import re
 
 from goodteam_os.assistant_queue import queue_manager_iteration_choice
-from goodteam_os.goal_continuation import authority_snapshot, goal_guard
+from goodteam_os.goal_continuation import (
+    authority_snapshot, goal_guard, notify_continuation_environment,
+    notify_continuation_environment_unavailable, same_continuation_project,
+)
 from goodteam_os.manager_execution import ManagerExecutionError, ManagerResourceBusy
 from goodteam_os.project_iteration import (
     _internal, normalize_write_domains, project_iteration_backlog, rank_project_backlog, write_domains_within_scope,
@@ -245,8 +248,14 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
         if value.get("status") != "active":
             return value
         try:
-            if value["authority"] != authority_snapshot(workspace, project_key, project_config, root):
-                raise ValueError("Project configuration, Team or model settings changed; authorization is stale.")
+            if not same_continuation_project(value["authority"], project_config, root):
+                raise ValueError("The original continuation project source changed.")
+            try:
+                environment = authority_snapshot(workspace, project_key, project_config, root)
+            except (OSError, ValueError):
+                notify_continuation_environment_unavailable(store, value["id"])
+            else:
+                notify_continuation_environment(store, value["id"], value["authority"], environment)
             tasks = LocalTaskStore(root, project_key).list_tasks()
             value = _refresh_project_backlog(store, value, tasks)
             if value.get("status") != "active":
@@ -291,7 +300,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                     return observed_value
                 from goodteam_os.project_observation_judgment import judge_running_observation
                 def authority_check():
-                    return observed_value["authority"] == authority_snapshot(workspace, project_key, project_config, root)
+                    return same_continuation_project(observed_value["authority"], project_config, root)
                 if observation_runner is None:
                     from goodteam_os.project_observation_runtime import judge_with_production_runtime
                     judged = judge_with_production_runtime(store=store, root=root, project_key=project_key,
@@ -401,8 +410,8 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                         nonlocal value
                         # The planner now owns the conversation lock. Recheck
                         # Stop even when replaying an already reserved attempt.
-                        if value["authority"] != authority_snapshot(workspace, project_key, project_config, root):
-                            raise ValueError("Project authorization changed before planning.")
+                        if not same_continuation_project(value["authority"], project_config, root):
+                            raise ValueError("The original project source changed before planning.")
                         def reserve(session):
                             current = session.get(_FIELD) or {}
                             if (current.get("id") != value["id"] or current.get("status") != "active"
@@ -426,7 +435,7 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                         current = store.read().get(_FIELD) or {}
                         if (current.get("id") != value["id"] or current.get("status") != "active"
                                 or current.get("authority") != value["authority"]
-                                or value["authority"] != authority_snapshot(workspace, project_key, project_config, root)):
+                                or not same_continuation_project(value["authority"], project_config, root)):
                             raise ManagerPlanningActivationChanged("Continuation stopped or authorization changed during planning.")
                     def settle_stale_planning(evidence):
                         # Retain the completed decision and settle its original
@@ -508,8 +517,8 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
             # This is the same path as a user-confirmed batch, not a new executor.
             if (store.read().get(_FIELD) or {}).get("status") != "active":
                 return store.read()[_FIELD]
-            if value["authority"] != authority_snapshot(workspace, project_key, project_config, root):
-                raise ValueError("Project configuration changed during planning; no Worker was authorized.")
+            if not same_continuation_project(value["authority"], project_config, root):
+                raise ValueError("The original project source changed during planning.")
             queued_by_id = {item["id"]: item for item in store.read().get("queued_task_proposals", [])}
             if (not set(pending["task_ids"]).issubset(value["task_ids"])
                     or [queued_by_id.get(identifier, {}).get("project_task_id") for identifier in pending["proposal_ids"]]
