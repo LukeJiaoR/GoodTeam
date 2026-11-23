@@ -6,7 +6,7 @@ Manager 与 Goal 共用任务队列和隔离 Worker 池。
 AGENTS.md: 本目录的成员与职责边界。
 execution/: 执行身份、PR 绑定、审批与 Reviewer 服务。证据清单和记忆归档共用回放规则，GitHub 状态共用 PR 编号校验。
 memory_core/: 角色记忆的纯投影与上下文规则。
-skills/: Skill 包、绑定和快照。普通 Role 方法给 Codex 提供固定文件，给 Pi 提供读取代理。
+skills/: Skill 包、绑定和快照。QA 默认方法要求浏览器用例附截图。Codex 读取固定文件，Pi 使用读取代理。
 __init__.py: GoodTeam Python 包入口。
 _repository_content_policy.py: 仓库内容的敏感路径拒绝与观察值脱敏。
 _trusted_system_executable.py: 校验系统可执行文件的身份与可信路径。

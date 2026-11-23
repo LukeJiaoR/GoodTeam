@@ -127,3 +127,38 @@ def test_explicit_default_capture_requires_team_and_keeps_custom_empty(tmp_path)
     service=ProjectTaskSkillService(workspace,'DEMO',worker_roots=(worker,))
     saved=service.locks.find_task(task=task,command_key='capture')
     assert captured and saved['lock']['start_input']['request']['default_items']=={}
+
+
+def test_readonly_qa_defaults_require_screenshot_evidence_for_codex_and_pi(tmp_path, monkeypatch):
+    from goodteam_os.dispatch import dispatch_tracks
+    from goodteam_os.project_registry import ProjectRegistry
+    from goodteam_os.team_control_plane import TeamControlPlaneStore
+    from test_dispatch_isolation import repository
+
+    root = repository(tmp_path / "source")
+    workspace = tmp_path / "workspace"
+    config = workspace / "projects/demo.local.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("project_key: DEMO\n")
+    ProjectRegistry().register_project(config, root=root, key="DEMO")
+    TeamControlPlaneStore(workspace, "DEMO").load_or_migrate(legacy_target={})
+    captured = []
+
+    class BeforeGit(Exception):
+        pass
+
+    def stop(_root, _run_id, job_ids, **_options):
+        captured.extend(job_ids)
+        raise BeforeGit
+
+    monkeypatch.setattr("goodteam_os.dispatch_workspace.prepare_dispatch_workspace", stop)
+    with pytest.raises(BeforeGit):
+        dispatch_tracks(project_root=root, logical_task_id="qa-default", require_isolation=True,
+            tracks=[dict(role="qa", adapter=adapter, execution_policy="read_only",
+                         track_id=adapter, project_task_id=f"qa-{adapter}", task="Verify a browser flow")
+                    for adapter in ("codex", "pi")])
+    assert len(captured) == 2
+    store = WorkerJobStore(root)
+    methods = [json.loads(PiMethodInput(store, job_id).prompt())["required_methods"] for job_id in captured]
+    assert methods[0] == methods[1]
+    assert "Capture a screenshot of each decisive UI state" in methods[0][0]["text"]

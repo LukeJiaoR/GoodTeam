@@ -76,8 +76,11 @@ def new_plan(scope, root, logical_id, tracks):
                 entries.append({'track_id': tid, 'mode': 'retry', 'defaults': False})
                 continue
             custom = team['skill_bindings'][subject_for_role(str(track['role']))]['mode'] == 'custom'
-            defaults = (ordinary(track) or readonly(track)) and track.get('role') in ROLE_PACKAGES
-            if custom and readonly_codex(track):
+            codex_qa = readonly_codex(track)
+            defaults = (ordinary(track) or readonly(track) or codex_qa) and track.get('role') in ROLE_PACKAGES
+            if track.get('role') == 'qa' and (codex_qa or readonly(track)) and not track.get('project_task_id'):
+                defaults = False
+            if codex_qa and (custom or defaults):
                 mode = 'readonly_codex'
             elif (custom or defaults) and (ordinary(track) or readonly(track)):
                 mode = 'readonly' if readonly(track) else 'ordinary'
@@ -109,7 +112,7 @@ def capture_plan(plan, *, scope, root, logical_id, tracks, confirmed_input, pare
                 or route['mode'] == 'ordinary' and not ordinary(track)
                 or route['mode'] == 'readonly' and (not readonly(track) or plan['schema_version'] == SCHEMA)
                 or route['mode'] == 'readonly_codex' and (not readonly_codex(track) or plan['schema_version'] != 'dispatch_track_methods.v3')
-                or route['defaults'] and route['mode'] not in {'ordinary', 'readonly'}):
+                or route['defaults'] and route['mode'] not in {'ordinary', 'readonly', 'readonly_codex'}):
             raise ValueError('Original per-track method route changed.')
         if route['mode'] == 'retry':
             old_id = track.get('original_failed_job_id')

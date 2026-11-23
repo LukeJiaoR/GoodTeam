@@ -2,8 +2,10 @@
 
 ## Ordinary QA dispatch
 
-A new isolated `read_only` QA track can use a custom Role binding with Codex
-or Pi. The immutable Worker request holds the Provider reference and the Role
+A new isolated `read_only` QA track uses the Role binding with Codex or Pi.
+The default QA binding loads `qa-browser-evidence`. Browser cases require
+screenshots of the observed result, linked from the report. A case awaiting
+its screenshot remains unverified. Custom bindings select their own packages. The immutable Worker request holds the Provider reference and the Role
 snapshot. Retries of ordinary method jobs use the original task lock and
 Provider reference.
 

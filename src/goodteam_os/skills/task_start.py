@@ -39,10 +39,11 @@ def capture_task_start(
         raise SkillError("invalid_revision", "Task confirmation requires a valid Team revision.")
     if not isinstance(confirmed_input, dict):
         raise SkillError("invalid_snapshot", "Task start requires its exact confirmed input.")
+    from .pi_methods import METHOD_MODES
     from .role_packages import ROLE_METHODS_VERSION as DEFAULT_ROLE_METHODS
     if (type(default_role_methods) is not bool
             or default_role_methods and (confirmed_input.get("default_role_methods") != DEFAULT_ROLE_METHODS
-                or confirmed_input.get("method_loading_mode") not in {"ordinary_pi_methods.v1", "manager_pi_methods.v1", "readonly_pi_methods.v1"})):
+                or confirmed_input.get("method_loading_mode") not in METHOD_MODES)):
         raise SkillError("task_scope_unknown", "Default methods require a new ordinary task confirmation.")
     if (confirmed_input.get("method_loading_mode") == "manager_pi_methods.v1"
             and (task.kind != "manager_message" or subjects != ("manager:orchestrator",))):
