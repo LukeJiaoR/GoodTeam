@@ -150,7 +150,7 @@ def dispatch_tracks(
         saved = read_bytes(artifact_root / "request.json")
         from goodteam_os.skills.role_packages import ROLE_METHODS_VERSION as DEFAULT_ROLE_METHODS, ROLE_PACKAGES
         capture_defaults = False
-        from goodteam_os.dispatch_methods import new_plan
+        from goodteam_os.dispatch_methods import new_plan, ordinary
         track_methods = (json.loads(saved).get("track_methods") if saved is not None else
                          new_plan(registered_scope, project_root, logical_id, tracks)
                          if not (artifact_root / "baseline.json").exists() else None)
@@ -160,9 +160,7 @@ def dispatch_tracks(
         if saved is not None:
             capture_defaults = json.loads(saved).get("default_role_methods") == DEFAULT_ROLE_METHODS
         elif (registered_scope is not None and not (artifact_root / "baseline.json").exists()
-                and all(track.get("adapter") in {"pi", "pi-rpc"}
-                    and track.get("execution_policy", "standard") == "standard"
-                    and track.get("role") in ROLE_PACKAGES for track in tracks)):
+                and all(ordinary(track) and track.get("role") in ROLE_PACKAGES for track in tracks)):
             # Existing pre-marker jobs are historical, not new default-method starts.
             history = WorkerJobStore(project_root)
             capture_defaults = not any(history.find_job_by_idempotency_key(
@@ -339,7 +337,7 @@ def _dispatch_tracks(
                 raise ValueError("Original task method mode is incompatible with these tracks.")
         from goodteam_os.skills.role_packages import ROLE_METHODS_VERSION as DEFAULT_ROLE_METHODS
         context = capture_task_start(
-            default_role_methods=default_role_methods,
+            default_role_methods=default_role_methods or isinstance(codex_review_admission, TrustedCodexReviewAdmission),
             workspace=workspace, project_key=key, worker_root=project_root,
             task=task_identity, command_key=command_key, subjects=subjects,
             confirmed_input={"tracks": tracks, "constraints": constraints, "verify_commands": verify_commands or {},

@@ -13,7 +13,7 @@ from goodteam_os.workers import WorkerJobStore
 from test_dispatch_isolation import repository
 
 
-@pytest.mark.parametrize("sibling_adapter,sibling_role", [("fake", "implementation"), ("pi", "architect")])
+@pytest.mark.parametrize("sibling_adapter,sibling_role", [("fake", "implementation"), ("pi", "code_review")])
 def test_mixed_batch_preserves_each_runtime_role_and_original_job_identity(tmp_path, monkeypatch, sibling_adapter, sibling_role):
     source = repository(tmp_path / 'source')
     workspace = tmp_path / 'workspace'

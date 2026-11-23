@@ -50,7 +50,7 @@ development-branch-hygiene.md: Development Branch Hygiene。
 discovery-context-refresh.md: Preserve completed discovery decisions and reconsider valid new facts。
 execution-identity.md: Execution Identity Reference。
 explainer.md: GoodTeam Explainer。
-first-party-role-methods.md: First-party Role methods: bounded ordinary Pi slice。
+first-party-role-methods.md: 各角色的内置基线、覆盖规则与加载入口。
 functional-ux-redesign-2026-10-11.md: GoodTeam 功能驱动的体验重设计研究。
 fundraising-readiness-sprint.md: Fundraising Readiness Sprint Plan。
 goal-history-pagination.md: Goal history pagination。

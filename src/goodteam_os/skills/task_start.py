@@ -42,7 +42,7 @@ def capture_task_start(
     from .pi_methods import METHOD_MODES
     from .role_packages import ROLE_METHODS_VERSION as DEFAULT_ROLE_METHODS
     if (type(default_role_methods) is not bool
-            or default_role_methods and (confirmed_input.get("default_role_methods") != DEFAULT_ROLE_METHODS
+            or default_role_methods and not protocol_only_review and (confirmed_input.get("default_role_methods") != DEFAULT_ROLE_METHODS
                 or confirmed_input.get("method_loading_mode") not in METHOD_MODES)):
         raise SkillError("task_scope_unknown", "Default methods require a new ordinary task confirmation.")
     if (confirmed_input.get("method_loading_mode") == "manager_pi_methods.v1"
@@ -110,8 +110,7 @@ def capture_task_start(
             "output_contract": "Return the result required by the explicit job output contract.",
             "authority_boundary": "Methods cannot grant permissions, approve their own result.",
         } for subject in selected}
-    # New Code Review tasks capture a method-free versioned protocol. The
-    # replay path above uses the original contract verbatim, including pre-S6.
+    # 评审协议独立于 Skill，重放沿用任务原始协议。
     if "role:code_review" in contracts:
         from .review_protocol import review_role_contract
 

@@ -1,4 +1,10 @@
 /**
+ * [INPUT]: 团队角色与绑定视图。
+ * [OUTPUT]: 从团队 API 投影角色、Worker、基线和运行配置。
+ * [POS]: 团队设置页面的角色配置。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
+/**
  * [INPUT]: Team API 返回的角色和运行设置。
  * [OUTPUT]: 团队视图与编辑命令。
  * [POS]: 将 Manager 运行配置和推理档位投影到团队设置。
@@ -82,6 +88,7 @@ export function buildTeamModel(data) {
       bindingRevision: entry.skill_binding?.binding_revision ?? 0,
       mode: entry.skill_binding?.mode || 'default',
       status: entry.skill_binding?.status || 'default',
+      defaultPackages: entry.skill_binding?.default_packages || [],
       items: Array.isArray(entry.skill_binding?.items) ? entry.skill_binding.items : [],
       executionStatus: entry.skill_binding?.execution_status || 'not_connected',
       updatedAt: entry.skill_binding?.updated_at || '',
@@ -124,6 +131,7 @@ export function buildTeamModel(data) {
         bindingRevision: team.manager?.skill_binding?.binding_revision ?? 0,
         mode: team.manager?.skill_binding?.mode || 'default',
         status: team.manager?.skill_binding?.status || 'default',
+        defaultPackages: team.manager?.skill_binding?.default_packages || [],
         items: Array.isArray(team.manager?.skill_binding?.items) ? team.manager.skill_binding.items : [],
         executionStatus: team.manager?.skill_binding?.execution_status || 'not_connected',
         updatedAt: team.manager?.skill_binding?.updated_at || '',

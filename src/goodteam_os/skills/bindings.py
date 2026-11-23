@@ -1,4 +1,7 @@
-"""Role–Skill binding contracts.
+"""[INPUT]: 角色绑定、内置基线与已安装版本。
+[OUTPUT]: 标准化绑定与团队页面的只读视图。
+[POS]: 在团队配置与任务快照之间校验绑定。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 
 Bindings are project configuration, not Runtime permission. They pin exact Skill
 versions for future task resolution, while task-scoped execution locking remains
@@ -161,6 +164,8 @@ def normalize_binding_map(
 
 
 def project_binding(binding: dict[str, Any], *, execution_connected: bool = False) -> dict[str, Any]:
+    from .role_packages import ROLE_PACKAGES
+
     mode = str(binding.get("mode", "default"))
     items = deepcopy(list(binding.get("items", []) or []))
     if mode == "default":
@@ -178,6 +183,7 @@ def project_binding(binding: dict[str, Any], *, execution_connected: bool = Fals
         "mode": mode,
         "status": status,
         "items": items,
+        "default_packages": list(ROLE_PACKAGES.get(binding["subject"].partition(":")[2], ())),
         "execution_status": "connected" if execution_connected else "not_connected",
         "updated_at": binding.get("updated_at", ""),
     }
