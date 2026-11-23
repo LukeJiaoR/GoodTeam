@@ -18,9 +18,9 @@ depend on unknown IDs in the same response. Multiple writers must have disjoint
 declared domains under the existing batch rules. Actual execution still passes
 the original resource, authorization, isolation and quality gates.
 
-The original task ledger validates all identities and normalized business
-equivalence under its existing lock before one atomic write. A duplicate later
-entry, including one matching an existing card, publishes no new cards. Replay
+The original task ledger validates all creation identities and their exact task
+intents under its existing lock before one atomic write. An identity with
+conflicting inputs publishes no new cards. Replay
 retains the grant/packet/index identity, adopts already-written exact cards,
 preserves their progress and never spends their task slots twice. The first
 identity remains compatible with historical single-task publication. Human
@@ -54,9 +54,8 @@ intents, receipt identity, effective dispatch/job results and retained candidate
 The accepted landed commit must remain in the current history. Paths changed by
 the candidate must still match the verified result. If candidate
 quality was configured, its original passed check and protected independent-review
-receipts must still match. A legacy delivery without configured quality remains
-explicitly `not_configured` / `human_attested`; delivery does not invent machine
-verification.
+receipts must still match. A Manager acceptance records an exact candidate and
+its observation. A manual acceptance retains the human attestation.
 
 This creates a frozen `project_outcome_discovery_packet.v1` containing:
 
@@ -91,10 +90,9 @@ output cannot select argv, a runtime, merge permission or approval state.
 The existing continuation session retains one planning/publication outbox. A
 create-once identity binds the grant and input packet. Within the LocalTaskStore
 lock, replay checks exact task intent and preserves current task progress,
-including `done`. A new identity with an equivalent normalized business intent
-cannot duplicate an existing card, including a completed one, or automatically
-adopt an unapproved existing task. This is exact deduplication, not a semantic
-similarity engine.
+including `done`. The Manager judges whether to repeat work. A fresh review of
+a corrected candidate receives a distinct creation identity even if the review
+instructions match the preceding review.
 
 The original active authorization is checked under the same session mutation
 that admits task creation. If writing the task succeeds but publishing its ID
@@ -103,13 +101,14 @@ spend another Manager call or overwrite the card. The retained choice then enter
 the ordinary Task Assistant queue and existing batch adapter; no second scheduler,
 execution ledger or Manager dispatcher is introduced.
 
-Checks, independent review and delivery remain the existing boundaries:
+Work and delivery use the existing boundaries:
 
 1. Execute the new task in an isolated Worker workspace.
 2. If quality is enabled for this batch, explicitly configure its check and runtime
    authorities using [candidate quality](project-batch-quality.md).
-3. Review the final candidate, land it through the authorized Git process and use
-   the existing delivery confirmation. Discovery never merges or deploys.
+3. Manager decides whether the available evidence supports accepting the final
+   candidate. The existing Git delivery path verifies the exact candidate that
+   landed. Discovery itself never merges or deploys.
 4. The existing service can then observe that new outcome and discover again within
    the remaining grant. A failed attempt uses [batch recovery](project-batch-recovery.md).
 
@@ -123,7 +122,8 @@ continuation while retaining the original reservation and counts.
 
 Batch or Manager budget exhaustion is `approved_iteration_budget_used`; new-task
 budget exhaustion is `discovery_task_budget_used`. Manager may instead return
-`new_task: null` with a concrete rationale. This records `discovery_no_followup`
+`new_task: null` and explain its decision. The rationale is recorded as advice.
+This records `discovery_no_followup`
 and ends this grant's active turn. It does **not** claim that the whole project or
 objective has been conclusively completed. The Work page displays the actual
 stopping reason and the last proposal's source receipt.
@@ -150,7 +150,10 @@ Use the existing `start_project_continuation` action, adding the optional object
 }
 ```
 
-Omitting `discovery` keeps the original fixed-list behavior. There is no extra
+Work sets `discovery.use_project_backlog` for project-scope starts. Current and
+later unclaimed backlog tasks can enter the Manager's candidate set within the
+configured project paths. The original fixed task-list behavior applies when
+this option is absent. There is no extra
 per-follow-up confirmation inside this preapproved scope. The session exposes the
 unchanged `seed_task_ids`, effective `task_ids`, `discovered_task_ids`, creation and
 planning counters, and `discovery_last` with its delivery receipt and rationale.

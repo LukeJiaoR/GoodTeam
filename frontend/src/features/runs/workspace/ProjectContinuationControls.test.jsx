@@ -6,9 +6,9 @@ it('binds explicit scoped continuation and reviewed landed delivery to visible e
   const action = vi.fn();
   const snapshot = { version: 'sha256:source', candidates: [{ task_id: 'APP-1', title: 'First task', status: 'todo' }] };
   const view = render(<ProjectContinuationControls snapshot={snapshot} projectKey="APP" onAction={action} canStart />);
+  fireEvent.click(screen.getByLabelText('Discover follow-up tasks within an explicit scope'));
   const start = screen.getByRole('button', { name: 'Authorize and start continuation' });
-  expect(start).toBeDisabled();
-  fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
+  expect(start).toBeEnabled();
   fireEvent.click(start);
   const initial = action.mock.calls[0][0];
   expect(initial).toMatchObject({ action: 'start_project_continuation', task_ids: ['APP-1'], max_batches: null,
@@ -19,8 +19,6 @@ it('binds explicit scoped continuation and reviewed landed delivery to visible e
   view.rerender(<ProjectContinuationControls snapshot={snapshot} projectKey="APP" onAction={action} canStart
     session={{ project_continuation: { id: 'approved-1', status: 'stopped', batches_started: 1, max_batches: 3,
       manager_calls: 1, max_manager_calls: 3 }, project_task_batches: { [batch.run_id]: batch } }} />);
-  expect(screen.getByRole('button', { name: 'Authorize and start continuation' })).toBeDisabled();
-  fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
   fireEvent.click(screen.getByRole('button', { name: 'Authorize and start continuation' }));
   expect(action.mock.calls[1][0].idempotency_key).not.toBe(initial.idempotency_key);
   expect(screen.getByRole('link', { name: /Inspect execution/ })).toHaveAttribute('href', `/api/projects/APP/iteration-batches/${batch.run_id}`);
@@ -44,43 +42,34 @@ it('binds explicit scoped continuation and reviewed landed delivery to visible e
   expect(action).toHaveBeenLastCalledWith({ action: 'stop_project_continuation', continuation_id: 'approved-1' });
 });
 
-it('opts into bounded outcome discovery with exact consent and shows the observed task origin', () => {
+it('starts project-scope discovery with the current settings and shows the observed task origin', () => {
   const action = vi.fn();
   const snapshot = { version: 'sha256:scope', candidates: [{ task_id: 'APP-1', title: 'Initial task', status: 'todo' }] };
   const props = { snapshot, projectKey: 'APP', onAction: action, canStart: true };
   const view = render(<ProjectContinuationControls {...props} />);
-  const toggle = screen.getByLabelText('Discover follow-up tasks within an explicit scope');
-  expect(toggle).not.toBeChecked();
-  expect(screen.queryByLabelText(/Project objective/)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
-  fireEvent.click(toggle);
+  expect(screen.getByLabelText('Discover follow-up tasks within an explicit scope')).toBeChecked();
+  expect(screen.getByLabelText(/Allowed project paths/)).toHaveValue('.');
   const start = screen.getByRole('button', { name: 'Authorize and start continuation' });
-  const consent = screen.getByLabelText(/I confirm the initial tasks/);
-  expect(consent).not.toBeChecked();
   expect(start).toBeDisabled();
   fireEvent.change(screen.getByLabelText(/Project objective/), { target: { value: 'Improve the import flow using verified delivery outcomes.' } });
   fireEvent.change(screen.getByLabelText(/Allowed project paths/), { target: { value: '/outside-project' } });
-  fireEvent.click(consent);
   expect(start).toBeDisabled();
   fireEvent.change(screen.getByLabelText(/Allowed project paths/), { target: { value: 'src/import/\ntests/import' } });
   fireEvent.change(screen.getByLabelText(/Maximum new tasks/), { target: { value: '2' } });
   fireEvent.change(screen.getByLabelText(/Total Manager calls/), { target: { value: '5' } });
   fireEvent.change(screen.getByLabelText('Maximum batches'), { target: { value: '3' } });
-  expect(consent).not.toBeChecked();
-  fireEvent.click(consent);
   fireEvent.click(start);
   const first = action.mock.lastCall[0];
   expect(first).toMatchObject({ action: 'start_project_continuation', expected_backlog_version: snapshot.version,
     task_ids: ['APP-1'], max_batches: 3, confirmed: true, billing_acknowledged: true,
     discovery: { objective: 'Improve the import flow using verified delivery outcomes.',
-      allowed_write_domains: ['src/import', 'tests/import'], max_new_tasks: 2, max_planning_calls: 5 } });
+      allowed_write_domains: ['src/import', 'tests/import'], max_new_tasks: 2, max_planning_calls: 5, use_project_backlog: true, allow_running_observation: true,
+      allow_running_human_question: true, worker_follow_up_limit: 1, allow_undelivered_feedback: true,
+      allow_candidate_handoff: true, allow_initial_readonly_feedback: true } });
   expect(first.idempotency_key.length).toBeLessThanOrEqual(256);
   fireEvent.click(start);
   expect(action.mock.lastCall[0]).toEqual(first);
   fireEvent.change(screen.getByLabelText(/Project objective/), { target: { value: 'Improve import error recovery after verified deliveries.' } });
-  expect(consent).not.toBeChecked();
-  expect(start).toBeDisabled();
-  fireEvent.click(consent);
   fireEvent.click(start);
   expect(action.mock.lastCall[0].idempotency_key).not.toBe(first.idempotency_key);
   const discovery = action.mock.lastCall[0].discovery;
@@ -90,7 +79,11 @@ it('opts into bounded outcome discovery with exact consent and shows the observe
     batches_started: 2, max_batches: 3, manager_calls: 3, max_manager_calls: 5, discovery, new_tasks_created: 1,
     discovery_last: { outcome_receipt_id: 'delivery-receipt-1', task_id: 'APP-2', status: 'task_created',
       rationale: 'The delivered import path exposes a recoverable validation gap.' } };
-  view.rerender(<ProjectContinuationControls {...props} session={{ project_continuation: value }} />);
+  const batch = { run_id: 'task-batch-review', expected_continuation_id: value.id, status: 'review', task_ids: ['APP-1'],
+    integration: { candidate_commit: 'b'.repeat(40) } };
+  view.rerender(<ProjectContinuationControls {...props} session={{ project_continuation: value,
+    project_task_batches: { [batch.run_id]: batch } }} />);
+  expect(screen.queryByRole('button', { name: 'Verify version and accept delivery' })).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Discover follow-up tasks within an explicit scope')).not.toBeInTheDocument();
   expect(screen.getByText('New tasks created: 1 / 2')).toBeInTheDocument();
   expect(screen.getByText('Initial tasks: APP-1')).toBeInTheDocument();
@@ -125,8 +118,6 @@ it('keeps quality failures visible and delivers only the checked and reviewed co
     .toHaveAttribute('href', `/api/projects/APP/iteration-batches/${batch.run_id}`);
   expect(screen.queryByRole('button', { name: 'Verify version and accept delivery' })).not.toBeInTheDocument();
   const advance = screen.getByRole('button', { name: 'Continue checks and review' });
-  expect(advance).toBeDisabled();
-  fireEvent.click(screen.getByLabelText(/I confirm continuing these checks/));
   fireEvent.click(advance);
   expect(action).toHaveBeenLastCalledWith({ action: 'advance_project_batch_quality', run_id: batch.run_id,
     expected_input_digest: quality.input_digest, confirmed: true, billing_acknowledged: true });
@@ -137,7 +128,7 @@ it('keeps quality failures visible and delivers only the checked and reviewed co
   view.rerender(<ProjectContinuationControls {...props} session={session(corrected)} />);
   // A review label alone cannot bypass a failed check or carry old cost consent.
   expect(screen.queryByRole('button', { name: 'Verify version and accept delivery' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Continue checks and review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Continue checks and review' })).toBeEnabled();
   const accepted = { ...corrected, check_status: 'passed' };
   view.rerender(<ProjectContinuationControls {...props} session={session(accepted)} />);
   expect(screen.queryByRole('button', { name: 'Continue checks and review' })).not.toBeInTheDocument();
@@ -173,8 +164,6 @@ it('binds recovery to failed task evidence, preserves stop, and makes abandonmen
   expect(screen.getByText('Preserved successful results: APP-1')).toBeInTheDocument();
   expect(screen.getByText('Confirmed failed tasks: APP-2')).toBeInTheDocument();
   const retry = screen.getByRole('button', { name: 'Retry confirmed failed tasks' });
-  expect(retry).toBeDisabled();
-  fireEvent.click(screen.getByLabelText(/I confirm retrying these failed tasks/));
   fireEvent.click(screen.getByLabelText(/Resume the remaining iterations/));
   fireEvent.click(retry);
   const first = action.mock.calls[0][0];
@@ -189,8 +178,6 @@ it('binds recovery to failed task evidence, preserves stop, and makes abandonmen
   // Even an obsolete can_resume projection cannot revive an owner-stopped authorization.
   view.rerender(<ProjectContinuationControls {...props} session={session(recovery, { ...continuation, status: 'stopped' })} />);
   expect(screen.queryByLabelText(/Resume the remaining iterations/)).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Retry confirmed failed tasks' })).toBeDisabled();
-  fireEvent.click(screen.getByLabelText(/I confirm retrying these failed tasks/));
   fireEvent.click(screen.getByRole('button', { name: 'Retry confirmed failed tasks' }));
   expect(action).toHaveBeenLastCalledWith({ ...first, resume_continuation: false, continuation_id: undefined,
     idempotency_key: `batch-retry:${batch.run_id}:${recovery.version}:manual` });
@@ -219,97 +206,13 @@ it('binds recovery to failed task evidence, preserves stop, and makes abandonmen
   expect(screen.queryByRole('button', { name: /Retry confirmed|Abandon this batch|Continue checks|Verify version/ })).not.toBeInTheDocument();
 });
 
-it('requires fresh consent for optional running observations and bounded Worker questions', () => {
-  const action = vi.fn();
-  render(<ProjectContinuationControls projectKey="APP" onAction={action} canStart snapshot={{ version: 'scope',
-    candidates: [{ task_id: 'APP-1', title: 'Original task', status: 'todo' }] }} />);
-  fireEvent.click(screen.getByLabelText('Discover follow-up tasks within an explicit scope'));
-  fireEvent.change(screen.getByLabelText(/Project objective/), { target: { value: 'Continue the authorized project tasks without expanding scope.' } });
-  fireEvent.change(screen.getByLabelText(/Allowed project paths/), { target: { value: 'src' } });
-  const observe = screen.getByLabelText('Allow Manager observations while Workers run');
-  expect(observe).not.toBeChecked();
-  const consent = screen.getByLabelText(/I confirm the initial tasks/);
-  fireEvent.click(consent);
-  fireEvent.click(observe);
-  expect(consent).not.toBeChecked();
-  const questions = screen.getByLabelText('Allow bounded Manager progress questions to current Pi invocations');
-  expect(questions).not.toBeChecked();
-  fireEvent.click(questions);
-  expect(screen.getByText(/each follow-up may add Worker model charges/)).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText('Total Worker follow-up limit'), { target: { value: '2' } });
-  fireEvent.click(consent);
-  fireEvent.click(screen.getByRole('button', { name: 'Authorize and start continuation' }));
-  expect(action.mock.lastCall[0].discovery).toMatchObject({ allow_running_observation: true, allow_running_human_question: true, worker_follow_up_limit: 2 });
-  const first = action.mock.lastCall[0];
-  fireEvent.change(screen.getByLabelText('Total Worker follow-up limit'), { target: { value: '11' } });
-  expect(consent).not.toBeChecked();
-  expect(screen.getByRole('button', { name: 'Authorize and start continuation' })).toBeDisabled();
-  fireEvent.click(observe);
-  fireEvent.click(consent);
-  fireEvent.click(screen.getByRole('button', { name: 'Authorize and start continuation' }));
-  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_running_observation');
-  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('worker_follow_up_limit');
-  expect(action.mock.lastCall[0].discovery).not.toHaveProperty('allow_running_human_question');
-  expect(action.mock.lastCall[0].idempotency_key).not.toBe(first.idempotency_key);
-});
-
-it('binds Team Role and feedback authority to fresh consent without upgrading existing grants', () => {
-  const action = vi.fn();
-  const props = { projectKey: 'APP', onAction: action, canStart: true,
-    snapshot: { version: 'scope', candidates: [{ task_id: 'APP-1', title: 'Read-only seed', status: 'todo' }] } };
-  const view = render(<ProjectContinuationControls {...props} />);
-  fireEvent.click(screen.getByLabelText('Discover follow-up tasks within an explicit scope'));
-  fireEvent.change(screen.getByLabelText(/Project objective/), { target: { value: 'Plan the next improvement using actual investigation results.' } });
-  fireEvent.change(screen.getByLabelText(/Allowed project paths/), { target: { value: 'src' } });
-  const start = screen.getByRole('button', { name: 'Authorize and start continuation' });
-  const consent = screen.getByLabelText(/I confirm the initial tasks/);
-  const feedback = screen.getByLabelText(/Allow decisions from known undelivered outcomes/);
-  const initialFeedback = () => screen.getByLabelText('Allow initial read-only task outcomes before the first engineering delivery');
-  expect(feedback).toBeChecked();
-  expect(initialFeedback()).toBeChecked();
-  fireEvent.click(consent);
-  fireEvent.click(start);
-  const enabled = action.mock.lastCall[0];
-  expect(enabled.discovery).toMatchObject({ allow_team_roles: true, allow_undelivered_feedback: true,
-    allow_candidate_handoff: true, allow_initial_readonly_feedback: true });
-  expect(enabled.discovery).not.toHaveProperty('allow_investigation');
-  expect(enabled.discovery).not.toHaveProperty('allow_planning');
-  fireEvent.click(start);
-  expect(action.mock.lastCall[0]).toEqual(enabled);
-  fireEvent.click(feedback);
-  expect(consent).not.toBeChecked();
-  expect(start).toBeDisabled();
-  fireEvent.click(consent);
-  fireEvent.click(start);
-  const narrowed = action.mock.lastCall[0];
-  expect(narrowed.idempotency_key).not.toBe(enabled.idempotency_key);
-  for (const flag of ['allow_undelivered_feedback', 'allow_candidate_handoff', 'allow_initial_readonly_feedback']) {
-    expect(narrowed.discovery).not.toHaveProperty(flag);
-  }
-  fireEvent.click(feedback);
-  expect(initialFeedback()).not.toBeChecked();
-  view.rerender(<ProjectContinuationControls {...props} session={{ project_continuation: {
-    id: 'old', status: 'active', discovery: { objective: 'Legacy grant', allowed_write_domains: ['src'], allow_planning: true } } }} />);
-  expect(screen.getByText('Planner delegation: Allowed')).toBeInTheDocument();
-  expect(screen.getByText('Read-only investigation: Not allowed')).toBeInTheDocument();
-  expect(screen.queryByText('Enabled Team Roles as needed: Allowed')).not.toBeInTheDocument();
-  view.rerender(<ProjectContinuationControls {...props} session={{ project_continuation: {
-    id: 'new', status: 'active', discovery: enabled.discovery } }} />);
-  expect(screen.getByText('Enabled Team Roles as needed: Allowed')).toBeInTheDocument();
-  expect(screen.getByText('Initial read-only continuation: Allowed')).toBeInTheDocument();
-});
-
- it('starts from blocked facts only through the existing explicit discovery consent', () => {
+ it('uses blocked backlog facts in project-scope mode', () => {
   const action = vi.fn();
   render(<ProjectContinuationControls snapshot={{version: 'blocked-v1', candidates: [{task_id: 'APP-1', title: 'Audience decision', status: 'blocked'}]}} projectKey="APP" onAction={action} canStart />);
   const start = screen.getByRole('button', {name: 'Authorize and start continuation'});
-  fireEvent.click(screen.getByLabelText(/I confirm this task scope/));
   expect(start).toBeDisabled();
-  fireEvent.click(screen.getByLabelText('Discover follow-up tasks within an explicit scope'));
   fireEvent.change(screen.getByLabelText(/Project objective/), {target: {value: 'Clarify the audience within the approved documentation scope.'}});
   fireEvent.change(screen.getByLabelText(/Allowed project paths/), {target: {value: 'docs'}});
-  expect(start).toBeDisabled();
-  fireEvent.click(screen.getByLabelText(/I confirm the initial tasks/));
   fireEvent.click(start);
   expect(action).toHaveBeenCalledOnce();
   expect(action.mock.lastCall[0]).toMatchObject({task_ids: ['APP-1'],

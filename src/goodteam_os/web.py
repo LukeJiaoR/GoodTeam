@@ -2060,8 +2060,9 @@ def handle_project_api_get(
                       "project_root": str(Path(root).resolve()), "status": batch["status"]}
             if (dispatch_artifact_root(root, effective_dispatch_id(batch)) / "report.json").exists():
                 report = iteration_batch_report(workspace=workspace, project_key=key, root=root, run_id=run_id)
-            quality = project_batch_quality_evidence(workspace=workspace, project_key=key, root=root, run_id=batch_match.group(2))
-            return 200, {**report, "recovery": recovery, **({"quality": quality} if quality["required"] else {})}
+            quality = project_batch_quality_evidence(workspace=workspace, project_key=key, root=root, run_id=run_id)
+            return 200, {**report, "recovery": recovery,
+                         **({"quality": quality} if quality["required"] or batch.get("manager_acceptance") else {})}
         except (OSError, ValueError) as exc:
             raise ProjectApiError("iteration_batch_report_unavailable", str(exc), 409) from exc
     team_events_match = re.fullmatch(r"/api/projects/([^/]+)/team/events", path)
@@ -2299,18 +2300,13 @@ def handle_project_api_post(
             except (ValueError, OSError) as exc:
                 raise ProjectApiError("batch_quality_unavailable", str(exc), 409,
                                       recovery=["inspect_project_batch_evidence"]) from exc
-        if action in {"start_project_continuation", "add_project_continuation_tasks", "accept_project_batch_delivery"}:
+        if action in {"start_project_continuation", "accept_project_batch_delivery"}:
             from goodteam_os.project_iteration_continuation import (
                 accept_project_batch_delivery, configure_project_continuation,
             )
 
             try:
-                if action == "add_project_continuation_tasks":
-                    from goodteam_os.project_scope_addition import add_project_continuation_tasks
-                    result = {"project_continuation": add_project_continuation_tasks(
-                        workspace=workspace, project_key=key, root=root,
-                        project_config=_project_config_for_key(workspace, key), request=request)}
-                elif action == "start_project_continuation":
+                if action == "start_project_continuation":
                     result = {"project_continuation": configure_project_continuation(
                         workspace=workspace, project_key=key, root=root,
                         project_config=_project_config_for_key(workspace, key), request=request,

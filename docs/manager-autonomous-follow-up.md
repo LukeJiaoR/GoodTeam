@@ -1,12 +1,10 @@
 # Bounded Manager progress questions (#700)
 
-The existing project-continuation authorization form can opt into running-period
-Manager observations, then separately authorize 1–10 total Worker follow-ups.
-Both are off by default. The explicit `discovery.worker_follow_up_limit` field is
-the opt-in and is included in the original authorization digest. An omitted
-field grants no controls; existing grants never upgrade. Changing any form
-option invalidates its confirmation. Stop/settle/re-authorize rules are unchanged.
-The form discloses both Manager allowance usage and additional Worker model cost.
+New project-scope starts in Work include running-period observations and one
+bounded Worker progress question. Manager decides whether to use them. This uses
+the same project settings and usage records. The `discovery.worker_follow_up_limit`
+field can still set a total of 1–10 for callers configuring the API. Existing
+grants retain their original observation and follow-up settings.
 
 The existing tick consumes an optional Manager `follow_up` proposal through the
 original `WorkerJobStore.session_control` queue, targeting the exact current Pi

@@ -12,7 +12,7 @@ not proof of missing implementation. This candidate is local, not latest main.
 | Manager discusses, clarifies, delegates rather than doing project work | manager_dialogue / manager_execution; first-party Manager method package; manager_pi_tools and Runtime witness |
 | Invocation-specific Role methods and generic Workers | team_control_plane explicit runtime source; dispatch_methods; task_start; PiMethodInput; original job/run/task identity |
 | Independent concurrent work, capacity 10 | project_parallel_dispatch; original batch ledger; short atomic claim; shared_worker_pool; no per-Role persistent pool |
-| New work during execution | assistant_queue; project_scope_addition; original grant confirmation and budgets |
+| New work during execution | assistant_queue; project-scope backlog refresh; existing project settings and budgets |
 | Researcher / Planner on demand | project_outcome_discovery; readonly_pi_methods; project_investigation_feedback; no mandatory research/planning stage |
 | Authorized Search, not default network | tasks; assistant_queue; TaskSearchConfiguration; original JobWebSearch; immutable Provider policy; readonly optional tool contract |
 | Worker progress / follow-up | manager_worker_control; project_running_observation; actual Runtime capabilities and original job receipt |

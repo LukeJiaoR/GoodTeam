@@ -1,4 +1,8 @@
-"""Project-level Manager selection should be replayable, bounded and advisory."""
+"""[INPUT]: 项目任务账与 Manager 响应夹具。
+[OUTPUT]: 建议、重放与入队的回归证据。
+[POS]: 验证 Manager 的比较不改变执行范围。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 import pytest
 
@@ -35,6 +39,7 @@ def test_manager_can_select_other_than_source_priority_and_persist(tmp_path):
     store = LocalTaskStore(project, "DEMO")
     high = task(store, "High priority", priority="high")
     low = task(store, "Lower risk", priority="low")
+    outside = task(store, "Outside the approved scope")
     config = tmp_path / "project.yaml"
     config.write_text("key: DEMO", encoding="utf-8")
     before = store.path.read_bytes()
@@ -49,12 +54,15 @@ def test_manager_can_select_other_than_source_priority_and_persist(tmp_path):
         with conversation_lock(session_store):
             pass
         calls.append(kwargs)
-        return manager_response(kwargs["backlog"])
+        result = manager_response(kwargs["backlog"])
+        result["selection"].update(compared_task_ids=[low["id"], high["id"], outside["id"]],
+                                   rationale="Lower risk.")
+        return result
 
     first = plan_next_iteration(
         workspace=tmp_path, project_key="DEMO", root=project,
         project_config=config, expected_backlog_version=snapshot["version"],
-        confirmed=True, manager_runner=fake_manager,
+        confirmed=True, manager_runner=fake_manager, allowed_task_ids=[high["id"], low["id"]],
     )
     assert first["iteration_choice"]["selected_task_id"] == low["id"]
     assert first["iteration_choice"]["selected_task_id"] != high["id"]
@@ -62,6 +70,7 @@ def test_manager_can_select_other_than_source_priority_and_persist(tmp_path):
     assert store.path.read_bytes() == before
     assert len(calls) == 1
     assert calls[0]["context"]["backlog"]["project_key"] == "DEMO"
+    assert first["iteration_choice"]["compared_task_ids"] == [low["id"], high["id"], outside["id"]]
 
     persisted = TaskAssistantSessionStore(tmp_path, "DEMO").read()
     assert persisted["proposed_task"] is None
@@ -71,10 +80,13 @@ def test_manager_can_select_other_than_source_priority_and_persist(tmp_path):
     repeated = plan_next_iteration(
         workspace=tmp_path, project_key="DEMO", root=project,
         project_config=config, expected_backlog_version=snapshot["version"],
-        confirmed=True, manager_runner=fake_manager,
+        confirmed=True, manager_runner=fake_manager, allowed_task_ids=[high["id"], low["id"]],
     )
     assert repeated["reused"] is True
     assert len(calls) == 1
+    queued = queue_manager_iteration_choice(workspace=tmp_path, project_key="DEMO", root=project,
+        expected_backlog_version=snapshot["version"], expected_task_ids=[low["id"]])
+    assert queued["queued_task_ids"] == [low["id"]]
 
 
 def test_models_cannot_pick_missing_or_blocked_tasks():
@@ -91,11 +103,6 @@ def test_models_cannot_pick_missing_or_blocked_tasks():
                 "rationale": "The chosen task seems urgent but is not eligible.",
                 "compared_task_ids": [chosen],
             })
-    with pytest.raises(ValueError):
-        validate_iteration_choice(snapshot, {
-            "selected_task_id": "T-1", "rationale": "Too vague",
-            "compared_task_ids": ["T-1"],
-        })
 
 
 def _batch_candidate(identifier, *, domains=None, policy="workspace_write", dependencies=None,
@@ -262,5 +269,3 @@ def test_manager_can_consider_unready_work_without_selecting_or_restarting_it():
     for identifier in ["T-blocked", "T-running", "T-review"]:
         with pytest.raises(ValueError, match="blocked task"):
             validate_iteration_choice(snapshot, {**response, "selected_task_ids": [identifier]})
-    with pytest.raises(ValueError, match="outside"):
-        validate_iteration_choice(snapshot, {**response, "compared_task_ids": ["T-ready", "not-in-packet"]})

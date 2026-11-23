@@ -1,4 +1,3 @@
-import ContinuationScopeAddition from './ContinuationScopeAddition';
 import { continuationActivity } from './continuationActivity';
 import { Fragment, useRef, useState } from 'react';
 
@@ -8,7 +7,6 @@ function qualityAccepted(quality) {
 }
 
 function BatchRecoveryControls({ batch, continuation, projectKey, onAction, disabled, zh }) {
-  const [retryConfirmed, setRetryConfirmed] = useState(false);
   const [abandonConfirmed, setAbandonConfirmed] = useState(false);
   const [resumeContinuation, setResumeContinuation] = useState(false);
   const recovery = batch.recovery || {};
@@ -16,7 +14,10 @@ function BatchRecoveryControls({ batch, continuation, projectKey, onAction, disa
   const preserved = recovery.preserved_task_ids || [];
   const unknown = recovery.unknown_task_ids || [];
   const abandoned = batch.status === 'abandoned';
-  const canRetry = !abandoned && batch.status === 'blocked' && retryable.length > 0 && unknown.length === 0;
+  const managerHandlesRetry = continuation?.status === 'active' && continuation.discovery?.use_project_backlog
+    && continuation.id === batch.expected_continuation_id;
+  const canRetry = !managerHandlesRetry && !abandoned && batch.status === 'blocked'
+    && retryable.length > 0 && unknown.length === 0;
   const canResume = recovery.can_resume_continuation === true && continuation?.status === 'blocked'
     && continuation.id === recovery.continuation_id;
   const resume = canResume && resumeContinuation;
@@ -31,17 +32,16 @@ function BatchRecoveryControls({ batch, continuation, projectKey, onAction, disa
     {unknown.length > 0 ? <p>{zh ? '结果尚未确认，须先核对执行证据' : 'Outcome unconfirmed; inspect execution evidence first'}: {unknown.join(', ')}</p> : null}
     <a href={`/api/projects/${encodeURIComponent(projectKey)}/iteration-batches/${encodeURIComponent(batch.run_id)}`}
       target="_blank" rel="noreferrer">{zh ? '查看保留的执行证据' : 'Inspect retained execution evidence'}</a>
+    {managerHandlesRetry && retryable.length > 0 ? <p>{zh ? 'Manager 会根据失败记录判断下一步。'
+      : 'The Manager will decide the next step from the failed runs.'}</p> : null}
     {canRetry ? <>
-      <p>{zh ? '仅重新执行上方已确认失败的任务；保留成功任务的结果。'
-        : 'Retry only the confirmed failed tasks above. Successful task results are retained.'}</p>
-      <label><input type="checkbox" checked={retryConfirmed} onChange={event => setRetryConfirmed(event.target.checked)} disabled={disabled} />
-        {zh ? '我确认重新执行这些失败任务，并承担已配置模型的调用费用。'
-          : 'I confirm retrying these failed tasks and acknowledge configured model charges.'}</label>
+      <p>{zh ? '仅重新执行上方已确认失败的任务；保留成功任务的结果。重试可能产生模型费用。'
+        : 'Retry only the confirmed failed tasks above. Successful task results are retained. Retrying may use model credits.'}</p>
       {canResume ? <label><input type="checkbox" checked={resumeContinuation}
         onChange={event => setResumeContinuation(event.target.checked)} disabled={disabled} />
         {zh ? '恢复原授权范围内尚未用完的自动迭代额度。' : 'Resume the remaining iterations within the original approved scope and budget.'}
       </label> : null}
-      <button type="button" disabled={disabled || !retryConfirmed || !recovery.version}
+      <button type="button" disabled={disabled || !recovery.version}
         onClick={() => onAction({ action: 'retry_project_batch', ...common,
           idempotency_key: `batch-retry:${batch.run_id}:${recovery.version}:${resume ? recovery.continuation_id : 'manual'}`,
           billing_acknowledged: true, retry_task_ids: retryable, resume_continuation: resume,
@@ -63,7 +63,6 @@ function BatchRecoveryControls({ batch, continuation, projectKey, onAction, disa
 }
 
 function BatchQualityControls({ batch, projectKey, onAction, disabled, zh }) {
-  const [acknowledged, setAcknowledged] = useState(false);
   const quality = batch.quality;
   const accepted = qualityAccepted(quality);
   const labels = zh
@@ -93,12 +92,9 @@ function BatchQualityControls({ batch, projectKey, onAction, disabled, zh }) {
     {quality.candidate_commit ? <p>{zh ? '当前候选提交' : 'Current candidate commit'}: <code>{quality.candidate_commit}</code></p> : null}
     {quality.candidate_path ? <p>{zh ? '当前候选目录' : 'Current candidate directory'}: <code>{quality.candidate_path}</code></p> : null}
     {!accepted ? <>
-      <p>{zh ? '继续此批次已配置的检查、独立审查及修复。执行器可用时才能推进；交付确认将在检查与审查通过后开放。'
-        : 'Continue this batch’s configured checks, independent review and correction. An available configured runtime is required. Delivery confirmation opens after checks and review pass.'}</p>
-      <label><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} disabled={disabled} />
-        {zh ? '我确认继续上述检查、审查或修复，并承担已配置模型的调用费用。'
-          : 'I confirm continuing these checks, review or correction and acknowledge configured model charges.'}</label>
-      <button type="button" disabled={disabled || !acknowledged || !quality.input_digest}
+      <p>{zh ? '继续此批次已配置的检查、独立审查及修复。执行器可用时才能推进；检查与审查可能产生模型费用。'
+        : 'Continue this batch’s configured checks, independent review and correction. An available configured runtime is required. Checks and review may use model credits.'}</p>
+      <button type="button" disabled={disabled || !quality.input_digest}
         onClick={() => onAction({ action: 'advance_project_batch_quality', run_id: batch.run_id,
           expected_input_digest: quality.input_digest, confirmed: true, billing_acknowledged: true })}>
         {zh ? '继续检查与审查' : 'Continue checks and review'}
@@ -112,7 +108,7 @@ function DeliveryConfirmation({ batch, projectKey, onAction, disabled, zh }) {
   const [reviewed, setReviewed] = useState(false);
   const quality = batch.quality?.required ? batch.quality : null;
   const integration = quality || batch.integration;
-  const candidate = integration?.candidate_commit;
+  const candidate = batch.manager_acceptance?.candidate_commit || integration?.candidate_commit;
   if (!candidate || batch.status !== 'review' || quality && !qualityAccepted(quality)) return null;
   return <details className="project-iteration-suggestion">
     <summary>{zh ? '确认已落地的交付' : 'Confirm landed delivery'} · {batch.task_ids.join(', ')}</summary>
@@ -138,32 +134,25 @@ function DeliveryConfirmation({ batch, projectKey, onAction, disabled, zh }) {
 
 function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, canStart, zh }) {
   const [maximum, setMaximum] = useState('');
-  const [discover, setDiscover] = useState(false);
+  const [discover, setDiscover] = useState(true);
   const [objective, setObjective] = useState('');
-  const [paths, setPaths] = useState('');
+  const [paths, setPaths] = useState('.');
   const [newTaskLimit, setNewTaskLimit] = useState('');
   const [planningLimit, setPlanningLimit] = useState('');
-  const [feedback, setFeedback] = useState(true);
-  const [initialFeedback, setInitialFeedback] = useState(true);
-  const [observeRunning, setObserveRunning] = useState(false);
-  const [followUp, setFollowUp] = useState(false);
-  const [followUpLimit, setFollowUpLimit] = useState(1);
-  const [confirmedInput, setConfirmedInput] = useState('');
   const [command] = useState(() => globalThis.crypto?.randomUUID?.() || `continuation-${Date.now()}`);
   const lastSubmission = useRef({ input: '', revision: 0 });
   const domains = paths.split(/\r?\n/).map(path => path.trim()).filter(Boolean).map(path => path.replace(/\/$/, ''));
-  const validDomains = domains.length >= 1 && domains.length <= 12
+  const validDomains = (domains.length === 1 && domains[0] === '.') || (domains.length >= 1 && domains.length <= 12
     && new Set(domains.map(path => path.toLowerCase())).size === domains.length
     && domains.every(path => path.length <= 160 && !path.split('/').some(part => ['', '.', '..'].includes(part))
-      && ![...path].some(character => character.charCodeAt(0) < 32 || '\\:*?[]'.includes(character)));
+      && ![...path].some(character => character.charCodeAt(0) < 32 || '\\:*?[]'.includes(character))));
   const scopedTasks = tasks.filter(task => task.status === 'todo' || discover && task.status === 'blocked');
   const discovery = discover ? { objective: objective.trim(), allowed_write_domains: domains,
     max_new_tasks: newTaskLimit === '' ? null : Number(newTaskLimit),
     max_planning_calls: planningLimit === '' ? null : Number(planningLimit), allow_backlog_judgment: true, allow_team_roles: true,
-    ...(feedback ? { allow_undelivered_feedback: true, allow_candidate_handoff: true } : {}),
-    ...(feedback && initialFeedback ? { allow_initial_readonly_feedback: true } : {}),
-    ...(observeRunning ? { allow_running_observation: true, allow_running_human_question: true } : {}),
-    ...(observeRunning && followUp ? { worker_follow_up_limit: followUpLimit } : {}) } : undefined;
+    use_project_backlog: true, allow_undelivered_feedback: true, allow_candidate_handoff: true,
+    allow_initial_readonly_feedback: true, allow_running_observation: true, allow_running_human_question: true,
+    worker_follow_up_limit: 1 } : undefined;
   const input = { action: 'start_project_continuation', expected_backlog_version: snapshot.version,
     task_ids: scopedTasks.map(task => task.task_id), max_batches: maximum === '' ? null : Number(maximum), confirmed: true, billing_acknowledged: true,
     ...(discovery ? { discovery } : {}) };
@@ -171,8 +160,7 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
   const validLimits = [maximum, ...(discover ? [newTaskLimit, planningLimit] : [])]
     .every(limit => limit === '' || Number.isInteger(Number(limit)) && Number(limit) >= 1);
   const valid = scopedTasks.length > 0 && validLimits
-    && (!discover || objective.trim().length >= 20 && objective.trim().length <= 2000 && validDomains
-      && (!observeRunning || !followUp || Number.isInteger(followUpLimit) && followUpLimit >= 1 && followUpLimit <= 10));
+    && (!discover || objective.trim().length > 0 && objective.trim().length <= 2000 && validDomains);
   const start = () => {
     if (lastSubmission.current.input !== inputIdentity) {
       lastSubmission.current = { input: inputIdentity, revision: lastSubmission.current.revision + 1 };
@@ -180,51 +168,29 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
     onAction({ ...input, idempotency_key: `${command}:${lastSubmission.current.revision}` });
   };
   return <>
-    <p>{discover ? (zh ? '授权下方初始任务，并让 Manager 在指定目标与路径范围内发现后续任务，按需使用项目中已启用的 Team Role。可依据已核实交付或当前已授权任务事实判断、提问及提出后续任务；未交付结果反馈可在下方授权。'
-      : 'Authorize the initial tasks below and let Manager discover follow-up tasks within the specified objective and paths, using enabled Team Roles as needed. Judgment and follow-up tasks may use verified delivery or authorized task facts; undelivered feedback can be authorized below.')
+    <p>{discover ? (zh ? 'Manager 在项目目标和路径范围内选择待办、发现后续任务并派工。'
+      : 'The Manager chooses backlog tasks, discovers follow-ups, and delegates within the project objective and paths.')
       : (zh ? '仅授权下方列出的现有任务自动规划和执行。' : 'Authorize planning and execution of only the existing tasks listed below.')}
       {' '}{zh ? '交付仍需审查并核实已落地的版本；每批最多同时运行 10 个 Worker，按当前配置产生模型费用。'
         : 'Delivery still requires review and a verified landed version. Up to 10 Workers run concurrently per batch and configured model charges apply.'}</p>
-    <ul>{scopedTasks.map(task => <li key={task.task_id}>{task.task_id}: {task.title}</li>)}</ul>
+    {!discover ? <ul>{scopedTasks.map(task => <li key={task.task_id}>{task.task_id}: {task.title}</li>)}</ul> : null}
     <label><input type="checkbox" checked={discover} onChange={event => setDiscover(event.target.checked)} disabled={disabled} />
       {zh ? '在明确授权范围内发现后续任务' : 'Discover follow-up tasks within an explicit scope'}</label>
     {discover ? <fieldset className="project-continuation-fieldset" disabled={disabled}>
       <legend>{zh ? '后续任务的授权范围' : 'Follow-up task authorization'}</legend>
-      <label className="project-continuation-field">{zh ? '项目目标（20–2000 字符）' : 'Project objective (20–2000 characters)'}
+      <label className="project-continuation-field">{zh ? '项目目标' : 'Project objective'}
         <textarea value={objective} onChange={event => setObjective(event.target.value)} rows={3} maxLength={2000} />
       </label>
       <label className="project-continuation-field">{zh ? '允许写入的项目路径（每行一个）' : 'Allowed project paths (one per line)'}
         <textarea value={paths} onChange={event => setPaths(event.target.value)} rows={3} spellCheck={false}
           placeholder={'src\ntests'} />
       </label>
-      <p>{zh ? '填写 1–12 个项目相对目录或文件路径。Manager 可选择后续任务，独立任务可以并行执行。'
-        : 'Enter 1–12 project-relative directories or files. Manager can select follow-up tasks and run independent tasks in parallel.'}</p>
+      <p>{zh ? '默认范围为整个项目。也可逐行填写项目相对路径来缩小写入范围。'
+        : 'The default is the whole project. Enter project-relative paths on separate lines to narrow write access.'}</p>
       <p>{zh ? 'Manager 可按需选择项目中已启用且可用的 Team Role；只读任务不获得写权限，写入仍限于上述路径。'
         : 'Manager can select enabled and available Team Roles as needed. Read-only tasks receive no write access; other writes remain within the paths above.'}</p>
-      <label><input type="checkbox" checked={feedback} onChange={event => {
-        setFeedback(event.target.checked);
-        if (!event.target.checked) setInitialFeedback(false);
-      }} />
-        {zh ? '允许根据未交付任务的已知结果继续判断，并在隔离工作区向后续任务交接已引用的候选'
-          : 'Allow decisions from known undelivered outcomes and pass cited candidates to follow-up tasks in isolated workspaces'}</label>
-      {feedback ? <>
-        <label><input type="checkbox" checked={initialFeedback} onChange={event => setInitialFeedback(event.target.checked)} />
-          {zh ? '首次工程交付前，允许根据初始只读任务结果接续' : 'Allow initial read-only task outcomes before the first engineering delivery'}</label>
-        <p>{zh ? '仅消费原授权任务的已知结果、失败或部分成果，仍占用 Manager 额度；不重试未知执行，不把报告当作工程交付。'
-          : 'Use only known outcomes, failures or partial results of originally authorized tasks, within the Manager allowance. No unknown execution is retried and reports are not engineering delivery.'}</p>
-      </> : null}
-      <label><input type="checkbox" checked={observeRunning} onChange={event => setObserveRunning(event.target.checked)} />
-        {zh ? '允许执行期间的 Manager 观察判断' : 'Allow Manager observations while Workers run'}</label>
-      {observeRunning ? <>
-        <p>{zh ? '观察可将必要的人类决定保存到本项目问题板，不向外发送消息、不停止在途任务，也不增加执行权限。' : 'Observations may save necessary owner decisions on this project’s question board. No external messages, stopping current work or additional execution authority.'}</p>
-        <label><input type="checkbox" checked={followUp} onChange={event => setFollowUp(event.target.checked)} />
-          {zh ? '允许 Manager 向当前 Pi 调用提出有界进展追问' : 'Allow bounded Manager progress questions to current Pi invocations'}</label>
-        {followUp ? <label>{zh ? 'Worker 追问总次数上限' : 'Total Worker follow-up limit'}
-          <input type="number" min="1" max="10" value={followUpLimit} onChange={event => setFollowUpLimit(Number(event.target.value))} />
-        </label> : null}
-        <p>{zh ? '观察占用 Manager 额度；每次追问可能增加 Worker 模型费用，每个调用最多一次。只限原任务，不授权 steer、abort、扩范围或未知结果重试；旧授权不会自动升级。'
-          : 'Observations use the Manager allowance; each follow-up may add Worker model charges, at most once per invocation. Original tasks only: no steer, abort, expanded scope or unknown-result retries. Existing grants are not upgraded.'}</p>
-      </> : null}
+      <p>{zh ? 'Manager 会跟进项目范围内的待办，观察 Worker 并按需追问。只有需要你作出决定时才会提问。'
+        : 'The Manager uses the project backlog, observes Workers, and follows up as needed. It asks you when a decision requires your input.'}</p>
       <label>{zh ? '新任务总量上限' : 'Maximum new tasks in total'}
         <input type="number" min="1" value={newTaskLimit} placeholder={zh ? '留空不限制' : 'No limit'} onChange={event => setNewTaskLimit(event.target.value)} />
       </label>
@@ -239,12 +205,7 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
     </label>
     <p>{zh ? '上限均可留空。留空时不限制相应次数，仍记录用量，可随时停止后续迭代。'
       : 'Limits are optional. Blank fields leave the corresponding counts uncapped; usage is recorded and you can stop future iterations.'}</p>
-    <label><input type="checkbox" checked={confirmedInput === inputIdentity}
-      onChange={event => setConfirmedInput(event.target.checked ? inputIdentity : '')} disabled={disabled} />
-      {discover ? (zh ? '我确认初始任务、项目目标、允许路径、所选能力与可选上限，并承担已配置模型的调用费用。'
-        : 'I confirm the initial tasks, objective, allowed paths, selected capabilities, optional limits and configured model charges.')
-        : (zh ? '我确认上述任务范围、可选上限和模型费用。' : 'I confirm this task scope, optional limits and model charges.')}</label>
-    <button type="button" disabled={disabled || !canStart || !valid || confirmedInput !== inputIdentity} onClick={start}>
+    <button type="button" disabled={disabled || !canStart || !valid} onClick={start}>
       {zh ? '授权并开始自动迭代' : 'Authorize and start continuation'}
     </button>
   </>;
@@ -314,20 +275,26 @@ export default function ProjectContinuationControls({ snapshot, session, project
         })}>{active ? (zh ? '停止后续迭代' : 'Stop future iterations')
           : (zh ? '保留结果并结束' : 'Keep results and finish')}</button> : null}
       </> : null}
-      {active ? <ContinuationScopeAddition key={value.id} value={value} snapshot={snapshot}
-        onAction={onAction} disabled={disabled} zh={zh} /> : null}
       {!active && tasks.length > 0 ? <ContinuationStartForm tasks={tasks} snapshot={snapshot} value={value}
         onAction={onAction} disabled={disabled} canStart={canStart} zh={zh} /> : null}
     </details>
-    {batches.map(batch => <Fragment key={batch.run_id}>
-      {['blocked', 'abandoned'].includes(batch.status) || batch.recovery?.can_abandon === true ? <BatchRecoveryControls
-        key={`${batch.recovery?.version || ''}:${batch.status}:${value?.id || ''}:${value?.status || ''}`}
-        batch={batch} continuation={value} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} /> : null}
-      {batch.quality?.required && batch.status !== 'abandoned' ? <BatchQualityControls
-        key={`${batch.quality.input_digest}:${batch.quality.status}:${batch.quality.correction_job_id || ''}:${batch.quality.candidate_commit || ''}`}
-        batch={batch} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} /> : null}
-      {batch.status !== 'abandoned' ? <DeliveryConfirmation key={`${batch.quality?.input_digest || ''}:${batch.quality?.candidate_commit || batch.integration?.candidate_commit || ''}`}
-        batch={batch} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} /> : null}
-    </Fragment>)}
+    {batches.map(batch => {
+      const managerReviews = active && value.discovery?.use_project_backlog && value.discovery?.allow_team_roles
+        && value.discovery?.allow_candidate_handoff && batch.expected_continuation_id === value.id && !batch.quality?.required;
+      return <Fragment key={batch.run_id}>
+        {['blocked', 'abandoned'].includes(batch.status) || batch.recovery?.can_abandon === true ? <BatchRecoveryControls
+          key={`${batch.recovery?.version || ''}:${batch.status}:${value?.id || ''}:${value?.status || ''}`}
+          batch={batch} continuation={value} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} /> : null}
+        {batch.quality?.required && batch.status !== 'abandoned' ? <BatchQualityControls
+          key={`${batch.quality.input_digest}:${batch.quality.status}:${batch.quality.correction_job_id || ''}:${batch.quality.candidate_commit || ''}`}
+          batch={batch} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} /> : null}
+        {active && value.discovery?.use_project_backlog && batch.expected_continuation_id === value.id
+          && batch.status === 'review' && (batch.manager_acceptance || qualityAccepted(batch.quality)) ? (
+          <p>{zh ? '候选已获接受。落地后将自动核验并登记交付。'
+            : 'Candidate accepted. Delivery will be recorded when the candidate lands.'}</p>
+        ) : batch.status !== 'abandoned' && !managerReviews ? <DeliveryConfirmation key={`${batch.quality?.input_digest || ''}:${batch.quality?.candidate_commit || batch.integration?.candidate_commit || ''}`}
+          batch={batch} projectKey={projectKey} onAction={onAction} disabled={disabled} zh={zh} /> : null}
+      </Fragment>;
+    })}
   </section>;
 }

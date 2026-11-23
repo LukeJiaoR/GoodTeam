@@ -1,5 +1,7 @@
 # Human-confirmed later work in the existing project grant
 
+> Historical implementation. Project-scope continuation now reads new tasks from the backlog. Existing addition receipts remain readable.
+
 The original project action endpoint and continuation panel now accept an
 explicit additive confirmation for existing todo task cards. Manager discussion
 and assignment still only prepare original unconfirmed tasks. There is no

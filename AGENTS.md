@@ -29,10 +29,10 @@ a parallel work queue.
 
 1. **Essential**: understand an existing repository and its goals, history,
    issues, risks and pending work; Manager autonomously identifies and
-   prioritizes the next iteration, chooses and coordinates Workers, verifies
-   results through task-relevant tests and independent review/fix, updates
-   project memory/backlog, and selects the following iteration based on
-   observed outcomes. The project moves across *multiple distinct iterations*
+   prioritizes the next iteration, chooses and coordinates Workers, and decides
+   which evidence, QA, Code Review or correction each task needs. Manager
+   updates project memory/backlog and selects the next iteration from observed
+   outcomes. The project moves across *multiple distinct iterations*
    without the user manually supplying each next Issue. Preserve necessary
    scoped human gates, authorization, failure recovery and honest artifacts.
 2. **Not essential**: do not expand external Planner/MCP,

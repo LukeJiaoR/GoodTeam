@@ -264,16 +264,6 @@ class LocalTaskStore:
                     or matches[0].get("worker_id") != intent.get("worker_id")):
                 raise ValueError("The discovered task identity already owns a different intent.")
             return dict(matches[0])
-        def fingerprint(task):
-            def words(value):
-                return " ".join(str(value or "").split()).casefold()
-            return {"title": words(task.get("title")), "description": words(task.get("description")),
-                    "role": task.get("role"), "execution_policy": task.get("execution_policy", "workspace_write"),
-                    "write_domains": sorted(normalize_write_domains(task.get("write_domains")) or []),
-                    "dependencies": sorted(task.get("dependencies") or []),
-                    "acceptance_criteria": sorted(words(item) for item in task.get("acceptance_criteria") or [])}
-        if any(fingerprint(task) == fingerprint(intent) for task in ledger["tasks"]):
-            raise ValueError("An equivalent project task already exists; discovery cannot duplicate or authorize it.")
         prefix = str(self.project_key or ledger.get("prefix", "GT")).strip().upper()
         next_id = ledger["next_id"]
         existing = {task["id"] for task in ledger["tasks"]}

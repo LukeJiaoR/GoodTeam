@@ -1,4 +1,9 @@
-"""Explicit recovery of the existing confirmed batch, never fresh task intake."""
+"""[INPUT]: 原批次、终止凭据和 Manager 或用户的恢复决定。
+[OUTPUT]: 原批次的恢复证据、运行记录和重试结果。
+[POS]: 复用原派工批次，仅为已终止的失败任务启动新尝试。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from hashlib import sha256
 import json
@@ -313,21 +318,52 @@ def _resume_command(workspace, project_key, root, batch, command_id):
             reconcile_recovery_tasks(root, project_key, batch, command)
 
 
+def retry_project_batch_from_manager(*, workspace, project_key, root, pending):
+    """将已保存的 Manager 决定交给原恢复服务。调用方持有项目续跑锁。"""
+    packet, selection = pending["packet"], pending["selection"]
+    feedback = packet["batch_feedback"]
+    request = {"action": "retry_project_batch", "run_id": feedback["batch_run_id"],
+               "expected_recovery_version": feedback["recovery_version"],
+               "retry_task_ids": selection["retry_task_ids"], "idempotency_key": "manager:" + packet["packet_digest"]}
+    from goodteam_os.project_batch_lock import ProjectBatchBusyError
+
+    try:
+        result = _recover_project_batch(workspace=workspace, project_key=project_key, root=root,
+                                        request=request, manager_pending=pending)
+    except ProjectBatchBusyError:
+        return TaskAssistantSessionStore(workspace, project_key).read()["project_continuation"]
+    except OSError:
+        saved = TaskAssistantSessionStore(workspace, project_key).read()
+        command_id = sha256(request["idempotency_key"].encode()).hexdigest()
+        command = saved.get("project_task_batches", {}).get(request["run_id"], {}).get("recovery_commands", {}).get(command_id)
+        if not command or command["request"] != request:
+            raise
+        return saved["project_continuation"]
+    return result["task_assistant_session"]["project_continuation"]
+
+
 def recover_project_batch(*, workspace, project_key, root, request):
-    """Confirm one retry/abandon against current evidence, preserving originals."""
+    """用当前证据恢复原批次，保留已完成的工作。"""
+    return _recover_project_batch(workspace=workspace, project_key=project_key, root=root,
+                                  request=request, manager_pending=None)
+
+
+def _recover_project_batch(*, workspace, project_key, root, request, manager_pending):
+    """Manager 调用已持有续跑锁。HTTP 调用在此获取续跑锁。"""
     from goodteam_os.assistant_requests import conversation_lock
     from goodteam_os.tasks import project_task_intent
     from goodteam_os.project_iteration_execution import (
         _require_execution_slot, _require_authority,
     )
     action, key = request.get("action"), request.get("idempotency_key")
-    if (action not in {"retry_project_batch", "abandon_project_batch"} or request.get("confirmed") is not True
+    if (action not in {"retry_project_batch", "abandon_project_batch"}
+            or manager_pending is None and request.get("confirmed") is not True
             or not isinstance(key, str) or not 1 <= len(key) <= 256):
         raise ValueError("Confirm recovery with a stable command identity.")
     retry = action == "retry_project_batch"
     if "resume_continuation" in request and type(request["resume_continuation"]) is not bool:
         raise ValueError("Explicitly choose whether to resume the same blocked continuation.")
-    if retry and request.get("billing_acknowledged") is not True:
+    if retry and manager_pending is None and request.get("billing_acknowledged") is not True:
         raise ValueError("Confirm the additional failed-task Worker charges.")
     store, batch = _batch(workspace, project_key, root, request.get("run_id"))
     command_id = sha256(key.encode()).hexdigest()
@@ -337,9 +373,12 @@ def recover_project_batch(*, workspace, project_key, root, request):
     if previous:
         if previous["request"] != request:
             raise ValueError("Recovery command identity was already used with different inputs.")
+        if manager_pending is not None:
+            return {"task_assistant_session": store.read()}
         _resume_command(workspace, project_key, root, batch, command_id)
         return _response(workspace, project_key, root, store.read()["project_task_batches"][batch["run_id"]], previous)
-    with goal_guard(workspace, project_key), project_batch_guard(workspace, project_key), conversation_lock(store):
+    guard = goal_guard(workspace, project_key) if manager_pending is None else nullcontext()
+    with guard, project_batch_guard(workspace, project_key), conversation_lock(store):
         _store, batch = _batch(workspace, project_key, root, batch["run_id"])
         previous = batch.get("recovery_commands", {}).get(command_id)
         if previous:
@@ -355,7 +394,8 @@ def recover_project_batch(*, workspace, project_key, root, request):
             if not evidence["can_abandon"]:
                 raise ValueError("This batch is not available for recovery.")
             if retry:
-                _require_execution_slot(workspace, project_key, batch["run_id"])
+                _require_execution_slot(workspace, project_key, batch["run_id"],
+                                        task_ids=batch["task_ids"] if manager_pending is not None else None)
                 _require_authority(workspace, project_key, root, batch["project_config"], batch.get("expected_authority"))
             selected = request.get("retry_task_ids")
             if retry and (not isinstance(selected, list) or not selected or any(not isinstance(item, str) for item in selected)
@@ -396,7 +436,9 @@ def recover_project_batch(*, workspace, project_key, root, request):
                     command.update(attempt_id=identity, dispatch_run_id=dispatch_id, source=source, tracks=tracks, started=False)
                 def persist(session):
                     current = session.get("project_continuation") or {}
-                    if request.get("resume_continuation") is True:
+                    if manager_pending is not None:
+                        _admit_manager_retry(current, batch, command, manager_pending, evidence)
+                    elif request.get("resume_continuation") is True:
                         pending = _continuation_pending_for_recovery(current, batch,
                             "sha256:" + command["source"]["report_digest"] if retry else None)
                         if (not retry or not evidence["can_resume_continuation"] or pending is None
@@ -421,19 +463,57 @@ def recover_project_batch(*, workspace, project_key, root, request):
                 for identifier in selected if retry else batch["task_ids"]:
                     known[identifier].update(status="in_progress" if retry else "canceled", updated_at=tasks._now())
                 tasks._write(ledger)
+    if manager_pending is not None:
+        return {"task_assistant_session": store.read()}
     _resume_command(workspace, project_key, root, store.read()["project_task_batches"][batch["run_id"]], command_id)
     batch = store.read()["project_task_batches"][batch["run_id"]]
     return _response(workspace, project_key, root, batch, command)
 
 
+def _admit_manager_retry(current, batch, command, pending, evidence):
+    from goodteam_os.project_outcome_discovery import _input_receipts, authorization_digest
+
+    packet = pending["packet"]
+    feedback = packet["batch_feedback"]
+    if (current.get("status") != "active" or current.get("discovery_pending") != pending
+            or not (current.get("discovery") or {}).get("use_project_backlog")
+            or current.get("id") != batch.get("expected_continuation_id")
+            or current.get("authority") != batch.get("expected_authority")
+            or current.get("authorization_digest") != packet.get("authorization_digest")
+            or current["authorization_digest"] != authorization_digest(current)
+            or current.get("batch_feedback_pending") != feedback["observation_key"]
+            or current.get("batch_observations", {}).get(feedback["observation_key"]) != feedback
+            or feedback["dispatch_run_id"] != evidence["current_dispatch_run_id"]
+            or feedback["dispatch_report_digest"] != "sha256:" + command["source"]["report_digest"]
+            or current["max_batches"] is not None and current["batches_started"] >= current["max_batches"]):
+        raise ValueError("The original Manager recovery decision or project scope changed.")
+    command["manager_continuation_id"] = current["id"]
+    trigger = pending["trigger_ref"]
+    if current.get("undelivered_feedback_anchor") == feedback["observation_key"]:
+        current.pop("undelivered_feedback_anchor")
+    current.update(
+        pending_batch={key: batch[key] for key in ("run_id", "task_ids", "proposal_ids", "expected_revisions")},
+        discovery_pending=None, batch_feedback_pending=None,
+        discovery_consumed=list(dict.fromkeys([*current.get("discovery_consumed", []), *_input_receipts(packet), trigger])),
+        batches_started=current["batches_started"] + 1, reason="manager_failed_task_recovery",
+        discovery_last={"status": "retry_queued", "packet_digest": packet["packet_digest"], "trigger_ref": trigger,
+                        "outcome_receipt_id": feedback["receipt_id"], "task_ids": command["source"]["retry_task_ids"],
+                        "rationale": pending["selection"]["rationale"]},
+    )
+
+
 def execute_recovery(*, workspace, project_key, root, batch):
     """Called under the existing batch execution guard/Worker thread registry."""
     from goodteam_os.dispatch import dispatch_tracks
-    from goodteam_os.project_iteration_execution import _settle_batch, _require_authority, _require_goal_source
+    from goodteam_os.project_iteration_execution import _settle_batch, _require_authority, _require_goal_source, _require_continuation
 
     store = TaskAssistantSessionStore(workspace, project_key)
     command_id = batch["current_recovery_attempt"]
     command = batch["recovery_commands"][command_id]
+    def check_start(*_):
+        _require_goal_source(workspace, project_key, batch.get("goal_source"), batch["run_id"])
+        _require_continuation(store.read(), command.get("manager_continuation_id"))
+
     report_path = dispatch_artifact_root(root, command["dispatch_run_id"]) / "report.json"
     if report_path.exists():
         report = json.loads(read_bytes(report_path))
@@ -450,8 +530,9 @@ def execute_recovery(*, workspace, project_key, root, batch):
             for job in found:
                 dispatch_job_terminal(Path(root), {**job, "job_id": job["id"], "dispatch_run_id": command["dispatch_run_id"]})
         else:
-            _require_goal_source(workspace, project_key, batch.get("goal_source"), batch["run_id"])
+            check_start()
             def started(session):
+                _require_continuation(session, command.get("manager_continuation_id"))
                 session["project_task_batches"][batch["run_id"]]["recovery_commands"][command_id]["started"] = True
                 return session
             store._mutate(started)
@@ -459,6 +540,6 @@ def execute_recovery(*, workspace, project_key, root, batch):
         report = dispatch_tracks(project_root=Path(root).resolve(), tracks=command["tracks"],
             projects_dir=Path(workspace) / "projects", logical_task_id=command["attempt_id"],
             require_isolation=True, recovery_source=command["source"],
-            capacity_check_start=lambda *_: _require_goal_source(workspace, project_key, batch.get("goal_source"), batch["run_id"]),
+            capacity_check_start=check_start,
             **({"worker_setup": batch["worker_setup"]} if batch.get("worker_setup") else {}))
     return _settle_batch(workspace, project_key, root, batch, report=report)

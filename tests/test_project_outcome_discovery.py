@@ -426,10 +426,6 @@ def test_verified_outcome_creates_once_then_delivers_next_iteration_within_froze
     intent = {key: delivered[key] for key in ("title", "description", "role", "priority", "dependencies",
         "acceptance_criteria", "write_domains", "execution_policy", "external_refs", "artifact_refs")}
     assert ledger.create_task_once(creation_ref=creation_ref, intent=intent) == delivered
-    duplicate_ref = "project-discovery:another-outcome"
-    with pytest.raises(ValueError, match="equivalent project task"):
-        ledger.create_task_once(creation_ref=duplicate_ref, intent={**intent,
-            "external_refs": [duplicate_ref, *[ref for ref in intent["external_refs"] if ref != creation_ref]]})
     assert action(request)["project_continuation"] == tick() == terminal
     assert handoffs()[-1] == final_message
     assert sum(item["details"]["phase"] == "exhausted" for item in handoffs()) == 1

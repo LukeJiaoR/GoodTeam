@@ -47,7 +47,7 @@ manager_dialogue.py: Bounded Manager conversation runtime; original services ret
 manager_execution.py: Manager 对话与后台判断入口、项目运行设置及资源限制。
 manager_runtime_observation.py: Bounded local Runtime observation for Manager conversations, never control.
 manager_skill_context.py: Pinned Manager Role/Skill input for the native app-server session.
-manager_tools.py: 将原生工具接入项目服务。Skill 存储不安全时保留只读对话。
+manager_tools.py: 提供 Manager 终止与请审规则，并将原生工具接入项目服务。
 manager_worker_control.py: Explicit project-chat supervision through the existing Pi control protocol.
 memory.py: 项目及角色记忆事件、检索与快照校验。
 memory_embeddings.py: Opt-in embeddings and a rebuildable PG projection of eligible role memory.
@@ -68,30 +68,30 @@ pi_skill_resources.mjs: Pi Worker 的 Skill 资源读取工具。
 pi_web_search.mjs: Pi Worker 的可选网页搜索工具。
 postgres_goals.py: PostgreSQL adapter for the existing bounded-Goal ledger and invariants.
 project_attention.py: Read-only, identity-bound attention across the existing project work surfaces.
-project_batch_feedback.py: Bound known terminal batch results to the existing continuation Context.
+project_batch_feedback.py: 将项目范围内的只读调查和终止批次绑定到续跑观察凭据。
 project_batch_lock.py: 串行化批次确认、恢复和候选审查。
-project_candidate_handoff.py: Bind an authorized continuation to an existing, undelivered batch candidate.
+project_candidate_handoff.py: 将引用的候选传给后续任务及只读 Reviewer。
 project_continuation_notice.py: Presentation of existing continuation state; never an execution authority.
 project_environment.py: Bind existing project dependencies to source worktrees.
 project_human_feedback.py: Bound a Human answer to an existing discovery decision, not new authority.
 project_import.py: 项目导入、工作台入口、模式确认与 readiness 绑定。
 project_investigation_feedback.py: Observe settled investigation output without accepting it as delivery.
-project_iteration.py: Read-only, evidence-grounded starting point for project iteration planning.
-project_iteration_continuation.py: 复用任务队列续跑，核验候选内容与落地提交并保存交付凭据。
+project_iteration.py: 从任务账投影候选。校验执行选择，保留 Manager 的比较与理由。
+project_iteration_continuation.py: 复用队列续跑，核对接受凭据和候选，登记 Git 交付。
 project_iteration_execution.py: 通过同一队列确认原建议或待办批次，并调用隔离 Worker 池。
-project_iteration_planner.py: 从项目任务与授权上下文生成只读迭代建议。
-project_iteration_quality.py: Bind an existing project batch to the existing candidate quality services.
-project_iteration_recovery.py: Explicit recovery of the existing confirmed batch, never fresh task intake.
+project_iteration_planner.py: 用自然语言把候选与授权上下文交给 Manager 判断，保存只读建议。
+project_iteration_quality.py: 统一读取 Manager 接受凭据与专项质量凭据。
+project_candidate_acceptance.py: 将 Manager 决定和观察来源绑定到候选及修正链。
+project_iteration_recovery.py: 复用原批次，执行 Manager 或用户选定的失败重试，保留执行凭据。
 project_observation_judgment.py: Budgeted, read-only advice contract shared with the bounded production consumer.
 project_observation_runtime.py: Bounded running-period Manager judgments over native app-server threads.
-project_outcome_discovery.py: 从已验证交付冻结发现输入并创建后续任务。
+project_outcome_discovery.py: 冻结交付证据，按授权范围创建 Manager 选定的后续任务。
 project_parallel_dispatch.py: Views over the original task/batch ledgers, not another execution queue.
 project_readiness.py: 项目模式、就绪状态与能力评估。
 project_readiness_executor.py: 项目导入后的隔离扫描与就绪执行。
 project_runtime.py: 解析项目运行根目录和规范项目身份。
 project_registry.py: 项目配置注册表与读取错误。
 project_running_observation.py: Deduplicated observation input on an existing continuation, not a new scheduler.
-project_scope_addition.py: Explicit Human additions to an existing grant, never a Manager action.
 project_worker_follow_up.py: Consume bounded Manager follow-up decisions through the original Pi queue.
 projects.py: 项目配置加载、初始化与运行时配置。
 provider_usage.py: Observed Codex invocation usage, separate from execution/approval authority.

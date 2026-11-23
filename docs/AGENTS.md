@@ -92,7 +92,7 @@ prior-art-multi-agent-coordination.md: Prior art — multi-agent coordination (r
 product-core-adapter-strategy.md: GoodTeam Product Strategy v0.1: Own the Engineering Org, Integrate the Tools。
 product-ui-capability-parity.md: Product UI capability parity。
 product-vision.md: GoodTeam — The First AI Engineering Org You Actually Own。
-project-batch-quality.md: Checks, independent review and one correction for a project batch。
+project-batch-quality.md: Manager 候选接受、QA、Code Review 与专项质量凭据。
 project-batch-recovery.md: Recover or abandon an undelivered project batch。
 project-chat-worker-controls.md: Explicit project-chat Worker control。
 project-conflict-wait.md: Reuse the original queue while a sibling occupies a write domain。

@@ -1,4 +1,15 @@
-# Checks, independent review and one correction for a project batch
+# Project checks, independent review and correction
+
+Manager chooses QA, Code Review, both, or existing evidence according to the
+task's acceptance criteria and risks. QA verifies behavior. Code Review
+inspects code changes. In full-flow QA, the QA role observes the run and records
+evidence, failures and limitations. Manager uses the findings to decide whether
+to assign a correction, verify again, or finish.
+A Manager acceptance binds the exact candidate and the observed batch. GoodTeam
+uses it to verify delivery against Git. Explicitly configured quality uses the
+separate evidence below.
+
+## Explicit checks with separate runtime policies
 
 An explicitly configured project batch now uses the existing
 `CandidateValidationService`, `AutomaticCandidateReviewService` and
@@ -12,7 +23,9 @@ same frozen input using authorities configured by the local operator. Delivery
 stays unavailable until an actual check passes and the protected independent
 review accepts that exact candidate under the existing review policy. A human
 checkbox cannot replace either receipt. Passing quality still leaves the tasks
-in `review`; the existing separately confirmed landed-version gate owns `done`.
+in `review` until the exact candidate is verified at the project HEAD. An active
+project-scope continuation records that delivery automatically. Other batches
+can use the manual delivery action.
 
 ## Configure one existing batch locally
 
