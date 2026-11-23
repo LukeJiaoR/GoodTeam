@@ -1,10 +1,10 @@
 /**
  * [INPUT]: Provider 与使用量 API。
- * [OUTPUT]: ProviderSettings 连接与运行器默认值表单。
+ * [OUTPUT]: ProviderSettings 连接表单、运行器默认值与模型列表。
  * [POS]: 设置页统一维护 Codex、Pi 与记忆检索的连接。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Cable, Plus, RefreshCw } from 'lucide-react';
 import { fetchProviderModels, getProviders, getProviderUsage, updateProvider } from './providerApi';
 import './providerSettings.css';
@@ -56,6 +56,8 @@ export default function ProviderSettings({ t }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [deleting, setDeleting] = useState('');
+  const modelRequest = useRef(null);
+  const modelBaseUrl = useRef('');
   const label = (key, values) => t(`providers.${key}`, values);
 
   const reload = async (signal) => {
@@ -74,10 +76,15 @@ export default function ProviderSettings({ t }) {
       .then(([config, stats]) => { if (!controller.signal.aborted) { setSettings(config); setUsage(stats); } })
       .catch((failure) => { if (!controller.signal.aborted) setError(failure.message); })
       .finally(() => { if (!controller.signal.aborted) setPending(''); });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      modelRequest.current?.abort();
+    };
   }, []);
 
   const edit = (provider) => {
+    modelRequest.current?.abort();
+    modelBaseUrl.current = provider?.base_url || '';
     setDraft(provider ? { ...provider, api_key: '' } : emptyDraft());
     setClearKey(false); setModels(null); setError(''); setNotice(''); setDeleting('');
   };
@@ -88,6 +95,7 @@ export default function ProviderSettings({ t }) {
     return fields;
   };
   const mutate = async (action, values = {}) => {
+    if (action === 'save') modelRequest.current?.abort();
     setPending(action); setError(''); setNotice('');
     try {
       const updated = await updateProvider({ action, expected_revision: settings.revision, ...values });
@@ -97,17 +105,40 @@ export default function ProviderSettings({ t }) {
     } catch (failure) { setError(failure.message); }
     finally { setPending(''); }
   };
-  const fetchModels = async () => {
-    setPending('models'); setError(''); setModels(null);
+  const fetchModels = async ({ automatic = false } = {}) => {
+    modelRequest.current?.abort();
+    const controller = new AbortController();
+    modelRequest.current = controller;
+    modelBaseUrl.current = draft.base_url.trim();
+    if (!automatic) setPending('models');
+    setError('');
     try {
-      const result = await fetchProviderModels({ ...formPayload(), name: draft.name || 'OpenAI Responses' });
-      setModels(result.models);
-    } catch (failure) { setError(failure.message); }
-    finally { setPending(''); }
+      const result = await fetchProviderModels({ ...formPayload(), name: draft.name || 'OpenAI Responses' }, controller.signal);
+      if (controller.signal.aborted) return;
+      if (result.models.length) setModels(result.models);
+      else setError(label('modelsEmpty'));
+    } catch (failure) {
+      if (!controller.signal.aborted) setError(failure.message);
+    } finally {
+      if (!automatic && !controller.signal.aborted) setPending('');
+    }
+  };
+  const refreshModelsOnAddressChange = (event) => {
+    const input = event.currentTarget;
+    if (input.validity.valid && modelBaseUrl.current && modelBaseUrl.current !== input.value.trim()) {
+      fetchModels({ automatic: true });
+    }
   };
   const change = (key, value) => {
+    if (key === 'base_url') {
+      modelRequest.current?.abort();
+      setDraft((current) => ({
+        ...current, base_url: value,
+        api_key: modelBaseUrl.current ? '' : current.api_key,
+      }));
+      return;
+    }
     setDraft((current) => ({ ...current, [key]: value }));
-    if (key === 'base_url' || key === 'api_key') setModels(null);
   };
   const disabled = Boolean(pending) || !settings?.configured;
   const active = settings?.active?.codex || '';
@@ -150,14 +181,14 @@ export default function ProviderSettings({ t }) {
         <div className="provider-settings__fields">
           <label>{label('name')}<input required maxLength={100} autoFocus value={draft.name} onChange={(event) => change('name', event.target.value)} /></label>
           <label>{label('protocol')}<select value={draft.protocol} onChange={(event) => change('protocol', event.target.value)}><option value="responses">OpenAI Responses</option></select></label>
-          <label className="provider-settings__wide">{label('url')}<input required type="url" maxLength={2048} placeholder="https://api.example.com/v1" value={draft.base_url} onChange={(event) => change('base_url', event.target.value)} /><small>{label('urlHint')}</small></label>
+          <label className="provider-settings__wide">{label('url')}<input required type="url" maxLength={2048} placeholder="https://api.example.com/v1" value={draft.base_url} onChange={(event) => change('base_url', event.target.value)} onBlur={refreshModelsOnAddressChange} /><small>{label('urlHint')}</small></label>
           <label className="provider-settings__wide">API Key<input type="password" autoComplete="new-password" maxLength={8192} disabled={clearKey} placeholder={label(draft.has_api_key ? 'keyPlaceholder' : 'keyOptional')} value={draft.api_key} onChange={(event) => change('api_key', event.target.value)} /><small>{label('keyHint')}</small></label>
-          {draft.has_api_key ? <label className="provider-settings__clear provider-settings__wide"><input type="checkbox" checked={clearKey} onChange={(event) => { setClearKey(event.target.checked); setModels(null); }} />{label('clearKey')}</label> : null}
+          {draft.has_api_key ? <label className="provider-settings__clear provider-settings__wide"><input type="checkbox" checked={clearKey} onChange={(event) => setClearKey(event.target.checked)} />{label('clearKey')}</label> : null}
           <label className="provider-settings__wide">{label('model')}<input list="provider-models" maxLength={200} value={draft.model} placeholder={label('modelPlaceholder')} onChange={(event) => change('model', event.target.value)} /><datalist id="provider-models">{(models || []).map((model) => <option key={model} value={model} />)}</datalist><small>{label('modelHint')}</small></label>
         </div>
-        <div className="provider-settings__actions"><button type="button" className="product-button product-button--secondary" disabled={!draft.base_url} onClick={fetchModels}><RefreshCw size={14} aria-hidden="true" />{label(pending === 'models' ? 'fetchingModels' : 'fetchModels')}</button>{models ? <span role="status">{label(models.length ? 'modelsLoaded' : 'modelsEmpty', { count: models.length })}</span> : null}</div>
+        <div className="provider-settings__actions"><button type="button" className="product-button product-button--secondary" disabled={!draft.base_url} onClick={() => fetchModels()}><RefreshCw size={14} aria-hidden="true" />{label(pending === 'models' ? 'fetchingModels' : 'fetchModels')}</button>{models ? <span role="status">{label('modelsLoaded', { count: models.length })}</span> : null}</div>
         {models?.length ? <label className="provider-settings__model-picker">{label('chooseModel')}<select value={models.includes(draft.model) ? draft.model : ''} onChange={(event) => change('model', event.target.value)}><option value="">{label('chooseModel')}</option>{models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label> : null}
-        <div className="provider-settings__actions"><button type="submit" className="product-button">{label(pending === 'save' ? 'saving' : 'save')}</button><button type="button" className="product-button product-button--secondary" onClick={() => { setDraft(null); setModels(null); }}>{label('cancel')}</button></div>
+        <div className="provider-settings__actions"><button type="submit" className="product-button">{label(pending === 'save' ? 'saving' : 'save')}</button><button type="button" className="product-button product-button--secondary" onClick={() => { modelRequest.current?.abort(); setDraft(null); setModels(null); }}>{label('cancel')}</button></div>
       </fieldset>
     </form> : null}
     {settings ? <MemoryRetrievalSettings key={settings.revision} settings={settings} disabled={disabled} label={label} onSave={(values) => mutate('configure_embeddings', values)} /> : null}

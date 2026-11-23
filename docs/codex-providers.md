@@ -28,8 +28,10 @@ Worker, model-profile, task-binding and PostgreSQL services from merged PR #670
 1. Configure the existing GoodTeam `GOODTEAM_DATABASE_URL` connection.
 2. Open **Settings → Agent providers → Add provider**.
 3. Enter a name, Responses Base URL (usually ending in `/v1`), optional API Key
-   and default model. **Fetch models** requests `<base_url>/models`; manual model
-   IDs remain available when the endpoint is unsupported or unavailable.
+   and default model. **Fetch models** requests `<base_url>/models`. Editing an
+   existing URL refreshes the list when focus leaves the address field. A failed
+   refresh shows the error and keeps the previous list and model selection.
+   Manual model IDs remain available.
 4. Save and choose **Use provider** for Codex. Select the same connection under
    **Pi connection** to share it. The local choices restore machine configuration.
 

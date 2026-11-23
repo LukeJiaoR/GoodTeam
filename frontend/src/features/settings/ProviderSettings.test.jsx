@@ -48,6 +48,32 @@ test('fetches a model, saves and activates a provider, and preserves an undisclo
   expect(within(card).getByText('Active')).toBeVisible();
   await user.click(within(card).getByRole('button', { name: 'Edit provider' }));
   expect(screen.getByLabelText('API Key', { exact: false, selector: 'input[type="password"]' })).toHaveValue('');
+  const editForm = within(screen.getByRole('form', { name: 'Edit provider' }));
+  await user.click(editForm.getByRole('button', { name: 'Fetch models' }));
+  const modelList = await editForm.findByLabelText('Choose a fetched model');
+  expect(modelList).toHaveValue('model-b');
+
+  fetchProviderModels.mockRejectedValueOnce(new Error('Address unavailable'));
+  const address = editForm.getByLabelText('Base URL', { exact: false });
+  await user.clear(address);
+  await user.type(address, 'https://api.example.com/v2');
+  await user.tab();
+  expect(await screen.findByText('Address unavailable')).toBeVisible();
+  expect(fetchProviderModels.mock.lastCall[0]).toMatchObject({ base_url: 'https://api.example.com/v2' });
+  expect(modelList).toHaveValue('model-b');
+
+  fetchProviderModels.mockResolvedValueOnce({ models: [] });
+  await user.click(editForm.getByRole('button', { name: 'Fetch models' }));
+  await screen.findByText(en['providers.modelsEmpty']);
+  expect(modelList).toHaveValue('model-b');
+
+  fetchProviderModels.mockResolvedValueOnce({ models: ['model-c'] });
+  await user.clear(address);
+  await user.type(address, 'https://api.example.com/v3');
+  await user.tab();
+  await within(modelList).findByRole('option', { name: 'model-c' });
+  expect(within(modelList).queryByRole('option', { name: 'model-b' })).toBeNull();
+  expect(editForm.getByDisplayValue('model-b')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Save provider' }));
   await screen.findByText('Provider saved. Choose Use provider to activate it.');
   expect(updateProvider.mock.lastCall[0]).not.toHaveProperty('api_key');
