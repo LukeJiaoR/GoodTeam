@@ -1,4 +1,17 @@
-# First-party Role methods: bounded ordinary Pi slice
+# Built-in Role Skill baselines
+
+Every Team role and the Manager have versioned defaults. QA retains its browser evidence method alongside its acceptance testing baseline.
+The role package map in `src/goodteam_os/skills/role_packages.py` defines them.
+Default-mode teams pick up these packages on new supported tasks.
+A custom binding, including an empty selection, overrides the defaults.
+Retries read the original task snapshot.
+
+Ordinary Pi dispatch loads the assigned role's methods. Read-only Pi dispatch
+supports Research and Planner. The native Manager loads its own pinned methods.
+Trusted native Reviewer starts load the existing review-core package. Runtimes
+that require protocol-only review retain that contract.
+
+## Original Pi integration
 
 > Historical scope of the original Pi package integration. #738 adds a pinned
 > native Manager loader for these packages; current Manager behavior is described
@@ -7,7 +20,7 @@
 
 Sources: GoodTeam #445 (per-invocation Role methods), #686 (discussion, delegation and continuation), #696 (Planner professional handoff), #701 (authorized search and evidence). These newly authored method assets are not copies of stable_role_prompt. The old prompt-based default experiment was withdrawn and is not part of this candidate.
 
-Four standard packages include SKILL.md and reference checklists: bounded-work (shared), manager-coordination, evidence-research, planning-handoff. Version role-methods.v1 and the exact package digest identify each source; original SkillStore installation/version IDs and task snapshots retain exact bytes. Role-to-package mapping is explicit and independent of Team Runtime configuration. Shared bounded-work is reused across orchestrator, research and planner. These are methodology packages, not new permissions, a scheduler, or a permanent worker identity.
+The original four standard packages include SKILL.md and reference checklists: bounded-work (shared), manager-coordination, evidence-research, planning-handoff. Version role-methods.v1 and the exact package digest identify each source; original SkillStore installation/version IDs and task snapshots retain exact bytes. Role-to-package mapping is explicit and independent of Team Runtime configuration. Shared bounded-work is reused across orchestrator, research and planner. These are methodology packages, not new permissions, a scheduler, or a permanent worker identity.
 
 New registered-project standard Pi dispatches whose Roles all have these methods capture defaults through existing TaskSkillPlan.default_items. Custom selections remain authoritative, including custom-empty. Unsupported Roles and adapters retain their previous path rather than silently acquiring invented methods. Existing dispatch request markers, task locks and jobs determine replay; old requests are not upgraded. Once captured, the original task version is replayed without looking up latest packages. Read-only and strict jobs remain unchanged.
 

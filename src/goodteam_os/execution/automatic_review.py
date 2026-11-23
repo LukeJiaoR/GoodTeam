@@ -1,4 +1,7 @@
-"""Trusted application coordinator for exact-candidate independent review.
+"""[INPUT]: 候选提交、验证凭据与本地评审准入。
+[OUTPUT]: 锁定的独立评审、修正与验证证据。
+[POS]: 在原始任务上推进有界评审循环。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 
 The Reviewer supplies advisory findings, never an approval. This controller
 applies one frozen policy to its protected report and an actual check receipt.
@@ -107,6 +110,8 @@ class AutomaticCandidateReviewService:
                 "policy": start["policy"]}
 
     def _capture(self, snapshot, start):
+        from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
+
         scope = registered_project_scope(self.project_root)
         if scope is None:
             raise TaskInputError("automatic_review_project_unregistered")
@@ -115,7 +120,8 @@ class AutomaticCandidateReviewService:
         context = capture_task_start(workspace=workspace, project_key=project_key, worker_root=self.project_root,
             task=TaskSkillIdentity("direct_task", project_key, task_id), command_key=task_id,
             confirmed_input=self._confirmation(snapshot, start), subjects=("role:code_review",),
-            protocol_only_review=True)
+            protocol_only_review=True, default_role_methods=(start["reviewer_adapter"] == "codex"
+                and isinstance(self.workers._codex_review_admission, TrustedCodexReviewAdmission)))
         if not context:
             raise TaskInputError("automatic_review_team_unavailable")
         return context

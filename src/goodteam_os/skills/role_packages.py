@@ -16,17 +16,32 @@ ROLE_PACKAGES = {
     'implementation': ('bounded-work',),
     'research': ('bounded-work', 'evidence-research'),
     'planner': ('bounded-work', 'planning-handoff'),
-    'qa': ('qa-browser-evidence',),
+    'product_requirement': ('requirement-definition',),
+    'architect': ('architecture-design',),
+    'review': ('design-review',),
+    'ui': ('interface-design',),
+    'frontend': ('frontend-delivery',),
+    'backend': ('backend-delivery',),
+    'qa': ('qa-browser-evidence', 'acceptance-testing'),
+    'release': ('release-preparation',),
+    'retro_memory': ('iteration-learning',),
+    'code_review': ('review-core',),
 }
 
 
 def role_method_package(name):
-    if name not in REFERENCES:
+    if name == 'review-core':
+        from .review_protocol import review_core_package
+
+        return review_core_package()
+    if not any(name in packages for packages in ROLE_PACKAGES.values()):
         raise SkillError('default_method_unavailable', 'No first-party method package is available for this name.')
     root = files('goodteam_os.skills').joinpath('builtin', name)
-    names = ('SKILL.md', 'references/' + REFERENCES[name] + '.md')
+    names = ['SKILL.md']
+    if name in REFERENCES:
+        names.append('references/' + REFERENCES[name] + '.md')
     package = package_from_files(tuple(PackageFile(path, root.joinpath(path).read_bytes()) for path in names),
-                                 directories=('references',))
+                                 directories=('references',) if name in REFERENCES else ())
     return package, SkillSource('builtin', 'builtin:' + name,
                                revision=ROLE_METHODS_VERSION + ':' + package.digest)
 

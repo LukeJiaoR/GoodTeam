@@ -17,8 +17,8 @@ confirmed inputs on replay, including historical captures with wider inventories
 They are not narrowed or downgraded to legacy work by this change.
 
 Role-to-Skill is already many-to-many; `required` / `on_demand` are binding
-properties. Default mode uses built-in packages for supported Pi roles and
-legacy behavior for other roles. The [Role Skill input
+properties. Default mode captures [built-in role packages](first-party-role-methods.md)
+on supported dispatch paths. The [Role Skill input
 contract](role-skill-input-contract.md) describes ordinary read-only Codex and Pi
 QA dispatch. The independently admitted Code Review path is described in
 `skills/review-protocol.md`.

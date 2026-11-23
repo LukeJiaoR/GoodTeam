@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 团队角色与绑定视图。
+ * [OUTPUT]: 展示角色基线，提交未来任务的 Skill 绑定。
+ * [POS]: 团队设置页面的角色配置。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { AlertTriangle, RefreshCw, X } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import Button from '../../components/ui/Button';
@@ -262,7 +268,7 @@ export default function RoleSkillsDialog({
               />
               <span>
                 <strong>{t('team.roleSkills.defaultMode')}</strong>
-                <small>{t('team.roleSkills.defaultModeHint')}</small>
+                <small>{role.skillBinding.defaultPackages?.join(' · ') || t('team.roleSkills.defaultModeHint')}</small>
               </span>
             </label>
             <label>

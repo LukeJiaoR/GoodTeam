@@ -13,6 +13,22 @@ from goodteam_os.workers import WorkerJobStore
 from goodteam_os.service import service_state_dir
 
 
+def test_every_team_subject_has_a_publishable_baseline(tmp_path):
+    from goodteam_os.team_control_plane import TeamControlPlaneStore
+
+    team = TeamControlPlaneStore(tmp_path / "workspace", "DEMO")
+    team.load_or_migrate(legacy_target={})
+    subjects = team.read()["skill_bindings"]
+    library = SkillLibraryService(tmp_path / "operator")
+    defaults = publish_role_methods(library.store, subjects)
+    for subject in subjects:
+        assert defaults[subject]
+        for item in defaults[subject]:
+            assert item["activation"] == "required"
+            version = library.store.get_version(item["skill_id"], item["version_id"])
+            assert version.package_digest == item["package_digest"]
+
+
 def test_role_packages_load_shared_versions_and_separate_invocation_context(tmp_path, monkeypatch):
     from pathlib import Path
     root=tmp_path/'worker'
@@ -75,14 +91,14 @@ def test_new_default_dispatch_loads_real_packages_but_old_requests_remain_legacy
         raise BeforeGit
     monkeypatch.setattr('goodteam_os.dispatch_workspace.prepare_dispatch_workspace',stop)
     request=dict(project_root=source,logical_task_id='default-new',require_isolation=True,
-                 tracks=[{'role':'planner','adapter':'pi','model':'fixture',
+                 tracks=[{'role':'architect','adapter':'pi','model':'fixture',
                           'task':'Make a bounded plan','context':'PRIVATE PLAN'}])
     with pytest.raises(BeforeGit):
         dispatch_tracks(**request)
     workers=WorkerJobStore(source)
     job_id=captured[-1][1][0]
     first=PiMethodInput(workers,job_id).prompt()
-    assert 'planning-handoff' in first and 'PRIVATE PLAN' in first
+    assert 'architecture-design' in first and 'PRIVATE PLAN' in first
     saved=dispatch_artifact_root(source,captured[-1][0])/'request.json'
     assert json.loads(saved.read_text())['default_role_methods']=='role-methods.v1'
     # Once captured, replay must not resolve current package sources again.
