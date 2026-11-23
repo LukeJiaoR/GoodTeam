@@ -13,8 +13,10 @@ flowchart LR
     Q --> B[Confirmed batch]
     B --> W[Isolated Workers]
     W --> V[Worker reports and candidate]
-    V --> R[Candidate checks and independent review]
-    R --> H[Explicit delivery decision]
+    V --> R[Manager evaluates evidence]
+    R -->|If required| QA[QA or Code Review]
+    QA --> R
+    R --> H[Accept candidate and verify landed Git result]
     H --> C
 ```
 

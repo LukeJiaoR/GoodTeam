@@ -1,8 +1,6 @@
 # M0 product acceptance: implementation is not delivery
 
-Owner: [#411](https://github.com/LukeJiaoR/GoodTeam/issues/411).
-Regression and documentation slice: [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419).
-This protocol does not replace either issue or weaken its acceptance criteria.
+Record real-task evidence in [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419). The original scorecard in [#411](https://github.com/LukeJiaoR/GoodTeam/issues/411) transferred there on 2026-10-20.
 
 ## Supported acceptance target
 
@@ -28,7 +26,7 @@ integration and billing are not dependencies for the first bounded delivery proo
 | Research-backed intake, preparation facts, conservative advice and report reads | #426 | Exact project/run/artifact-bound implementation and isolated CI evidence. Report readability and exit code do not establish delivery acceptance. |
 | Always-visible task context and scoped history | [#434](https://github.com/LukeJiaoR/GoodTeam/pull/434) | Read-only navigation/projection and focused/browser tests. Use that PR's final head, base, CI and screenshots, not its earlier candidate. |
 | Same-composer task-change handoff and status | [#435](https://github.com/LukeJiaoR/GoodTeam/pull/435) | Exact original-text draft handoff and persisted status tests. A draft is not confirmed execution; a recorded decision is not accepted delivery. |
-| Repeated useful real coding delivery | #411 | Still requires actual task scorecards and independently inspectable outputs. No PASS count is created by this document. |
+| Repeated useful real coding delivery | #419 | Still requires actual task scorecards and independently inspectable outputs. No PASS count is created by this document. |
 
 Relevant retained records:
 [question/runtime checks](plans/2026-09-10-m0-runtime-team-recovery.md),
@@ -43,7 +41,7 @@ assertion that the current installation has been tested with real providers.
 
 1. Record the selected GoodTeam commit/tree and target repository baseline.
    Inspect current PR dependencies; testing a branch does not mean it is merged
-   or deployed. Keep ordinary exact-head CI as a prerequisite, not a substitute.
+   or deployed. Record exact-head CI when available. During the [CI pause](testing-strategy.md), record the local checks run and their revision.
 2. Use an explicitly designated isolated checkout, workspace, project registry,
    state directory and service port. Follow the [live-smoke playbook](live-smoke-playbook.md).
    Do not restart, delete or mutate the user's existing service/workspace.
@@ -86,7 +84,7 @@ work and partial results must not be presented as accepted completion.
 
 ## Compact per-task scorecard
 
-Copy this block into the #411 evidence record, replacing placeholders with actual
+Copy this block into the #419 evidence record, replacing placeholders with actual
 observations. Store detailed private evidence in the approved project location;
 link only redacted summaries and references in shared issue/PR text.
 
@@ -145,7 +143,7 @@ was started or checked.
 
 ## Completion and escalation
 
-Preserve #411's gate: at least five real tasks across two or more projects; at
+The scorecard inherited from #411 requires at least five real tasks across two or more projects; at
 least four satisfy their actual contracts without material manual rework; at
 least three consecutive tasks need no hidden orchestration repair; no false
 completion; one observed meaningful review/fix sequence; useful restart/re-entry;
@@ -164,10 +162,4 @@ its own PR; shared-file dependencies require combination-head validation.
 Every implementation PR must identify its final head/base, verification tier,
 commands, actual CI result, browser evidence, failed attempts and unexecuted
 checks. A passing old head, tests merely present in source, and uninspected
-screenshots are not current verification. When validation is CI-owned, do not
-run local tests/builds to fill gaps without authorization.
-
-This documentation update does not run a real provider, restart a service,
-merge a PR, publish a release or close #411. When the real runtime or authorization
-is unavailable, record BLOCKED/NOT RUN with the exact missing prerequisite;
-never replace that stage with simulated evidence or a promised background run.
+screenshots are not current verification. Follow the [current verification policy](testing-strategy.md). Record BLOCKED or NOT RUN with the missing prerequisite whenever a required stage cannot run.

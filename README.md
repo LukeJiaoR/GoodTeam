@@ -52,7 +52,7 @@ The desktop Web experience stays centered on one project conversation:
 | **Review** | Inspect evidence and make explicit approval or change decisions. |
 | **Knowledge** | Explore repository understanding, artifacts, provenance, and memory. |
 
-> **Current stage:** real-model delivery acceptance is pending under [M0 / #411](docs/m0-product-acceptance.md). Implemented features and deterministic CI coverage are not a claim of complete product acceptance.
+> **Current stage:** real-model delivery acceptance is pending under [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419) using the [M0 scorecard](docs/m0-product-acceptance.md). Implemented features and deterministic CI coverage are not a claim of complete product acceptance.
 
 ## Capabilities
 
@@ -95,8 +95,9 @@ flowchart TB
     Other --> Evidence
     Batch --> Adapters[GitHub / CI / optional integrations]
     Adapters --> Evidence
-    Evidence --> Review[Human review decision]
-    Human --> Review
+    Evidence --> Review[Manager evaluates candidate]
+    Review --> Delivery[Verify landed Git result]
+    Human -->|When approval is required| Delivery
     CP <--> Store[(Local batch receipts / ledger / memory)]
     Batch --> Store
     Evidence --> Store
@@ -182,7 +183,7 @@ CLI `init` defaults to credential-free `fake` Workers; Web Team defaults can dif
 | --- | --- |
 | Desktop Web and local project workflow | Implemented product surfaces; consult [current status](docs/status.md) for scope and evidence. |
 | Pi persistent runtime | Implemented adapter-level session lifecycle and event records. |
-| Real coding delivery | Next milestone: repeatable, inspectable real-task outcomes under [#411](https://github.com/LukeJiaoR/GoodTeam/issues/411). |
+| Real coding delivery | Next milestone: repeatable, inspectable real-task outcomes under [#419](https://github.com/LukeJiaoR/GoodTeam/issues/419). |
 | Shared Teams across projects | Follow-up scope in [#409](https://github.com/LukeJiaoR/GoodTeam/issues/409); Team configuration is currently project-scoped. |
 | Broader automation and packaging | Arbitrary in-flight changes, automatic replanning, external Planner/MCP expansion, and commercial packaging are outside the current M0 acceptance target. |
 
