@@ -19,7 +19,7 @@ from pathlib import Path
 from goodteam_os.goal_assessment import (
     CompletedAssessmentProtocolError, assess_goal, evidence_digest, verify_completed_assessment,
 )
-from goodteam_os.manager_execution import ManagerResourceBusy
+from goodteam_os.manager_execution import ManagerExecutionError, ManagerResourceBusy
 from goodteam_os.goals import GoalStore
 from goodteam_os.project_runtime import normalize_project_key
 from goodteam_os.tasks import LocalTaskStore
@@ -443,9 +443,11 @@ def tick_goal(workspace, project_key, goal_id, *, assessor=assess_goal, blocking
         except Exception as exc:
             goal = store.get_goal(goal_id)
             if goal["status"] == "active":
-                if getattr(exc, "code", "") == "context_window_exceeded":
-                    goal = store.pause_for_model_context(goal_id, reason=str(exc),
-                        expected_revision=goal["revision"], idempotency_key=f"context:{goal_id}:{goal['revision']}")
+                if isinstance(exc, ManagerExecutionError):
+                    from goodteam_os.assistant_runtime import safe_failure
+
+                    goal = store.pause_for_runtime(goal_id, reason=safe_failure(exc)["message"],
+                        expected_revision=goal["revision"], idempotency_key=f"runtime-pause:{goal_id}:{goal['revision']}")
                 else:
                     goal = _block(store, goal, f"Goal task continuation could not proceed: {exc}")
         store.sync_tasks(goal_id, tasks)

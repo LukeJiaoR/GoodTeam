@@ -98,7 +98,7 @@ def test_goal_context_pause_preserves_original_work(setup, monkeypatch):
     monkeypatch.setattr("goodteam_os.goal_continuation._tick_task_goal", exhausted_context)
     tick_goal(workspace, "DEMO", goal["id"])
     saved = store.get_goal(goal["id"])
-    assert saved["status"] == "blocked" and saved["model_context_paused"]
+    assert saved["status"] == "blocked" and saved["runtime_paused"]
     assert "larger context window" in saved["stop_reason"]
     assert saved["work_units"] == goal["work_units"]
     assert saved["continuation_stopped"] is False

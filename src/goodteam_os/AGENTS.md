@@ -38,7 +38,7 @@ full_smoke.py: 隔离工作区的完整 smoke 命令入口。
 goal_assessment.py: 评估 Goal 所绑定的批次和候选证据。
 goal_continuation.py: 推进已绑定批次、评估交付并提示自动续跑的环境变更。
 goal_review_evidence.py: 从批次绑定读取 Worker 结果和独立 Reviewer 证据。
-goals.py: 保存已确认的 Goal、工作证据与可保留原任务的模型上下文暂停。
+goals.py: 保存已确认的 Goal、工作证据与保留原任务的运行时暂停。
 http_transport.py: Finite resource boundaries for GoodTeam's local dashboard HTTP transport.
 manager_app_server.py: Manager 运行时准入、原生会话、记忆快照与执行恢复。
 manager_assignment.py: Manager callable assignment adapter; existing task cards and queue own work.
