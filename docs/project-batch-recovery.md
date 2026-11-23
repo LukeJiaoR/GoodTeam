@@ -1,9 +1,11 @@
 # Recover or abandon an undelivered project batch
 
-The Work page now exposes an explicit recovery action for a confirmed batch
-whose Worker failed. It uses the original Task Assistant queue, LocalTaskStore
-cards and `dispatch_tracks` pool. A recovery command is retained with the batch's
-confirmation; it is not another task ledger or scheduler.
+During project-scope continuation, Manager reads the failed batch's original
+terminal evidence and decides whether retrying can make progress. A retry uses
+one slot from the configured batch limit, when set. Manager can ask for a
+decision if attempts keep failing without progress. The Work page retains a
+manual recovery action for other batches. Both routes record the retry in the
+original Task Assistant batch and keep the existing Worker pool.
 
 ## Retry only observed failures
 
@@ -15,7 +17,7 @@ an observed exit, missing status, or an outer dispatch error is insufficient.
 An unknown or still-running Worker keeps the project execution slot and cannot
 be replaced or abandoned through this action.
 
-Confirm the displayed failed-task scope and additional Worker charges. Successful
+The retry action displays the failed tasks and potential model charges. Successful
 siblings retain their original jobs, result commits, receipts and workspaces.
 The selected failures receive new job identities with the original failed-job
 lineage and observed failure summary. Every retry starts from the same retained

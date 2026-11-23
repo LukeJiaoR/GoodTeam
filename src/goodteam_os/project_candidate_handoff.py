@@ -1,4 +1,8 @@
-"""Bind an authorized continuation to an existing, undelivered batch candidate."""
+"""[INPUT]: 续跑、源候选与原始 Worker 凭据。
+[OUTPUT]: 绑定待审或待修版本的 Worker 工作区输入。
+[POS]: 将候选传给引用它的后续任务，沿用只读 Reviewer 的原候选。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from pathlib import Path
 
 
@@ -12,7 +16,8 @@ def candidate_for_tasks(*, workspace, project_key, root, session, tasks, continu
         return None
     key = value.get("undelivered_feedback_anchor")
     receipt = (value.get("batch_observations") or {}).get(key)
-    if not receipt:
+    if not receipt or ((value.get("discovery") or {}).get("use_project_backlog")
+                       and not all(receipt["receipt_id"] in task.get("external_refs", []) for task in tasks)):
         return None
     if not valid_receipt(value, receipt):
         raise ValueError("The original candidate feedback is invalid.")
@@ -42,10 +47,11 @@ def _source(*, workspace, project_key, root, value, key, allow_no_candidate=Fals
         report = iteration_batch_report(workspace=workspace, project_key=project_key,
                                         root=Path(root), run_id=batch["run_id"])
         frozen = _starting_candidate(root=Path(root), batch=batch, report=report)
-        if (frozen is None
-                and not any((row.get("captured_result") or {}).get("changed_files")
-                            for row in receipt["tasks"])):
-            return None
+        if not any((row.get("captured_result") or {}).get("changed_files") for row in receipt["tasks"]):
+            if frozen is None:
+                return None
+            if (value["discovery"].get("use_project_backlog") and receipt.get("read_only_discovery") is True):
+                return verify_candidate_for_batch(workspace=workspace, project_key=project_key, root=root, batch=batch)
         # Explicit no-integration outcomes must retain the starting candidate,
         # not partial Worker changes or a fallback to the original checkout.
         if (report.get("all_ok") is False and report.get("integration") in (

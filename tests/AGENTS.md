@@ -86,11 +86,11 @@ test_project_discovery_multiple.py: One decision publishes a bounded set through
 test_project_discovery_planner.py: Planner uses existing discovery/ledger contracts without widening old grants.
 test_project_investigation_feedback.py: One report-to-decision contract with deterministic storage/dispatch seams.
 test_project_iteration.py: First-vertical-slice checks for project-level next-iteration facts.
-test_project_iteration_continuation.py: 验证等价 Git 落地、相关文件核验和交付后的下一轮派工。
+test_project_iteration_continuation.py: 验证按项目路径纳入待办、Git 落地和交付后的派工。
 test_project_iteration_execution.py: One real subprocess batch proves queue -> isolated pool -> original cards.
-test_project_iteration_planner.py: Project-level Manager selection should be replayable, bounded and advisory.
-test_project_iteration_quality.py: One offline batch exercises real checks, protected review and correction.
-test_project_iteration_recovery.py: One real failed batch resumes only its failed task, then continues safely.
+test_project_iteration_planner.py: 验证建议重放、执行范围与比较信息入队回归。
+test_project_iteration_quality.py: 验证 Manager 按证据交付、QA 修正链和专项质量凭据。
+test_project_iteration_recovery.py: 验证 Manager 与用户重试已结束的失败任务，保留同批成功结果。
 test_project_live_pool.py: Real Manager/queue/claim/thread locks; execution output is an offline seam.
 test_project_observation_judgment.py: Offline judgment contract; no live Manager Runtime or Worker reply evidence.
 test_project_observation_runtime.py: Native observation integration with local event files and a simulated Manager.
@@ -98,7 +98,6 @@ test_project_outcome_discovery.py: One bounded project loop learns from delivery
 test_project_question_board.py: One lifecycle through real file stores/locks, with explicit Manager packets.
 test_project_readiness_web.py: 验证 project readiness web 的行为。
 test_project_running_observation.py: Observation input contract, not autonomous model/provider acceptance.
-test_project_scope_addition.py: 验证 project scope addition 的行为。
 test_project_worker_follow_up.py: Manager decision -> durable original Pi queue; no external model requests.
 test_providers.py: Provider configuration in disposable PG; local HTTP/CLI fixtures only.
 test_queued_web_search.py: Explicit queue search authority reaches the original Worker, no paid transport.

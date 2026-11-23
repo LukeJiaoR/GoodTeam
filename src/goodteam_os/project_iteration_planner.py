@@ -44,8 +44,8 @@ project-relative write_domains. Unknown write scope or overlap means pick
 only ONE task; do not assume different role names imply independence.
 Read-only tasks must explicitly declare execution_policy=read_only. An
 advisory parallel choice still requires real worktree isolation, verified
-worker permissions, file collision checks, fan-in review, and human authority
-before dispatch. Do not claim those checks have occurred at planning time.
+worker permissions, file collision checks and fan-in review. An active project
+continuation uses its existing project settings for routine dispatch. Do not claim those checks have occurred at planning time.
 
 Compare candidates using project goals, dependencies, risk, evidence, value,
 and verification effort. Only select IDs present in the supplied eligible
@@ -62,13 +62,13 @@ Return one JSON object only (no Markdown):
 Keep selected_task_ids unique and ordered by preference. Choose a batch
 size justified by the project's actual independent work, not by a model
 constant or a guessed Worker capacity. selected_task_id must equal its first
-element. Keep compared IDs unique and present in the supplied candidate inventory,
-including every selected ID. You may compare blocked, in-progress or review tasks
-to explain dependencies, uncertainty or waiting, but do not select/restart them
-or treat review as accepted delivery. Comparison does not change their status.
+element. Explain why the choice fits the project. When useful, mention which
+tasks informed it in compared_task_ids. Use supplied context, including blocked,
+running, review and out-of-scope tasks, to explain dependencies or uncertainty.
+Only select eligible tasks from the authorized backlog.
 The number of tasks in a planning batch is NOT the number of Agent processes
 that will run concurrently; execution capacity, cost and permissions are
-separate runtime decisions. Rationale length 20-1600.
+separate runtime decisions.
 If there is insufficient independence evidence, return a single-task plan.
 The response is advice, NEVER permission to run, merge or deploy."""
 
@@ -96,7 +96,7 @@ Return only one JSON object:
 "rationale":"Explain the verified evidence and why this next task advances the approved objective."}
 If no useful in-scope follow-up is justified, return new_task:null with an
 evidence-based rationale. That means no follow-up was proposed in this turn,
-never a claim that the whole project is complete. Rationale length 20–1600.
+never a claim that the whole project is complete.
 Only one follow-up per delivered outcome; do not add task IDs or extra fields."""
 
 
@@ -114,7 +114,7 @@ investigation, choose the appropriate available role; do not make investigation
 or any particular role a mandatory step. Do not claim a Worker result is accepted
 delivery, or repeat an unknown execution.
 
-Return one JSON object: {"new_task": task_or_null, "rationale": "20-1600 characters"}.
+Return one JSON object: {"new_task": task_or_null, "rationale": "Explain the decision."}.
 Each task contains exactly role, title, description, acceptance_criteria,
 write_domains, dependencies and source_refs. Use the exact role string shown in
 role_capabilities. Give observable criteria and enough context for the Worker;
@@ -142,7 +142,7 @@ changes or a Git commit for research. No write, merge, deployment, new network
 or credential authority is granted by a task description. A returned research
 report is evidence for later judgment, not proof of project completion.
 
-Return exactly {"new_task": task_or_null, "rationale": "20-1600 characters"}.
+Return exactly {"new_task": task_or_null, "rationale": "Explain the decision."}.
 A task has exactly title (5-240 characters), description (20-4000 characters),
 acceptance_criteria (1-12 observable items), write_domains, dependencies,
 source_refs, and optional task_type ("implementation" or "investigation").
@@ -182,10 +182,11 @@ Human-feedback extension: this extends the preceding task-or-null JSON contract.
 In this extension the limit is one task per decision. New delivery, investigation
 or Human feedback can justify another decision from the same delivered outcome
 within the original budgets.
-When a business choice or unavailable fact truly needs the owner, you may add:
+When the Manager instructions call for user review, you may add:
 "human_question":{"question":"Specific decision to resolve (10-1200 characters)",
 "why_human":"Why available Context and authorized Workers cannot resolve this (10-1200 characters)"}.
-Keep rationale. Do not ask for routine orchestration or facts Workers can obtain.
+Keep rationale. Name the unresolved stopping condition, missing evidence, or
+repeated obstacle that requires the owner's decision.
 
 You own the project-level judgment: decide which work needs this answer and
 which valuable authorized work can continue. A question and new_task may be
@@ -307,6 +308,37 @@ allow_planning. Do not repeat unknown or running work, bypass dependencies, clai
 that a question was answered, or use a Human reply as new authority. No follow-up
 means this judgment proposes none, not that the unfinished project is complete.
 """
+    if discovery.get("use_project_backlog") and context.get("batch_feedback"):
+        base += """
+Recovery extension: batch_feedback describes the current terminal batch.
+If a further attempt can make progress within the project settings, return
+new_task:null and retry_task_ids with only the failed tasks you want to retry.
+Use the prior failures and explain what makes this retry useful. Judge repeated
+failure by its evidence and progress. If the work is looping without progress,
+ask the owner about the unresolved decision. Successful results are retained.
+A retry proposal does not start a Worker or prove completion.
+"""
+    if discovery.get("use_project_backlog") and context.get("batch_feedback"):
+        base += """
+When a writing batch supplies a candidate, decide whether the work needs behavior
+verification by qa, independent code inspection by code_review, both, or has
+sufficient evidence already. Use the original acceptance criteria, risks and
+available evidence. Honor any verification the user explicitly requested.
+For full-flow QA, ask QA to observe the run and report evidence, failures and
+limitations without intervening. Use the findings to decide whether to assign a
+scoped correction, verify again, or finish.
+For verification, review or correction, use the current batch receipt in
+source_refs to inherit the candidate. State what each result actually verifies.
+"""
+    if context.get("delivery_candidate"):
+        base += """
+Judge whether the available evidence supports accepting delivery_candidate
+for the original work, including any corrections. If it does, return
+new_task:null and accept_candidate:true with the evidence in your rationale.
+If more evidence or work is needed, choose a useful next step. Ask the owner only
+when you cannot establish a stopping condition, cannot tell whether to stop from
+available evidence, or keep returning to the same blocker without progress.
+"""
     # Frozen pre-extension packets retain their original prompt contract.
     if context.get("human_feedback_supported") is True:
         base += _MANAGER_HUMAN_FEEDBACK_TASK
@@ -379,8 +411,8 @@ def run_manager_iteration_choice(*, project_config: Path, project_key: str,
         # backlog cannot reuse advice from another delivered result or grant.
         identity = "project-outcome:" + sha256(json.dumps(context, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     prompt = _discovery_prompt(context) if discovery else (_MANAGER_CHOICE_TASK + (
-        "\nFor this captured allow_wait turn, selecting no task is also valid: return selected_task_ids:[], "
-        "compared_task_ids with actual supplied IDs and a 20-1600 character rationale explaining "
+        "\nFor this captured allow_wait turn, selecting no task is also valid: return selected_task_ids:[] "
+        "and explain "
         "the dependency, missing evidence or decision needed. Do not select blocked work or claim "
         "a question was recorded, investigation delegated, or any action taken. This is advice only."
         if backlog.get("allow_wait") is True else "") + (
@@ -491,7 +523,11 @@ def _planning_context(workspace, project_key, root, session, snapshot, source_sn
     from goodteam_os.project_environment import environment_for_task
     from goodteam_os.worker_setup import load_worker_setup
     setup = load_worker_setup(project_config) if project_config is not None else None
+    discovery = (session.get("project_continuation") or {}).get("discovery") or {}
+    project_scope = ({"objective": discovery["objective"], "write_paths": discovery["allowed_write_domains"]}
+                     if allowed is not None and discovery.get("use_project_backlog") is True else {})
     return {
+        **({"project_scope": project_scope} if project_scope else {}),
         **({"question_board": question_board(session)} if include_question_context else {}),
         "schema_version": "project_iteration_choice_packet.v1",
         "project_key": project_key,

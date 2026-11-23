@@ -1,5 +1,5 @@
-"""[INPUT]: 已授权迭代、已验证交付、任务账和角色记忆。
-[OUTPUT]: 冻结的发现输入与幂等后续任务。
+"""[INPUT]: 已授权迭代、批次观察、已验证交付和任务账。
+[OUTPUT]: 冻结的发现输入、Manager 候选决定和幂等后续任务。
 [POS]: 在既有 continuation、Manager 与队列之间衔接交付发现。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 
@@ -13,7 +13,9 @@ import json
 from pathlib import Path
 
 from goodteam_os.goal_continuation import authority_snapshot
-from goodteam_os.project_iteration import normalize_write_domains, rank_project_backlog, validate_iteration_choice
+from goodteam_os.project_iteration import (
+    normalize_write_domains, rank_project_backlog, validate_iteration_choice, write_domains_within_scope,
+)
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.tasks import LocalTaskStore
 
@@ -40,7 +42,7 @@ def normalize_discovery(value):
     required = {"objective", "allowed_write_domains"}
     limits = {"max_new_tasks", "max_planning_calls"}
     if (not isinstance(value, dict) or not required.issubset(value)
-            or set(value) - required - limits - {"allow_investigation", "allow_planning", "allow_team_roles", "allow_undelivered_feedback", "allow_candidate_handoff", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question"}):
+            or set(value) - required - limits - {"allow_investigation", "allow_planning", "allow_team_roles", "allow_undelivered_feedback", "allow_candidate_handoff", "allow_running_observation", "allow_initial_readonly_feedback", "worker_follow_up_limit", "allow_backlog_judgment", "allow_running_human_question", "use_project_backlog"}):
         raise ValueError("Confirm an explicit discovery objective and paths.")
     if any(value.get(key) is not None and (type(value[key]) is not int or value[key] < 1) for key in limits):
         raise ValueError("Optional task and planning limits must be positive integers.")
@@ -50,6 +52,8 @@ def normalize_discovery(value):
             type(value["allow_running_human_question"]) is not bool
             or value["allow_running_human_question"] and value.get("allow_running_observation") is not True):
         raise ValueError("Running Human questions require explicit running observation permission.")
+    if "use_project_backlog" in value and type(value["use_project_backlog"]) is not bool:
+        raise ValueError("Project backlog scope must be a boolean.")
     if "allow_backlog_judgment" in value and type(value["allow_backlog_judgment"]) is not bool:
         raise ValueError("Backlog judgment permission must be an explicit boolean.")
     if "allow_investigation" in value and type(value["allow_investigation"]) is not bool:
@@ -74,10 +78,12 @@ def normalize_discovery(value):
     # Keep omitted flags omitted: existing grants retain their exact digest and
     # cannot acquire research or Planner authority on upgrade or authorization replay.
     objective = value["objective"]
-    domains = normalize_write_domains(value["allowed_write_domains"])
-    if (not isinstance(objective, str) or not 20 <= len(objective.strip()) <= 2000
+    paths = value["allowed_write_domains"]
+    domains = ["."] if value.get("use_project_backlog") and paths == ["."] else normalize_write_domains(paths)
+    minimum_objective = 1 if value.get("use_project_backlog") else 20
+    if (not isinstance(objective, str) or not minimum_objective <= len(objective.strip()) <= 2000
             or domains is None or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/"))):
-        raise ValueError("Discovery needs a 20–2000 character objective and explicit project paths.")
+        raise ValueError("Discovery needs a project objective and explicit project paths.")
     return {**value, **{key: value.get(key) for key in limits},
             "objective": objective.strip(), "allowed_write_domains": domains}
 
@@ -120,7 +126,9 @@ def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
     a discovery grant. Observation never grants follow-up execution authority.
     """
     from goodteam_os.dispatch_workspace import _git
-    from goodteam_os.project_iteration_continuation import DELIVERY_VERIFICATIONS, _verify_landed_batch
+    from goodteam_os.project_iteration_continuation import (
+        DELIVERY_PRODUCERS, DELIVERY_VERIFICATIONS, _delivery_quality_binding, _verify_landed_batch,
+    )
     from goodteam_os.tasks import project_task_intent
 
     batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
@@ -134,7 +142,7 @@ def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
         raise NoVerifiedDelivery("Discovery requires a verified delivery from this authorized continuation.")
     receipt = batch.get("delivery_receipt") or {}
     if (receipt.get("receipt_id") != _digest({key: item for key, item in receipt.items() if key != "receipt_id"})
-            or receipt.get("producer") != "human_confirmed_candidate_delivery"
+            or receipt.get("producer") not in DELIVERY_PRODUCERS
             or receipt.get("verification") not in DELIVERY_VERIFICATIONS
             or receipt.get("run_id") != batch["run_id"] or receipt.get("reviewed") is not True):
         raise ValueError("The accepted project delivery receipt cannot be verified.")
@@ -157,12 +165,12 @@ def verified_outcome(*, workspace, project_key, root, value=None, run_id=None):
     if receipt.get("dispatch_run_id") != report["run_id"]:
         raise ValueError("The delivery receipt references another effective dispatch.")
     if quality:
-        observed = {key: quality[key] for key in (
-            "input_digest", "execution_id", "validation_receipt_id", "review_receipt_id", "candidate_commit")}
+        observed = _delivery_quality_binding(quality)
         if receipt.get("quality") != observed:
             raise ValueError("The original delivered quality receipt changed.")
         checks = {key: quality[key] for key in (
-            "required", "status", "check_status", "review_status", "acceptance_status", "validation_receipt_id", "review_receipt_id")}
+            "required", "status", "check_status", "review_status", "acceptance_status",
+            "validation_receipt_id", "review_receipt_id", "reviewer_job_id", "decision_receipt_id") if key in quality}
     else:
         if receipt.get("quality"):
             raise ValueError("The accepted quality evidence is missing.")
@@ -368,6 +376,13 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
         packet["allowed_source_refs"].extend(item["receipt_id"] for item in batch_history)
     if value.get("batch_feedback_pending"):
         packet["batch_feedback"] = pending_batch_feedback(workspace=workspace, project_key=project_key, root=root, value=value)
+        if value["discovery"].get("use_project_backlog"):
+            from goodteam_os.project_candidate_acceptance import candidate_target
+
+            batches = TaskAssistantSessionStore(workspace, project_key).read().get("project_task_batches", {})
+            target = candidate_target(workspace, project_key, root, batches, packet["batch_feedback"])
+            if target:
+                packet["delivery_candidate"] = target
     packet["human_feedback_supported"] = True
     packet["human_questions"] = question_context(value)
     packet["question_board"] = question_board({**TaskAssistantSessionStore(workspace, project_key).read(),
@@ -416,15 +431,20 @@ def _creation_refs(value, pending):
 
 def _validate_discovered_single(packet, response):
     """Validate advice against the frozen grant; no storage or execution effects."""
-    fields = {"new_task", "rationale"}
-    optional = {"human_question", "wait_for_human"} if packet.get("human_feedback_supported") is True else set()
+    optional = {"rationale"}
+    if packet.get("human_feedback_supported") is True:
+        optional.update(("human_question", "wait_for_human"))
     if "question_board" in packet:
         optional.add("question_updates")
-    if not isinstance(response, dict) or not fields.issubset(response) or set(response) - fields - optional:
-        raise ValueError("Discovery must return one bounded follow-up or an evidence-based stopping reason.")
-    reason = response["rationale"]
-    if not isinstance(reason, str) or not 20 <= len(reason.strip()) <= 1600:
-        raise ValueError("Discovery requires a concrete outcome-based rationale.")
+    batch_feedback = packet.get("batch_feedback") or {}
+    if packet.get("delivery_candidate"):
+        optional.add("accept_candidate")
+    if (packet.get("discovery") or {}).get("use_project_backlog") and batch_feedback:
+        optional.add("retry_task_ids")
+    if not isinstance(response, dict) or "new_task" not in response or set(response) - {"new_task"} - optional:
+        raise ValueError("Discovery must return an explicit follow-up or no follow-up.")
+    reason = response.get("rationale")
+    rationale = reason.strip() if isinstance(reason, str) else ""
     task = response["new_task"]
     actions = {}
     if "human_question" in response:
@@ -451,8 +471,21 @@ def _validate_discovered_single(packet, response):
                     or any(item["id"] not in updated for item in packet.get("human_questions", [])))):
             raise ValueError("Waiting for Human input requires a retained or newly proposed question.")
         actions["wait_for_human"] = response["wait_for_human"]
+    if "retry_task_ids" in response:
+        ids = response["retry_task_ids"]
+        failed = {item["task_id"] for item in batch_feedback["tasks"] if item["worker_status"] == "failed"}
+        if (task is not None or actions.get("wait_for_human") or not isinstance(ids, list) or not ids
+                or any(not isinstance(identifier, str) or identifier not in failed for identifier in ids)
+                or len(ids) != len(set(ids))):
+            raise ValueError("Retry only failed tasks in the current terminal batch, without a new task or wait.")
+        actions["retry_task_ids"] = ids
+    if "accept_candidate" in response:
+        if (response["accept_candidate"] is not True or task is not None
+                or actions.get("retry_task_ids") or actions.get("wait_for_human")):
+            raise ValueError("Accept the current candidate as a standalone decision.")
+        actions["accept_candidate"] = True
     if task is None:
-        return {"new_task": None, "rationale": reason.strip(), **actions}
+        return {"new_task": None, "rationale": rationale, **actions}
     fields = {"title", "description", "acceptance_criteria", "write_domains", "dependencies", "source_refs"}
     team_roles = packet["discovery"].get("allow_team_roles") is True
     investigation_allowed = packet["discovery"].get("allow_investigation") is True
@@ -502,9 +535,7 @@ def _validate_discovered_single(packet, response):
     allowed = packet["discovery"]["allowed_write_domains"]
     if (not isinstance(criteria, list) or not 1 <= len(criteria) <= 12
             or any(not isinstance(item, str) or not 5 <= len(item.strip()) <= 500 for item in criteria)
-            or domains is None or (
-                any(not any(path == parent or path.startswith(parent + "/") for parent in allowed) for path in domains)
-                or any(part in {".git", ".goodteam"} for path in domains for part in path.split("/")))):
+            or domains is None or not write_domains_within_scope(domains, allowed)):
         raise ValueError("The follow-up's acceptance criteria and write paths must fit the approved discovery scope.")
     dependencies, sources = task["dependencies"], task["source_refs"]
     done = set(packet["authorized_done_task_ids"])
@@ -523,7 +554,7 @@ def _validate_discovered_single(packet, response):
         raise ValueError("A batch-driven follow-up must reference its captured results, including unresolved work.")
     return {"new_task": {**task, "title": task["title"].strip(), "description": task["description"].strip(),
                          "acceptance_criteria": [item.strip() for item in criteria], "write_domains": domains},
-            "rationale": reason.strip(), **actions}
+            "rationale": rationale, **actions}
 
 
 def _discovered_task_intent(packet, selection, creation_ref):
@@ -774,7 +805,9 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
                    "backlog_version": packet["backlog"]["version"], "trigger_ref": trigger_ref}
         def reserve(session):
             current = _current(session, value)
-            if packet.get("undelivered_source"):
+            if packet["discovery"].get("use_project_backlog") and packet.get("batch_feedback"):
+                current["undelivered_feedback_anchor"] = packet["batch_feedback"]["observation_key"]
+            elif packet.get("undelivered_source"):
                 current["undelivered_feedback_anchor"] = packet["undelivered_source"]["observation_key"]
             current.update(discovery_pending=pending, manager_calls=current["manager_calls"] + 1, reason="outcome_discovery_reserved")
             return session
@@ -805,6 +838,16 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
         value = record_human_question(store, value, pending)
     value = record_question_updates(store, value, pending)
     inputs = _input_receipts(pending["packet"])
+    if selection.get("accept_candidate"):
+        from goodteam_os.project_candidate_acceptance import record_candidate_acceptance
+
+        return record_candidate_acceptance(workspace=workspace, project_key=project_key, root=root, value=value, pending=pending)
+    if selection.get("retry_task_ids"):
+        if value["max_batches"] is not None and value["batches_started"] >= value["max_batches"]:
+            return _budget_exhausted(store, value, "approved_iteration_budget_used")
+        from goodteam_os.project_iteration_recovery import retry_project_batch_from_manager
+
+        return retry_project_batch_from_manager(workspace=workspace, project_key=project_key, root=root, pending=pending)
     if not _selection_tasks(selection):
         waiting = bool(selection.get("human_question") or selection.get("wait_for_human"))
         def finished(session):

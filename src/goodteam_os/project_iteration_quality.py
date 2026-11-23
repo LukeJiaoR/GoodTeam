@@ -1,8 +1,7 @@
-"""Bind an existing project batch to the existing candidate quality services.
-
-Only explicit local preparation selects the check command. HTTP actions can
-advance that frozen input using separately composed runtime authorities. The
-original task cards and dispatch reports remain the execution ledger.
+"""[INPUT]: 原批次、Manager 接受凭据和专项质量凭据。
+[OUTPUT]: 候选接受、检查、独审和修正证据。
+[POS]: 为既有交付路径读取 Manager 决定或专项质量凭据。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from __future__ import annotations
 
@@ -291,6 +290,10 @@ def project_batch_quality_evidence(*, workspace, project_key, root, run_id):
         if required is None:
             if result["required"]:
                 raise TaskInputError("batch_quality_input_missing")
+            if batch.get("manager_acceptance"):
+                from goodteam_os.project_candidate_acceptance import manager_acceptance_evidence
+
+                return {**result, **manager_acceptance_evidence(workspace=workspace, project_key=project_key, root=root, run_id=run_id)}
             return result
         result.update(required=True, input_digest=required["input_digest"],
                       execution_id=required["snapshot"]["execution_id"], snapshot_ref=required["snapshot"])
@@ -409,10 +412,10 @@ def advance_project_batch_quality(*, workspace, project_key, root, run_id, expec
 
 
 def accepted_batch_quality(*, workspace, project_key, root, run_id):
-    """Delivery gate. Legacy batches retain their separately confirmed human path."""
+    """读取与交付版本绑定的接受凭据。"""
     quality = project_batch_quality_evidence(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
     if not quality["required"]:
-        return None
+        return quality if quality.get("acceptance_status") == "accepted_by_manager" else None
     if (quality["status"] != "reviewed" or quality["check_status"] != "passed"
             or quality["review_status"] != "machine_recorded" or quality["acceptance_status"] != "accepted_by_review_policy"):
         raise TaskInputError("batch_quality_acceptance_required")

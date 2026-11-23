@@ -7,6 +7,11 @@ them blank for no count limit. Usage is still recorded and Stop remains availabl
 A configured batch limit also bounds Manager calls in fixed-task mode. An optional
 [outcome discovery grant](project-outcome-discovery.md) can select follow-ups
 within the approved objective and paths, with optional task and Manager-call limits.
+New project-scope starts from Work use `discovery.use_project_backlog`. At each
+unreserved planning cycle, the service includes new unclaimed tasks that fit the
+configured write paths or explicitly run read-only. Work defaults to the project root. Manager chooses what to
+dispatch. The Work form includes running observation and one Worker progress
+question under the same project settings.
 One batch uses the existing isolated pool,
 with up to ten concurrent Workers; each authorized task can be claimed once.
 
@@ -15,10 +20,20 @@ existing continuation service resumes it on server restart. LocalTaskStore
 remains the only project task ledger, and dispatch reports/workspaces remain
 the execution evidence. Viewing the Work page or report never starts a Worker.
 
+## When Manager asks the user to review
+
+Manager finishes when observed evidence satisfies the acceptance criteria. It
+continues while useful work remains within the project settings. It asks the
+user to review when it cannot establish a stopping condition, cannot tell
+whether to stop from available evidence, or returns to the same blocker
+without progress. The question states what remains unclear, what Manager
+tried, and the decision it needs.
+
 ## Delivery and the next iteration
 
-1. Manager compares only tasks in the approved scope, using a fresh complete
-   project backlog as context. Dependencies must already be delivered.
+1. Manager uses the current backlog and project context to compare work. Its
+   comparisons and rationale are advisory. Tasks selected for execution must
+   belong to the approved scope and have delivered dependencies.
 2. The choice enters the ordinary Assistant queue and the same batch adapter
    used by a manually confirmed queue selection. Readiness, method admission,
    actual write scope and isolation checks still apply.
@@ -29,14 +44,21 @@ the execution evidence. Viewing the Work page or report never starts a Worker.
    A batch explicitly configured for [candidate quality](project-batch-quality.md)
    additionally requires a passed real check and exact-candidate independent
    review; its original result report and any bounded correction stay inspectable.
-4. Independently review the candidate and acceptance evidence. Integrate the
-   reviewed candidate commit from the displayed candidate directory into the
-   project repository using the normal authorized Git workflow. This feature
-   does not merge or deploy on the user's behalf.
-   For a quality-enabled batch, use its final reviewed candidate, which can be a
-   separately recorded correction of the initial integration.
-5. In **Confirm landed delivery**, enter the full current project HEAD and
-   confirm the review. GoodTeam verifies the retained candidate and Worker
+4. Manager uses the acceptance criteria, risk and available evidence to choose
+   QA, Code Review, both, or whether verification is sufficient. In full-flow QA,
+   QA observes the run and records evidence. Manager uses the findings to decide
+   whether to correct, verify again, or finish. For an isolated QA repository, set
+   `local_delivery_branch: qa/delivery` in its local
+   project configuration before starting continuation. GoodTeam fast-forwards
+   that checked-out branch to the exact accepted candidate when
+   the checkout is clean and the candidate starts from the current tree.
+   Other projects can integrate the candidate through their Git workflow.
+   A quality-enabled batch uses its final reviewed candidate after correction.
+5. After Manager accepts a candidate in an active project-scope run, the
+   service reads the current HEAD and records delivery once it verifies that the
+   accepted candidate landed. Explicitly configured quality uses its own acceptance
+   receipt. Use **Confirm landed delivery** for manual
+   review or inactive continuations. GoodTeam verifies the retained candidate and Worker
    identities and checks that the landed commit has the same Git entries for
    every path changed by the candidate. A squash or cherry-pick can satisfy
    this check. Uncommitted edits to those paths block acceptance. An unchanged
@@ -54,7 +76,7 @@ Stop is durable even while a Manager call or Worker is running. A Manager call
 already admitted may finish, but its late result cannot reactivate continuation
 or admit a new batch after revocation.
 
-Without outcome discovery, the service stops when the approved tasks are delivered, the batch/model-call
+Without project-scope discovery, the service stops when the approved tasks are delivered, the batch/model-call
 budget is used, scope/configuration changes, an execution is blocked, or no
 approved task is ready. That default mode does not create new backlog tasks or expand the
 approved inventory. The explicit discovery mode freezes its original seed list

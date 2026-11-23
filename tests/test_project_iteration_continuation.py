@@ -268,3 +268,42 @@ def test_competing_manual_recommendation_cannot_replace_authorized_queue_handoff
     replacement = continuation.configure_project_continuation(workspace=tmp_path, project_key="DEMO", root=source,
         project_config=config, request={**request, "idempotency_key": "after-unclaimed-configuration-block"})
     assert replacement["status"] == "active" and replacement["pending_batch"] is None
+
+
+def test_project_scope_admits_later_backlog_without_task_confirmation(tmp_path):
+    source = repository(tmp_path / "source")
+    config = tmp_path / "projects/demo.local.yaml"
+    config.parent.mkdir()
+    config.write_text(f"key: DEMO\nrepos:\n  root: {source}\nworker_backend:\n  mode: fake\n")
+    ledger = LocalTaskStore(source, "DEMO")
+
+    def task(title, domain):
+        return ledger.create_task(title=title, description="Implement the project change.",
+                                  role="implementation", write_domains=[domain])
+
+    initial = task("Initial task", "src/initial.py")
+    outside = task("Different project area", "src-other/outside.py")
+    scope = dict(workspace=tmp_path, project_key="DEMO", root=source, project_config=config)
+    request = {"task_ids": [initial["id"], outside["id"]], "confirmed": True,
+               "billing_acknowledged": True, "idempotency_key": "project-scope",
+               "expected_backlog_version": project_iteration_backlog(source, "DEMO")["version"],
+               "discovery": {"objective": "Improve import.",
+                             "allowed_write_domains": ["src"], "use_project_backlog": True}}
+    started = continuation.configure_project_continuation(**scope, request=request)
+    assert started["task_ids"] == [initial["id"]]
+    later = task("New project work", "src/later.py")
+
+    def manager(*, backlog, context, **_):
+        assert context["project_scope"] == {"objective": "Improve import.", "write_paths": ["src"]}
+        assert {item["task_id"] for item in backlog["candidates"]} == {initial["id"], later["id"]}
+        return {"selection": {"selected_task_ids": [later["id"]], "compared_task_ids": [later["id"], outside["id"]],
+                              "rationale": "The newer task better advances the project objective."}}
+
+    def start_batch(**arguments):
+        assert arguments["expected_continuation_id"] == started["id"]
+        assert arguments["confirmed"] is True
+        return {"run_id": "task-batch-project-scope"}
+
+    state = continuation.tick_project_continuation(**scope, manager_runner=manager, batch_runner=start_batch)
+    assert state["pending_batch"]["task_ids"] == [later["id"]]
+    assert not state.get("scope_additions")

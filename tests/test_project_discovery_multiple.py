@@ -136,21 +136,17 @@ def test_multiple_followups_publish_once_after_partial_write_and_lost_queue_repl
     assert "Multiple follow-ups extension" not in planner._discovery_prompt(legacy)
 
 
-@pytest.mark.parametrize("existing", [False, True])
-def test_equivalent_later_task_rejects_entire_set_without_new_cards(tmp_path, existing):
+def test_conflicting_creation_identity_keeps_discovery_set_atomic(tmp_path):
     ledger = LocalTaskStore(tmp_path, "APP")
+
     def intent(ref, title):
         return dict(title=title, description="Investigate the exact missing evidence.", role="research",
             priority="medium", dependencies=[], acceptance_criteria=["Return source-backed evidence."],
             write_domains=[], execution_policy="read_only", external_refs=[ref], artifact_refs=["seed"])
-    first_ref, second_ref = "project-discovery:set", "project-discovery:set:1"
-    if existing:
-        ref = "project-discovery:previous"
-        ledger.create_task_once(creation_ref=ref, intent=intent(ref, "Investigate beta"))
-    before = ledger.path.read_bytes() if ledger.path.exists() else None
-    first = intent(first_ref, "Investigate alpha")
-    second = intent(second_ref, "INVESTIGATE  BETA" if existing else "INVESTIGATE  ALPHA")
-    with pytest.raises(ValueError, match="equivalent"):
-        ledger.create_tasks_once(items=[(first_ref, first), (second_ref, second)])
-    assert (ledger.path.read_bytes() if ledger.path.exists() else None) == before
-    assert len(ledger.list_tasks()) == int(existing)
+
+    new_ref, original_ref = "project-discovery:new", "project-discovery:original"
+    original = ledger.create_task_once(creation_ref=original_ref, intent=intent(original_ref, "Original investigation"))
+    with pytest.raises(ValueError, match="already owns a different intent"):
+        ledger.create_tasks_once(items=[(new_ref, intent(new_ref, "New investigation")),
+                                       (original_ref, intent(original_ref, "Replaced investigation"))])
+    assert ledger.list_tasks() == [original]

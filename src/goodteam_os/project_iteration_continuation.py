@@ -1,13 +1,13 @@
-"""[INPUT]: 项目续跑授权、原任务、Worker 结果和 Git 内容。
-[OUTPUT]: 续跑状态及绑定已审候选和落地提交的交付凭据。
-[POS]: 使用现有任务队列续跑，并核验交付内容。
+"""[INPUT]: 项目续跑设置、待办、Worker 结果、接受凭据和 Git 内容。
+[OUTPUT]: 续跑状态及绑定已接受候选和落地提交的交付凭据。
+[POS]: 复用任务队列。按项目路径纳入待办，核对候选与 Git 落地。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 
 Bounded project continuation through the existing Assistant queue and dispatch.
 
 The Assistant session retains the owner's scope/budget and pending queue IDs.
 LocalTaskStore remains task truth; dispatch receipts remain execution truth.
-Neither a Worker exit nor a Manager statement is a delivery acceptance.
+Delivery records both the acceptance source and the observed Git result.
 """
 from __future__ import annotations
 
@@ -21,7 +21,9 @@ import re
 from goodteam_os.assistant_queue import queue_manager_iteration_choice
 from goodteam_os.goal_continuation import authority_snapshot, goal_guard
 from goodteam_os.manager_execution import ManagerExecutionError, ManagerResourceBusy
-from goodteam_os.project_iteration import _internal, project_iteration_backlog, rank_project_backlog
+from goodteam_os.project_iteration import (
+    _internal, normalize_write_domains, project_iteration_backlog, rank_project_backlog, write_domains_within_scope,
+)
 from goodteam_os.project_iteration_planner import (
     plan_next_iteration, ManagerPlanningBudgetExhausted, ManagerPlanningActivationChanged,
 )
@@ -33,6 +35,12 @@ from goodteam_os.tasks import LocalTaskStore, project_task_intent, task_evidence
 _FIELD = "project_continuation"
 _DELIVERY_VERIFICATION = "landed_git_content"
 DELIVERY_VERIFICATIONS = (_DELIVERY_VERIFICATION, "landed_git_ancestor_and_content")
+DELIVERY_PRODUCERS = ("human_confirmed_candidate_delivery", "independently_reviewed_candidate_delivery",
+                      "manager_accepted_candidate_delivery")
+
+
+class DeliveryNotLanded(ValueError):
+    """当前 Git 内容尚不能证明候选已落地。"""
 
 
 def _digest(value):
@@ -92,7 +100,7 @@ def pending_project_batch(session, root, project_key):
 
 
 def configure_project_continuation(*, workspace, project_key, root, project_config, request):
-    """Confirm existing task identities and optional iteration/model-call limits."""
+    """保存项目续跑范围、初始任务和可选用量上限。"""
     from goodteam_os.team_control_plane import ensure_team_state
     from goodteam_os.project_outcome_discovery import authorization_digest, normalize_discovery
 
@@ -104,9 +112,10 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
     discovery = normalize_discovery(request.get("discovery"))
     if not isinstance(key, str) or not 1 <= len(key) <= 256:
         raise ValueError("A stable continuation command identity is required.")
-    if (not isinstance(ids, list) or not 1 <= len(ids) <= 128
+    project_scope = bool(discovery and discovery.get("use_project_backlog"))
+    if (not isinstance(ids, list) or not ids or not project_scope and len(ids) > 128
             or any(not isinstance(item, str) or not item for item in ids) or len(set(ids)) != len(ids)):
-        raise ValueError("Select 1–128 distinct existing project tasks.")
+        raise ValueError("Supply distinct existing tasks. Fixed-list continuation supports up to 128 tasks.")
     if maximum is not None and (type(maximum) is not int or maximum < 1):
         raise ValueError("The optional project batch limit must be a positive integer.")
     workspace, root, project_config = Path(workspace), Path(root), Path(project_config)
@@ -119,7 +128,7 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
         current = session.get(_FIELD) or {}
         original = current if current.get("id") == identity else (session.get("project_continuation_history") or {}).get(identity)
         if original:
-            if (original.get("seed_task_ids", original.get("task_ids")) != ids or original.get("max_batches") != maximum
+            if (original.get("requested_task_ids", original.get("seed_task_ids", original.get("task_ids"))) != ids or original.get("max_batches") != maximum
                     or original.get("discovery") != discovery
                     or original.get("approved_backlog_version") != request.get("expected_backlog_version")):
                 raise ValueError("Continuation command was already used with different scope or limits.")
@@ -142,9 +151,15 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
         if discovery and any(tasks[identifier]["status"] == "done" and tasks[identifier].get("delivery_verified") is not True
                              for identifier in ids):
             raise ValueError("Discovery seed dependencies marked done need verified delivery evidence.")
+        if project_scope:
+            ids_in_scope = [identifier for identifier in ids if _within_project_paths(tasks[identifier], discovery)]
+            if not any(tasks[identifier]["status"] != "done" for identifier in ids_in_scope):
+                raise ValueError("Start with an existing read-only task or a task within the project write paths.")
+        else:
+            ids_in_scope = ids
         value = {
             "schema_version": "project_continuation.v1", "id": identity, "status": "active",
-            "task_ids": ids, "task_intents": {identifier: _intent(tasks[identifier]) for identifier in ids},
+            "task_ids": ids_in_scope, "task_intents": {identifier: _intent(tasks[identifier]) for identifier in ids_in_scope},
             "approved_backlog_version": version,
             "max_batches": maximum, "max_manager_calls": maximum,
             "batches_started": 0, "manager_calls": 0, "pending_batch": None,
@@ -153,9 +168,11 @@ def configure_project_continuation(*, workspace, project_key, root, project_conf
             "created_at": datetime.now(UTC).isoformat(),
         }
         if discovery:
-            value.update(discovery=discovery, seed_task_ids=list(ids), discovered_task_ids=[], new_tasks_created=0,
-                         seed_task_intents={identifier: value["task_intents"][identifier] for identifier in ids},
+            value.update(discovery=discovery, seed_task_ids=list(ids_in_scope), discovered_task_ids=[], new_tasks_created=0,
+                         seed_task_intents=dict(value["task_intents"]),
                          discovery_pending=None, discovery_consumed=[], max_manager_calls=discovery["max_planning_calls"])
+            if project_scope:
+                value["requested_task_ids"] = ids
             value["authorization_digest"] = authorization_digest(value)
         _save(store, value)
         _event(store, f"project-continuation:{identity}", "project_continuation_authorized",
@@ -189,6 +206,29 @@ def _scope_tasks(value, tasks):
     return known, selected
 
 
+def _within_project_paths(task, discovery):
+    if task.get("execution_policy") == "read_only":
+        return True
+    domains = normalize_write_domains(task.get("write_domains"))
+    return bool(domains and write_domains_within_scope(domains, discovery["allowed_write_domains"]))
+
+
+def _refresh_project_backlog(store, value, tasks):
+    """将项目路径内的新待办交给 Manager 排序，保留已绑定的任务版本。"""
+    discovery = value.get("discovery") or {}
+    if (discovery.get("use_project_backlog") is not True or value.get("planning_backlog_version")
+            or value.get("discovery_pending")):
+        return value
+    intents = value["task_intents"]
+    added = {task["id"]: _intent(task) for task in tasks
+             if task["id"] not in intents and task["status"] == "todo" and not task.get("run_id")
+             and not task.get("goal_id") and not _internal(task) and _within_project_paths(task, discovery)}
+    if not added:
+        return value
+    return _save(store, {**value, "task_ids": [*value["task_ids"], *added],
+                         "task_intents": {**intents, **added}})
+
+
 def tick_project_continuation(*, workspace, project_key, root, project_config,
                               manager_runner=None, batch_runner=None, observation_runner=None):
     """One bounded automatic step; retries retain the same queued batch identity."""
@@ -207,9 +247,26 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
         try:
             if value["authority"] != authority_snapshot(workspace, project_key, project_config, root):
                 raise ValueError("Project configuration, Team or model settings changed; authorization is stale.")
-            known, selected = _scope_tasks(value, LocalTaskStore(root, project_key).list_tasks())
+            tasks = LocalTaskStore(root, project_key).list_tasks()
+            value = _refresh_project_backlog(store, value, tasks)
+            if value.get("status") != "active":
+                return value
+            known, selected = _scope_tasks(value, tasks)
             from goodteam_os.project_parallel_dispatch import select_pending, ready_parallel_tasks
-            pending = select_pending(store.read(), value, known)
+            session = store.read()
+            if ((value.get("discovery") or {}).get("use_project_backlog")
+                    and not value.get("planning_backlog_version") and not value.get("discovery_pending")):
+                for batch in session.get("project_task_batches", {}).values():
+                    if (batch.get("expected_continuation_id") == value["id"] and batch.get("status") == "review"
+                            and (batch.get("manager_acceptance") or
+                                 (batch.get("quality") or {}).get("acceptance_status") == "accepted_by_review_policy")):
+                        from goodteam_os.models import _parse_simple_yaml
+
+                        branch = _parse_simple_yaml(project_config).get("local_delivery_branch")
+                        delivered = _reconcile_accepted_delivery(workspace, project_key, root, batch, branch=branch)
+                        if delivered is not None:
+                            return delivered["project_continuation"]
+            pending = select_pending(session, value, known)
             if pending != value.get("pending_batch"):
                 value = _save(store, {**value, "pending_batch": pending})
             parallel_planning = bool(value.get("planning_backlog_version") and value.get("planning_input_version") == 5)
@@ -265,9 +322,11 @@ def tick_project_continuation(*, workspace, project_key, root, project_config,
                 elif any(task["status"] == "canceled" for task in batch_tasks):
                     raise ValueError("The current batch was canceled; no automatic follow-up is authorized.")
                 elif not recovering and all(task["status"] in {"review", "blocked"} for task in batch_tasks):
-                    observed = observe_pending_investigation(workspace=workspace, project_key=project_key,
+                    candidate_feedback = ((value.get("discovery") or {}).get("use_project_backlog")
+                                          and saved_batch.get("candidate_source"))
+                    observed = None if candidate_feedback else observe_pending_investigation(workspace=workspace, project_key=project_key,
                         root=root, project_config=project_config, value=value)
-                    if observed is None and (any(task["status"] == "blocked" for task in batch_tasks)
+                    if observed is None and (candidate_feedback or any(task["status"] == "blocked" for task in batch_tasks)
                             or can_observe_discovered_readonly(value, batch_tasks)
                             or can_observe_initial_readonly(value, batch_tasks)
                             or can_observe_pending_write_review(value, batch_tasks)):
@@ -560,17 +619,15 @@ def _require_clean_checkout(root, label, *, paths=None):
     status = _read_git(root, ["status", "--porcelain=v1", "--untracked-files=all",
         "--no-renames", "-z", "--", *pathspecs])
     if any(not _metadata_path(os.fsdecode(entry[3:])) for entry in status.split(b"\0") if entry):
-        raise ValueError(f"The {label} contains uncommitted edits; review and commit the exact delivery first.")
+        raise DeliveryNotLanded(f"The {label} contains uncommitted edits; review and commit the exact delivery first.")
 
 
-def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_commit, landed_commit):
-    from goodteam_os.dispatch_workspace import (
-        _git, _read_git, dispatch_artifact_root, verify_dispatch_results,
-    )
+def _delivery_candidate(*, workspace, project_key, root, run_id, candidate_commit):
+    from goodteam_os.dispatch_workspace import _read_git, dispatch_artifact_root, verify_dispatch_results
     from goodteam_os.project_iteration_execution import iteration_batch_report
     from goodteam_os.project_iteration_quality import accepted_batch_quality
 
-    candidate_commit, landed_commit = _commit(candidate_commit), _commit(landed_commit)
+    candidate_commit = _commit(candidate_commit)
     report = iteration_batch_report(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
     integration = report.get("integration") or {}
     if report.get("all_ok") is not True or integration.get("status") != "succeeded":
@@ -595,22 +652,32 @@ def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_comm
     quality = accepted_batch_quality(workspace=workspace, project_key=project_key, root=root, run_id=run_id)
     effective_commit = quality["candidate_commit"] if quality else integration["candidate_commit"]
     if candidate_commit != effective_commit:
-        raise ValueError("Delivery requires the exact independently reviewed candidate.")
+        raise ValueError("Delivery requires the exact accepted candidate.")
     if quality:
         # The quality resolver verifies the correction's original input,
         # protected host seal, ancestry and write scope. Never rewrite the
         # initial dispatch integration receipt to impersonate this new result.
         candidate = Path(quality["candidate_path"])
         _require_clean_checkout(candidate, "reviewed candidate")
+    return report, quality, candidate
+
+
+def _verify_landed_batch(*, workspace, project_key, root, run_id, candidate_commit, landed_commit):
+    from goodteam_os.dispatch_workspace import _git, _read_git
+
+    landed_commit = _commit(landed_commit)
+    report, quality, candidate = _delivery_candidate(workspace=workspace, project_key=project_key, root=root,
+        run_id=run_id, candidate_commit=candidate_commit)
+    integration = report["integration"]
     if _read_git(root, ["rev-parse", "HEAD"]).strip().decode() != landed_commit:
-        raise ValueError("The project is not at the exact confirmed landed commit.")
+        raise DeliveryNotLanded("The project is not at the exact confirmed landed commit.")
     changed = [path for path in _read_git(candidate, ["diff", "--name-only", "--no-renames", "-z",
         integration["baseline_commit"], candidate_commit]).split(b"\0") if path]
     if not changed and _git(root, ["merge-base", "--is-ancestor", candidate_commit, landed_commit], check=False).returncode:
-        raise ValueError("The unchanged candidate has not landed in the project's current Git history.")
+        raise DeliveryNotLanded("The unchanged candidate has not landed in the project's current Git history.")
     expected, actual = _tree(candidate, candidate_commit), _tree(root, landed_commit)
     if any(expected.get(path) != actual.get(path) for path in changed):
-        raise ValueError("The landed project content differs from the reviewed candidate.")
+        raise DeliveryNotLanded("The landed project content differs from the reviewed candidate.")
     _require_clean_checkout(root, "project", paths=changed)
     return report, quality
 
@@ -638,72 +705,159 @@ def accept_project_batch_delivery(*, workspace, project_key, root, request):
     """Human review plus observed landed Git evidence; never a model assertion."""
     if request.get("confirmed") is not True or request.get("reviewed") is not True:
         raise ValueError("Confirm independent review of the exact candidate and its verification evidence.")
+    with goal_guard(workspace, project_key):
+        return _accept_project_batch_delivery(workspace=workspace, project_key=project_key, root=root,
+                                              request=request, producer=DELIVERY_PRODUCERS[0])
+
+
+def _reconcile_accepted_delivery(workspace, project_key, root, batch, *, branch=None):
+    """依据接受凭据和实际 Git 内容登记交付。调用方持有项目锁。"""
+    from goodteam_os.dispatch_workspace import _read_git
+    from goodteam_os.project_iteration_quality import project_batch_quality_evidence
+
+    scope = dict(workspace=workspace, project_key=project_key, root=root, run_id=batch["run_id"])
+    quality = project_batch_quality_evidence(**scope)
+    if quality.get("acceptance_status") not in {"accepted_by_review_policy", "accepted_by_manager"}:
+        return None
+    head = quality["candidate_commit"]
+    landed = _read_git(root, ["rev-parse", "HEAD"]).decode().strip()
+    request = {"run_id": batch["run_id"], "candidate_commit": head, "landed_commit": landed}
+    accept = dict(workspace=workspace, project_key=project_key, root=root,
+                  producer=(DELIVERY_PRODUCERS[2] if quality.get("acceptance_status") == "accepted_by_manager"
+                            else DELIVERY_PRODUCERS[1]))
+    try:
+        return _accept_project_batch_delivery(**accept, request=request)
+    except DeliveryNotLanded:
+        if not branch:
+            return None
+    try:
+        if _land_accepted_candidate(scope, batch, head, landed, branch):
+            return _accept_project_batch_delivery(**accept, request={**request, "landed_commit": head})
+    except DeliveryNotLanded:
+        pass
+    return None
+
+
+def _land_accepted_candidate(scope, batch, head, landed, branch):
+    """将已接受候选快进到项目配置的本地分支。"""
+    from goodteam_os.dispatch_workspace import _git, _import_retained_commit, _read_git
+
+    root = scope["root"]
+    ref = f"refs/heads/{branch}"
+    if not isinstance(branch, str) or _git(root, ["check-ref-format", ref], check=False).returncode:
+        raise ValueError("Set local_delivery_branch to a local Git branch name.")
+    if _git(root, ["symbolic-ref", "-q", "HEAD"], check=False).stdout.strip().decode() != ref:
+        return False
+    report, quality, source = _delivery_candidate(**scope, candidate_commit=head)
+    baseline = report["integration"]["baseline_commit"]
+    # 只落地已接受的变更，排除派工前工作区中的未提交内容。
+    if (not quality or _read_git(source, ["rev-parse", baseline + "^{tree}"])
+            != _read_git(root, ["rev-parse", landed + "^{tree}"])):
+        return False
+    try:
+        _require_clean_checkout(root, "project")
+    except DeliveryNotLanded:
+        return False
+    _import_retained_commit(root, source, head)
+    if _git(root, ["merge-base", "--is-ancestor", landed, head], check=False).returncode:
+        return False
+    store = TaskAssistantSessionStore(scope["workspace"], scope["project_key"])
+    advanced = False
+
+    def land(session):
+        nonlocal advanced
+        value = session.get(_FIELD) or {}
+        if (batch.get("expected_continuation_id") != value.get("id") or value.get("status") != "active"
+                or batch.get("expected_authority") != value.get("authority")
+                or _git(root, ["symbolic-ref", "-q", "HEAD"], check=False).stdout.strip().decode() != ref
+                or _read_git(root, ["rev-parse", "HEAD"]).strip().decode() != landed):
+            return session
+        _require_clean_checkout(root, "project")
+        _git(root, ["merge", "--ff-only", head])
+        advanced = True
+        return session
+
+    try:
+        store._mutate(land)
+    except DeliveryNotLanded:
+        return False
+    return advanced
+
+
+def _delivery_quality_binding(quality):
+    return {key: quality[key] for key in ("input_digest", "execution_id", "validation_receipt_id",
+                                         "review_receipt_id", "reviewer_job_id", "decision_receipt_id", "candidate_commit") if key in quality}
+
+
+def _accept_project_batch_delivery(*, workspace, project_key, root, request, producer):
     run_id = request.get("run_id")
     if not isinstance(run_id, str) or not run_id.startswith("task-batch-"):
         raise ValueError("An existing project batch identity is required.")
     workspace, root = Path(workspace), Path(root)
     store = TaskAssistantSessionStore(workspace, project_key)
     tasks = LocalTaskStore(root, project_key)
-    with goal_guard(workspace, project_key):
-        batch = store.read().get("project_task_batches", {}).get(run_id, {})
-        if not batch or batch.get("project_root") != str(root.resolve()) or batch.get("status") == "abandoned":
-            raise ValueError("The delivery does not belong to this project batch.")
-        receipt = {"producer": "human_confirmed_candidate_delivery", "run_id": run_id,
-                   "dispatch_run_id": batch.get("current_dispatch_run_id", batch["dispatch_run_id"]), "candidate_commit": _commit(request.get("candidate_commit")),
-                   "landed_commit": _commit(request.get("landed_commit")), "reviewed": True,
-                   "verification": _DELIVERY_VERIFICATION}
-        with tasks._lock():
-            before = [task for task in tasks._read()["tasks"] if task.get("run_id") == run_id]
-            # 保留原凭据的验证方式和质量记录，重放不依赖当前 HEAD。
-            previous = (before[0].get("delivery_receipt") or {}) if before else {}
-            replayed = {**receipt, "verification": previous.get("verification")}
-            if previous.get("quality"):
-                replayed["quality"] = previous["quality"]
-            replayed["receipt_id"] = _digest(replayed)
-            replay = (before and len(before) == len(batch["task_ids"])
-                      and replayed["verification"] in DELIVERY_VERIFICATIONS
-                      and all(task["status"] == "done" and task.get("delivery_verified") is True
-                              and task.get("delivery_receipt") == replayed for task in before))
-            originals = {item["task_id"]: item.get("task_intent") for item in batch["task_bindings"]}
-            if not replay and (not before or len(before) != len(originals)
-                    or any(project_task_intent(task) != originals.get(task["id"])
-                           for task in before)):
-                raise ValueError("The original task scope changed after batch confirmation.")
-            expected_tasks = {task["id"]: task_evidence_digest(task) for task in before}
-        if replay:
-            # Finish a potentially interrupted session projection without
-            # requiring HEAD to remain at a historical accepted revision.
-            return {**_record_delivery(store, run_id, replayed, [task["id"] for task in before]), "reused": True}
-        report, quality = _verify_landed_batch(
-            workspace=workspace, project_key=project_key, root=root, run_id=run_id,
-            candidate_commit=request.get("candidate_commit"), landed_commit=request.get("landed_commit"),
-        )
-        if quality:
-            receipt["quality"] = {key: quality[key] for key in (
-                "input_digest", "execution_id", "validation_receipt_id", "review_receipt_id", "candidate_commit")}
-        receipt["receipt_id"] = _digest(receipt)
-        with tasks._lock():
-            from goodteam_os.dispatch_workspace import _read_git
+    batch = store.read().get("project_task_batches", {}).get(run_id, {})
+    if not batch or batch.get("project_root") != str(root.resolve()) or batch.get("status") == "abandoned":
+        raise ValueError("The delivery does not belong to this project batch.")
+    receipt = {"producer": producer, "run_id": run_id,
+               "dispatch_run_id": batch.get("current_dispatch_run_id", batch["dispatch_run_id"]), "candidate_commit": _commit(request.get("candidate_commit")),
+               "landed_commit": _commit(request.get("landed_commit")), "reviewed": True,
+               "verification": _DELIVERY_VERIFICATION}
+    with tasks._lock():
+        before = [task for task in tasks._read()["tasks"] if task.get("run_id") == run_id]
+        # 保留原凭据的验证方式和质量记录，重放不依赖当前 HEAD。
+        previous = (before[0].get("delivery_receipt") or {}) if before else {}
+        replayed = {**receipt, "verification": previous.get("verification")}
+        if previous.get("producer") in DELIVERY_PRODUCERS:
+            replayed["producer"] = previous["producer"]
+        if previous.get("quality"):
+            replayed["quality"] = previous["quality"]
+        replayed["receipt_id"] = _digest(replayed)
+        replay = (before and len(before) == len(batch["task_ids"])
+                  and replayed["verification"] in DELIVERY_VERIFICATIONS
+                  and all(task["status"] == "done" and task.get("delivery_verified") is True
+                          and task.get("delivery_receipt") == replayed for task in before))
+        originals = {item["task_id"]: item.get("task_intent") for item in batch["task_bindings"]}
+        if not replay and (not before or len(before) != len(originals)
+                or any(project_task_intent(task) != originals.get(task["id"])
+                       for task in before)):
+            raise ValueError("The original task scope changed after batch confirmation.")
+        expected_tasks = {task["id"]: task_evidence_digest(task) for task in before}
+    if replay:
+        # Finish a potentially interrupted session projection without
+        # requiring HEAD to remain at a historical accepted revision.
+        return {**_record_delivery(store, run_id, replayed, [task["id"] for task in before]), "reused": True}
+    report, quality = _verify_landed_batch(
+        workspace=workspace, project_key=project_key, root=root, run_id=run_id,
+        candidate_commit=request.get("candidate_commit"), landed_commit=request.get("landed_commit"),
+    )
+    if producer != DELIVERY_PRODUCERS[0] and not quality:
+        raise ValueError("Automatic delivery requires an acceptance receipt for this candidate.")
+    if quality:
+        receipt["quality"] = _delivery_quality_binding(quality)
+    receipt["receipt_id"] = _digest(receipt)
+    with tasks._lock():
+        from goodteam_os.dispatch_workspace import _read_git
 
-            if _read_git(root, ["rev-parse", "HEAD"]).strip().decode() != receipt["landed_commit"]:
-                raise ValueError("The project revision changed during delivery verification.")
-            ledger = tasks._read()
-            matched = [task for task in ledger["tasks"] if task.get("run_id") == run_id]
-            jobs = {job["job_id"]: job for job in report["jobs"]}
-            if (not matched or len(matched) != len(jobs)
-                    or {task.get("dispatch_job_id") for task in matched} != set(jobs)
-                    or any(task.get("execution_origin") != "task_assistant_batch"
-                           or task.get("dispatch_run_id") != jobs[task["dispatch_job_id"]].get("dispatch_run_id", report["run_id"])
-                           or jobs[task["dispatch_job_id"]].get("project_task_id") != task["id"]
-                           or task_evidence_digest(task) != expected_tasks.get(task["id"])
-                           or task["status"] not in {"review", "done"} for task in matched)):
-                raise ValueError("The delivery result does not match every original project task.")
-            for task in matched:
-                if task["status"] == "done" and task.get("delivery_receipt") != receipt:
-                    raise ValueError("This task already has a different delivery receipt.")
-                task.update(status="done", delivery_verified=True, delivery_receipt=receipt, updated_at=tasks._now())
-            tasks._write(ledger)
-        # The existing service observes these same done cards and automatically
-        # replans. The request itself does not launch or approve another run.
-        return _record_delivery(store, run_id, receipt, [task["id"] for task in matched])
+        if _read_git(root, ["rev-parse", "HEAD"]).strip().decode() != receipt["landed_commit"]:
+            raise DeliveryNotLanded("The project revision changed during delivery verification.")
+        ledger = tasks._read()
+        matched = [task for task in ledger["tasks"] if task.get("run_id") == run_id]
+        jobs = {job["job_id"]: job for job in report["jobs"]}
+        if (not matched or len(matched) != len(jobs)
+                or {task.get("dispatch_job_id") for task in matched} != set(jobs)
+                or any(task.get("execution_origin") != "task_assistant_batch"
+                       or task.get("dispatch_run_id") != jobs[task["dispatch_job_id"]].get("dispatch_run_id", report["run_id"])
+                       or jobs[task["dispatch_job_id"]].get("project_task_id") != task["id"]
+                       or task_evidence_digest(task) != expected_tasks.get(task["id"])
+                       or task["status"] not in {"review", "done"} for task in matched)):
+            raise ValueError("The delivery result does not match every original project task.")
+        for task in matched:
+            if task["status"] == "done" and task.get("delivery_receipt") != receipt:
+                raise ValueError("This task already has a different delivery receipt.")
+            task.update(status="done", delivery_verified=True, delivery_receipt=receipt, updated_at=tasks._now())
+        tasks._write(ledger)
+    # The existing service observes these same done cards and automatically
+    # replans. The request itself does not launch or approve another run.
+    return _record_delivery(store, run_id, receipt, [task["id"] for task in matched])
 

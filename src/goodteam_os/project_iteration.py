@@ -1,4 +1,9 @@
-"""Read-only, evidence-grounded starting point for project iteration planning.
+"""[INPUT]: 项目任务账与 Manager 的规划建议。
+[OUTPUT]: 候选清单与经过执行条件核验的选择。
+[POS]: 连接任务账与规划。原样保留 Manager 的比较结论。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Read-only, evidence-grounded starting point for project iteration planning.
 
 This is a projection of the existing project task ledger, not a new scheduler.
 Work units managed by a confirmed Goal are deliberately
@@ -62,6 +67,15 @@ def normalize_write_domains(value: object) -> list[str] | None:
         seen.add(normalized.casefold())
         domains.append(normalized)
     return domains
+
+
+def write_domains_within_scope(domains: list[str], roots: list[str]) -> bool:
+    """核对已规范的任务写入路径是否在项目范围内。"""
+    return all(
+        not {".git", ".goodteam"}.intersection(domain.split("/"))
+        and any(root == "." or domain == root or domain.startswith(root + "/") for root in roots)
+        for domain in domains
+    )
 
 
 def _domains_overlap(left: str, right: str) -> bool:
@@ -198,20 +212,19 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
         raise ValueError("No valid project backlog is available for planning.")
     if not isinstance(response, dict):
         raise ValueError("Manager choice must be a JSON object.")
+    compared = response.get("compared_task_ids")
+    reason = response.get("rationale")
+    advice = {
+        "compared_task_ids": compared if isinstance(compared, list) else [],
+        "rationale": reason.strip() if isinstance(reason, str) else "",
+    }
     if snapshot.get("allow_wait") is True and response.get("selected_task_ids") == []:
-        compared = response.get("compared_task_ids")
-        candidates = {item["task_id"] for item in snapshot.get("candidates", [])}
-        reason = response.get("rationale")
-        if (response.get("selected_task_id") not in (None, "")
-                or not isinstance(compared, list) or not compared
-                or any(not isinstance(item, str) or item not in candidates for item in compared)
-                or len(compared) != len(set(compared))
-                or not isinstance(reason, str) or not 20 <= len(reason.strip()) <= 1600):
-            raise ValueError("A non-dispatch judgment needs bounded rationale and actual compared task IDs.")
+        if response.get("selected_task_id") not in (None, ""):
+            raise ValueError("A wait decision cannot select a primary task.")
         return {"schema_version": "project_iteration_choice.v1", "project_key": snapshot["project_key"],
                 "backlog_version": snapshot["version"], "selected_task_id": None, "selected_title": "",
                 "selected_task_ids": [], "selected_tasks": [], "execution_mode": "none",
-                "compared_task_ids": compared, "rationale": reason.strip(), "status": "waiting",
+                **advice, "status": "waiting",
                 "execution_authorized": False, "parallel_execution_authorized": False,
                 "requires_worktree_isolation": False, "fan_in_required": False,
                 "source": "manager_on_backlog_snapshot"}
@@ -226,24 +239,9 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
     if selected is not None and selected != selected_ids[0]:
         raise ValueError("Manager primary task ID differs from the selected batch.")
     selected = selected_ids[0]
-    reason = response.get("rationale")
-    compared = response.get("compared_task_ids")
-    if not isinstance(reason, str) or not 20 <= len(reason.strip()) <= 1600:
-        raise ValueError("Manager must explain the project-level priority choice.")
-    if (not isinstance(compared, list) or not compared
-            or any(not isinstance(item, str) for item in compared)
-            or len(compared) != len(set(compared))
-            or any(item not in compared for item in selected_ids)):
-        raise ValueError("Manager must name the candidate IDs it compared.")
     candidates = {item["task_id"]: item for item in snapshot.get("candidates", [])}
-    if len(selected_ids) > len(candidates) or len(compared) > len(candidates):
-        raise ValueError("Manager selection exceeds the supplied project candidate inventory.")
     if any(item not in candidates or not candidates[item]["eligible_to_plan"] for item in selected_ids):
         raise ValueError("Manager selected a missing, stale or blocked task.")
-    # Considering a blocked/running/review task is project judgment, not
-    # permission to select or restart it. Selection keeps its eligibility gate.
-    if any(item not in candidates for item in compared):
-        raise ValueError("Manager compared a candidate outside the supplied project context.")
     if len(selected_ids) > 1:
         _validate_parallel_group([candidates[task_id] for task_id in selected_ids])
     return {
@@ -259,8 +257,7 @@ def validate_iteration_choice(snapshot: dict[str, Any], response: object) -> dic
         "max_simultaneous_workers_per_dispatch": DEFAULT_MAX_CONCURRENT_WORKERS,
         "requires_worktree_isolation": len(selected_ids) > 1,
         "fan_in_required": len(selected_ids) > 1,
-        "compared_task_ids": list(compared),
-        "rationale": reason.strip(),
+        **advice,
         "status": "recommended",
         "execution_authorized": False,
         "source": "manager_on_backlog_snapshot",

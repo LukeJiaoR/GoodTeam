@@ -336,3 +336,66 @@ def test_failed_task_retry_preserves_success_then_delivers_continues_and_abandon
     assert len(calls()) == 4 and len(review_calls.read_text().splitlines()) == 1
     assert len(WorkerJobStore(source).list_jobs()) == 5
     assert initial_report_path.read_bytes() == initial_report_bytes and _files(succeeded_root) == succeeded_files
+
+
+def test_manager_retries_only_the_observed_failure_in_project_scope(tmp_path, monkeypatch):
+    signals = _worker_cli(tmp_path, monkeypatch)
+    source = repository(tmp_path / "source")
+    config = tmp_path / "projects/demo.local.yaml"
+    config.parent.mkdir()
+    config.write_text(f"key: DEMO\nsource_type: existing_project\nrepos:\n  root: {source}\nworker_backend:\n  mode: codex\n")
+    ProjectRegistry().register_project(config, root=source, key="DEMO")
+    ledger = LocalTaskStore(source, "DEMO")
+    tasks = [ledger.create_task(title=f"TASK_FILE=unit-{name}.txt", description="Write the selected file.",
+                               role="implementation", write_domains=[f"unit-{name}.txt"],
+                               acceptance_criteria=["The file contains the completed result."]) for name in "ab"]
+    identifiers = [task["id"] for task in tasks]
+    scope = {"workspace": tmp_path, "project_key": "DEMO", "root": source, "project_config": config}
+    value = continuation.configure_project_continuation(**scope, request={
+        "task_ids": identifiers, "max_batches": 2, "confirmed": True, "billing_acknowledged": True,
+        "idempotency_key": "project-manager-recovery",
+        "expected_backlog_version": project_iteration_backlog(source, "DEMO")["version"],
+        "discovery": {"objective": "Deliver both files.", "allowed_write_domains": ["."],
+                      "use_project_backlog": True, "allow_undelivered_feedback": True,
+                      "allow_backlog_judgment": True},
+    })
+    decisions = []
+
+    def manager(*, context, **_):
+        decisions.append(context["schema_version"])
+        if "batch_feedback" not in context:
+            return {"selection": {"selected_task_ids": identifiers, "compared_task_ids": identifiers,
+                                  "rationale": "Both files use separate paths and advance the objective."}}
+        feedback = context["batch_feedback"]
+        assert {item["task_id"]: item["worker_status"] for item in feedback["tasks"]} == {
+            identifiers[0]: "completed", identifiers[1]: "failed"}
+        from goodteam_os.project_outcome_discovery import validate_discovered_task
+
+        with pytest.raises(ValueError, match="Retry only failed tasks"):
+            validate_discovered_task(context, {"new_task": None, "retry_task_ids": identifiers})
+        return {"selection": {"new_task": None, "retry_task_ids": [identifiers[1]],
+                              "rationale": "Retry the terminal failure using the retained failure details."}}
+
+    session = TaskAssistantSessionStore(tmp_path, "DEMO")
+    state = continuation.tick_project_continuation(**scope, manager_runner=manager)
+    run_id = state["pending_batch"]["run_id"]
+    try:
+        _wait_for(lambda: (signals / "b-live").exists())
+        assert len(decisions) == 1
+    finally:
+        (signals / "release-b").touch()
+    _wait_for(lambda: session.read()["project_task_batches"][run_id]["status"] == "blocked")
+
+    state = continuation.tick_project_continuation(**scope, manager_runner=manager)
+    assert state["status"] == "active", state.get("reason")
+    assert state["id"] == value["id"] and state["batches_started"] == 2
+    assert state["discovery_last"]["status"] == "retry_queued"
+    _wait_for(lambda: session.read()["project_task_batches"][run_id]["status"] == "review")
+    batch = session.read()["project_task_batches"][run_id]
+    assert len(batch["recovery_commands"]) == 1
+    attempt = next(iter(batch["recovery_commands"].values()))
+    assert attempt["manager_continuation_id"] == value["id"]
+    assert attempt["source"]["retry_task_ids"] == [identifiers[1]]
+    calls = [json.loads(line)["task"] for line in (signals / "calls.jsonl").read_text().splitlines()]
+    assert sorted(calls) == ["unit-a.txt", "unit-b.txt", "unit-b.txt"]
+    assert len(decisions) == 2

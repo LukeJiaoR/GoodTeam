@@ -25,7 +25,10 @@ from goodteam_os.execution.correction_store import CorrectionAttemptStore
 from goodteam_os.execution.task_snapshot import canonical_bytes, execution_key
 from goodteam_os.execution.task_snapshot_store import store_for_project
 from goodteam_os.project_iteration import project_iteration_backlog
-from goodteam_os.project_iteration_continuation import accept_project_batch_delivery
+from goodteam_os.project_iteration_continuation import (
+    accept_project_batch_delivery, configure_project_continuation, tick_project_continuation,
+)
+from goodteam_os.task_assistant_session import TaskAssistantSessionStore
 from goodteam_os.project_iteration_execution import run_queued_iteration_batch
 from goodteam_os.project_iteration_planner import plan_next_iteration
 from goodteam_os.project_registry import ProjectRegistry
@@ -212,6 +215,10 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
     config = tmp_path / "projects/demo.local.yaml"
     config.parent.mkdir()
     config.write_text(f"key: DEMO\nsource_type: existing_project\nrepos:\n  root: {source}\nworker_backend:\n  mode: codex\n")
+    branch = "qa/delivery"
+    git(source, "checkout", "-qb", branch)
+    with config.open("a") as file:
+        file.write(f"local_delivery_branch: {branch}\n")
     ProjectRegistry().register_project(config, root=source, key="DEMO")
     ensure_team_state(tmp_path, "DEMO", config)
     ledger = LocalTaskStore(source, "DEMO")
@@ -222,12 +229,21 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
     task_ids = [item["id"] for item in tasks]
     backlog = project_iteration_backlog(source, "DEMO")
     scope = dict(workspace=tmp_path, project_key="DEMO", root=source)
+    run_scope = {}
+    if delivery_handoff is None:
+        value = configure_project_continuation(**scope, project_config=config, request={
+            "task_ids": task_ids, "confirmed": True, "billing_acknowledged": True,
+            "idempotency_key": "qa-local-delivery", "expected_backlog_version": backlog["version"],
+            "discovery": {"objective": "Validate and deliver the files.", "allowed_write_domains": ["."],
+                          "use_project_backlog": True},
+        })
+        run_scope = {"expected_authority": value["authority"], "expected_continuation_id": value["id"]}
     plan_next_iteration(**scope, project_config=config, expected_backlog_version=backlog["version"], confirmed=True,
         manager_runner=lambda **_: {"selection": {"selected_task_ids": task_ids, "compared_task_ids": task_ids,
             "rationale": "Both independent tasks have exact, disjoint authorized file scopes."}})
     queued = queue_manager_iteration_choice(**scope, expected_backlog_version=backlog["version"])
     batch = run_queued_iteration_batch(**scope, project_config=config, proposal_ids=queued["queued_proposal_ids"],
-        expected_revisions={key: 1 for key in queued["queued_proposal_ids"]}, confirmed=True)
+        expected_revisions={key: 1 for key in queued["queued_proposal_ids"]}, confirmed=True, **run_scope)
     assert batch["status"] == "review", batch
     run = dict(**scope, run_id=batch["run_id"])
     report_path = dispatch_artifact_root(source, batch["dispatch_run_id"]) / "report.json"
@@ -321,12 +337,27 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
     assert git(source, "rev-parse", "HEAD") == original_head
     assert all(task["status"] == "review" and not task["delivery_verified"] for task in ledger.list_tasks())
 
-    git(source, "merge", "--quiet", "--no-edit", "--no-ff", final_head)
+    if delivery_handoff is None:
+        git(source, "checkout", "-qb", "qa/other")
+        tick_project_continuation(**scope, project_config=config)
+        assert git(source, "rev-parse", "HEAD") == original_head
+        assert all(task["status"] == "review" for task in ledger.list_tasks())
+        git(source, "checkout", "-q", branch)
+        waiting = source / "untracked-user-work.txt"
+        waiting.write_text("Do not replace local user work.\n")
+        tick_project_continuation(**scope, project_config=config)
+        assert git(source, "rev-parse", "HEAD") == original_head and waiting.is_file()
+        waiting.unlink()
+        tick_project_continuation(**scope, project_config=config)
+        saved = TaskAssistantSessionStore(tmp_path, "DEMO").read()["project_task_batches"][batch["run_id"]]
+        assert saved["delivery_receipt"]["producer"] == "independently_reviewed_candidate_delivery"
+        assert git(source, "rev-parse", "HEAD") == final_head
+        assert git(source, "rev-parse", "qa/other") == original_head
+    else:
+        git(source, "merge", "--quiet", "--no-edit", "--no-ff", final_head)
     delivery = dict(run_id=batch["run_id"], candidate_commit=final_head, landed_commit=git(source, "rev-parse", "HEAD"),
                     reviewed=True, confirmed=True)
-    if delivery_handoff is None:
-        accept_project_batch_delivery(**scope, request=delivery)
-    else:
+    if delivery_handoff is not None:
         delivery_handoff(tmp_path, source, config, delivery)
     assert all(task["status"] == "done" and task["delivery_verified"]
                and task["delivery_receipt"]["candidate_commit"] == final_head for task in ledger.list_tasks())
@@ -338,3 +369,103 @@ def test_batch_quality_checks_reviews_corrects_and_delivers_without_reexecution(
     assert calls.read_bytes() == saved_calls and checks.read_bytes() == saved_checks
     assert WorkerJobStore(source).list_jobs() == saved_jobs
     assert report_path.read_bytes() == original_report
+
+
+@pytest.mark.parametrize("needs_qa", [False, True])
+def test_manager_delivers_with_chosen_evidence_without_batch_setup(tmp_path, monkeypatch, needs_qa):
+    source = repository(tmp_path / "source")
+    branch = "qa/delivery"
+    git(source, "checkout", "-qb", branch)
+    config = tmp_path / "projects/demo.local.yaml"
+    config.parent.mkdir()
+    config.write_text(f"key: DEMO\nrepos:\n  root: {source}\nworker_backend:\n  mode: codex\nlocal_delivery_branch: {branch}\n")
+    ProjectRegistry().register_project(config, root=source, key="DEMO")
+    binary = tmp_path / "bin/codex"
+    binary.parent.mkdir()
+    calls = tmp_path / "calls.jsonl"
+    binary.write_text(f"#!{sys.executable}\n" + r'''
+import json, os, subprocess, sys
+from pathlib import Path
+if "--version" in sys.argv:
+    print("offline Team reviewer")
+    raise SystemExit(0)
+task = sys.stdin.read()
+product = Path("product.txt")
+if "REVIEW_PRODUCT" in task:
+    action, result = "review", f"Checked the candidate content: {product.read_text().strip()}."
+elif "CORRECT_PRODUCT" in task:
+    assert product.read_text() == "broken\n"
+    action, result = "correct", "Corrected the reported defect."
+    product.write_text("ready\n")
+else:
+    action, result = "implement", "Created the candidate."
+    product.write_text(os.environ["TEAM_FIXTURE_INITIAL_PRODUCT"] + "\n")
+with Path(os.environ["TEAM_REVIEW_FIXTURE_CALLS"]).open("a") as stream:
+    stream.write(json.dumps({"action": action, "cwd": str(Path.cwd()),
+        "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}) + "\n")
+Path(sys.argv[sys.argv.index("--output-last-message") + 1]).write_text(result)
+''')
+    binary.chmod(0o755)
+    monkeypatch.setenv("PATH", str(binary.parent) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("TEAM_REVIEW_FIXTURE_CALLS", str(calls))
+    monkeypatch.setenv("TEAM_FIXTURE_INITIAL_PRODUCT", "broken" if needs_qa else "ready")
+    ledger = LocalTaskStore(source, "DEMO")
+    original = ledger.create_task(title="Initial product implementation", description="Create the product output.",
+        role="implementation", write_domains=["product.txt"], acceptance_criteria=["product.txt contains ready."])
+    scope = dict(workspace=tmp_path, project_key="DEMO", root=source, project_config=config)
+    configure_project_continuation(**scope, request={
+        "task_ids": [original["id"]], "idempotency_key": "team-quality", "confirmed": True,
+        "billing_acknowledged": True, "expected_backlog_version": project_iteration_backlog(source, "DEMO")["version"],
+        "discovery": {"objective": "Deliver the product.", "allowed_write_domains": ["."],
+                      "allow_team_roles": True, "allow_backlog_judgment": True, "allow_undelivered_feedback": True,
+                      "allow_candidate_handoff": True, "use_project_backlog": True},
+    })
+    decisions = []
+
+    def manager(*, context, **_):
+        if context.get("verified_outcome") and not context.get("batch_feedback"):
+            return {"selection": {"new_task": None, "rationale": "The scoped work has been delivered."}}
+        feedback = context.get("batch_feedback")
+        if not feedback:
+            return {"selection": {"selected_task_ids": [original["id"]],
+                                  "rationale": "Implement the scoped product result."}}
+        result = feedback["tasks"][0]
+        source_refs = [feedback["receipt_id"]]
+        if not needs_qa or result["role"] == "qa" and "ready" in result["report"]:
+            decisions.append(context["delivery_candidate"]["candidate_commit"])
+            return {"selection": {"new_task": None, "accept_candidate": True,
+                                  "rationale": "The available evidence supports the original criterion."}}
+        if result["role"] == "qa":
+            task = {"role": "implementation", "title": "CORRECT_PRODUCT", "write_domains": ["product.txt"],
+                    "description": "Correct the content defect found by the independent review."}
+        else:
+            task = {"role": "qa", "title": "REVIEW_PRODUCT", "write_domains": [],
+                    "description": "Verify the exact candidate against the original criterion."}
+        return {"selection": {"new_task": {**task, "acceptance_criteria": ["Report the evidence for the product content."],
+                                           "dependencies": [], "source_refs": source_refs},
+                              "rationale": "Use the current candidate and the evidence from this batch."}}
+
+    deadline = time.monotonic() + 180
+    while not ledger.get_task(original["id"]).get("delivery_verified"):
+        state = tick_project_continuation(**scope, manager_runner=manager)
+        assert state["status"] == "active", state.get("reason")
+        assert time.monotonic() < deadline, state
+        time.sleep(.02)
+    state = tick_project_continuation(**scope, manager_runner=manager)
+    assert state["status"] != "blocked", state.get("reason")
+    assert decisions == [git(source, "rev-parse", "HEAD")]
+    assert (source / "product.txt").read_text() == "ready\n"
+    accepted_tasks = [ledger.get_task(original["id"])]
+    if needs_qa:
+        accepted_tasks.append(next(task for task in ledger.list_tasks() if task["title"] == "CORRECT_PRODUCT"))
+    for task in accepted_tasks:
+        assert task["status"] == "done" and task["delivery_receipt"]["quality"]["candidate_commit"] == decisions[0]
+        code, report = web.handle_project_api_get(tmp_path, f"/api/projects/DEMO/iteration-batches/{task['run_id']}")
+        assert code == 200 and report["quality"]["acceptance_status"] == "accepted_by_manager"
+        assert report["quality"]["decision_receipt_id"] == task["delivery_receipt"]["quality"]["decision_receipt_id"]
+    invocations = [json.loads(line) for line in calls.read_text().splitlines()]
+    expected = ["implement", "review", "correct", "review"] if needs_qa else ["implement"]
+    assert [item["action"] for item in invocations] == expected
+    if needs_qa:
+        assert invocations[-1]["head"] == decisions[0]
+    assert len({item["cwd"] for item in invocations}) == len(expected)

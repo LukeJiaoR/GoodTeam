@@ -1,4 +1,7 @@
-"""Bound known terminal batch results to the existing continuation Context.
+"""[INPUT]: 续跑范围、原批次和已终止的 Worker 结果。
+[OUTPUT]: 绑定原批次的观察凭据。
+[POS]: 将只读调查和未交付结果送回 Manager。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 
 Observations never accept output, retry an invocation or abandon its batch.
 """
@@ -143,6 +146,23 @@ def is_observed_discovered_readonly(value, task):
     return False
 
 
+def _historical_scope_addition(value, task):
+    """核验已停用的人工追加入口留下的任务凭据。"""
+    from goodteam_os.project_iteration_continuation import _intent
+
+    intent = _intent(task)
+    for receipt in (value.get('scope_additions') or {}).values():
+        confirmation = receipt.get('confirmation') or {}
+        if (confirmation.get('continuation_id') == value.get('id')
+                and task.get('id') in confirmation.get('task_ids', [])
+                and receipt.get('actor') == 'user'
+                and receipt.get('receipt_id') == _digest({k: v for k, v in receipt.items() if k != 'receipt_id'})
+                and receipt.get('task_intents', {}).get(task['id']) == intent
+                and value.get('task_intents', {}).get(task['id']) == intent):
+            return True
+    return False
+
+
 def can_observe_initial_readonly(value, tasks):
     """Only a newly opted-in grant may settle successful read-only seed work.
 
@@ -150,13 +170,13 @@ def can_observe_initial_readonly(value, tasks):
     revalidates terminal processes, original task bindings and captured output.
     """
     from goodteam_os.project_investigation_feedback import _authorized_read_only_role
-    from goodteam_os.project_scope_addition import confirmed_added_task
 
     discovery = value.get("discovery") or {}
     return (discovery.get("allow_initial_readonly_feedback") is True
             and discovery.get("allow_undelivered_feedback") is True
             and bool(tasks)
-            and all((task["id"] in value.get("seed_task_ids", []) or confirmed_added_task(value, task))
+            and all((task["id"] in value.get("seed_task_ids", []) or _historical_scope_addition(value, task)
+                        or discovery.get("use_project_backlog") is True and task["id"] in value["task_ids"])
                     and task.get("status") == "review"
                     and _authorized_read_only_role(value, task.get("role"))
                     and task.get("execution_policy") == "read_only"
