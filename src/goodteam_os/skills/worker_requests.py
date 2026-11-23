@@ -1,5 +1,5 @@
 """[INPUT]: 已注册任务锁、Worker 请求与 Skill 版本。
-[OUTPUT]: 不可变 Worker 快照、预检与运行入口。
+[OUTPUT]: 不可变 Worker 快照、预检、运行入口与公开方法证据。
 [POS]: 普通 Role 方法和专用 Reviewer 分别进入各自的运行检查。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
@@ -556,6 +556,11 @@ def public_skill_job_fields(job) -> dict[str, Any]:
               "skill_error_code", "skill_runtime_status", "method_input_status", "method_packages_status")
     result = {key: job[key] for key in fields if key in job and isinstance(job[key], str)}
     reference = job.get("provider_connection")
+    invocation = job.get("invocation_evidence")
+    used_provider = invocation.get("provider_connection") if isinstance(invocation, dict) else None
+    if (isinstance(reference, dict) and isinstance(used_provider, dict)
+            and used_provider.get("id") == reference.get("id") and type(used_provider.get("revision")) is int):
+        reference = used_provider
     if (job.get("method_loading_mode") in ORDINARY_METHODS and isinstance(reference, dict)
             and isinstance(reference.get("id"), str) and re.fullmatch(r"provider-[a-f0-9]{32}", reference["id"])
             and type(reference.get("revision")) is int):

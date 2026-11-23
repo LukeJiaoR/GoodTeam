@@ -232,6 +232,7 @@ def test_readonly_qa_dispatch_uses_one_provider_and_binding_across_codex_and_pi(
     from goodteam_os.service import service_state_dir
     from goodteam_os.skills.library import SkillLibraryService
     from goodteam_os.skills.pi_resources import PiResourceChannel
+    from goodteam_os.skills.worker_requests import public_skill_job_fields
     from goodteam_os.team_control_plane import TeamControlPlaneStore
     from test_pi_method_dispatch import configured
 
@@ -332,6 +333,7 @@ thinking = ''', 1)
     report = dispatch_tracks(project_root=source, logical_task_id="qa-cross-agent", require_isolation=True, tracks=tracks)
     assert report["all_ok"], [(row["adapter"], row["summary"]) for row in report["jobs"]]
     workers = WorkerJobStore(source)
+    details = {job["id"]: public_skill_job_fields(job) for job in workers.list_jobs()}
     for row in report["jobs"]:
         root = workers.root / row["job_id"]
         job = json.loads((root / "job.json").read_text())
@@ -339,6 +341,7 @@ thinking = ''', 1)
         assert job["status"] == "queued" and row["status"] == "completed"
         used = row["invocation_evidence"]["provider_connection"]
         assert (used["id"], used["revision"]) == (connection["id"], updated["revision"])
+        assert details[row["job_id"]]["provider_connection"] == {"id": used["id"], "revision": used["revision"]}
         assert {item["version_id"] for item in row["method_items"]} == {item["version_id"] for item in items[:2]}
         assert row["method_input_status"] in {"transport_attempted", "prompt_acknowledged"}
         if row["adapter"] == "codex":
