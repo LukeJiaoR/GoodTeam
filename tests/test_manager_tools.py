@@ -1,4 +1,8 @@
-"""Host tools retain queue identity and the shared project's control allowance."""
+"""[INPUT]: Manager 工具、任务账与项目会话。
+[OUTPUT]: 委派、重放与控制额度回归。
+[POS]: 验证原始任务与验收标准进入既有队列。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -26,14 +30,18 @@ def _tools(tmp_path):
 
 def test_concurrent_tool_delivery_reuses_one_original_assignment(tmp_path):
     tools, store, root = _tools(tmp_path)
+    criterion = "Verify each source reference against the retained project files. " * 70 + "Record omissions."
     args = {"operation_id": "research", "role": "research", "source_message_ids": ["request"],
-            "execution_policy": "read_only", "write_domains": [], "acceptance_criteria": ["Cite retained files."],
+            "execution_policy": "read_only", "write_domains": [], "acceptance_criteria": [criterion],
             "delegation": {"purpose": "Understand the project", "context": "Current repository", "scope": "Read only"}}
     with ThreadPoolExecutor(max_workers=2) as pool:
         calls = [pool.submit(tools.call, "goodteam_delegate", args, call_id=str(index), logical_ids=["request"])
                  for index in range(2)]
         results = [call.result(timeout=5) for call in calls]
     assert results[0] == results[1]
+    project = tools.call("goodteam_project", {}, call_id="inspect", logical_ids=["request"])
+    assert project["backlog"]["candidates"][0]["acceptance_criteria"] == [criterion]
+    assert project["queue"][0]["assignment"]["acceptance_criteria"] == [criterion]
     assert len(LocalTaskStore(root, "DEMO").list_tasks()) == len(store.read()["queued_task_proposals"]) == 1
     # Recovery returns the original queue's latest fact, not a synthetic new pending task.
     receipt_key = next(iter(store.read()["manager_app_server"]["tool_receipts"]))

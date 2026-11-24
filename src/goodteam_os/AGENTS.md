@@ -76,7 +76,7 @@ project_environment.py: Bind existing project dependencies to source worktrees.
 project_human_feedback.py: Bound a Human answer to an existing discovery decision, not new authority.
 project_import.py: 项目导入、工作台入口、模式确认与 readiness 绑定。
 project_investigation_feedback.py: Observe settled investigation output without accepting it as delivery.
-project_iteration.py: 从任务账投影候选。校验执行选择，保留 Manager 的比较与理由。
+project_iteration.py: 从任务账投影候选，保留完整验收标准。校验执行选择，保留 Manager 的比较与理由。
 project_iteration_continuation.py: 复用队列续跑，核对接受凭据和候选，登记 Git 交付。
 project_iteration_execution.py: 通过同一队列核对项目身份和原批准，调用隔离 Worker 池。
 project_iteration_planner.py: 用自然语言把候选与授权上下文交给 Manager 判断，保存只读建议。

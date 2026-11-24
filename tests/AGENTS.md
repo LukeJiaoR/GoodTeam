@@ -56,7 +56,7 @@ test_manager_input_priority.py: Durable admission and native recovery do not blo
 test_manager_runtime_config.py: 验证 Manager 配置迁移、默认启动和推理档位。
 test_manager_runtime_observation.py: Read real local session files; no provider execution or paid Manager call.
 test_manager_skill_context.py: Native Manager input reuses pinned Role/Skill records without a Worker job.
-test_manager_tools.py: Host tools retain queue identity and the shared project's control allowance.
+test_manager_tools.py: 验证委派保留完整验收标准、原队列身份和项目控制额度。
 test_manager_worker_control.py: Original chat routes exact explicit controls; Runtime responses are fixtures.
 test_memory_core.py: Legacy content compatibility with explicit pickup-policy invalidation.
 test_memory_embeddings.py: 验证 pgvector 记忆检索和项目迭代发现。

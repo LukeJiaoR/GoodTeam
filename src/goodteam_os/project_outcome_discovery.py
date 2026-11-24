@@ -534,7 +534,7 @@ def _validate_discovered_single(packet, response):
     domains = [] if investigation or planning else normalize_write_domains(task["write_domains"])
     allowed = packet["discovery"]["allowed_write_domains"]
     if (not isinstance(criteria, list) or not 1 <= len(criteria) <= 12
-            or any(not isinstance(item, str) or not 5 <= len(item.strip()) <= 500 for item in criteria)
+            or any(not isinstance(item, str) or len(item.strip()) < 5 for item in criteria)
             or domains is None or not write_domains_within_scope(domains, allowed)):
         raise ValueError("The follow-up's acceptance criteria and write paths must fit the approved discovery scope.")
     dependencies, sources = task["dependencies"], task["source_refs"]
