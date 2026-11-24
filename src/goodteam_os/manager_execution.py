@@ -197,7 +197,7 @@ def _parse_chat_turn(output: str, *, require_task_intake: bool = True, require_d
                 or (action["execution_policy"] == "workspace_write" and not action["write_domains"])
                 or not isinstance(action.get("acceptance_criteria"), list)
                 or not 1 <= len(action["acceptance_criteria"]) <= 8
-                or any(not isinstance(item, str) or not item.strip() or len(item) > 400
+                or any(not isinstance(item, str) or not item.strip()
                        for item in action["acceptance_criteria"])):
             raise ManagerExecutionError("The Manager returned an invalid task action.")
         if "delegation" in action:

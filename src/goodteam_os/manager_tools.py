@@ -123,7 +123,9 @@ Do not run business work yourself in the Manager shell; delegate to the appropri
                 _spec("goodteam_delegate", "Create an exact task card and queue it for a native Role. Returns real task/proposal IDs. Existing confirmation or project authorization controls execution.", {
                     "operation_id": _STRING, "role": _STRING, "source_message_ids": _STRINGS,
                     "execution_policy": {"type": "string", "enum": ["read_only", "workspace_write"]},
-                    "write_domains": _STRINGS, "acceptance_criteria": _STRINGS, "dependencies": _STRINGS,
+                    "write_domains": _STRINGS, "acceptance_criteria": {"type": "array", "minItems": 1, "maxItems": 8,
+                                            "items": {"type": "string", "minLength": 1}},
+                    "dependencies": _STRINGS,
                     "delegation": {"type": "object", "properties": {key: _STRING for key in ("purpose", "context", "scope")},
                                    "required": ["purpose", "context", "scope"], "additionalProperties": False},
                 }, ("operation_id", "role", "source_message_ids", "execution_policy", "write_domains", "acceptance_criteria", "delegation")),

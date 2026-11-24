@@ -1,5 +1,5 @@
 """[INPUT]: 项目任务账与 Manager 的规划建议。
-[OUTPUT]: 候选清单与经过执行条件核验的选择。
+[OUTPUT]: 含完整验收标准的候选清单与经过执行条件核验的选择。
 [POS]: 连接任务账与规划。原样保留 Manager 的比较结论。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 
@@ -24,11 +24,11 @@ _INTERNAL_REFS = ("stage:", "goal:")
 _ACTIVE_STATUSES = {"todo", "blocked", "review", "in_progress"}
 
 
-def _text(value: object, limit: int) -> str:
+def _text(value: object, limit: int | None) -> str:
     return str(value).strip()[:limit] if isinstance(value, str) else ""
 
 
-def _items(value: object, maximum: int, width: int) -> list[str]:
+def _items(value: object, maximum: int | None = None, width: int | None = None) -> list[str]:
     if not isinstance(value, list):
         return []
     return [_text(item, width) for item in value[:maximum] if _text(item, width)]
@@ -155,7 +155,7 @@ def rank_project_backlog(tasks: list[dict[str, Any]], project_key: str, *, limit
             "status": status,
             "dependencies": dependencies,
             "blocked_by": blockers,
-            "acceptance_criteria": _items(task.get("acceptance_criteria"), 8, 400),
+            "acceptance_criteria": _items(task.get("acceptance_criteria")),
             "source_refs": _items(task.get("external_refs"), 12, 256),
             "artifact_refs": _items(task.get("artifact_refs"), 12, 256),
             "review_gaps": _items(task.get("review_gaps"), 6, 300),
