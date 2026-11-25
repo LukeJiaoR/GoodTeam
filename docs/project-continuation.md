@@ -39,8 +39,9 @@ tried, and the decision it needs.
    actual write scope and isolation checks still apply.
 3. Completed Workers leave original task cards in `review`. Open **Inspect
    execution and verification records** to inspect the actual jobs, verification
-   results, changed paths and integrated candidate. A successful process is not
-   an independent review; `verify.skipped` remains visible when no command ran.
+   results, changed paths and integrated candidate. The ordinary batch awaits
+   candidate acceptance and verified delivery. `verify.skipped` shows when no
+   verification command ran.
    A batch explicitly configured for [candidate quality](project-batch-quality.md)
    additionally requires a passed real check and exact-candidate independent
    review; its original result report and any bounded correction stay inspectable.

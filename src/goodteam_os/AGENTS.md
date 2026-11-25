@@ -71,7 +71,7 @@ project_attention.py: Read-only, identity-bound attention across the existing pr
 project_batch_feedback.py: 将项目范围内的只读调查和终止批次绑定到续跑观察凭据。
 project_batch_lock.py: 串行化批次确认、恢复和候选审查。
 project_candidate_handoff.py: 将引用的候选传给后续任务及只读 Reviewer。
-project_continuation_notice.py: Presentation of existing continuation state; never an execution authority.
+project_continuation_notice.py: 投影续跑交接，显示候选验收、显式质量检查及待答问题。
 project_environment.py: Bind existing project dependencies to source worktrees.
 project_human_feedback.py: Bound a Human answer to an existing discovery decision, not new authority.
 project_import.py: 项目导入、工作台入口、模式确认与 readiness 绑定。
