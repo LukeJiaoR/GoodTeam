@@ -134,6 +134,17 @@ event('end')
     assert all(task["status"] == "review" and not task["delivery_verified"]
                and task["run_id"] == first["run_id"] and task["dispatch_job_id"] for task in ledger.list_tasks())
 
+    event_id = f"batch-result:{first['run_id']}:initial"
+    pending_heading = "Worker results returned. Candidate acceptance and delivery are pending."
+    legacy_heading = "Worker results returned; independent review and delivery remain outstanding."
+
+    def retain_legacy_heading(current):
+        result = next(item for item in current["timeline"] if item.get("message_id") == event_id)
+        assert result["content"].startswith(pending_heading)
+        result["content"] = result["content"].replace(pending_heading, legacy_heading, 1)
+        return current
+
+    session._mutate(retain_legacy_heading)
     again = run_queued_iteration_batch(**request, confirmed=True)
     assert again["status"] == "review"
     assert again["report"] == report

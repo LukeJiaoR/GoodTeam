@@ -713,7 +713,7 @@ def _record_delivery(store, run_id, receipt, task_ids):
 def accept_project_batch_delivery(*, workspace, project_key, root, request):
     """Human review plus observed landed Git evidence; never a model assertion."""
     if request.get("confirmed") is not True or request.get("reviewed") is not True:
-        raise ValueError("Confirm independent review of the exact candidate and its verification evidence.")
+        raise ValueError("Confirm that you inspected the exact candidate and its verification evidence.")
     with goal_guard(workspace, project_key):
         return _accept_project_batch_delivery(workspace=workspace, project_key=project_key, root=root,
                                               request=request, producer=DELIVERY_PRODUCERS[0])

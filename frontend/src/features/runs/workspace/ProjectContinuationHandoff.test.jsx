@@ -77,16 +77,20 @@ it('offers a current bilingual Manager handoff through existing controls without
   expect(screen.getByText(`Question: ${questions[0].question}`)).toBeInTheDocument();
   expect(screen.getAllByText(answerCommand(questions[0]))).toHaveLength(1);
   const reviewNotice = { ...humanNotice, id: 'continuation:grant:review', phase: 'review_required',
-    reason: 'independent_review_and_delivery_required', next_action: '' };
+    reason: 'candidate_acceptance_pending', next_action: '' };
   view.rerender(handoff(reviewNotice));
-  expect(screen.getByText(/needs independent review and delivery confirmation/)).toBeInTheDocument();
-  expect(screen.getByText(/Next step: inspect the candidate, independently review it/)).toBeInTheDocument();
+  expect(screen.getByText(/Acceptance and verified delivery are pending/)).toBeInTheDocument();
+  expect(screen.getByText(/Inspect the candidate and its verification evidence/)).toBeInTheDocument();
   for (const question of questions) {
     expect(screen.getByText(`Question: ${question.question}`)).toBeInTheDocument();
     expect(screen.getByText(`Why your input is needed: ${question.why_human}`)).toBeInTheDocument();
     expect(screen.getAllByText(answerCommand(question))).toHaveLength(1);
   }
   expect(onAction).toHaveBeenCalledTimes(1);
+  view.rerender(handoff({ ...reviewNotice, reason: 'independent_review_and_delivery_required' }, 'zh-CN'));
+  expect(screen.getByText(/候选正在等待验收/)).toBeInTheDocument();
+  view.rerender(handoff({ ...reviewNotice, phase: 'quality_required', reason: 'quality_required' }));
+  expect(screen.getByText(/configured checks and independent review before delivery/)).toBeInTheDocument();
   view.rerender(handoff(humanNotice, 'en', 'continuation:new:notice'));
   expect(screen.getByText(answerCommand(questions[0]))).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'View iteration and actions' })).not.toBeInTheDocument();

@@ -13,6 +13,7 @@ import pytest
 
 from goodteam_os import web
 from goodteam_os import project_iteration_continuation as continuation
+from goodteam_os.project_continuation_notice import project_continuation_notice
 from goodteam_os.project_iteration_execution import iteration_batch_report
 from goodteam_os.project_iteration import project_iteration_backlog
 from goodteam_os.project_iteration_planner import plan_next_iteration
@@ -112,6 +113,9 @@ Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('Candidat
     assert ledger.get_task(second_task["id"])["status"] == "todo"
     continuation.tick_authorized_project_continuations(tmp_path)
     assert choices == [first_task["id"]]
+    notice = project_continuation_notice(TaskAssistantSessionStore(tmp_path, "DEMO").read())
+    assert notice["phase"] == "review_required"
+    assert notice["reason"] == "candidate_acceptance_pending"
 
     def delivery_request(run_id, report):
         return dict(action="accept_project_batch_delivery", run_id=run_id,

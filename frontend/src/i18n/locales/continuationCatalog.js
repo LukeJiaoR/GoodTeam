@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 续跑阶段、交接原因和记录的动作。
+ * [OUTPUT]: 续跑与待答问题的中英文消息。
+ * [POS]: 为 Work 交接显示普通候选验收及显式质量状态。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 export const continuationEn = {
   "work.questions.title": "Project questions",
   "work.questions.description": "Decisions and answers, kept with the project",
@@ -29,7 +35,7 @@ export const continuationEn = {
   "work.questions.showHistory": "Earlier questions ({{count}})",
   "work.questions.showClosed": "View closed questions ({{count}})",
   "work.manager.continuation.human_required": "Manager has questions for you. Other authorized work can continue according to its decisions.",
-  "work.manager.continuation.review_required": "The batch produced a candidate and needs independent review and delivery confirmation.",
+  "work.manager.continuation.review_required": "The batch produced a candidate. Acceptance and verified delivery are pending.",
   "work.manager.continuation.quality_required": "The batch needs its configured checks and independent review before delivery.",
   "work.manager.continuation.delivery_required": "Candidate checks and independent review passed. Delivery still needs your confirmation.",
   "work.manager.continuation.blocked": "Automatic project iteration is blocked and needs your attention.",
@@ -41,7 +47,7 @@ export const continuationEn = {
   "work.manager.events.project_continuation_environment_unavailable": "GoodTeam could not read the current execution environment. Check the project and runtime settings.",
   "work.manager.events.project_continuation_authorized": "Authorized project iteration for {{tasks}}. Batch limit: {{batches}}; Manager call limit: {{calls}}.",
   "work.manager.continuation.no_limit": "No limit",
-  "work.manager.events.project_continuation_batch_started": "Dispatched the project batch for {{tasks}}. Its output will need independent review and verified delivery.",
+  "work.manager.events.project_continuation_batch_started": "Dispatched the project batch for {{tasks}}.",
   "work.manager.events.project_continuation_stopped": "Stopped future iterations. Existing execution and evidence are retained.",
   "work.manager.continuation.reason": "Reason: {{reason}}",
   "work.manager.continuation.budget": "Batch reservations: {{batches}} · Manager reservations: {{calls}}",
@@ -52,7 +58,7 @@ export const continuationEn = {
   "work.manager.continuation.why_human": "Why your input is needed: {{reason}}",
   "work.manager.continuation.answer_format": "Reply format: {{command}}",
   "work.manager.continuation.next.human_required": "Next step: answer each specific question with its displayed /answer command in this project conversation.",
-  "work.manager.continuation.next.review_required": "Next step: inspect the candidate, independently review it, then use the existing delivery confirmation after landing it.",
+  "work.manager.continuation.next.review_required": "Inspect the candidate and its verification evidence. Use delivery confirmation if you land it manually.",
   "work.manager.continuation.next.quality_required": "Next step: open the batch checks and review card and follow its next step for this same input.",
   "work.manager.continuation.next.delivery_required": "Next step: inspect the evidence, land this exact candidate through the authorized Git workflow, then confirm delivery.",
   "work.manager.continuation.next.blocked": "Next step: inspect the retained result and resolve the blocker through the existing batch recovery or project configuration controls.",
@@ -68,7 +74,8 @@ export const continuationEn = {
   "work.manager.continuation.reason.discovery_no_followup": "No follow-up was proposed within the approved scope.",
   "work.manager.continuation.reason.authorized_tasks_delivered": "The authorized task scope has ended.",
   "work.manager.continuation.reason.owner_stopped": "The owner stopped future iterations.",
-  "work.manager.continuation.reason.independent_review_and_delivery_required": "The candidate awaits independent review and delivery confirmation.",
+  "work.manager.continuation.reason.candidate_acceptance_pending": "Candidate acceptance is pending.",
+  "work.manager.continuation.reason.independent_review_and_delivery_required": "Candidate acceptance is pending.",
   "work.manager.continuation.reason.candidate_review_policy_satisfied": "Candidate checks and independent review passed.",
   "work.manager.continuation.reason.quality_required": "The configured checks and independent review need to continue.",
   "work.manager.continuation.reason.no_authorized_task_is_ready": "No authorized task is ready to execute.",
@@ -109,7 +116,7 @@ export const continuationZhCN = {
   "work.questions.showHistory": "历史问题（{{count}}）",
   "work.questions.showClosed": "查看已关闭问题（{{count}}）",
   "work.manager.continuation.human_required": "Manager 有问题需要你回答；其他已授权工作可按其判断继续。",
-  "work.manager.continuation.review_required": "本批次已产出候选，需要独立审查与交付确认。",
+  "work.manager.continuation.review_required": "本批次已产出候选，等待验收与交付确认。",
   "work.manager.continuation.quality_required": "本批次需要完成已配置的检查与独立审查，才能交付。",
   "work.manager.continuation.delivery_required": "候选检查与独立审查已通过，仍需要你确认交付。",
   "work.manager.continuation.blocked": "项目自动迭代已受阻，需要你处理。",
@@ -121,7 +128,7 @@ export const continuationZhCN = {
   "work.manager.events.project_continuation_environment_unavailable": "GoodTeam 暂时无法读取执行环境，请检查项目和运行时设置。",
   "work.manager.events.project_continuation_authorized": "已获准对 {{tasks}} 推进项目迭代。批次上限：{{batches}}；Manager 调用上限：{{calls}}。",
   "work.manager.continuation.no_limit": "未设上限",
-  "work.manager.events.project_continuation_batch_started": "已派发项目批次：{{tasks}}。产出仍需独立审查和可验证的交付。",
+  "work.manager.events.project_continuation_batch_started": "已派发 {{tasks}} 的项目批次。",
   "work.manager.events.project_continuation_stopped": "已停止后续迭代，已有执行与证据已保留。",
   "work.manager.continuation.reason": "原因：{{reason}}",
   "work.manager.continuation.budget": "已预留批次：{{batches}} · 已预留 Manager 次数：{{calls}}",
@@ -132,7 +139,7 @@ export const continuationZhCN = {
   "work.manager.continuation.why_human": "为什么需要你决定：{{reason}}",
   "work.manager.continuation.answer_format": "回答格式：{{command}}",
   "work.manager.continuation.next.human_required": "下一步：在本项目对话中，使用各问题显示的 /answer 命令分别回答。",
-  "work.manager.continuation.next.review_required": "下一步：查看候选并独立审查，落地后通过现有交付卡确认交付。",
+  "work.manager.continuation.next.review_required": "查看候选及其验证证据。手动落地后可确认交付。",
   "work.manager.continuation.next.quality_required": "下一步：打开本批次的检查与审查卡，按卡片提示继续处理同一输入。",
   "work.manager.continuation.next.delivery_required": "下一步：查看证据，通过已授权的 Git 流程落地此候选，再确认交付。",
   "work.manager.continuation.next.blocked": "下一步：查看保留的执行结果，通过现有批次恢复或项目配置入口处理阻塞。",
@@ -148,7 +155,8 @@ export const continuationZhCN = {
   "work.manager.continuation.reason.discovery_no_followup": "本次未提出授权范围内的后续任务。",
   "work.manager.continuation.reason.authorized_tasks_delivered": "本次授权任务范围已结束。",
   "work.manager.continuation.reason.owner_stopped": "所有者已停止后续迭代。",
-  "work.manager.continuation.reason.independent_review_and_delivery_required": "候选正在等待独立审查与交付确认。",
+  "work.manager.continuation.reason.candidate_acceptance_pending": "候选正在等待验收。",
+  "work.manager.continuation.reason.independent_review_and_delivery_required": "候选正在等待验收。",
   "work.manager.continuation.reason.candidate_review_policy_satisfied": "候选检查与独立审查已通过。",
   "work.manager.continuation.reason.quality_required": "需要继续已配置的检查与独立审查。",
   "work.manager.continuation.reason.no_authorized_task_is_ready": "目前没有已获授权且可执行的任务。",

@@ -1,11 +1,15 @@
-"""Presentation of existing continuation state; never an execution authority."""
+"""[INPUT]: 项目续跑状态、候选批次、质量配置和待答问题。
+[OUTPUT]: 续跑交接提示与时间线事件。
+[POS]: 投影普通候选验收与显式质量检查的实际进度。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from hashlib import sha256
 import json
 
 
 _COPY = {
     "human_required": "Manager has questions for you. Other authorized work can continue according to its decisions.",
-    "review_required": "The batch produced a candidate and needs independent review and delivery confirmation.",
+    "review_required": "The batch produced a candidate. Acceptance and verified delivery are pending.",
     "quality_required": "The batch needs its configured checks and independent review before delivery.",
     "delivery_required": "Candidate checks and independent review passed. Delivery still needs your confirmation.",
     "blocked": "Automatic project iteration is blocked and needs your attention.",
@@ -16,7 +20,7 @@ _COPY = {
 }
 _NEXT = {
     "human_required": "Reply with the displayed /answer command in this project conversation.",
-    "review_required": "Inspect the candidate, independently review it, then use the existing delivery confirmation after landing it.",
+    "review_required": "Inspect the candidate and its verification evidence. Use delivery confirmation if you land it manually.",
     "quality_required": "Open the batch checks and review card and follow its next step for this same input.",
     "delivery_required": "Inspect the retained evidence, land this exact candidate through the authorized Git workflow, then ask to confirm delivery in this conversation.",
     "blocked": "Inspect the retained result and resolve the blocker through the existing batch recovery or project configuration controls.",
@@ -44,7 +48,7 @@ def project_continuation_notice(session):
                  for row in (value.get("human_questions") or {}).values()
                  if status == "active" and row.get("answer") is None and not row.get("resolution")]
     if status in {"active", "stopped"} and own_batch and batch.get("status") == "review":
-        phase, reason = "review_required", "independent_review_and_delivery_required"
+        phase, reason = "review_required", "candidate_acceptance_pending"
         if quality.get("required"):
             accepted = (quality.get("status") == "reviewed" and quality.get("check_status") == "passed"
                         and quality.get("review_status") == "machine_recorded"

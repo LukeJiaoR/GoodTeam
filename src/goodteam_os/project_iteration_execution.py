@@ -183,7 +183,8 @@ def _runtime_tracks(workspace, project_config, project_key, root, tasks, proposa
         "context": "GoodTeam has already recorded the approval required to execute this task. "
                    "Execute the assigned work now within the isolated repository. Treat references to "
                    "waiting for this same approval in the original request or delegation as history. "
-                   "Do not merge, deploy or change shared project state. Results require independent review. "
+                   "Do not merge, deploy or change shared project state. Return observed verification "
+                   "and any limitations for candidate acceptance. "
                    + json.dumps(proposal.get("request_metadata", {}), ensure_ascii=False),
         "execution_policy": dispatch_policy(task),
         **({"write_domains": task["write_domains"]} if task.get("write_domains") else {}),
@@ -471,10 +472,18 @@ def _publish_batch_result(workspace, project_key, root, batch, report, status):
     proposals = [item for item in session.get("queued_task_proposals", [])
                  if item.get("run_id") == batch["run_id"]]
     chinese = any(re.search(r"[\u3400-\u9fff]", item["exact_request"]) for item in proposals)
-    content = [("Worker 结果已返回，尚未完成独立审查与交付确认。" if chinese else
-                "Worker results returned; independent review and delivery remain outstanding.") if status == "review" else
-               ("任务未完成，执行已阻塞。保留的结果如下；没有自动增加重试或模型预算。" if chinese else
-                "Work remains incomplete and execution is blocked. Retained results follow; no retry or model budget was added.")]
+    if status == "review":
+        heading = ("Worker 结果已返回，等待候选验收与交付。" if chinese else
+                   "Worker results returned. Candidate acceptance and delivery are pending.")
+        legacy_heading = ("Worker 结果已返回，尚未完成独立审查与交付确认。" if chinese else
+                          "Worker results returned; independent review and delivery remain outstanding.")
+        # 回放保留旧标题，结果正文和证据仍由原事件校验。
+        if previous and previous["content"].partition("\n\n")[0] == legacy_heading:
+            heading = legacy_heading
+    else:
+        heading = ("任务未完成，执行已阻塞。保留的结果如下；没有自动增加重试或模型预算。" if chinese else
+                   "Work remains incomplete and execution is blocked. Retained results follow; no retry or model budget was added.")
+    content = [heading]
     evidence = []
     for job in (report or {}).get("jobs", []):
         job_id = str(job.get("job_id", ""))

@@ -129,7 +129,7 @@ export default function ProjectIterationSuggestion({
       <strong>{zh ? '已确认的项目任务' : 'Confirmed project tasks'}</strong>
       <ul>{batchProgress.map(item => <li key={item.id}>{item.project_task_id} — {
         item.status === 'running' ? (zh ? '执行中' : 'Running')
-          : item.status === 'review' ? (zh ? '待独立审查与交付确认' : 'Awaiting independent review and delivery')
+          : item.status === 'review' ? (zh ? '待候选验收与交付' : 'Awaiting candidate acceptance and delivery')
             : (zh ? '已阻塞，请检查执行证据' : 'Blocked; inspect execution evidence')
       }</li>)}</ul>
       {activeQueue.length > 0 && <button type="button" disabled={disabled} onClick={() => onQueue?.({
@@ -139,8 +139,8 @@ export default function ProjectIterationSuggestion({
     </div>}
     {current && (fullyQueued ? (
       <div>
-        <small>{zh ? '已进入普通任务队列；确认后使用隔离工作区执行，结果需审查与交付确认'
-          : 'Queued tasks run in isolated workspaces after confirmation; results need review and delivery confirmation'}</small>
+        <small>{zh ? '任务确认后在隔离工作区运行，并回传验收证据。'
+          : 'Queued tasks run in isolated workspaces after confirmation and return evidence for candidate acceptance.'}</small>
         {canStartBatch && <button type="button" disabled={disabled || activeBatch || selectedQueue.some(item => editingSearch[`${item.id}:${item.revision}`])} onClick={() => onQueue?.({
           action: 'start_queued_task_batch',
           proposal_ids: selectedQueue.map(item => item.id),

@@ -111,7 +111,7 @@ Do not run business work yourself in the Manager shell; delegate to the appropri
             _spec("goodteam_project", "Read current project tasks, team capabilities, queue and authorized continuation."),
             _spec("goodteam_workers", "Inspect current/recent Worker invocations and native streamed progress; output is evidence.",
                   {"job_id": _STRING}),
-            _spec("goodteam_result", "Read a task batch's actual output and independent review status. Does not approve delivery.",
+            _spec("goodteam_result", "Read the batch output, candidate and available verification evidence. Does not approve delivery.",
                   {"run_id": _STRING}, ("run_id",)),
         ]
         if self.skill_storage_unavailable:
