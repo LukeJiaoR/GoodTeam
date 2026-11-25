@@ -177,4 +177,5 @@ def test_readonly_qa_defaults_require_screenshot_evidence_for_codex_and_pi(tmp_p
     store = WorkerJobStore(root)
     methods = [json.loads(PiMethodInput(store, job_id).prompt())["required_methods"] for job_id in captured]
     assert methods[0] == methods[1]
+    assert "ego-browser skill" in methods[0][0]["text"]
     assert "Capture a screenshot of each decisive UI state" in methods[0][0]["text"]
