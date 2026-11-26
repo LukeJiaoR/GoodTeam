@@ -4,6 +4,11 @@ Only exact commits and raw objects are accepted. No checkout, working-tree read,
 network fetch, hook, filter, textconv, or model-selected source path is used.
 Renames are represented as deletion + addition, retaining both sides. Unsupported
 files block the whole capture instead of disappearing from a successful review.
+
+[INPUT]: 依赖可信 Git 解析及仓库中的原始对象。
+[OUTPUT]: 采集绑定到提交的审查来源，供候选校验读取 Git。
+[POS]: 连接只读 Git 对象和 Reviewer 证据。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from __future__ import annotations
 
@@ -13,9 +18,14 @@ import os
 from pathlib import Path
 import re
 import selectors
-import shutil
 import subprocess
 import time
+
+from goodteam_os._trusted_system_executable import (
+    TrustedExecutableError,
+    open_verified_executable,
+    resolve_trusted_system_git,
+)
 
 from .filesystem import directory
 from .models import SkillError, canonical_json, content_digest, resource_path
@@ -67,21 +77,29 @@ class _Git:
         self.root = Path(root).absolute()
         with directory(self.root):
             pass
-        self.binary = shutil.which("git", path=os.defpath)
-        if not self.binary:
-            raise SkillError("review_git_unavailable", "The controller requires a local Git binary for source capture.")
+        try:
+            self.binary, self.system_path, self.identity = resolve_trusted_system_git(self.root)
+        except TrustedExecutableError as exc:
+            raise SkillError("review_git_unavailable", "The controller requires a local Git binary for source capture.") from exc
         self.deadline = time.monotonic() + 30
 
     def read(self, *args, maximum=MAX_SOURCE_BYTES):
         # No inherited credentials, startup variables, helpers or replacement objects.
-        env = {"PATH": os.defpath, "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
+        env = {"PATH": self.system_path, "LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1",
                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_NO_REPLACE_OBJECTS": "1",
                "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": "", "GIT_TERMINAL_PROMPT": "0",
                "GIT_OPTIONAL_LOCKS": "0"}
         command = [self.binary, "--no-pager", "-c", "core.hooksPath=" + os.devnull,
                    "-c", "core.fsmonitor=false", "-c", "protocol.allow=never", *args]
-        process = subprocess.Popen(command, cwd=self.root, env=env, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, bufsize=0)
+        try:
+            executable_fd = open_verified_executable(self.binary, self.identity)
+        except TrustedExecutableError as exc:
+            raise SkillError("review_git_unavailable", "The local Git binary changed before source capture.") from exc
+        try:
+            process = subprocess.Popen(command, cwd=self.root, env=env, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, bufsize=0)
+        finally:
+            os.close(executable_fd)
         output = bytearray()
         error_size = 0
         try:

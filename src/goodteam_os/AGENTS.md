@@ -9,7 +9,7 @@ memory_core/: 角色记忆的纯投影与上下文规则。
 skills/: Skill 包、绑定和快照。QA 默认方法先运行 Ego Skill 引导并附截图。Codex 读取固定文件，Pi 使用读取代理。
 __init__.py: GoodTeam Python 包入口。
 _repository_content_policy.py: 仓库内容的敏感路径拒绝与观察值脱敏。
-_trusted_system_executable.py: 校验系统可执行文件的身份与可信路径。
+_trusted_system_executable.py: 仓库快照和候选证据共用的可信 Git 解析。macOS 优先检查 Apple Command Line Tools 安装路径。
 assistant_conversation.py: 围绕待确认草稿回复项目会话。
 assistant_drafts.py: 编辑草稿并确认提交任务批次。
 assistant_intake.py: Bound task discovery to the user's messages for the current, unstarted task.
