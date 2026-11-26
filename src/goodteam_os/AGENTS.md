@@ -81,11 +81,11 @@ project_iteration_continuation.py: 复用队列续跑，核对接受凭据和候
 project_iteration_execution.py: 通过同一队列核对项目身份和原批准，调用隔离 Worker 池。
 project_iteration_planner.py: 用自然语言把候选与授权上下文交给 Manager 判断，保存只读建议。
 project_iteration_quality.py: 统一读取 Manager 接受凭据与专项质量凭据。
-project_candidate_acceptance.py: 将 Manager 决定和观察来源绑定到候选及修正链。
+project_candidate_acceptance.py: 校验 Work 反馈版本，将 Manager 决定和观察绑定到候选及修正链。
 project_iteration_recovery.py: 重试原批次中的失败任务，保留 Provider 引用与 Skill 锁。
 project_observation_judgment.py: Budgeted, read-only advice contract shared with the bounded production consumer.
 project_observation_runtime.py: Bounded running-period Manager judgments over native app-server threads.
-project_outcome_discovery.py: 冻结交付证据，按授权范围创建 Manager 选定的后续任务。
+project_outcome_discovery.py: 冻结交付证据与 Work 反馈，按授权范围推进 Manager 的有效决定。
 project_parallel_dispatch.py: Views over the original task/batch ledgers, not another execution queue.
 project_readiness.py: 项目模式、就绪状态与能力评估。
 project_readiness_executor.py: 项目导入后的隔离扫描与就绪执行。

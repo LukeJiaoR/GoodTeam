@@ -9,7 +9,7 @@ AssistantControls.jsx: 助手请求恢复与待确认操作。
 AssistantControls.test.jsx: 助手操作与恢复界面检查。
 AssistantPendingReply.jsx: 回复状态、流式文本与停止按钮。
 AssistantPendingReply.test.jsx: 回复状态与停止按钮检查。
-ContinuationActivity.test.jsx: 项目持续迭代活动检查。
+ContinuationActivity.test.jsx: 检查阻塞状态与等待阶段的同次续跑交付凭据。
 ConversationAttachments.jsx: 会话附件选择与列表。
 ConversationComposer.jsx: 会话输入、附件与发送操作。
 ConversationTimeline.jsx: 会话时间线及消息展示。
@@ -19,7 +19,7 @@ GoalContinuationPanel.jsx: Goal 持续执行的控制面板。
 GoalHistory.test.jsx: Goal 历史展示检查。
 GoalRetryConsent.test.jsx: Goal 重试授权检查。
 PreparationFacts.jsx: 项目准备步骤所需事实。
-ProjectContinuationControls.jsx: 项目续跑设置、执行证据与交付状态。
+ProjectContinuationControls.jsx: 项目续跑设置与恢复操作。等待反馈时展示本次续跑已登记的交付批次。
 ProjectContinuationControls.test.jsx: 续跑设置、恢复和交付凭据的界面检查。
 ProjectContinuationHandoff.test.jsx: 持续迭代交接状态检查。
 ProjectConversation.jsx: 项目会话、草稿及任务准备。

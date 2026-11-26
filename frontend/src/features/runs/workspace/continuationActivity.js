@@ -1,4 +1,9 @@
-// Presentation only: a valid grant or reserved call is not proof of execution.
+/**
+ * [INPUT]: Work 会话中的授权、批次归属及实际执行证据。
+ * [OUTPUT]: 展示续跑阶段和阻塞原因。
+ * [POS]: 根据 Work 会话投影执行状态。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 export function continuationActivity(session, zh = false) {
   const value = session?.project_continuation;
   if (value?.status !== 'active') return null;
@@ -12,8 +17,8 @@ export function continuationActivity(session, zh = false) {
       'Batch attribution needs checking', 'Retain the original batch; this is not proof of a running Worker.');
     if (batch.status === 'review') return copy('等待审查与交付', '已有候选结果；尚不能当作验收或交付通过。',
       'Awaiting review and delivery', 'A candidate exists; this is not accepted delivery.');
-    if (batch.status === 'blocked') return copy('批次结果需要处理', batch.error || '核对原结果和恢复入口，不重复未知执行。',
-      'Batch result needs attention', batch.error || 'Inspect the original evidence and recovery controls; do not repeat unknown execution.');
+    if (batch.status === 'blocked') return copy('自动迭代已受阻', batch.error || '核对原结果和恢复入口，不重复未知执行。',
+      'Automatic iteration blocked', batch.error || 'Inspect the original evidence and recovery controls; do not repeat unknown execution.');
     if (['claimed', 'running'].includes(batch.status)) return copy('等待 Worker 结果', '已记录原批次。当前进程是否活跃，以对应调用的实际状态为准。',
       'Awaiting Worker results', 'The original batch is recorded. Check its invocation evidence for current process activity.');
     return copy('等待批次状态核对', '原批次还未完成本轮接续判断。',

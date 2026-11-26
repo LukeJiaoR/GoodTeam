@@ -94,7 +94,7 @@ test_project_iteration_recovery.py: 验证 Manager 与用户重试已结束的�
 test_project_live_pool.py: Real Manager/queue/claim/thread locks; execution output is an offline seam.
 test_project_observation_judgment.py: Offline judgment contract; no live Manager Runtime or Worker reply evidence.
 test_project_observation_runtime.py: Native observation integration with local event files and a simulated Manager.
-test_project_outcome_discovery.py: One bounded project loop learns from delivery and creates its next task.
+test_project_outcome_discovery.py: 验证交付驱动续跑，并拒绝新 Work 反馈到达前的候选判断。
 test_project_question_board.py: One lifecycle through real file stores/locks, with explicit Manager packets.
 test_project_readiness_web.py: 验证 project readiness web 的行为。
 test_project_running_observation.py: Observation input contract, not autonomous model/provider acceptance.

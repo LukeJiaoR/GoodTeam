@@ -1,4 +1,4 @@
-"""[INPUT]: 项目续跑、已观察批次、隔离候选和 Manager 决定。
+"""[INPUT]: 项目续跑、已观察批次、隔离候选、Work 用户反馈和 Manager 决定。
 [OUTPUT]: 绑定候选版本和观察来源的 Manager 接受凭据。
 [POS]: 将 Manager 决定交给既有 Git 交付路径。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
@@ -31,7 +31,7 @@ def record_candidate_acceptance(*, workspace, project_key, root, value, pending)
     """保存 Manager 对候选的判断，供已有交付路径消费。"""
     from goodteam_os.project_iteration_continuation import _digest
     from goodteam_os.project_iteration_quality import project_batch_quality_evidence
-    from goodteam_os.project_outcome_discovery import _current, _input_receipts
+    from goodteam_os.project_outcome_discovery import DiscoveryContextChanged, _current, _input_receipts, _work_feedback
 
     packet = pending["packet"]
     feedback = packet["batch_feedback"]
@@ -67,6 +67,8 @@ def record_candidate_acceptance(*, workspace, project_key, root, value, pending)
                 or jobs.get(feedback["batch_run_id"]) != batches[feedback["batch_run_id"]]
                 or any(jobs.get(identifier) != batch for identifier, batch in chain.items())):
             raise ValueError("The candidate or its observed batch changed before recording.")
+        if "work_feedback" in packet and packet["work_feedback"] != _work_feedback(session, current):
+            raise DiscoveryContextChanged("New Work feedback arrived before candidate acceptance.")
         for identifier in chain:
             jobs[identifier]["manager_acceptance"] = receipt
         if current.get("undelivered_feedback_anchor") == feedback["observation_key"]:

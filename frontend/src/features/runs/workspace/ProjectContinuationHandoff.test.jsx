@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { translate } from '../../../i18n';
 import { normalizeProjectAttention, attentionHref, readAttentionSelection, resolveAttentionFocus } from '../../projects/projectAttention';
@@ -26,6 +26,10 @@ it('offers a current bilingual Manager handoff through existing controls without
       continuationNoticeId={notice.id} /></ol>
   </div>;
   const view = render(ui('zh-CN'));
+  const controls = within(screen.getByRole('region', { name: '项目自动迭代' }));
+  expect(controls.getByText('已记录交付：APP-1')).toBeInTheDocument();
+  expect(controls.getByText('交付凭据：sha256:receipt')).toBeInTheDocument();
+  expect(onAction).not.toHaveBeenCalled();
   expect(screen.getByText(/这不代表项目已经完成/)).toBeInTheDocument();
   expect(screen.getByText(/Manager 判断依据：More project context is needed/)).toBeInTheDocument();
   expect(screen.queryByText(item.content)).not.toBeInTheDocument();
