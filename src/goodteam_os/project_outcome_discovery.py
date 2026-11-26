@@ -555,8 +555,7 @@ def _validate_discovered_single(packet, response):
             or len(set(dependencies)) != len(dependencies)
             or not set(dependencies).issubset(done & set(packet["authorized_task_ids"]))
             or not isinstance(sources, list) or not sources or any(not isinstance(item, str) for item in sources)
-            or len(set(sources)) != len(sources) or not set(sources).issubset(packet["allowed_source_refs"])
-            or _source_receipt(packet) not in sources):
+            or len(set(sources)) != len(sources) or not set(sources).issubset(packet["allowed_source_refs"])):
         raise ValueError("Follow-up dependencies and source references must name authorized delivered facts.")
     feedback = packet.get("investigation_feedback")
     if feedback and feedback["receipt_id"] not in sources:
@@ -564,8 +563,15 @@ def _validate_discovered_single(packet, response):
     batch_feedback = packet.get("batch_feedback")
     if batch_feedback and batch_feedback["receipt_id"] not in sources:
         raise ValueError("A batch-driven follow-up must reference its captured results, including unresolved work.")
+    source_receipt = _source_receipt(packet)
+    if source_receipt not in sources:
+        if not (batch_feedback and packet.get("verified_outcome") and source_receipt in packet["allowed_source_refs"]):
+            raise ValueError("Follow-up dependencies and source references must name authorized delivered facts.")
+        # 当前批次回执来自 Manager 决定，冻结的交付回执由主机补齐。
+        sources = [source_receipt, *sources]
     return {"new_task": {**task, "title": task["title"].strip(), "description": task["description"].strip(),
-                         "acceptance_criteria": [item.strip() for item in criteria], "write_domains": domains},
+                         "acceptance_criteria": [item.strip() for item in criteria], "write_domains": domains,
+                         "source_refs": sources},
             "rationale": rationale, **actions}
 
 

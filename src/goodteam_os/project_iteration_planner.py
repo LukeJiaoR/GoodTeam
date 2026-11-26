@@ -117,9 +117,13 @@ delivery, or repeat an unknown execution.
 Return one JSON object: {"new_task": task_or_null, "rationale": "Explain the decision."}.
 Each task contains exactly role, title, description, acceptance_criteria,
 write_domains, dependencies and source_refs. Use the exact role string shown in
-role_capabilities. Give observable criteria and enough context for the Worker;
-source_refs must use allowed_source_refs and include the current source receipt.
-When investigation_feedback or batch_feedback is present, also cite its receipt_id.
+role_capabilities. Give observable criteria and enough context for the Worker.
+Use only allowed_source_refs. The primary receipt is the first available from
+verified_outcome.delivery.receipt_id, backlog_judgment_source.receipt_id and
+undelivered_source.receipt_id. Cite it in source_refs. If batch_feedback is
+present, cite its receipt_id. When both batch_feedback and verified_outcome
+are present, the host retains the primary receipt even if you omit it.
+When investigation_feedback is present, also cite its receipt_id.
 Dependencies must already be authorized and delivered. If no useful in-scope
 task is justified, return new_task:null and explain why without claiming the
 whole project is complete. The decision itself is not execution authority.

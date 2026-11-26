@@ -83,7 +83,10 @@ provenance event does not silently replace the original context.
 
 The response may contain one bounded task, with explicit acceptance criteria,
 allowed write domains, authorized delivered dependencies and actual receipt
-references. The original delivery receipt is required. The host fixes the role to
+references. The original delivery receipt is required. When a follow-up cites
+the current `batch_feedback.receipt_id`, the host adds the frozen verified
+delivery receipt if omitted. The follow-up still needs the exact batch receipt
+and can depend only on verified, authorized tasks. The host fixes the role to
 `implementation`, priority to `medium` and policy to `workspace_write`; model
 output cannot select argv, a runtime, merge permission or approval state.
 

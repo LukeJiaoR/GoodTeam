@@ -69,6 +69,33 @@ def test_next_candidate_decision_respects_work_feedback_received_during_review(t
     assert saved["project_continuation"]["discovery_pending"] == pending
 
 
+def test_batch_review_followup_keeps_frozen_delivery_lineage():
+    packet = {
+        "discovery": {"allow_team_roles": True, "allowed_write_domains": ["docs"]},
+        "role_capabilities": [{"role": "code_review", "dispatchable": True}],
+        "verified_outcome": {"delivery": {"receipt_id": "first-delivery"}},
+        "batch_feedback": {"receipt_id": "current-candidate"},
+        "allowed_source_refs": ["first-delivery", "current-candidate"],
+        "authorized_task_ids": ["DEMO-1", "DEMO-2"],
+        "authorized_done_task_ids": ["DEMO-1"],
+    }
+    task = {"role": "code_review", "title": "Review the latest candidate",
+            "description": "Check the current candidate against the documented behavior.",
+            "acceptance_criteria": ["Report verified claims and any gaps."], "write_domains": [],
+            "dependencies": ["DEMO-1"], "source_refs": ["current-candidate"]}
+    proposal = {"new_task": task, "rationale": "Check operational claims before recording delivery."}
+
+    result = validate_discovered_task(packet, proposal)
+    assert result["new_task"]["source_refs"] == ["first-delivery", "current-candidate"]
+    assert proposal["new_task"]["source_refs"] == ["current-candidate"]
+    assert validate_discovered_task(packet, result) == result
+
+    with pytest.raises(ValueError, match="capture.*results"):
+        validate_discovered_task(packet, {**proposal, "new_task": {**task, "source_refs": ["first-delivery"]}})
+    with pytest.raises(ValueError, match="authorized delivered facts"):
+        validate_discovered_task(packet, {**proposal, "new_task": {**task, "dependencies": ["DEMO-2"]}})
+
+
 def _offline_cli(tmp_path, monkeypatch):
     """Use a pinned native executable with an empty, private credential home."""
     compiler = shutil.which("cc")
