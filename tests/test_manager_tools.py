@@ -1,5 +1,5 @@
 """[INPUT]: Manager 工具、任务账与项目会话。
-[OUTPUT]: 委派、重放与控制额度回归。
+[OUTPUT]: 委派校验、重放与控制额度回归。
 [POS]: 验证原始任务与验收标准进入既有队列。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
@@ -34,6 +34,11 @@ def test_concurrent_tool_delivery_reuses_one_original_assignment(tmp_path):
     args = {"operation_id": "research", "role": "research", "source_message_ids": ["request"],
             "execution_policy": "read_only", "write_domains": [], "acceptance_criteria": [criterion],
             "delegation": {"purpose": "Understand the project", "context": "Current repository", "scope": "Read only"}}
+    with pytest.raises(ValueError, match="Provide 1 to 8 nonempty acceptance criteria"):
+        tools.call("goodteam_delegate", {**args, "acceptance_criteria": ["Verify one item."] * 9},
+                   call_id="invalid-criteria", logical_ids=["request"])
+    assert not LocalTaskStore(root, "DEMO").list_tasks()
+    assert not store.read().get("manager_app_server", {}).get("tool_receipts")
     with ThreadPoolExecutor(max_workers=2) as pool:
         calls = [pool.submit(tools.call, "goodteam_delegate", args, call_id=str(index), logical_ids=["request"])
                  for index in range(2)]
