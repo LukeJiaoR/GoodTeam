@@ -1,4 +1,4 @@
-"""[INPUT]: 已授权迭代、批次观察、已验证交付和任务账。
+"""[INPUT]: 已授权迭代、Work 用户消息、批次观察、已验证交付和任务账。
 [OUTPUT]: 冻结的发现输入、Manager 候选决定和幂等后续任务。
 [POS]: 在既有 continuation、Manager 与队列之间衔接交付发现。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
@@ -259,6 +259,16 @@ def _authorized_task_context(root, project_key, value, *, exclude_ref=None):
                 ({exclude_ref} if isinstance(exclude_ref, str) else set(exclude_ref or []))]
 
 
+def _work_feedback(session, value):
+    return [
+        {"message_id": row["message_id"], "content": row["content"]}
+        for row in session.get("timeline", [])
+        if row.get("actor") == "user" and row.get("content")
+        and row.get("created_at", "") >= value.get("created_at", "")
+        and row["message_id"] not in session.get("external_inputs", {})
+    ][-8:]
+
+
 def _packet(workspace, project_key, root, value, outcome, *, project_config=None, backlog_source=None):
     from goodteam_os.memory import runtime_role_memory_store
     from goodteam_os.project_iteration_planner import _project_evidence
@@ -385,8 +395,10 @@ def _packet(workspace, project_key, root, value, outcome, *, project_config=None
                 packet["delivery_candidate"] = target
     packet["human_feedback_supported"] = True
     packet["human_questions"] = question_context(value)
-    packet["question_board"] = question_board({**TaskAssistantSessionStore(workspace, project_key).read(),
-                                              "project_continuation": value})
+    session = TaskAssistantSessionStore(workspace, project_key).read()
+    packet["question_board"] = question_board({**session, "project_continuation": value})
+    if value["discovery"].get("use_project_backlog"):
+        packet["work_feedback"] = _work_feedback(session, value)
     packet["allowed_source_refs"].extend(item["answer"]["receipt_id"]
         for item in packet["question_board"]["items"] if not item["current"] and item["answer"])
     answers = human_feedback(value)
@@ -589,6 +601,7 @@ def _input_receipts(packet):
     if packet.get("batch_feedback"):
         receipts.append(packet["batch_feedback"]["receipt_id"])
     receipts.extend(item["receipt_id"] for item in packet.get("human_answers", []))
+    receipts.extend(_digest(item) for item in packet.get("work_feedback", []))
     return list(dict.fromkeys(receipts))
 
 
@@ -600,12 +613,16 @@ def _budget_exhausted(store, value, reason):
     return store._mutate(exhausted)["project_continuation"]
 
 
-def _revalidate(workspace, project_key, root, config, value, pending):
+def _revalidate(workspace, project_key, root, config, value, pending, *, check_work_feedback=True):
     from goodteam_os.project_human_feedback import validate_human_input
 
     packet = pending["packet"]
     changes = []
     validate_human_input(value, packet)
+    if check_work_feedback and "work_feedback" in packet:
+        session = TaskAssistantSessionStore(workspace, project_key).read()
+        if packet["work_feedback"] != _work_feedback(session, value):
+            changes.append("New Work feedback arrived during the Manager decision.")
     if packet.get("authorized_backlog_context") is not None:
         if packet["authorized_backlog_context"] != _backlog_source(root, project_key, value,
                 authorized_tasks=True, exclude_refs=_creation_refs(value, pending)):
@@ -691,8 +708,10 @@ def _retain_changed_discovery(store, root, project_key, config, value, pending, 
              "details": {"pending": pending, "selection": selection, "manager_execution": execution, "reason": reason}}
     def settle(session):
         current = _current(session, value)
+        retained_selection = pending.get("selection")
         if (current != before or current.get("discovery_pending") != pending or current.get("manager_calls") != value["manager_calls"]
-                or "selection" in pending or "task_id" in pending or "task_ids" in pending):
+                or retained_selection is not None and (retained_selection != selection or not selection.get("accept_candidate"))
+                or "task_id" in pending or "task_ids" in pending):
             raise ValueError("The original discovery reservation changed before settlement.")
         _scope_tasks(current, LocalTaskStore(root, project_key).list_tasks())
         timeline = session.setdefault("timeline", [])
@@ -813,7 +832,15 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
             return session
         value = store._mutate(reserve)["project_continuation"]
     _current(store.read(), value)
-    _revalidate(workspace, project_key, root, project_config, value, pending)
+    try:
+        _revalidate(workspace, project_key, root, project_config, value, pending,
+                    check_work_feedback="selection" in pending)
+    except DiscoveryContextChanged as exc:
+        selection = pending.get("selection") or {}
+        if not selection.get("accept_candidate"):
+            raise
+        return _retain_changed_discovery(store, root, project_key, project_config, value, pending,
+            selection, pending.get("manager_execution", {}), str(exc))
     if "selection" not in pending:
         packet = pending["packet"]
         result = (manager_runner or run_manager_iteration_choice)(project_config=Path(project_config), project_key=project_key,
@@ -841,7 +868,12 @@ def _discover_next_iteration(*, workspace, project_key, root, project_config, va
     if selection.get("accept_candidate"):
         from goodteam_os.project_candidate_acceptance import record_candidate_acceptance
 
-        return record_candidate_acceptance(workspace=workspace, project_key=project_key, root=root, value=value, pending=pending)
+        try:
+            return record_candidate_acceptance(
+                workspace=workspace, project_key=project_key, root=root, value=value, pending=pending)
+        except DiscoveryContextChanged as exc:
+            return _retain_changed_discovery(store, root, project_key, project_config, value, pending,
+                selection, pending.get("manager_execution", {}), str(exc))
     if selection.get("retry_task_ids"):
         if value["max_batches"] is not None and value["batches_started"] >= value["max_batches"]:
             return _budget_exhausted(store, value, "approved_iteration_budget_used")

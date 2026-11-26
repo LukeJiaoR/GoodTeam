@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from goodteam_os import project_candidate_acceptance
 from goodteam_os import project_iteration_continuation as continuation
 from goodteam_os import web
 from goodteam_os.execution.task_snapshot_store import store_for_project
@@ -23,7 +24,7 @@ from goodteam_os.memory import RoleMemoryStore
 from goodteam_os.project_iteration import project_iteration_backlog
 from goodteam_os.project_import import confirm_project_mode, import_project
 from goodteam_os.project_iteration_quality import prepare_project_batch_quality
-from goodteam_os.project_outcome_discovery import validate_discovered_task
+from goodteam_os.project_outcome_discovery import DiscoveryContextChanged, authorization_digest, validate_discovered_task
 from goodteam_os.project_readiness_executor import ProjectReadinessExecutor
 from goodteam_os.project_registry import ProjectRegistry
 from goodteam_os.skills.codex_trusted import TrustedCodexReviewAdmission
@@ -33,6 +34,39 @@ from goodteam_os.team_control_plane import ensure_team_state
 from goodteam_os.workers import WorkerJobStore
 from test_dispatch_isolation import git
 from test_project_iteration_quality import _private_json
+
+
+def test_next_candidate_decision_respects_work_feedback_received_during_review(tmp_path, monkeypatch):
+    store = TaskAssistantSessionStore(tmp_path, "DEMO")
+    grant = {
+        "id": "grant", "status": "active", "seed_task_ids": [], "seed_task_intents": {},
+        "approved_backlog_version": "version", "discovery": {"use_project_backlog": True},
+        "authority": {}, "max_batches": 2, "max_manager_calls": 3, "created_at": "2026-01-01T00:00:00+00:00",
+    }
+    grant["authorization_digest"] = authorization_digest(grant)
+    candidate = {"candidate_run_id": "run", "candidate_commit": "a" * 40}
+    pending = {
+        "packet": {
+            "delivery_candidate": candidate, "packet_digest": "packet", "work_feedback": [],
+            "batch_feedback": {"batch_run_id": "run", "receipt_id": "observation"},
+        },
+        "selection": {"accept_candidate": True, "rationale": "Candidate checks passed."},
+    }
+    grant["discovery_pending"] = pending
+    batch = {"status": "review", "expected_continuation_id": grant["id"], "expected_authority": grant["authority"]}
+    store._mutate(lambda session: {**session, "project_continuation": grant, "project_task_batches": {"run": batch}})
+    monkeypatch.setattr(project_candidate_acceptance, "candidate_target", lambda *_args: candidate)
+    monkeypatch.setattr("goodteam_os.project_iteration_quality.project_batch_quality_evidence",
+                        lambda **_kwargs: {"required": False})
+    store.append_message("new-feedback", "user", "The real Work response exposes no notice for this candidate.")
+
+    with pytest.raises(DiscoveryContextChanged, match="New Work feedback"):
+        project_candidate_acceptance.record_candidate_acceptance(
+            workspace=tmp_path, project_key="DEMO", root=tmp_path, value=grant, pending=pending)
+
+    saved = store.read()
+    assert "manager_acceptance" not in saved["project_task_batches"]["run"]
+    assert saved["project_continuation"]["discovery_pending"] == pending
 
 
 def _offline_cli(tmp_path, monkeypatch):

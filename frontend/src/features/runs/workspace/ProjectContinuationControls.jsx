@@ -1,5 +1,12 @@
+/**
+ * [INPUT]: Work 会话、交付批次和续跑操作回调。
+ * [OUTPUT]: 展示项目续跑设置、已验证的交付凭据和恢复操作。
+ * [POS]: 从 Work 投影显示交付证据。操作由上层回调提交。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { continuationActivity } from './continuationActivity';
 import { Fragment, useRef, useState } from 'react';
+import { translate } from '../../../i18n';
 
 function qualityAccepted(quality) {
   return quality?.status === 'reviewed' && quality.check_status === 'passed'
@@ -211,14 +218,31 @@ function ContinuationStartForm({ tasks, snapshot, value, onAction, disabled, can
   </>;
 }
 
+function recordedStrings(values) {
+  return Array.isArray(values) ? values.filter(value => typeof value === 'string' && value.length > 0) : [];
+}
+
 export default function ProjectContinuationControls({ snapshot, session, projectKey, onAction, disabled, canStart, language = 'en' }) {
   const zh = String(language).startsWith('zh');
   const value = session?.project_continuation;
+  const notice = session?.project_continuation_notice;
+  const allBatches = Object.values(session?.project_task_batches || {});
   const tasks = (snapshot?.candidates || []).filter(item => ['todo', 'blocked'].includes(item.status));
-  const batches = Object.values(session?.project_task_batches || {}).filter(item =>
+  const batches = allBatches.filter(item =>
     ['review', 'blocked', 'abandoned'].includes(item.status) || item.quality?.required && item.status !== 'delivered');
   if (!onAction || (!value && !tasks.length && !batches.length)) return null;
   const active = value?.status === 'active';
+  const awaitingDeliveryFeedback = active && value.reason === 'delivery_feedback_pending';
+  const recordedBatches = awaitingDeliveryFeedback ? allBatches.filter(batch =>
+    batch.expected_continuation_id === value.id && batch.status === 'delivered'
+    && typeof batch.delivery_receipt?.receipt_id === 'string' && batch.delivery_receipt.receipt_id) : [];
+  const deliveredTaskIds = awaitingDeliveryFeedback
+    ? [...new Set(recordedBatches.flatMap(batch => recordedStrings(batch.task_ids)))]
+    : recordedStrings(notice?.delivered_task_ids);
+  const deliveryReceiptIds = awaitingDeliveryFeedback
+    ? recordedBatches.map(batch => batch.delivery_receipt.receipt_id)
+    : recordedStrings(notice?.delivery_receipt_ids);
+  const showDeliveryEvidence = !active || awaitingDeliveryFeedback;
   const activity = continuationActivity(session, zh);
   const canFinish = ['no_followup', 'exhausted'].includes(session?.project_continuation_notice?.phase)
     && !value?.pending_batch;
@@ -270,6 +294,10 @@ export default function ProjectContinuationControls({ snapshot, session, project
           {activity.rationale ? <p>{zh ? '上次 Manager 判断依据' : 'Last Manager rationale'}: {activity.rationale}</p> : null}
         </div> : null}
         {value.status !== 'active' && value.reason ? <p role="status">{reasons[value.reason] || value.reason}</p> : null}
+        {showDeliveryEvidence && deliveredTaskIds.length > 0
+          ? <p>{translate(language, 'work.manager.continuation.delivered', { tasks: deliveredTaskIds.join(', ') })}</p> : null}
+        {showDeliveryEvidence && deliveryReceiptIds.length > 0
+          ? <p>{translate(language, 'work.manager.continuation.receipts', { receipts: deliveryReceiptIds.join(', ') })}</p> : null}
         {active || canFinish ? <button type="button" onClick={() => onAction({
           action: 'stop_project_continuation', continuation_id: value.id,
         })}>{active ? (zh ? '停止后续迭代' : 'Stop future iterations')

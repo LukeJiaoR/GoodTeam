@@ -49,3 +49,46 @@ it('distinguishes retained calls, applied decisions, new facts and resource wait
   expect(activity({ reason: 'backlog_judgment_waiting', discovery_last: { rationale: 'Original evidence' } }).rationale).toBe('Original evidence');
   expect(continuationActivity({ project_continuation: { ...value, status: 'stopped' } })).toBeNull();
 });
+
+it('shows explicit delivery evidence while awaiting its next judgment without acting', () => {
+  const onAction = vi.fn();
+  const continuation = { id: 'grant', status: 'active', reason: 'delivery_feedback_pending',
+    manager_calls: 2, max_manager_calls: 4, batches_started: 1, max_batches: 3 };
+  const deliveredBatch = { expected_continuation_id: continuation.id, status: 'delivered',
+    task_ids: ['APP-1', null], delivery_receipt: { receipt_id: 'sha256:receipt' } };
+  const unrelatedBatch = { ...deliveredBatch, expected_continuation_id: 'older-grant',
+    task_ids: ['OTHER-1'], delivery_receipt: { receipt_id: 'sha256:unrelated' } };
+
+  render(<ProjectContinuationControls snapshot={{ candidates: [] }} session={{
+    project_continuation: continuation, project_continuation_notice: null,
+    project_task_batches: { delivered: deliveredBatch, unrelated: unrelatedBatch },
+  }} projectKey="APP" onAction={onAction} canStart language="en" />);
+
+  expect(screen.getByText('Automatic project iteration · Awaiting next judgment')).toBeInTheDocument();
+  expect(screen.getByText('Recorded deliveries: APP-1')).toBeInTheDocument();
+  expect(screen.getByText('Delivery receipts: sha256:receipt')).toBeInTheDocument();
+  expect(screen.queryByText(/OTHER-1|sha256:unrelated/)).not.toBeInTheDocument();
+  expect(onAction).not.toHaveBeenCalled();
+});
+
+it('identifies an explicitly blocked batch while preserving its evidence and recovery without acting', () => {
+  const onAction = vi.fn();
+  const continuation = { id: 'grant', status: 'active', batches_started: 1, max_batches: 3,
+    manager_calls: 1, max_manager_calls: 3, pending_batch: { run_id: 'batch', task_ids: ['APP-1'] } };
+  const batch = { run_id: 'batch', expected_continuation_id: continuation.id, status: 'blocked', task_ids: ['APP-1'],
+    error: 'The Worker returned a blocked result.', recovery: { version: 'evidence-1',
+      reason: 'Dependency ownership must be resolved before retrying.', retryable_task_ids: ['APP-1'],
+      preserved_task_ids: [], unknown_task_ids: [], can_abandon: true } };
+
+  render(<ProjectContinuationControls snapshot={{ candidates: [] }} session={{ project_continuation: continuation,
+    project_task_batches: { [batch.run_id]: batch } }} projectKey="APP" onAction={onAction} canStart language="en" />);
+
+  expect(screen.getByText('Automatic project iteration · Automatic iteration blocked')).toBeInTheDocument();
+  expect(screen.getByText(batch.error)).toBeInTheDocument();
+  expect(screen.getByText(batch.recovery.reason)).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Inspect retained execution evidence' }))
+    .toHaveAttribute('href', '/api/projects/APP/iteration-batches/batch');
+  expect(screen.getByText('Confirmed failed tasks: APP-1')).toBeInTheDocument();
+  expect(screen.getByLabelText(/I confirm abandoning this batch/)).toBeInTheDocument();
+  expect(onAction).not.toHaveBeenCalled();
+});
