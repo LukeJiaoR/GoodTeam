@@ -1,4 +1,9 @@
-/* Knowledge-only #677 alignment. Source evidence remains expanded and searchable. */
+/*
+ * [INPUT]: 工作区知识页和仓库证据的布局样式。
+ * [OUTPUT]: 紧凑控件尺寸和可换行的长证据文本。
+ * [POS]: 知识页的布局覆盖。源证据保持完整可读。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 .product-shell.product-shell--workspace .product-knowledge-page.product-knowledge-page { font-size: 14px; }
 .product-shell.product-shell--workspace .product-knowledge-page :is(h2, h3) { font-size: 14px; line-height: 1.5; }
 .product-shell.product-shell--workspace .product-knowledge-page :is(.product-page-heading__description, .knowledge-context-description, .knowledge-confirmed-facts header p) { font-size: 12px; margin: 0; }
@@ -13,7 +18,10 @@
 .product-shell.product-shell--workspace .product-knowledge-page .knowledge-intro dd { margin: 0; font-size: 14px; }
 .product-shell.product-shell--workspace .product-knowledge-page .knowledge-confirmed-facts > header { padding: 10px 12px; gap: 8px; }
 .product-shell.product-shell--workspace .product-knowledge-page .knowledge-confirmed-grid > section { padding: 12px; }
-.product-shell.product-shell--workspace .product-knowledge-page .knowledge-confirmed-grid :is(li, .product-empty-copy) { font-size: 14px; }
+.product-shell.product-shell--workspace .product-knowledge-page .knowledge-confirmed-grid :is(li, .product-empty-copy) {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
 .product-shell.product-shell--workspace .product-knowledge-page .knowledge-overview > .repository-overview { padding: 12px; }
 .product-shell.product-shell--workspace .product-knowledge-page .knowledge-overview .repository-overview-group { padding: 12px; }
 .product-shell.product-shell--workspace .product-knowledge-page :is(.knowledge-artifacts, .knowledge-memory) { gap: 12px; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); }

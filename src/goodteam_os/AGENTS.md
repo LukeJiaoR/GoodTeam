@@ -47,7 +47,7 @@ manager_dialogue.py: Bounded Manager conversation runtime; original services ret
 manager_execution.py: Manager 对话与后台判断入口、项目运行设置及资源限制。
 manager_runtime_observation.py: Bounded local Runtime observation for Manager conversations, never control.
 manager_skill_context.py: Pinned Manager Role/Skill input for the native app-server session.
-manager_tools.py: 提供 Manager 终止与请审规则，并将原生工具接入项目服务。
+manager_tools.py: 提供 Manager 终止与请审规则，先校验委派验收标准，再为有效工具输入登记操作。
 manager_worker_control.py: Explicit project-chat supervision through the existing Pi control protocol.
 memory.py: 项目及角色记忆事件、检索与快照校验。
 memory_embeddings.py: Opt-in embeddings and a rebuildable PG projection of eligible role memory.

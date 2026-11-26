@@ -1,5 +1,5 @@
 """[INPUT]: Manager 请求、项目状态、既有队列与授权服务。
-[OUTPUT]: Manager 终止与请审规则、工具描述与业务回执。
+[OUTPUT]: Manager 终止与请审规则、工具描述、委派校验错误与业务回执。
 [POS]: 接入项目工具。Skill 存储不可用时保留只读对话。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 
@@ -162,6 +162,16 @@ Do not run business work yourself in the Manager shell; delegate to the appropri
         for field, definition in schema["properties"].items():
             if field in arguments and "enum" in definition and arguments[field] not in definition["enum"]:
                 raise ValueError("Manager tool arguments do not match the declared operation.")
+        if name == "goodteam_delegate":
+            criteria = arguments["acceptance_criteria"]
+            definition = schema["properties"]["acceptance_criteria"]
+            minimum, maximum = definition["minItems"], definition["maxItems"]
+            if (not isinstance(criteria, list) or not minimum <= len(criteria) <= maximum
+                    or any(not isinstance(item, str) or not item.strip() for item in criteria)):
+                raise ValueError(
+                    f"Provide {minimum} to {maximum} nonempty acceptance criteria. "
+                    "Put additional detail in the delegation context or scope."
+                )
         if self.skills is not None:
             self.skills.preflight()
         session = self._current(logical_ids)
