@@ -1,6 +1,8 @@
-"""Native Manager tools traverse the real queue and isolated subprocess pool.
-
-Both providers are offline protocol fixtures, proving routing, not model quality.
+"""
+[INPUT]: 依赖离线 Manager 和 Worker 协议夹具及本地 Git。
+[OUTPUT]: 验证 Manager 的角色派工、确认队列与结果回流。
+[POS]: 通过隔离派工验证两个运行器之间的任务传递。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -136,13 +138,18 @@ def assignment_git(monkeypatch):
     operations, including on containers whose system UID ownership is remapped.
     """
     from goodteam_os import dispatch_workspace, repository_snapshot
-    from goodteam_os._trusted_system_executable import ExecutableIdentity
+    from goodteam_os._trusted_system_executable import (
+        SYSTEM_EXECUTION_PATH,
+        SYSTEM_GIT_CANDIDATES,
+        ExecutableIdentity,
+    )
 
-    executable = '/usr/bin/git'
+    # 按宿主平台选择现有 Git，避免在 macOS 依赖 Xcode 启动器。
+    executable = next(path for path, _ in SYSTEM_GIT_CANDIDATES if os.access(path, os.X_OK))
     value = os.stat(executable, follow_symlinks=False)
     identity = ExecutableIdentity(value.st_dev, value.st_ino, value.st_mode)
     def fixture_executable(root, operation):
-        return executable, '/usr/bin:/bin', identity
+        return executable, SYSTEM_EXECUTION_PATH, identity
     monkeypatch.setattr(repository_snapshot, '_trusted_git_executable', fixture_executable)
     monkeypatch.setattr(dispatch_workspace, '_trusted_git_executable', fixture_executable)
 

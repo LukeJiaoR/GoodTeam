@@ -1,13 +1,23 @@
+"""
+[INPUT]: 依赖操作系统提供固定安装路径与文件身份。
+[OUTPUT]: 解析并核对可信 Git 可执行文件。
+[POS]: 仓库快照和候选证据共用的 Git 入口。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import os
 import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
 SYSTEM_EXECUTION_PATH = "/usr/bin:/bin"
-SYSTEM_GIT_CANDIDATES = (
+_APPLE_GIT_CANDIDATES = (
+    ("/Library/Developer/CommandLineTools/usr/bin/git", "/Library"),
+) if sys.platform == "darwin" else ()
+SYSTEM_GIT_CANDIDATES = _APPLE_GIT_CANDIDATES + (
     ("/usr/bin/git", "/usr"),
     ("/bin/git", "/"),
 )
