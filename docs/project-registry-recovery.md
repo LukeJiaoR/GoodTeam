@@ -20,6 +20,9 @@ The registry must be a JSON object with a `projects` list of objects. Version 1
 is supported; an omitted version remains compatible with older files. Each
 project needs a nonempty string `config_path`. If present, `key`, `root`,
 `state_path`, and `updated_at` must be strings. Unknown fields are retained.
+The optional `removed_configs` list holds resolved config paths for projects
+removed from discovery. Importing the same directory restores its config to
+discovery.
 Duplicate JSON keys, nonstandard `NaN` or infinity constants, and numbers that
 overflow to infinity are rejected rather than silently discarding or rewriting
 their values.

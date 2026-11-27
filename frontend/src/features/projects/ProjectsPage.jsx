@@ -1,17 +1,18 @@
 /**
- * [INPUT]: 读取项目快照、URL 筛选与项目导入结果。
- * [OUTPUT]: 提供项目目录与跨项目待处理事项。
+ * [INPUT]: 读取项目快照、URL 筛选并调用项目登记 API。
+ * [OUTPUT]: 提供项目目录、导入和移除入口及跨项目待处理事项。
  * [POS]: 作为 /projects 的入口，将用户导向项目工作台。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
 import { ArrowRight, FolderGit2, FolderPlus, Play, Plus } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import FileLocation from '../../components/ui/FileLocation';
 import { fileName } from '../../lib/presentation/filePresentation';
 import CollectionToolbar from '../../components/ui/CollectionToolbar';
 import { browseProjects, projectActivity } from './projectBrowse';
 import Button from '../../components/ui/Button';
+import InlineNotice from '../../components/ui/InlineNotice';
 import PageState from '../../components/ui/PageState';
 import PageHeading from '../../components/ui/PageHeading';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -47,6 +48,10 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
   const { projects, status, refresh } = useProjectsSnapshot(api);
   const hasProjects = ['ready', 'refreshing', 'stale'].includes(status);
   const [importOpen, setImportOpen] = useState(false);
+  const [projectToRemove, setProjectToRemove] = useState(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState(false);
+  const removeDialog = useRef(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const query = searchParams.get('q') || '';
   const requestedFilter = searchParams.get('filter');
@@ -79,6 +84,27 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
     if (!projectKey) return;
     notifyProjectsChanged(api);
     navigate(routes.projectWork(projectKey));
+  };
+
+  const openRemove = (project) => {
+    setProjectToRemove(project);
+    setRemoveError(false);
+    removeDialog.current.showModal();
+  };
+
+  const confirmRemove = async () => {
+    setRemoving(true);
+    setRemoveError(false);
+    try {
+      await api.removeProject(projectToRemove);
+      removeDialog.current?.close();
+      document.getElementById('projects-add-project')?.focus();
+      notifyProjectsChanged(api);
+    } catch {
+      setRemoveError(true);
+    } finally {
+      setRemoving(false);
+    }
   };
 
   return (
@@ -155,6 +181,11 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
                         <ArrowRight aria-hidden="true" size={17} />
                       </span>
                     </Link>
+                    <Button variant="secondary" className="project-remove-button"
+                      aria-label={t('projects.remove.label', { name: project.display_name })}
+                      onClick={() => openRemove(project)}>
+                      {t('projects.remove.action')}
+                    </Button>
                     <FileLocation path={project.root} label={t('projects.folderLabel', { name: fileName(project.root) })} t={t} />
                   </li>
                 );
@@ -165,6 +196,24 @@ export default function ProjectsPage({ api: apiOverride, navigate: navigateOverr
 
         <ProjectAttentionOverview projects={projects} status={status} onRefresh={refresh} t={t} />
       </div>
+
+      <dialog className="projects-import-dialog projects-remove-dialog" ref={removeDialog}
+        aria-labelledby="projects-remove-title" aria-describedby="projects-remove-description"
+        onCancel={(event) => { if (removing) event.preventDefault(); }}>
+        <header className="projects-import-dialog__header">
+          <div>
+            <h1 id="projects-remove-title">{t('projects.remove.title')}</h1>
+            <p id="projects-remove-description">
+              {t('projects.remove.description', { name: projectToRemove?.display_name || '' })}
+            </p>
+          </div>
+        </header>
+        {removeError ? <InlineNotice tone="error" className="projects-remove-dialog__error">{t('projects.remove.error')}</InlineNotice> : null}
+        <form method="dialog" className="projects-import-dialog__footer">
+          <Button type="submit" variant="secondary" disabled={removing}>{t('projects.load.cancel')}</Button>
+          <Button variant="danger" onClick={confirmRemove} busy={removing}>{t('projects.remove.title')}</Button>
+        </form>
+      </dialog>
 
       {importOpen ? (
         <LoadProjectPanel

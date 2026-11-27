@@ -1,3 +1,8 @@
+"""[INPUT]: 本机或 PostgreSQL 项目注册表与项目配置路径。
+[OUTPUT]: 项目注册、发现与可恢复的移除记录。
+[POS]: 为配置发现与重新导入保存同一份项目登记。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import json
@@ -5,6 +10,7 @@ import logging
 import math
 import os
 import threading
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -62,15 +68,25 @@ class ProjectRegistry:
         return self._read_data()["projects"]
 
     def list_registered_configs(self) -> list[Path]:
-        configs: list[Path] = []
-        for entry in self.list_registered_projects():
-            config_path_str = str(entry.get("config_path", "")).strip()
-            if not config_path_str:
-                continue
-            config_path = Path(config_path_str).expanduser().resolve()
-            if config_path.is_file() and config_path not in configs:
-                configs.append(config_path)
-        return configs
+        active, _removed = self.partition_configs()
+        return active
+
+    def partition_configs(self, local_configs: Iterable[Path] = ()) -> tuple[list[Path], list[Path]]:
+        data = self._read_data()
+        removed = set(data.get("removed_configs", []))
+        configs = [*local_configs, *(Path(entry["config_path"].strip()).expanduser() for entry in data["projects"])]
+        resolved = dict.fromkeys(path.resolve() for path in configs if path.is_file())
+        return [path for path in resolved if str(path) not in removed], [path for path in resolved if str(path) in removed]
+
+    def set_configs_removed(self, config_paths: Iterable[Path], *, removed: bool) -> None:
+        paths = {str(path.resolve()) for path in config_paths}
+        with _REGISTRY_LOCK, state_documents.document_lock(self.registry_path):
+            data = self._read_data()
+            previous = set(data.get("removed_configs", []))
+            updated = previous | paths if removed else previous - paths
+            if updated != previous:
+                data["removed_configs"] = sorted(updated)
+                self._write_data(data, raise_on_error=True)
 
     def register_project(
         self,
@@ -192,6 +208,9 @@ class ProjectRegistry:
             projects = data.get("projects")
             if not isinstance(projects, list):
                 raise ValueError("projects must be a list")
+            removed = data.get("removed_configs", [])
+            if not isinstance(removed, list) or any(not isinstance(path, str) or not path for path in removed):
+                raise ValueError("removed_configs must be a list of non-empty strings")
             for index, entry in enumerate(projects):
                 if not isinstance(entry, dict):
                     raise ValueError(f"projects[{index}] must be an object")
@@ -212,13 +231,13 @@ class ProjectRegistry:
                 "The registry has been left unchanged."
             ) from exc
 
-    def _write_data(self, data: dict[str, Any]) -> None:
+    def _write_data(self, data: dict[str, Any], *, raise_on_error: bool = False) -> None:
         if database_configured():
             state_documents.write_json(self.registry_path, data, storage_root=self.registry_path.parent)
             return
+        temporary_path: Path | None = None
         try:
             self.registry_path.parent.mkdir(parents=True, exist_ok=True)
-            temporary_path: Path | None = None
             with NamedTemporaryFile(
                 mode="w",
                 encoding="utf-8",
@@ -234,3 +253,7 @@ class ProjectRegistry:
             os.replace(temporary_path, self.registry_path)
         except OSError as exc:
             LOGGER.warning("Could not write project registry to %s: %s", self.registry_path, exc)
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+            if raise_on_error:
+                raise

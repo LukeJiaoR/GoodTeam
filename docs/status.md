@@ -21,7 +21,7 @@ This file is the short-lived current-state entry point for contributors and agen
 Projects → Work / Team / Knowledge
 ```
 
-- `/projects` imports or opens a local project.
+- `/projects` imports, opens or removes projects. Removal preserves the local repository and GoodTeam history. Adding the same directory restores the project.
 - `/projects/<PROJECT_KEY>/work` is the primary Task Assistant / 任务助手 conversation for understanding, work intake, clarification, progress and explicit recovery.
 - Work keeps project/task identity and one next step visible. The context action locates existing controls; it does not independently approve or execute work.
 - The composer accepts project questions and task drafts. Confirm a draft to turn its exact revision into a batch.

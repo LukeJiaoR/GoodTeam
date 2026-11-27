@@ -90,7 +90,7 @@ project_parallel_dispatch.py: Views over the original task/batch ledgers, not an
 project_readiness.py: 项目模式、就绪状态与能力评估。
 project_readiness_executor.py: 项目导入后的隔离扫描与就绪执行。
 project_runtime.py: 解析项目运行根目录和规范项目身份。
-project_registry.py: 项目配置注册表与读取错误。
+project_registry.py: 项目配置注册表、发现范围与可恢复的移除记录。
 project_running_observation.py: Deduplicated observation input on an existing continuation, not a new scheduler.
 project_worker_follow_up.py: Consume bounded Manager follow-up decisions through the original Pi queue.
 projects.py: 项目配置加载、初始化与运行时配置。
@@ -116,7 +116,7 @@ task_delegation.py: One task input contract shared by role dispatch entry points
 tasks.py: 保存任务身份、状态、证据和依赖。
 team_control_plane.py: 保存项目角色、Worker 和 Manager 运行配置，记录团队变更。
 team_workspace.py: 从会话和批次凭据投影 Worker 状态。
-web.py: 校验本机项目请求，路由派工与交付操作，提供历史操作记录查询。
+web.py: 校验本机项目请求，为项目登记、派工、交付和历史查询提供 HTTP 路由。
 web_search.py: Opt-in hosted search for an existing Pi job, never a new worker runtime.
 worker_capabilities.py: 定义 Manager 请求档位、持久化档位与 Worker 目录后备值。
 worker_output_context.py: Bounded, invocation-bound Worker output. Never a control/reply join.

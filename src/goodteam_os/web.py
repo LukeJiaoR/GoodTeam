@@ -1,5 +1,5 @@
 """[INPUT]: GoodTeam 请求、工作区与项目服务。
-[OUTPUT]: Web 服务、项目任务与交付 API、历史执行和操作记录查询。
+[OUTPUT]: Web 服务、项目登记与任务交付 API、历史执行和操作记录查询。
 [POS]: 校验 HTTP 请求并路由至工作区和项目服务。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
@@ -1565,6 +1565,24 @@ def delete_project(*, workspace: Path, project_key: str) -> dict[str, object]:
     }
 
 
+def remove_project(workspace: Path, key: str, root: object) -> dict[str, object]:
+    if not isinstance(root, str):
+        raise ProjectApiError("invalid_request", "The displayed project root is required.", 400)
+    matches = []
+    active_configs, removed_configs = _partition_project_configs(workspace)
+    for config in active_configs + removed_configs:
+        target = load_project_target(config)
+        if normalize_project_key(str(target.get("key", config.stem))) != key:
+            continue
+        current_root = resolve_project_runtime_root(dict(target.get("repos", {})))
+        if str(current_root or "") == root:
+            matches.append(config)
+    if not matches:
+        raise ProjectApiError("project_not_found", "The selected project could not be found.", 404)
+    ProjectRegistry().set_configs_removed(matches, removed=True)
+    return {"removed": True, "project_key": key}
+
+
 def open_path_in_file_manager(*, workspace: Path, relative_path: str) -> dict[str, object]:
     target_path = (workspace / relative_path).resolve()
     resolved_workspace = workspace.resolve()
@@ -1737,17 +1755,22 @@ def save_workspace_product_settings(
     return build_workspace_product_settings(workspace)
 
 
-def discover_project_configs(workspace: Path) -> list[Path]:
-    paths: list[Path] = []
+def _partition_project_configs(workspace: Path) -> tuple[list[Path], list[Path]]:
+    local_configs: list[Path] = []
     for project_dir in _project_config_dirs(workspace):
         if project_dir.is_dir():
-            paths.extend(project_dir.glob("*.local.yaml"))
+            local_configs.extend(project_dir.glob("*.local.yaml"))
     try:
-        paths.extend(ProjectRegistry().list_registered_configs())
+        active, removed = ProjectRegistry().partition_configs(local_configs)
     except Exception:
-        pass
-    unique = sorted({path.resolve(): path.resolve() for path in paths if path.is_file()}.values(), key=lambda item: item.name.lower())
-    return unique
+        active = list(dict.fromkeys(path.resolve() for path in local_configs if path.is_file()))
+        removed = []
+    return sorted(active, key=lambda path: path.name.lower()), sorted(removed, key=lambda path: path.name.lower())
+
+
+def discover_project_configs(workspace: Path) -> list[Path]:
+    active, _removed = _partition_project_configs(workspace)
+    return active
 
 
 def _project_config_dirs(workspace: Path) -> list[Path]:
@@ -1789,14 +1812,15 @@ def _project_config_for_key(workspace: Path, project_key: str) -> Path:
     cache_key = (workspace, key)
     if paths is not None and cache_key in paths:
         return paths[cache_key]
-    for config_path in discover_project_configs(workspace):
+    configs = discover_project_configs(workspace)
+    for config_path in configs:
         target = load_project_target(config_path)
         if normalize_project_key(str(target.get("key", config_path.stem))) == key:
             if paths is not None:
                 paths[cache_key] = config_path
             return config_path
     fallback = workspace / "projects" / f"{key.lower()}.local.yaml"
-    if fallback.is_file():
+    if fallback.resolve() in configs:
         if paths is not None:
             paths[cache_key] = fallback
         return fallback
@@ -2181,11 +2205,13 @@ def handle_project_api_post(
                 recovery=["choose_another_directory"],
             )
         defaults = read_workspace_product_settings(workspace)
+        _active_configs, removed_configs = _partition_project_configs(workspace)
         result = import_project(
             workspace,
             root,
             display_name=str(request.get("display_name", "")),
             requested_key=str(request.get("project_key", "")),
+            existing_configs=removed_configs,
             default_model_profile=defaults["model_profile"],
             default_worker_mode=defaults["worker_backend"],
         )
@@ -2193,9 +2219,15 @@ def handle_project_api_post(
         imported_key = normalize_project_key(str(imported_project.get("project_key", "")))
         imported_root = Path(str(imported_project.get("root", "")))
         readiness = ProjectReadinessExecutor(workspace).status(imported_key, imported_root)
+        config = Path(str(imported_project["config_path"]))
+        if config.resolve() in removed_configs:
+            ProjectRegistry().set_configs_removed([config], removed=False)
         result["readiness"] = readiness
         result["capabilities"] = build_capabilities(readiness)
         return (201 if result["created"] else 200), result
+    remove_match = re.fullmatch(r"/api/projects/([^/]+)/remove", path)
+    if remove_match:
+        return 200, remove_project(workspace, _decode_project_api_key(remove_match.group(1)), request.get("root"))
     attachment_upload_match = re.fullmatch(r"/api/projects/([^/]+)/task-assistant/attachments", path)
     if attachment_upload_match:
         from goodteam_os.conversation_attachments import upload_attachment
@@ -2668,7 +2700,7 @@ def _is_project_api_post_path(path: str) -> bool:
     return bool(
         path in {"/api/projects/import", "/api/settings", "/api/providers", "/api/providers/models"}
         or re.fullmatch(
-            r"/api/projects/[^/]+/(mode|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions|attachments)|team/commands)",
+            r"/api/projects/[^/]+/(remove|mode|readiness/(start|input|retry|cancel)|task-assistant/(messages|actions|attachments)|team/commands)",
             path,
         )
     )
