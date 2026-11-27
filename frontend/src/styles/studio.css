@@ -127,14 +127,20 @@
 .product-shell.product-shell--studio .projects-launcher .collection-search:focus-within { outline: 2px solid var(--product-focus); outline-offset: 1px; }
 .product-shell.product-shell--studio .projects-launcher .collection-filters button[aria-pressed="true"] { color: var(--product-accent-strong); background: var(--product-accent-soft); }
 .product-shell.product-shell--studio .projects-launcher-list { display: grid; gap: 0; }
-.product-shell.product-shell--studio .project-launcher-entry { background: var(--product-surface); border: 0; border-radius: 0; box-shadow: none; }
+.product-shell.product-shell--studio .project-launcher-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; background: var(--product-surface); border: 0; border-radius: 0; box-shadow: none; }
 .product-shell.product-shell--studio .project-launcher-entry + .project-launcher-entry { border-top: 1px solid var(--product-border); }
+.project-remove-button { align-self: center; margin-inline-end: .875rem; }
+.projects-remove-dialog { max-width: calc(100% - 2rem); max-height: calc(100% - 2rem); margin: auto; }
+.projects-remove-dialog:modal { overflow: auto; overscroll-behavior: contain; }
+.projects-remove-dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: rgb(7 17 34 / 58%); }
+.projects-remove-dialog h1 { margin: 0; font-size: var(--product-heading-size); font-weight: 550; }
+.projects-remove-dialog__error { margin: .75rem 1rem; }
 .product-shell.product-shell--studio .project-launcher-row { grid-template-columns: 2rem minmax(0, 1fr) auto auto; gap: .5rem; min-block-size: 2.625rem; padding: .5rem .875rem 0; background: transparent; text-decoration: none; }
 .product-shell.product-shell--studio .project-launcher-row__icon { inline-size: 2rem; block-size: 2rem; border: 0; border-radius: 7px; color: var(--product-accent-strong); background: var(--product-accent-soft); }
 .product-shell.product-shell--studio .project-launcher-row__copy strong { font-size: var(--studio-text-body); font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
 .product-shell.product-shell--studio .project-launcher-row__activity { justify-self: start; background: var(--product-bg); }
 .product-shell.product-shell--studio .project-launcher-row__action { grid-column: -2; display: grid; place-items: center; inline-size: 1.75rem; block-size: 1.75rem; padding: 0; }
-.product-shell.product-shell--studio .project-launcher-entry > .file-location { margin: 0 .875rem .375rem; padding: 0; padding-inline-start: 2.5rem; }
+.product-shell.product-shell--studio .project-launcher-entry > .file-location { grid-column: 1 / -1; margin: 0 .875rem .375rem; padding: 0; padding-inline-start: 2.5rem; }
 .product-shell.product-shell--studio .project-launcher-entry > .file-location > summary { min-height: 24px; padding: 2px 0; margin: 0; font-size: var(--studio-text-small); }
 .product-shell--studio .collection-empty { padding: .875rem; }
 @container project-directory (max-width: 35rem) {

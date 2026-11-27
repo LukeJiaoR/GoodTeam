@@ -1,7 +1,57 @@
+/**
+ * [INPUT]: 使用独立项目夹具与真实项目 API。
+ * [OUTPUT]: 验证项目目录、待处理事项与移除恢复流程。
+ * [POS]: 项目目录的浏览器回归测试。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import fs from 'node:fs';
 import path from 'node:path';
 import { test, expect, importProject } from './fixtures.js';
 import { getJson } from './business-loop-helpers.js';
+
+test('removing a project persists across reload and reimport restores its history', async ({ page, fixture }) => {
+  const { project } = await importProject(page, fixture);
+  const api = `/api/projects/${fixture.key}`;
+  const config = fs.readFileSync(project.config_path, 'utf8');
+  const readme = fs.readFileSync(path.join(fixture.root, 'README.md'), 'utf8');
+  const mode = await page.request.post(`${api}/mode`, { data: { mode: 'existing_project' } });
+  expect(mode.ok(), await mode.text()).toBe(true);
+
+  await page.getByRole('link', { name: 'Projects', exact: true }).click();
+  const remove = page.getByRole('button', { name: `Remove ${fixture.name}`, exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Remove project' });
+  await remove.click();
+  await expect(dialog.getByText(new RegExp(fixture.name))).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(remove).toBeFocused();
+
+  await remove.click();
+  await dialog.getByRole('button', { name: 'Remove project' }).click();
+  await expect(remove).toHaveCount(0);
+  const sidebarProject = page.locator('.studio-project-list').getByText(fixture.name, { exact: true });
+  await expect(sidebarProject).toHaveCount(0);
+  expect((await page.request.get(`${api}/home`)).status()).toBe(404);
+  expect(fs.readFileSync(project.config_path, 'utf8')).toBe(config);
+  expect(fs.readFileSync(path.join(fixture.root, 'README.md'), 'utf8')).toBe(readme);
+
+  await page.reload();
+  const listed = await getJson(page, '/api/projects');
+  expect(listed.projects.some(entry => entry.project.project_key === fixture.key)).toBe(false);
+  await expect(remove).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add project', exact: true }).first().click();
+  await page.getByLabel('Project directory').fill(fixture.root);
+  const restoredResponse = page.waitForResponse(response => response.url().endsWith('/api/projects/import'));
+  await page.getByRole('button', { name: 'Load project', exact: true }).click();
+  const restored = await restoredResponse;
+  expect(restored.status(), await restored.text()).toBe(200);
+  expect(await restored.json()).toMatchObject({
+    project: { project_key: fixture.key, config_path: project.config_path },
+    readiness: { project_mode: 'existing_project' },
+  });
+  await expect(page).toHaveURL(new RegExp(`/projects/${fixture.key}/work$`));
+  await expect(sidebarProject).toBeVisible();
+});
 
 test('compact projects retain import, browsing, exact attention targets and honest unavailable states', async ({ page, fixture }, testInfo) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
