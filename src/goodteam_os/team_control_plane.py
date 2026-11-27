@@ -623,7 +623,7 @@ class TeamControlPlaneStore:
                     validate_runtime_choice(worker["runtime"], before_runtimes.get(str(worker["id"])), catalogs=catalogs)
                 manager_choice = dict(state["manager"]).get("runtime", {})
                 depth = manager_choice.get("reasoning_depth", "default")
-                # Manager 走原生 app-server，不使用 Worker 的接入目录。
+                # Codex Manager 走 app-server 的独立档位配置。
                 if manager_choice.get("provider") == "codex":
                     if depth != before_manager.get("reasoning_depth") and depth not in ("default", *MANAGER_REASONING_DEPTHS):
                         raise ValueError(f"Manager reasoning depth {depth!r} is not selectable.")

@@ -1,11 +1,14 @@
-export function refreshCatalog(agents) {
-  return agents.map((agent) => ({ ...agent, discovery_status: 'loading', stale: true }));
+export function refreshCatalog(agents, provider) {
+  const catalog = provider && !agents.some((agent) => agent.backend === provider)
+    ? [...agents, { backend: provider, models: [] }] : agents;
+  return catalog.map((agent) => !provider || agent.backend === provider
+    ? { ...agent, discovery_status: 'loading', stale: true } : agent);
 }
 
-export function finishCatalog(previous, incoming = []) {
+export function finishCatalog(previous, incoming = [], provider) {
   const received = new Set(incoming.map((agent) => agent.backend));
   return mergeCatalog(previous, [
-    ...previous.filter((agent) => !received.has(agent.backend)).map((agent) => ({
+    ...previous.filter((agent) => (!provider || agent.backend === provider) && !received.has(agent.backend)).map((agent) => ({
       backend: agent.backend, models: [], models_source: 'unavailable', discovery_status: 'failed',
     })),
     ...incoming,

@@ -1,5 +1,5 @@
 """[INPUT]: 接收 CodeBuddy CLI 路径、已准入的 Manager 轮次和工具回调。
-[OUTPUT]: 通过 ACP 读取模型目录，交付 Manager 会话、回复和取消结果。
+[OUTPUT]: 通过 ACP 读取模型及其档位，交付 Manager 会话、回复和取消结果。
 [POS]: 目录探测使用独立会话。Manager 会话将工具调用转给现有 MCP 服务。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
@@ -8,9 +8,10 @@ from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
+from time import monotonic
 from uuid import uuid4
 
-from goodteam_os.codebuddy_worker import worker_environment
+from goodteam_os.codebuddy_worker import REASONING_EFFORTS, worker_environment
 from goodteam_os.codex_app_server import CodexAppServer, CodexAppServerError, CodexAppServerRejected
 from goodteam_os.manager_mcp import ManagerMcp
 from goodteam_os.skills.filesystem import directory
@@ -38,8 +39,8 @@ class _CodeBuddyAcp(CodexAppServer):
         self._can_load = result.get("agentCapabilities", {}).get("loadSession") is True
 
 
-def query_codebuddy_models(binary: str) -> tuple[tuple[str, ...], str] | None:
-    """Read the CLI's model list from a disposable session without sending a prompt."""
+def query_codebuddy_models(binary: str) -> tuple[dict, str] | None:
+    """在一次临时会话读取模型及推理档位。"""
     try:
         with TemporaryDirectory(prefix="goodteam-codebuddy-models-") as root:
             cwd = Path(root).resolve()
@@ -49,23 +50,68 @@ def query_codebuddy_models(binary: str) -> tuple[tuple[str, ...], str] | None:
             try:
                 client.start(timeout=4)
                 session = client.request("session/new", {"cwd": str(cwd), "mcpServers": []}, timeout=6)
+                return _read_model_catalog(client, session)
             finally:
                 client.close()
     except (CodexAppServerError, OSError, ValueError):
         return None
 
+
+def _session_option(response, option_id):
+    options = response.get("configOptions")
+    if not isinstance(options, list):
+        return {}
+    return next((option for option in options if isinstance(option, dict) and option.get("id") == option_id), {})
+
+
+def _reasoning_capabilities(response, model):
+    if _session_option(response, "model").get("currentValue") != model:
+        return {}
+    thought = _session_option(response, "thought_level")
+    if not isinstance(thought.get("options"), list):
+        return {}
+    depths = [option["value"] for option in thought["options"]
+              if isinstance(option, dict) and option.get("value") in REASONING_EFFORTS]
+    capabilities = {"reasoning_depths": depths}
+    current = thought.get("currentValue")
+    if current in (*depths, "enabled", "disabled"):
+        capabilities["reasoning_default"] = current
+    return capabilities
+
+
+def _read_model_catalog(client, session):
     catalog = session.get("models")
     if not isinstance(catalog, dict) or not isinstance(catalog.get("availableModels"), list):
         return None
-    models = []
+    models = {}
     for entry in catalog["availableModels"]:
         model_id = entry.get("modelId") if isinstance(entry, dict) else None
         if isinstance(model_id, str) and model_id.strip():
-            models.append(model_id.strip())
+            models[model_id.strip()] = {}
     if not models:
         return None
     current = catalog.get("currentModelId")
-    return tuple(models), current if current in models else "auto"
+    current = current if isinstance(current, str) and current in models else "auto"
+    if current in models:
+        models[current] = _reasoning_capabilities(session, current)
+    session_id = session.get("sessionId")
+    if session_id and _session_option(session, "model"):
+        # 模型目录可先于部分档位可用。限制探测总时间。
+        deadline = monotonic() + 1
+        for model in models:
+            if model == current:
+                continue
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
+            try:
+                response = client.request("session/set_config_option", {
+                    "sessionId": session_id, "configId": "model", "value": model,
+                }, timeout=remaining)
+            except CodexAppServerError:
+                break
+            models[model] = _reasoning_capabilities(response, model)
+    return models, current
 
 
 class CodeBuddyManager(_CodeBuddyAcp):
@@ -77,7 +123,9 @@ class CodeBuddyManager(_CodeBuddyAcp):
         names = ", ".join("mcp__goodteam__" + spec["name"] for spec in specs)
         instructions += ("\nCall GoodTeam tools by their full MCP names. Available tools are " + names
                          + ". After the last tool call, include the complete answer in your final message.")
-        args = ["--allowedTools", "mcp__goodteam", "--append-system-prompt", instructions, "--effort", effort]
+        args = ["--allowedTools", "mcp__goodteam", "--append-system-prompt", instructions]
+        if effort and effort != "default":
+            args.extend(["--effort", effort])
         if model:
             args.extend(["--model", model])
         super().__init__(binary, cwd=cwd, config=config, args=args, stderr_path=state / "stderr.log",

@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 AUTH_ENV = ("CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN")
+REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
 _RUNTIME_ENV = {
     *AUTH_ENV, "CODEBUDDY_INTERNET_ENVIRONMENT",
     "PATH", "LANG", "LC_ALL", "SHELL", "TMPDIR",

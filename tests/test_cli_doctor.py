@@ -55,18 +55,27 @@ def test_codebuddy_model_discovery_uses_a_disposable_native_session(tmp_path, mo
         import sys
 
         assert "--no-session-persistence" in sys.argv
+
+        def options(model, levels):
+            return [{"id": "model", "currentValue": model},
+                    {"id": "thought_level", "currentValue": "enabled",
+                     "options": [{"value": level} for level in [*levels, "enabled"]]}]
+
         for line in sys.stdin:
             request = json.loads(line)
             if request["method"] == "initialize":
                 result = {"protocolVersion": 1}
-            else:
-                assert request["method"] == "session/new"
+            elif request["method"] == "session/new":
                 assert request["params"] == {"cwd": str(Path.cwd()), "mcpServers": []}
                 assert Path(os.environ["CODEBUDDY_CONFIG_DIR"]).parent == Path.cwd()
-                result = {"sessionId": "catalog", "models": {
+                result = {"sessionId": "catalog", "configOptions": options("alternate", ["low", "high", "max"]), "models": {
                     "currentModelId": "alternate",
                     "availableModels": [{"modelId": "standard"}, {"modelId": "alternate"}],
                 }}
+            else:
+                assert request["method"] == "session/set_config_option"
+                assert request["params"] == {"sessionId": "catalog", "configId": "model", "value": "standard"}
+                result = {"configOptions": options("standard", ["high"])}
             print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
         """))
     cli.chmod(0o755)
@@ -78,3 +87,7 @@ def test_codebuddy_model_discovery_uses_a_disposable_native_session(tmp_path, mo
     assert agent["models_source"] == "live"
     assert agent["models"] == ["standard", "alternate"]
     assert agent["model_default"] == "alternate"
+    assert agent["model_capabilities"] == {
+        "standard": {"reasoning_depths": ["high"], "reasoning_default": "enabled"},
+        "alternate": {"reasoning_depths": ["low", "high", "max"], "reasoning_default": "enabled"},
+    }

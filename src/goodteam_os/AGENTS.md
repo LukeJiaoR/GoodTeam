@@ -19,7 +19,7 @@ assistant_runtime.py: Manager 运行时快照、状态与安全失败信息。
 assistant_workspace.py: 投影项目会话、草稿、队列与 Manager 活动。
 attempt_memory.py: Bounded, read-only ordinary Worker memory observations for one exact attempt.
 cli.py: 启动服务、接收 Issue 并调用批次质量和执行命令。
-codebuddy_manager.py: 从独立 ACP 会话读取 CodeBuddy 模型目录。Manager 会话只访问该轮 MCP 工具。
+codebuddy_manager.py: 从独立 ACP 会话读取 CodeBuddy 模型与档位。Manager 会话只访问该轮 MCP 工具。
 codebuddy_worker.py: 在隔离仓库限定 CodeBuddy 文件工具，读取 CLI 最终结果。
 codex_app_server.py: Codex app-server 的 JSONL 双向传输；回调交给 Manager 服务。
 context.py: 项目上下文条目与代码骨架。

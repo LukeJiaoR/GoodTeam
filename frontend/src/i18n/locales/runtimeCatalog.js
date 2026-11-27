@@ -9,6 +9,7 @@ export const runtimeEn = {
   'team.dialog.effortManual': 'Requested override: {value}. Actual runtime acceptance is not yet observed.',
 
   'team.dialog.reasoningNone': 'None',
+  'team.dialog.reasoningEnabled': 'On',
   'team.dialog.reasoningOff': 'Off',
   'team.dialog.reasoningMinimal': 'Minimal',
   'team.dialog.reasoningXhigh': 'Extra high (xhigh)',
@@ -42,6 +43,7 @@ export const runtimeZhCN = {
   'team.dialog.effortManual': '请求覆盖值：{value}。实际运行是否采用尚未观察。',
 
   'team.dialog.reasoningNone': '无（none）',
+  'team.dialog.reasoningEnabled': '开启',
   'team.dialog.reasoningOff': '关闭（off）',
   'team.dialog.reasoningMinimal': '最低（minimal）',
   'team.dialog.reasoningXhigh': '超高（xhigh）',

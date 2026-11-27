@@ -45,9 +45,10 @@ CodeBuddy can reuse the CLI login of the operating-system user running GoodTeam.
 GoodTeam gives CodeBuddy a project-scoped runtime directory and exposes its
 project tools over local stdio MCP. The adapter disables CodeBuddy built-in tools
 and hooks. GoodTeam loads the Manager's Role and Skills for both providers.
-The Team page reads the CodeBuddy model list for Manager and Worker settings
-from a temporary ACP session. The refresh sends no prompt and uses the service
-user's existing CLI login.
+Manager and Worker settings fetch the selected agent's catalog on demand and
+reuse it while the page stays open. CodeBuddy reports models and their effort
+options in one temporary ACP session that uses the service user's CLI login.
+Refreshing probes the selected agent again without sending a prompt.
 
 Use **Stop** to interrupt the active turn. A connection check runs a bounded
 read-only prompt against the selected provider.
@@ -56,9 +57,10 @@ If the Skill store is inside a Worker-writable root, foreground chat can
 still reply and inspect project state. Skill loading and project actions
 stay disabled for that turn. Background judgments still require Skill preflight.
 
-Manager settings show the effort requested from the selected provider.
-The GoodTeam default is `high`. Users can choose `low`, `medium`, `high`,
-or `xhigh`. CodeBuddy uses its default model when the model field is empty.
+Codex Manager defaults to `high` and offers `low`, `medium`, `high`, and `xhigh`.
+CodeBuddy Manager and Worker offer the explicit effort levels reported for the
+selected model. Automatic effort follows the CLI default. CodeBuddy uses its
+default model when the model field is empty.
 
 Codex uses app-server v2. GoodTeam registers scoped tools at
 `thread/start.dynamicTools` and answers `item/tool/call`. Subsequent turns use

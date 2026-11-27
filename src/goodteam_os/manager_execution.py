@@ -118,7 +118,8 @@ def _manager_settings(target: dict[object, object]) -> dict[str, object]:
     else:
         settings = worker_type_settings_for_role(target, "orchestrator")
     if settings.get("reasoning_depth", "default") == "default":
-        settings["reasoning_depth"] = MANAGER_DEFAULT_REASONING_DEPTH
+        settings["reasoning_depth"] = ("default" if configured_manager_provider(target) == "codebuddy"
+                                       else MANAGER_DEFAULT_REASONING_DEPTH)
     settings.pop("desired_instances", None)
     settings.pop("pi_thinking_level", None)
     return settings
