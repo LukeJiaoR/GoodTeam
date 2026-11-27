@@ -10,11 +10,11 @@ test('fast provider is published before slow response; abort suppresses late pro
   const controller = new AbortController();
   const progress = vi.fn();
   const request = getAgents({ signal: controller.signal, onProgress: progress });
-  pending.codex({ agents: [{ backend: 'codex', models: ['current'] }] });
+  pending.codebuddy({ agents: [{ backend: 'codebuddy', models: ['current'] }] });
   await vi.waitFor(() => expect(progress).toHaveBeenCalledTimes(1));
-  expect(progress).toHaveBeenLastCalledWith([{ backend: 'codex', models: ['current'] }]);
+  expect(progress).toHaveBeenLastCalledWith([{ backend: 'codebuddy', models: ['current'] }]);
   controller.abort();
-  for (const provider of ['agy', 'claude', 'gemini', 'opencode', 'pi']) {
+  for (const provider of ['agy', 'claude', 'codex', 'gemini', 'opencode', 'pi']) {
     pending[provider]({ agents: [{ backend: provider, models: ['late'] }] });
   }
   await request;

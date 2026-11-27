@@ -16,7 +16,7 @@ test_backlog_board.py: Real grant/ledger/question/answer/queue path; Manager and
 test_backlog_wait_receipt.py: Committed waiting decisions reconcile their own lost acknowledgement only.
 test_builtin_role_methods.py: 覆盖全部角色基线，并验证快照与 Pi 输入。
 test_ci_change_classifier.py: One smoke check for focused CI classifier paths after test consolidation.
-test_cli_doctor.py: 验证 cli doctor 的行为。
+test_cli_doctor.py: 验证 CLI 检查与 CodeBuddy ACP 模型目录。
 test_codex_app_server.py: Protocol subprocess evidence; these tests do not invoke a model provider.
 test_codex_local_engine.py: 验证 codex local engine 的行为。
 test_context_freshness.py: Project iterations must not reuse understanding of changed source files.

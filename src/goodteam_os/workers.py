@@ -4035,9 +4035,10 @@ def _discover_installed_agents(provider: str = "") -> list[dict[str, Any]]:
         # Always query the installed agent. A failed probe must not masquerade
         # as a successful catalog using bundled or previously returned names.
         models: tuple[str, ...] = ()
-        models_source = "unavailable" if spec.which_name in {"codex", "agy", "opencode"} else "unsupported"
+        models_source = "unavailable" if spec.which_name in {"codex", "codebuddy", "agy", "opencode"} else "unsupported"
         model_capabilities: dict[str, dict[str, Any]] = {}
         connection = ProviderStore().active() if canonical == "codex" else None
+        model_default = (connection or {}).get("model") or spec.model_default
         if spec.which_name == "claude" and report.get("available"):
             # Claude Code does not expose a stable non-interactive model-list
             # command. Its documented aliases and current full model names are
@@ -4059,6 +4060,16 @@ def _discover_installed_agents(provider: str = "") -> list[dict[str, Any]]:
                 models = tuple(live_models)
                 model_capabilities = live_models
                 models_source = "live"
+        elif spec.which_name == "codebuddy" and report.get("available"):
+            from goodteam_os.codebuddy_manager import query_codebuddy_models
+
+            catalog = query_codebuddy_models(str(report["command_path"]))
+            if catalog:
+                models, model_default = catalog
+                models_source = "live"
+                report["hint"] = "CodeBuddy CLI returned its model list."
+            else:
+                report["hint"] = "CodeBuddy CLI did not return a model list. Check the CLI login and try again."
         elif spec.which_name == "agy" and report.get("available"):
             live_models = _query_agy_models(str(report.get("command_path", "")))
             if live_models:
@@ -4080,7 +4091,7 @@ def _discover_installed_agents(provider: str = "") -> list[dict[str, Any]]:
                 "hint": str(report.get("hint", "")),
                 "models": list(dict.fromkeys(models)),
                 "models_source": models_source,
-                "model_default": (connection or {}).get("model") or spec.model_default,
+                "model_default": model_default,
                 "model_capabilities": model_capabilities,
                 "reasoning_depths": [] if connection else list(BACKEND_REASONING_DEPTHS.get(canonical, ())),
             }

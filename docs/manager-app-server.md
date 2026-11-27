@@ -45,6 +45,9 @@ CodeBuddy can reuse the CLI login of the operating-system user running GoodTeam.
 GoodTeam gives CodeBuddy a project-scoped runtime directory and exposes its
 project tools over local stdio MCP. The adapter disables CodeBuddy built-in tools
 and hooks. GoodTeam loads the Manager's Role and Skills for both providers.
+The Team page reads the CodeBuddy model list for Manager and Worker settings
+from a temporary ACP session. The refresh sends no prompt and uses the service
+user's existing CLI login.
 
 Use **Stop** to interrupt the active turn. A connection check runs a bounded
 read-only prompt against the selected provider.

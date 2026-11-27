@@ -5,7 +5,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from threading import Lock
 
-PROVIDERS = ("agy", "claude", "codex", "gemini", "opencode", "pi")
+PROVIDERS = ("agy", "claude", "codebuddy", "codex", "gemini", "opencode", "pi")
 _pool = ThreadPoolExecutor(max_workers=len(PROVIDERS), thread_name_prefix="model-discovery")
 _lock = Lock()
 _pending: dict[str, Future] = {}
