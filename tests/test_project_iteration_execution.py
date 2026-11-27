@@ -1,4 +1,8 @@
-"""One real subprocess batch proves queue -> isolated pool -> original cards."""
+"""[INPUT]: 已确认的任务与本地 CLI 进程夹具。
+[OUTPUT]: 验证派工、候选结果和原任务卡状态。
+[POS]: 覆盖从 Manager 选择到隔离 Worker 的项目批次入口。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 import json
 import os
 from pathlib import Path
@@ -172,3 +176,99 @@ def test_batch_captured_write_scope_violation_blocks_candidate_and_preserves_sou
     assert result["integration"]["status"] == "blocked"
     assert result["jobs"][0]["write_scope_verified"] is False
     assert not (source / "outside.txt").exists()
+
+
+def test_codebuddy_worker_settles_project_batches_from_final_json(tmp_path, monkeypatch):
+    from goodteam_os.team_control_plane import execute_team_commands
+    from goodteam_os.workers import worker_backend_doctor
+    from goodteam_os.web import WORKER_BACKEND_OPTIONS
+
+    source = repository(tmp_path / "source")
+    config = tmp_path / "projects/demo.local.yaml"
+    config.parent.mkdir()
+    config.write_text(f"key: DEMO\nsource_type: existing_project\nrepos:\n  root: {source}\nworker_backend:\n  mode: fake\n")
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    binary = binaries / "codebuddy"
+    binary.write_text(f"#!{sys.executable}\n" + r'''import json, os, sys
+from pathlib import Path
+
+if "--version" in sys.argv:
+    print("CodeBuddy CLI fixture")
+    raise SystemExit(0)
+assert "--model" not in sys.argv
+assert sys.argv[sys.argv.index("--output-format") + 1] == "json"
+assert sys.argv[sys.argv.index("--permission-mode") + 1] == "dontAsk"
+assert sys.argv[sys.argv.index("--tools") + 1] == "Read,Glob,Grep,Edit,Write"
+assert Path(os.environ["CODEBUDDY_CONFIG_DIR"]).parent != Path.cwd()
+assert "OPENAI_API_KEY" not in os.environ
+assert not Path("node_modules").exists()
+prompt = sys.stdin.read()
+if "TASK_ABORT" in prompt:
+    credential = os.environ["CODEBUDDY_API_KEY"]
+    print(json.dumps([{"type": "result", "subtype": "error_during_execution", "is_error": True,
+                       "result": f"Fixture response binding {credential}"}]))
+else:
+    assert "CODEBUDDY_API_KEY" not in os.environ and "CODEBUDDY_AUTH_TOKEN" not in os.environ
+    assert "CODEBUDDY_BASE_URL" not in os.environ
+    Path("isolated.txt").write_text("CodeBuddy fixture change\n")
+    print(json.dumps([{"type": "result", "subtype": "success", "is_error": False,
+                       "result": "Fixture CLI sign-in response\n"}]))
+''')
+    binary.chmod(0o755)
+    monkeypatch.setenv("PATH", str(binaries) + os.pathsep + os.environ["PATH"])
+    monkeypatch.delenv("CODEBUDDY_API_KEY", raising=False)
+    monkeypatch.delenv("CODEBUDDY_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("CODEBUDDY_BASE_URL", "https://codebuddy-fixture.invalid")
+    assert "codebuddy" in WORKER_BACKEND_OPTIONS
+    monkeypatch.setenv("OPENAI_API_KEY", "fixture-unrelated-secret")
+    doctor = worker_backend_doctor("codebuddy")
+    assert doctor["ready"] is True and doctor["auth_present"] is False
+    execute_team_commands(tmp_path, "DEMO", [
+        {"kind": "initialize_worker", "role": "implementation", "worker_id": "builder-codebuddy",
+         "name": "CodeBuddy", "runtime": {"provider": "codebuddy"}},
+    ], actor="user", surface="team_ui", config_path=config)
+    (source / ".git/info/exclude").write_text("node_modules/\n")
+    (source / "node_modules").mkdir()
+    ledger = LocalTaskStore(source, "DEMO")
+    first = ledger.create_task(title="Write isolated.txt", description="Write the assigned file.",
+        role="implementation", worker_id="builder-codebuddy",
+        write_domains=["isolated.txt"], acceptance_criteria=["Contains the fixture change."])
+    second = ledger.create_task(title="TASK_ABORT", description="Exercise a terminal execution error.",
+        role="implementation", worker_id="builder-codebuddy",
+        write_domains=["aborted.txt"], acceptance_criteria=["Contains the next fixture change."])
+
+    def run_selected(task_id, *, previous=None):
+        def manager(*, backlog, **_):
+            candidates = {item["task_id"]: item for item in backlog["candidates"]}
+            if previous is not None:
+                assert candidates[previous]["status"] == "review"
+            return {"selection": {"selected_task_ids": [task_id], "compared_task_ids": list(candidates),
+                                  "rationale": "Advance the next eligible task."}}
+
+        snapshot = project_iteration_backlog(source, "DEMO")
+        plan_next_iteration(workspace=tmp_path, project_key="DEMO", root=source, project_config=config,
+            expected_backlog_version=snapshot["version"], confirmed=True, manager_runner=manager)
+        queued = queue_manager_iteration_choice(workspace=tmp_path, project_key="DEMO", root=source,
+            expected_backlog_version=snapshot["version"])
+        ids = queued["queued_proposal_ids"]
+        return run_queued_iteration_batch(workspace=tmp_path, project_key="DEMO", root=source, project_config=config,
+            proposal_ids=ids, expected_revisions=dict.fromkeys(ids, 1), confirmed=True)
+
+    completed = run_selected(first["id"])
+    assert completed["status"] == "review", completed
+    report = completed["report"]
+    job = report["jobs"][0]
+    assert job["adapter"] == "codebuddy" and job["worker_id"] == "builder-codebuddy"
+    assert job["write_scope_verified"] is True
+    assert Path(job["result_path"]).read_text() == "Fixture CLI sign-in response\n"
+    assert Path(report["integration"]["candidate_path"], "isolated.txt").read_text() == "CodeBuddy fixture change\n"
+    assert not (source / "isolated.txt").exists()
+    monkeypatch.setenv("CODEBUDDY_API_KEY", "fixture-only-secret")
+    blocked = run_selected(second["id"], previous=first["id"])
+    assert blocked["status"] == "blocked"
+    failed = blocked["report"]["jobs"][0]
+    status = json.loads(Path(failed["status_path"]).read_text())
+    assert status["exit_code"] == 0
+    assert failed["summary"].startswith("CodeBuddy reported an execution error")
+    assert "Fixture response binding [REDACTED]" in Path(status["stdout_path"]).read_text()

@@ -947,7 +947,7 @@ export const en = {
   "team.dialog.workerDescription": "Choose how this worker runs. Changes apply to new jobs.",
   'team.dialog.managerEyebrow': 'Task Assistant',
   "team.dialog.managerTitle": "Task Assistant settings",
-  "team.dialog.managerDescription": "Codex app-server keeps the Manager conversation active. Choose its model, reasoning depth and instructions.",
+  "team.dialog.managerDescription": "Choose Codex or CodeBuddy as the Manager and set its model, reasoning depth and instructions.",
   'team.dialog.role': 'Role',
   'team.dialog.selectRole': 'Select a role',
   'team.dialog.name': 'Name',

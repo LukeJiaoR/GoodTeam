@@ -214,6 +214,7 @@ Reference modes:
 | `fake` | Credential-free deterministic smoke and first-run demos. |
 | `anthropic` | Drives the `claude` CLI when Anthropic credentials are ready. |
 | `codex` | Drives the `codex` CLI when Codex credentials are ready. |
+| `codebuddy` | Runs ordinary Workers in isolated project batches. |
 | `pi` | Drives an optional persistent Pi RPC session; `pi-rpc` is an alias. |
 | `noop` | Produces no real worker execution. Useful for disabled paths. |
 

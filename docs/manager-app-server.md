@@ -1,17 +1,16 @@
-# Manager on Codex app-server
+# Native Manager runtimes
 
-Implementation for #738, based on merged #737 (`e83228f`). GoodTeam's project
-Manager runs through a local `codex app-server` process. Other Roles keep their
-own native runtimes. The task ledger, queue, isolated Worker pool, review and
-project continuation services remain the business owners.
+Each GoodTeam project can run its Manager on Codex app-server or CodeBuddy CLI
+over ACP. Both use the same GoodTeam task ledger, confirmation queue, isolated
+Worker pool, review and project continuation services.
 
 ## Observable behavior
 
 Project chat keeps a native thread across messages. Replies stream into the
-existing assistant-request record, and the composer becomes available as soon
-as the backend durably accepts a message. Additional input can steer an active
-conversation turn. Independent background analysis uses other native threads,
-so a slow running-period judgment does not occupy the user conversation.
+existing assistant-request record. The composer becomes available as soon as
+the backend durably accepts a message. Codex can steer an active conversation
+turn. CodeBuddy starts the next message after the active turn settles.
+Independent background analysis uses separate native sessions.
 
 The Manager can query the project and Workers, queue a concrete Role assignment,
 read its actual result, advance an existing authorized continuation, ask a
@@ -30,27 +29,40 @@ result or grant review, merge or deployment permissions.
 
 ## Runtime and configuration
 
-GoodTeam launches `codex app-server` from PATH or `GOODTEAM_CODEX_PATH` for
-Manager conversations, background analysis, and native recovery. The old
-project toggle no longer controls startup. Use Stop to interrupt an active turn.
+In the project's Team page, select **Configure assistant**, choose
+**Codex app-server** or **CodeBuddy CLI**, then select **Save and check
+connection**. Selecting a different provider starts its model and reasoning
+fields at their defaults and keeps the additional instructions. Each provider
+has its own native session history. Worker roles use their own saved runtimes.
+
+GoodTeam launches `codex app-server` from PATH or `GOODTEAM_CODEX_PATH`.
 Codex owns the sign-in, model connection, integration configuration, and managed
 policies. Changing local MCP settings can change what the Manager can use.
-External tools follow their own permissions and confirmation rules. GoodTeam
-commands continue to use the project queue and approvals. A connection check
-verifies that the runtime responds. It does not certify tool isolation.
+External tools follow their own permissions and confirmation rules.
+
+GoodTeam launches `codebuddy --acp` from PATH or `GOODTEAM_CODEBUDDY_PATH`.
+CodeBuddy can reuse the CLI login of the operating-system user running GoodTeam.
+GoodTeam gives CodeBuddy a project-scoped runtime directory and exposes its
+project tools over local stdio MCP. The adapter disables CodeBuddy built-in tools
+and hooks. GoodTeam loads the Manager's Role and Skills for both providers.
+
+Use **Stop** to interrupt the active turn. A connection check runs a bounded
+read-only prompt against the selected provider.
 
 If the Skill store is inside a Worker-writable root, foreground chat can
 still reply and inspect project state. Skill loading and project actions
 stay disabled for that turn. Background judgments still require Skill preflight.
 
-Manager settings show the concrete effort requested on `turn/start`.
-An unset legacy value resolves to `high`. Users can choose `low`, `medium`,
-`high`, or `xhigh` without a Worker model catalog. A connection check tests
-the selected value against Codex. Worker effort settings remain independent.
+Manager settings show the effort requested from the selected provider.
+The GoodTeam default is `high`. Users can choose `low`, `medium`, `high`,
+or `xhigh`. CodeBuddy uses its default model when the model field is empty.
 
-The transport uses app-server v2. GoodTeam registers scoped tools at
+Codex uses app-server v2. GoodTeam registers scoped tools at
 `thread/start.dynamicTools` and answers `item/tool/call`. Subsequent turns use
 `thread/resume`, `turn/start`, `turn/steer`, and `turn/interrupt`.
+CodeBuddy uses ACP stdio. Each turn opens or loads a session with the same
+GoodTeam tools, calls `session/prompt`, then records the terminal response
+before closing the CLI process.
 
 `GOODTEAM_MANAGER_TURN_TIMEOUT_SECONDS` bounds a turn (default 600 seconds).
 Process exits, tool errors, unknown outcomes and unsupported Worker capabilities
@@ -86,12 +98,12 @@ The existing Task Assistant session stores a `manager_app_server` projection:
 - `tool_receipts` records stable operation identity and the actual returned
   business IDs. Tasks and runs continue to live in their original stores.
 
-Duplicate input IDs reuse the original outcome. An uncertain native outcome is
-not silently replayed. Native completed turns can be reconciled without rerunning
-tools; stopped work stays stopped. A shared steered turn has one visible final
-reply, and stopping it stops the linked request records. Project continuation
-Stop also interrupts its active native background judgments and retains the
-original business authorization history.
+Duplicate input IDs reuse the original outcome. Codex can reconcile completed
+turns against native history. CodeBuddy recovery reuses the GoodTeam completion
+receipt. If the ACP terminal response was lost, GoodTeam treats the turn as
+interrupted and retains any recorded tool receipts. Stopping a shared Codex turn
+stops its linked requests. Project continuation Stop also interrupts its active
+native background judgments and retains the original authorization history.
 
 A separate operation lock deduplicates host mutations. Follow-up reservations
 consume the existing continuation allowance before enqueue and share the budget
@@ -149,6 +161,7 @@ coordination before it is a supported deployment.
 | Area | Source |
 | --- | --- |
 | JSONL transport | `codex_app_server.py` |
+| CodeBuddy ACP and local MCP | `codebuddy_manager.py`, `manager_mcp.py` |
 | Native Manager identity and lifecycle | `manager_app_server.py`, `manager_completion.py` |
 | Existing service tools | `manager_tools.py`, `manager_assignment.py` |
 | Pinned Role/Skill input | `manager_skill_context.py` |

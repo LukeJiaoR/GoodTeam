@@ -1,9 +1,14 @@
-"""Bounded running-period Manager judgments over native app-server threads."""
+"""[INPUT]: 接收已授权的运行中 Worker 观察资料。
+[OUTPUT]: 保存具有原生回执的 Manager 判断。
+[POS]: 将观察和结果绑定到项目续跑与原请求。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from copy import deepcopy
 from hashlib import sha256
 import json
 from pathlib import Path
 
+from goodteam_os.manager_completion import NATIVE_MANAGER_ADAPTERS, recorded_manager_adapter
 from goodteam_os.manager_execution import ManagerExecutionError
 from goodteam_os.project_observation_judgment import ObservationStaleBeforeLaunch, judge_running_observation
 from goodteam_os.project_running_observation import _binding, human_observation_current
@@ -65,7 +70,7 @@ def reconcile_completed_observations(*, store, root, project_key, value, authori
             continue
         invocation = record.get("manager_invocation") or {}
         identity = "running-observation:" + sha256((value["id"] + ":" + key).encode()).hexdigest()
-        if (invocation.get("adapter") != "codex-app-server" or invocation.get("logical_id") != identity
+        if (invocation.get("adapter") not in NATIVE_MANAGER_ADAPTERS or invocation.get("logical_id") != identity
                 or invocation.get("phase") != "project_running_observation"):
             continue  # Historical Pi receipts stay readable and never restart Pi.
         try:
@@ -78,7 +83,8 @@ def reconcile_completed_observations(*, store, root, project_key, value, authori
                 continue
             raw = native["result"]["text"]
             execution = native["result"].get("manager_execution") or {}
-            if (not isinstance(raw, str) or execution.get("adapter") != "codex-app-server"
+            if (not isinstance(raw, str) or execution.get("adapter") != invocation.get("adapter")
+                    or execution.get("adapter") != recorded_manager_adapter(native)
                     or execution.get("logical_id") != identity or execution.get("status") != "completed"
                     or not native.get("thread_id") or not native.get("turn_id")
                     or execution.get("thread_id") != native["thread_id"]
@@ -121,16 +127,18 @@ def reconcile_completed_observations(*, store, root, project_key, value, authori
 
 def _run(*, store, root, project_config, project_key, observation, observation_id,
          continuation_id, contract, authority_check):
-    from goodteam_os.manager_execution import run_manager_analysis
+    from goodteam_os.manager_execution import configured_manager_provider, run_manager_analysis
     from goodteam_os.project_runtime import resolve_project_runtime_root
     from goodteam_os.projects import load_project_target
 
-    configured = resolve_project_runtime_root(dict(load_project_target(project_config).get("repos", {})))
+    target = load_project_target(project_config)
+    configured = resolve_project_runtime_root(dict(target.get("repos", {})))
     if configured is None or Path(configured).resolve() != root.resolve():
         raise ManagerExecutionError("Observation root no longer matches the configured project.")
     packet = json.dumps({"observation": observation, "contract": contract}, sort_keys=True, ensure_ascii=False)
     identity = "running-observation:" + sha256((continuation_id + ":" + observation_id).encode()).hexdigest()
-    invocation = {"adapter": "codex-app-server", "logical_id": identity,
+    adapter = "codebuddy-acp" if configured_manager_provider(target) == "codebuddy" else "codex-app-server"
+    invocation = {"adapter": adapter, "logical_id": identity,
                   "project_config": str(project_config.resolve()), "phase": "project_running_observation",
                   "input_digest": sha256(packet.encode()).hexdigest()}
 
@@ -159,6 +167,8 @@ def _run(*, store, root, project_config, project_key, observation, observation_i
         task=_TASK + (_HUMAN_TASK_SUFFIX if "optional_human_question" in contract else ""),
         context=packet, phase="project_running_observation", run_id="project-observation:" + project_key,
         authority_check=current_authority)
+    if result.get("manager_execution", {}).get("adapter") != adapter:
+        raise ManagerExecutionError("Observation Manager provider changed before execution.")
     if len(result["text"].encode()) > 16_000:
         raise ManagerExecutionError("Observation Manager response exceeds its contract.")
     return json.loads(result["text"])

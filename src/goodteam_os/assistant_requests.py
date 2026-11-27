@@ -1,3 +1,8 @@
+"""[INPUT]: 用户消息、会话状态和已登记的 Manager 回执。
+[OUTPUT]: 保存请求、恢复原生答复和停止请求。
+[POS]: 连接项目对话与选定的 Manager 运行器。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import fcntl
@@ -161,6 +166,8 @@ def recover_interrupted(store, *, project_config=None):
 
 def _recover_native_reply(store, message_id, attempt):
     """Publish an already completed native reply without replaying any tools."""
+    from goodteam_os.manager_completion import NATIVE_MANAGER_ADAPTERS, recorded_manager_adapter
+
     def reconcile(session):
         request = session.get("assistant_requests", {}).get(message_id, {})
         if request.get("status") != "running" or request.get("attempt") != attempt:
@@ -173,8 +180,10 @@ def _recover_native_reply(store, message_id, attempt):
         if native.get("status") != "completed" or not isinstance(result, dict):
             return session
         execution = result.get("manager_execution")
+        adapter = recorded_manager_adapter(native)
         if (not isinstance(result.get("text"), str) or not isinstance(execution, dict)
-                or execution.get("adapter") != "codex-app-server" or execution.get("logical_id") != message_id
+                or adapter not in NATIVE_MANAGER_ADAPTERS or execution.get("adapter") != adapter
+                or execution.get("logical_id") != message_id
                 or execution.get("status") != "completed" or native.get("phase") != "conversation"
                 or native.get("attempt_id") != worker_attempt_id(store.project_key, message_id, attempt)
                 or not native.get("thread_id") or not native.get("turn_id")

@@ -1,4 +1,8 @@
-"""Resolve project and Team Worker runtime settings for dispatch."""
+"""[INPUT]: 项目模型、Team 成员与角色运行配置。
+[OUTPUT]: 绑定作业的执行器、模型和运行参数。
+[POS]: 在派工前根据 Team 配置解析 Worker。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 
 from collections.abc import Callable
 
@@ -104,15 +108,16 @@ def _worker_job_fields(
     """
     from goodteam_os.team_control_plane import resolve_worker_for_role
 
-
-    if model_fallback is not None:
-        fallback_model = model_fallback()
-    else:
-        fallback_model = worker_model_for_role(role_models, role)
     resolution = resolve_worker_for_role(target, role, worker_id=worker_id)
+    adapter = resolution["adapter"] if resolution else resolve_role_adapter(target, role)
+    fallback_model = worker_model_for_role(role_models, role) if model_fallback is None else model_fallback()
+    if adapter == "codebuddy" and model_fallback is None:
+        # 模型留空时沿用 CodeBuddy 默认值。Codex 档位并非 CodeBuddy 模型 ID。
+        primary = str(role_models.get(role, {}).get("primary", "")).strip()
+        fallback_model = primary.removeprefix("codebuddy:").strip() if primary.startswith("codebuddy:") else ""
     if resolution is None:
         return {
-            "adapter": resolve_role_adapter(target, role),
+            "adapter": adapter,
             "model": fallback_model,
             **worker_type_settings_for_role(target, role),
         }

@@ -19,6 +19,8 @@ assistant_runtime.py: Manager 运行时快照、状态与安全失败信息。
 assistant_workspace.py: 投影项目会话、草稿、队列与 Manager 活动。
 attempt_memory.py: Bounded, read-only ordinary Worker memory observations for one exact attempt.
 cli.py: 启动服务、接收 Issue 并调用批次质量和执行命令。
+codebuddy_manager.py: 启动 CodeBuddy ACP，会话只访问该轮 MCP 工具。
+codebuddy_worker.py: 在隔离仓库限定 CodeBuddy 文件工具，读取 CLI 最终结果。
 codex_app_server.py: Codex app-server 的 JSONL 双向传输；回调交给 Manager 服务。
 context.py: 项目上下文条目与代码骨架。
 context_continuity.py: Bounded, deterministic context projections, never a second task authority.
@@ -40,14 +42,15 @@ goal_continuation.py: 推进已绑定批次、评估交付并提示自动续跑�
 goal_review_evidence.py: 从批次绑定读取 Worker 结果和独立 Reviewer 证据。
 goals.py: 保存已确认的 Goal、工作证据与保留原任务的运行时暂停。
 http_transport.py: Finite resource boundaries for GoodTeam's local dashboard HTTP transport.
-manager_app_server.py: Manager 运行时准入、原生会话、记忆快照与执行恢复。
+manager_app_server.py: 选择 Manager 运行器，绑定原生会话、记忆快照与执行回执。
 manager_assignment.py: Manager callable assignment adapter; existing task cards and queue own work.
-manager_completion.py: Read native Manager completion from the original conversation receipt.
+manager_completion.py: 核对原生运行器及会话标识，复用已保存的 Manager 回执。
 manager_dialogue.py: Bounded Manager conversation runtime; original services retain all authority.
 manager_execution.py: Manager 对话与后台判断入口、项目运行设置及资源限制。
+manager_mcp.py: 将一次 ACP 会话的 MCP 调用转给 GoodTeam 项目服务。
 manager_runtime_observation.py: Bounded local Runtime observation for Manager conversations, never control.
 manager_skill_context.py: Pinned Manager Role/Skill input for the native app-server session.
-manager_tools.py: 提供 Manager 终止与请审规则，先校验委派验收标准，再为有效工具输入登记操作。
+manager_tools.py: 将 Manager 轮次接到原队列、Worker 结果和请审服务，使用同一授权。
 manager_worker_control.py: Explicit project-chat supervision through the existing Pi control protocol.
 memory.py: 项目及角色记忆事件、检索与快照校验。
 memory_embeddings.py: Opt-in embeddings and a rebuildable PG projection of eligible role memory.
@@ -78,13 +81,13 @@ project_import.py: 项目导入、工作台入口、模式确认与 readiness �
 project_investigation_feedback.py: Observe settled investigation output without accepting it as delivery.
 project_iteration.py: 从任务账投影候选，保留完整验收标准。校验执行选择，保留 Manager 的比较与理由。
 project_iteration_continuation.py: 复用队列续跑，核对接受凭据和候选，登记 Git 交付。
-project_iteration_execution.py: 通过同一队列核对项目身份和原批准，调用隔离 Worker 池。
+project_iteration_execution.py: 用原确认调用隔离 Worker 池，按绑定作业读取结果正文。
 project_iteration_planner.py: 用自然语言把候选与授权上下文交给 Manager 判断，保存只读建议。
 project_iteration_quality.py: 统一读取 Manager 接受凭据与专项质量凭据。
 project_candidate_acceptance.py: 校验 Work 反馈版本，将 Manager 决定和观察绑定到候选及修正链。
 project_iteration_recovery.py: 重试原批次中的失败任务，保留 Provider 引用与 Skill 锁。
 project_observation_judgment.py: Budgeted, read-only advice contract shared with the bounded production consumer.
-project_observation_runtime.py: Bounded running-period Manager judgments over native app-server threads.
+project_observation_runtime.py: 为项目续跑读取带原生回执的 Manager 判断。
 project_outcome_discovery.py: 冻结交付证据与 Work 反馈，按授权范围推进 Manager 的有效决定。
 project_parallel_dispatch.py: Views over the original task/batch ledgers, not another execution queue.
 project_readiness.py: 项目模式、就绪状态与能力评估。
@@ -121,6 +124,7 @@ web_search.py: Opt-in hosted search for an existing Pi job, never a new worker r
 worker_capabilities.py: 定义 Manager 请求档位、持久化档位与 Worker 目录后备值。
 worker_output_context.py: Bounded, invocation-bound Worker output. Never a control/reply join.
 worker_setup.py: Read optional project setup context for ordinary Planner/Worker tasks.
+worker_routing.py: 绑定已选 Worker 的执行器、模型与作业输入。
 workers.py: Worker 作业、运行时与结果持久化。
 
 [PROTOCOL]: Update this header on change, then check AGENTS.md

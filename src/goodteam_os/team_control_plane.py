@@ -65,6 +65,7 @@ TEAM_CONTROL_PLANE_SCHEMA_VERSION = "team_control_plane.v1"
 TEAM_CAPABILITY_VIEW_SCHEMA_VERSION = "team_capability_view.v1"
 
 MANAGER_ROLE = "orchestrator"
+MANAGER_PROVIDERS = ("codex", "codebuddy")
 # Worker runtime providers this product accepts, mirroring the web-layer
 # accepted backend set without importing the web module.
 WORKER_PROVIDER_OPTIONS = frozenset({*BUILTIN_WORKER_MODES, *CLI_BACKENDS, *SESSION_BACKENDS, "manual"})
@@ -231,15 +232,19 @@ def _sanitize_worker_runtime(raw: object) -> dict[str, str]:
 
 
 def manager_runtime(runtime: object) -> dict[str, object]:
-    """Current Manager execution uses app-server; Worker providers stay independent.
+    """Resolve the project's Manager provider independently of Workers.
 
     Retain selected model/effort/instructions during the current-state migration.
     This projection does not rewrite historical execution snapshots or decisions.
     """
     selected = _sanitize_worker_runtime(runtime)
-    if selected["provider"] not in {*BUILTIN_WORKER_MODES, "builtin"}:
+    if selected["provider"] not in {*MANAGER_PROVIDERS, *BUILTIN_WORKER_MODES, "builtin"}:
         selected["provider"] = "codex"
     return selected
+
+
+def _manager_runtime_kind(provider):
+    return {"codex": "app_server", "codebuddy": "acp"}.get(provider, "builtin")
 
 
 def _sanitize_worker_record(raw: object) -> dict[str, object]:
@@ -761,8 +766,9 @@ def build_team_state_from_legacy_config(project_key: str, target: dict[str, obje
             )
 
     manager_settings = dict(settings.get(MANAGER_ROLE, {}) or {}) if isinstance(settings.get(MANAGER_ROLE, {}), dict) else {}
+    legacy_manager = workers_config.get(MANAGER_ROLE, "") or ("codex" if default_provider == "codebuddy" else default_provider)
     manager_config = manager_runtime({
-        "provider": normalize_provider(workers_config.get(MANAGER_ROLE, "") or default_provider),
+        "provider": normalize_provider(legacy_manager),
         "model": _model_part(str(overrides.get(MANAGER_ROLE, "") or "")),
         "reasoning_depth": validate_reasoning_depth(manager_settings.get("reasoning_depth", "default")),
         "additional_prompt": str(manager_settings.get("additional_prompt", "") or "").strip()[:ADDITIONAL_PROMPT_MAX_CHARS],
@@ -1498,8 +1504,10 @@ def _cmd_change_manager_runtime(state, command, *, actor, surface, decision_id, 
     before = dict(runtime)
     if "provider" in command:
         provider = validate_provider(command.get("provider"))
-        if provider not in {"codex", *BUILTIN_WORKER_MODES}:
-            raise TeamControlPlaneError("Manager uses Codex app-server. Configure other native agents on Worker Roles.")
+        if provider not in {*MANAGER_PROVIDERS, *BUILTIN_WORKER_MODES}:
+            raise TeamControlPlaneError("Manager supports Codex app-server and CodeBuddy ACP.")
+        if provider != runtime["provider"]:
+            runtime.update(model="", reasoning_depth="default")
         runtime["provider"] = provider
     if "model" in command:
         runtime["model"] = str(command.get("model", "") or "").strip()
@@ -1663,8 +1671,8 @@ def build_team_capability_view(
             "reasoning_default": MANAGER_DEFAULT_REASONING_DEPTH,
             "reasoning_depths": list(MANAGER_REASONING_DEPTHS),
             "runtime": manager_runtime(manager.get("runtime", {})),
-            "runtime_kind": ("builtin" if manager_runtime(manager.get("runtime", {}))["provider"]
-                             in {*BUILTIN_WORKER_MODES, "builtin"} else "app_server"),
+            "runtime_kind": _manager_runtime_kind(manager_runtime(manager.get("runtime", {}))["provider"]),
+            "providers": list(MANAGER_PROVIDERS),
             "skill_binding": project_binding(
                 normalize_binding(
                     dict(state.get("skill_bindings", {}) or {}).get(manager_subject(MANAGER_ROLE), {}),
@@ -1843,7 +1851,7 @@ def _manager_resolution(state: dict[str, object]) -> dict[str, object]:
         "reasoning_depth": reasoning_depth,
         "additional_prompt": str(runtime.get("additional_prompt", "") or ""),
         "pi_thinking_level": "",
-        "runtime_kind": "app_server" if adapter == "codex" else "builtin",
+        "runtime_kind": _manager_runtime_kind(adapter),
     }
 
 
@@ -1906,18 +1914,13 @@ def team_view_for_config(workspace: Path, project_key: str, config_path: Path | 
 def _sync_legacy_worker_config_view(config_path: Path, state: dict[str, object]) -> None:
     """Rewrite the legacy YAML worker blocks as a derived compatibility view.
 
-    The canonical truth is the control-plane state. The legacy blocks
-    (``worker_backend``/``workers``/``role_model_overrides``/
-    ``worker_type_settings``) remain on disk only so diagnostics and any
-    not-yet-migrated reader keep working. They are never authoritative.
+    The control-plane state owns per-role settings. Keep the project's
+    default Worker backend separate from the Manager runtime.
     """
     from goodteam_os.projects import update_worker_backend_config
 
-    default_provider = "codex"
     manager = dict(state["manager"])  # type: ignore[arg-type]
     manager_config = manager_runtime(manager.get("runtime", {}))
-    if manager_config.get("provider"):
-        default_provider = str(manager_config["provider"])
     workers: dict[str, str] = {}
     role_models: dict[str, str] = {}
     type_settings: dict[str, dict[str, object]] = {}
@@ -1940,7 +1943,7 @@ def _sync_legacy_worker_config_view(config_path: Path, state: dict[str, object])
         runtime = dict(active[0]["runtime"])
         if source_id:
             runtime["additional_prompt"] = ""
-        provider = str(runtime.get("provider", "") or default_provider)
+        provider = str(runtime.get("provider", "") or "codex")
         workers[role] = provider
         if runtime.get("model"):
             role_models[role] = f"{provider}:{runtime['model']}"
@@ -1949,7 +1952,7 @@ def _sync_legacy_worker_config_view(config_path: Path, state: dict[str, object])
             "additional_prompt": runtime.get("additional_prompt", ""),
             "desired_instances": len(active),
         }
-    workers[MANAGER_ROLE] = str(manager_config.get("provider", "") or default_provider)
+    workers[MANAGER_ROLE] = str(manager_config["provider"])
     if manager_config.get("model"):
         role_models[MANAGER_ROLE] = f"{manager_config.get('provider', '')}:{manager_config['model']}"
     type_settings[MANAGER_ROLE] = {
@@ -1959,7 +1962,6 @@ def _sync_legacy_worker_config_view(config_path: Path, state: dict[str, object])
     try:
         update_worker_backend_config(
             Path(config_path),
-            mode=default_provider,
             workers=workers,
             role_model_overrides=role_models,
             worker_type_settings=type_settings,

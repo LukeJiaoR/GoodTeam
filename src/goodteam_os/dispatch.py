@@ -386,7 +386,11 @@ def _dispatch_tracks(
 
         for job in jobs_by_role:
             environment = environment_for_task(project_root, worker_setup)
-            bind_environment(isolated.workspace(str(job["id"])), environment)
+            if job['adapter'] == 'codebuddy':
+                # 文件工具只访问隔离目录。共享依赖链接会指向目录外。
+                environment['shared_paths'] = []
+            else:
+                bind_environment(isolated.workspace(str(job["id"])), environment)
             # The shared paths are runtime inputs; the source cwd stays isolated.
             job["project_environment"] = environment
     if require_isolation and isolated is None:

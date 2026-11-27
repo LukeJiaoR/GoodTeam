@@ -1,3 +1,8 @@
+"""[INPUT]: 项目配置、仓库目录与 Team 状态。
+[OUTPUT]: 提供项目读取、运行路径和兼容配置写入。
+[POS]: 向 Manager 和 Worker 提供项目配置。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 import json
 import os
 from pathlib import Path
@@ -11,7 +16,7 @@ from goodteam_os.workers import worker_backend_doctor
 
 ProjectTarget = dict[str, object]
 
-WORKER_MODES = ("fake", "codex", "anthropic", "gemini", "opencode", "pi", "pi-rpc", "noop", "human", "manual")
+WORKER_MODES = ("fake", "codex", "anthropic", "codebuddy", "gemini", "opencode", "pi", "pi-rpc", "noop", "human", "manual")
 DELIVERY_MODES = (
     "mvp",
     "init_project",
@@ -187,18 +192,18 @@ def init_project(
 def update_worker_backend_config(
     config_path: Path,
     *,
-    mode: str,
+    mode: str | None = None,
     workers: dict[str, str],
     role_model_overrides: dict[str, str] | None = None,
     worker_type_settings: dict[str, dict[str, object]] | None = None,
 ) -> None:
     """Update only worker backend blocks in a local project config."""
     lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    worker_backend_block = ["worker_backend:\n", f"  mode: {mode}\n"]
     worker_lines = [f"  {role}: {backend}\n" for role, backend in workers.items()]
     workers_block = ["workers:\n", *worker_lines] if worker_lines else []
 
-    lines = _replace_or_append_top_level_block(lines, "worker_backend", worker_backend_block)
+    if mode is not None:
+        lines = _replace_or_append_top_level_block(lines, "worker_backend", ["worker_backend:\n", f"  mode: {mode}\n"])
     lines = _replace_or_append_top_level_block(lines, "workers", workers_block)
     if role_model_overrides is not None:
         model_lines = [f"  {role}: {model}\n" for role, model in role_model_overrides.items()]

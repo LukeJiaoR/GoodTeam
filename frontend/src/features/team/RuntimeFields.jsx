@@ -6,14 +6,14 @@
  */
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
-import { changeRuntimeSelection, newWorkerRuntime, runtimeOptions } from './teamModel';
+import { changeRuntimeSelection, managerProviderLabel, newWorkerRuntime, runtimeOptions } from './teamModel';
 
-export default function RuntimeFields({ draft, setDraft, backendOptions, agents, defaultProvider, agentsLoading, onRefresh, prompt = true, fixedProvider = false, managerReasoning, t }) {
+export default function RuntimeFields({ draft, setDraft, backendOptions, agents, defaultProvider, agentsLoading, onRefresh, prompt = true, managerProviders, managerReasoning, t }) {
   const [customModel, setCustomModel] = useState(false);
   const [promptOpen, setPromptOpen] = useState(Boolean(draft.additionalPrompt));
   const options = runtimeOptions(agents, draft.provider, draft.model, defaultProvider);
   agentsLoading = options.agent?.discovery_status ? options.agent.discovery_status === 'loading' : agentsLoading;
-  const providers = fixedProvider ? [draft.provider || 'codex']
+  const providers = managerProviders ? [...new Set([...managerProviders, draft.provider || 'codex'])]
     : [...new Set([draft.provider, defaultProvider, ...backendOptions].filter(Boolean))];
   const changeSelection = (patch) => setDraft(managerReasoning ? { ...draft, ...patch }
     : changeRuntimeSelection(draft, patch, agents, defaultProvider));
@@ -44,11 +44,16 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
       <div className="team-runtime-fields__grid">
         <label>
           <span>{t('team.dialog.provider')}</span>
-          <select aria-label={t('team.dialog.provider')} disabled={fixedProvider} value={draft.provider || defaultProvider} onChange={(event) => {
+          <select name="provider" aria-label={t('team.dialog.provider')} disabled={providers.length < 2} value={draft.provider || defaultProvider} onChange={(event) => {
             setCustomModel(false);
-            changeSelection({ provider: event.target.value, model: newWorkerRuntime(event.target.value).model });
+            const provider = event.target.value;
+            if (managerProviders) {
+              setDraft({ ...draft, provider, model: '', reasoningDepth: 'default' });
+            } else {
+              changeSelection({ provider, model: newWorkerRuntime(provider).model });
+            }
           }}>
-            {providers.map((provider) => <option key={provider} value={provider}>{fixedProvider && provider === 'codex' ? 'Codex app-server' : provider}</option>)}
+            {providers.map((provider) => <option key={provider} value={provider}>{managerProviders ? managerProviderLabel(provider) : provider}</option>)}
           </select>
           {!agentsLoading && !options.agent?.stale && (diagnosticHint || diagnosticFallback) ? <small className={options.agent?.ready === false ? 'team-field-warning' : undefined}>
             {t('team.config.localDiagnostic')}: {diagnosticHint || t(diagnosticFallback)}

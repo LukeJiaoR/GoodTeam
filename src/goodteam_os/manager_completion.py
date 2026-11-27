@@ -1,4 +1,15 @@
-"""Read native Manager completion from the original conversation receipt."""
+"""[INPUT]: 接收原生 Manager 请求与执行回执。
+[OUTPUT]: 验证执行后端并复用原完成结果。
+[POS]: 为对话重试和后台判断验证持久化回执。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
+
+
+NATIVE_MANAGER_ADAPTERS = {"codex-app-server", "codebuddy-acp"}
+
+
+def recorded_manager_adapter(record):
+    return (record.get("runtime") or {}).get("adapter", "codex-app-server")
 
 
 def completed_manager_result(store, logical_id):
@@ -7,7 +18,9 @@ def completed_manager_result(store, logical_id):
         return None
     result = record.get("result") or {}
     evidence = result.get("manager_execution") or {}
-    if (not isinstance(result.get("text"), str) or evidence.get("adapter") != "codex-app-server"
+    adapter = recorded_manager_adapter(record)
+    if (not isinstance(result.get("text"), str) or adapter not in NATIVE_MANAGER_ADAPTERS
+            or evidence.get("adapter") != adapter
             or evidence.get("thread_id") != record.get("thread_id")
             or evidence.get("turn_id") != record.get("turn_id") or not evidence.get("turn_id")
             or evidence.get("status") != "completed"):

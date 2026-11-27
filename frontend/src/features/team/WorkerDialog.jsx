@@ -44,7 +44,7 @@ export default function WorkerDialog({ presentation = 'dialog', children, agents
 
   const runtimeBusy = manager && assistantSession?.runtime?.status === 'checking';
   const locked = saving || Boolean(runtimeBusy);
-  const localCodex = manager && draft.provider === 'codex';
+  const nativeManager = manager && ['codex', 'codebuddy'].includes(draft.provider);
   const runtimeMatches = manager && draft.provider === (managerRuntime?.provider || '')
     && draft.model === (managerRuntime?.model || '')
     && draft.reasoningDepth === (managerRuntime?.reasoningDepth || 'default')
@@ -133,7 +133,7 @@ export default function WorkerDialog({ presentation = 'dialog', children, agents
               </label>
             </>
           ) : null}
-          <RuntimeFields draft={draft} setDraft={changeDraft} agents={agents} backendOptions={backendOptions} defaultProvider={worker?.provider || managerRuntime?.provider || defaultProvider} agentsLoading={agentsLoading} onRefresh={onRefresh} fixedProvider={manager} managerReasoning={localCodex ? managerRuntime : null} t={t} />
+          <RuntimeFields draft={draft} setDraft={changeDraft} agents={agents} backendOptions={backendOptions} defaultProvider={worker?.provider || managerRuntime?.provider || defaultProvider} agentsLoading={agentsLoading} onRefresh={onRefresh} managerProviders={manager ? managerRuntime?.providers || [] : null} managerReasoning={nativeManager ? managerRuntime : null} t={t} />
         </fieldset>
 
         {error ? <div className="team-dialog__error"><ProductError error={error} t={t} /></div> : null}

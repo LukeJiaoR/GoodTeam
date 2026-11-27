@@ -1,3 +1,8 @@
+"""[INPUT]: 项目、任务队列、Team 和 Manager 运行配置。
+[OUTPUT]: 提供项目对话、待确认任务和项目状态。
+[POS]: 通过统一任务队列衔接 Manager 和批次。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
+"""
 from __future__ import annotations
 
 import json
@@ -412,11 +417,11 @@ class TaskAssistantService:
             # An injected turn callable owns classification (tests, harnesses).
             return False
         try:
+            from goodteam_os.manager_execution import configured_manager_provider
             from goodteam_os.projects import load_project_target
-            from goodteam_os.worker_routing import resolve_role_adapter
             from goodteam_os.workers import BUILTIN_WORKER_MODES
 
-            adapter = resolve_role_adapter(load_project_target(self.project_config), MANAGER_ROLE)
+            adapter = configured_manager_provider(load_project_target(self.project_config))
         except (OSError, ValueError):
             return False
         return adapter in BUILTIN_WORKER_MODES
