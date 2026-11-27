@@ -1,7 +1,7 @@
 import { requestJson } from './client';
 
 export const getProjects = ({ signal } = {}) => requestJson('/api/projects', { signal });
-const catalogProviders = ['codex', 'claude', 'agy', 'gemini', 'opencode', 'pi'];
+const catalogProviders = ['codex', 'claude', 'codebuddy', 'agy', 'gemini', 'opencode', 'pi'];
 export const getAgents = async ({ signal, onProgress } = {}) => {
   const agents = await Promise.all(catalogProviders.map(async (provider) => {
     let result;

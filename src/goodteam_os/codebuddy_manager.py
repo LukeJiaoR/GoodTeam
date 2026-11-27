@@ -1,6 +1,6 @@
-"""[INPUT]: 接收已准入的 Manager 轮次、CodeBuddy CLI 和工具回调。
-[OUTPUT]: 通过 ACP 交付会话、回复和取消结果。
-[POS]: 为单轮启动 CLI，并把 MCP 工具调用转交现有 Manager 服务。
+"""[INPUT]: 接收 CodeBuddy CLI 路径、已准入的 Manager 轮次和工具回调。
+[OUTPUT]: 通过 ACP 读取模型目录，交付 Manager 会话、回复和取消结果。
+[POS]: 目录探测使用独立会话。Manager 会话将工具调用转给现有 MCP 服务。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
 """
 
@@ -16,31 +16,71 @@ from goodteam_os.manager_mcp import ManagerMcp
 from goodteam_os.skills.filesystem import directory
 
 
-class CodeBuddyManager(CodexAppServer):
+class _CodeBuddyAcp(CodexAppServer):
     _label = "CodeBuddy ACP"
     _jsonrpc_version = "2.0"
     _process_group = True
 
+    def __init__(self, binary, *, cwd, config, args, **transport_options):
+        if any((parent / ".codebuddy" / "models.json").exists() for parent in (cwd, *cwd.parents)):
+            raise ValueError("CodeBuddy ACP cannot load a workspace model endpoint override.")
+        env = worker_environment(cwd)
+        env.update(CODEBUDDY_CONFIG_DIR=str(config), CODEBUDDY_DEFER_TOOL_LOADING="0")
+        command = [binary, "--acp", "--agent", "cli", "--setting-sources", "", "--tools", "",
+                   "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--permission-mode", "dontAsk",
+                   "--settings", '{"disableAllHooks":true,"autoMemoryEnabled":false}', *args]
+        super().__init__(command, cwd=cwd, env=env, **transport_options)
+
+    def _initialize(self, timeout):
+        result = self.request("initialize", {"protocolVersion": 1, "clientCapabilities": {}}, timeout=timeout)
+        if result.get("protocolVersion") != 1:
+            raise CodexAppServerError("CodeBuddy did not negotiate ACP version 1.")
+        self._can_load = result.get("agentCapabilities", {}).get("loadSession") is True
+
+
+def query_codebuddy_models(binary: str) -> tuple[tuple[str, ...], str] | None:
+    """Read the CLI's model list from a disposable session without sending a prompt."""
+    try:
+        with TemporaryDirectory(prefix="goodteam-codebuddy-models-") as root:
+            cwd = Path(root).resolve()
+            config = cwd / "config"
+            config.mkdir()
+            client = _CodeBuddyAcp(binary, cwd=cwd, config=config, args=["--no-session-persistence"])
+            try:
+                client.start(timeout=4)
+                session = client.request("session/new", {"cwd": str(cwd), "mcpServers": []}, timeout=6)
+            finally:
+                client.close()
+    except (CodexAppServerError, OSError, ValueError):
+        return None
+
+    catalog = session.get("models")
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("availableModels"), list):
+        return None
+    models = []
+    for entry in catalog["availableModels"]:
+        model_id = entry.get("modelId") if isinstance(entry, dict) else None
+        if isinstance(model_id, str) and model_id.strip():
+            models.append(model_id.strip())
+    if not models:
+        return None
+    current = catalog.get("currentModelId")
+    return tuple(models), current if current in models else "auto"
+
+
+class CodeBuddyManager(_CodeBuddyAcp):
     def __init__(self, binary, *, state, instructions, model, effort, timeout, specs, on_event, on_request):
         cwd = state / "workspace"
         config = state / "config"
         with directory(cwd, create=True), directory(config, create=True):
             pass
-        if any((parent / ".codebuddy" / "models.json").exists() for parent in (cwd, *cwd.parents)):
-            raise ValueError("CodeBuddy Manager cannot load a workspace model endpoint override.")
-        env = worker_environment(cwd)
-        env.update(CODEBUDDY_CONFIG_DIR=str(config), CODEBUDDY_DEFER_TOOL_LOADING="0")
         names = ", ".join("mcp__goodteam__" + spec["name"] for spec in specs)
         instructions += ("\nCall GoodTeam tools by their full MCP names. Available tools are " + names
                          + ". After the last tool call, include the complete answer in your final message.")
-        command = [binary, "--acp", "--agent", "cli", "--setting-sources", "", "--tools", "",
-                   "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
-                   "--permission-mode", "dontAsk", "--allowedTools", "mcp__goodteam",
-                   "--settings", '{"disableAllHooks":true,"autoMemoryEnabled":false}',
-                   "--append-system-prompt", instructions, "--effort", effort]
+        args = ["--allowedTools", "mcp__goodteam", "--append-system-prompt", instructions, "--effort", effort]
         if model:
-            command.extend(["--model", model])
-        super().__init__(command, cwd=cwd, env=env, stderr_path=state / "stderr.log",
+            args.extend(["--model", model])
+        super().__init__(binary, cwd=cwd, config=config, args=args, stderr_path=state / "stderr.log",
                          on_event=on_event, on_request=self._client_request)
         self.timeout = timeout
         self.thread_id = ""
@@ -55,12 +95,6 @@ class CodeBuddyManager(CodexAppServer):
         except BaseException:
             self._temp.cleanup()
             raise
-
-    def _initialize(self, timeout):
-        result = self.request("initialize", {"protocolVersion": 1, "clientCapabilities": {}}, timeout=timeout)
-        if result.get("protocolVersion") != 1:
-            raise CodexAppServerError("CodeBuddy did not negotiate ACP version 1.")
-        self._can_load = result.get("agentCapabilities", {}).get("loadSession") is True
 
     @staticmethod
     def _client_request(method, _params):
