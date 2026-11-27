@@ -64,10 +64,9 @@ flowchart TD
 Operator rule: if the task cannot be stated as a bounded packet, do not dispatch
 it yet. Re-plan or split it.
 
-## Configure Workers in Team
+## Configure roles in Team
 
-The Team page starts with responsibility groups. Expand a group only when you
-need to inspect or change an individual role or Worker:
+The Team page lists roles by responsibility.
 
 | Responsibility | Roles |
 | --- | --- |
@@ -80,20 +79,18 @@ The Task Assistant has its own configuration above these groups. Grouping is a
 presentation aid; it does not change role identities or dispatch boundaries.
 Additional server-defined roles appear under Other responsibilities.
 
-Use **Configure group** to apply an agent, model, and reasoning depth to one
-responsibility, or **Bulk configure** to select several groups. Expand a group
-inside the configuration dialog to select individual roles. The preview shows
-how many Workers will change and how many will be created for empty roles.
-Disabled roles are excluded. Names, individual instructions, and paused states
-are preserved. The changes are submitted as one team decision.
+Use a role's **Configure** button to set its agent, model, and reasoning depth.
+**Configure group** and **Bulk configure** apply the same settings to selected
+enabled roles. Open the role's status to manage its methods or enablement.
+Saving applies a shared configuration to the role's Workers and sets up one
+Worker if the role is empty. The Team decision preserves names, individual
+instructions, paused states, and explicit runtime links.
 
-For individual changes, expand a group and use a Worker's **Configure** button.
-New Workers use the project's default agent explicitly. An empty model means
-the selected agent's default; **Enter model ID** also works when model discovery
-is unavailable. Additional instructions are optional and can be expanded when
-needed. Saving a Worker configuration does not invoke the model; the Task
-Assistant's separate **Save and check connection** action still performs its
-existing connection check.
+Open **Worker management** to create, edit, pause, or activate individual Workers.
+New Workers use the project's default agent explicitly. Leave the model empty to
+use the selected agent's default. Use **Enter model ID** when model discovery is
+unavailable. The Task Assistant's **Save and check connection** action checks its
+model connection.
 
 The default backend is `codex`, and new Codex configurations preselect
 `gpt-5.6-sol`. The default `balanced` model profile and the Codex adapter fallback
@@ -170,7 +167,7 @@ The CLI validates the saved sign-in when a task runs. See Tencent's
 [headless mode](https://www.codebuddy.cn/docs/cli/headless) and
 [authentication options](https://www.codebuddy.cn/docs/cli/iam).
 
-In **Team**, configure an ordinary Worker and select `codebuddy` as its Agent.
+In **Team**, configure a role and select `codebuddy` as its Agent.
 Leave the model empty for the CLI default or enter a CodeBuddy model ID.
 Confirm queued tasks as usual. The adapter gives CodeBuddy file tools in
 the isolated Git copy. Read-only tasks receive Read, Glob and Grep.

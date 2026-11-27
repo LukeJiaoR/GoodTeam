@@ -1,13 +1,7 @@
 /**
- * [INPUT]: 团队角色与绑定视图。
- * [OUTPUT]: 从团队 API 投影角色、Worker、基线和运行配置。
- * [POS]: 团队设置页面的角色配置。
- * [PROTOCOL]: Update this header on change, then check AGENTS.md
- */
-/**
- * [INPUT]: Team API 返回的角色和运行设置。
- * [OUTPUT]: 团队视图与编辑命令。
- * [POS]: 将 Manager 运行配置和推理档位投影到团队设置。
+ * [INPUT]: Team API 返回的团队快照与运行配置目录。
+ * [OUTPUT]: 角色、Worker 和任务助手的视图与编辑命令。
+ * [POS]: 将角色运行配置转成同一职责范围内的 Team 命令。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
 const ROLE_FALLBACK_LABEL = (role) => String(role || '').replaceAll('_', ' ');
@@ -84,6 +78,7 @@ export function buildTeamModel(data) {
     state: entry.state || 'enabled',
     capability: entry.capability || 'unstaffed',
     capabilityTone: capabilityTone(entry.capability),
+    hasLinkedRuntime: Boolean(entry.runtime_source_worker_id),
     skillBinding: {
       schemaVersion: entry.skill_binding?.schema_version || 'role_skill_bindings.v1',
       projectKey: entry.skill_binding?.project_key || team.project_key || '',
@@ -152,10 +147,6 @@ export function capabilityCounts(roles) {
   );
 }
 
-export function rosteredWorkerCount(roles) {
-  return (roles || []).reduce((total, role) => total + role.workers.length, 0);
-}
-
 /**
  * Diff a worker's edited fields against current truth and return the matching
  * control-plane commands. Order matters for reviewability: identity, then
@@ -215,21 +206,16 @@ export function initialWorkerRuntime(roles, defaultProvider) {
 export function batchWorkerPlan(roles, selectedRoles, draft) {
   const selected = new Set(selectedRoles);
   const commands = [];
-  let updated = 0;
-  let created = 0;
   for (const role of roles) {
     if (role.state !== 'enabled' || !selected.has(role.role)) continue;
     const runtime = { provider: draft.provider, model: draft.model, reasoningDepth: draft.reasoningDepth };
     if (!role.workers.length) {
       commands.push({ ...workerCreateCommand(role.role, runtime), ensure_role_enabled: false });
-      created += 1;
     } else {
       for (const worker of role.workers) {
-        const changes = workerEditCommands(worker, { ...worker, ...runtime });
-        commands.push(...changes);
-        if (changes.length) updated += 1;
+        commands.push(...workerEditCommands(worker, { ...worker, ...runtime }));
       }
     }
   }
-  return { commands, updated, created };
+  return commands;
 }
