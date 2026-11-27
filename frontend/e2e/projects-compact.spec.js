@@ -41,12 +41,15 @@ test('compact projects retain import, browsing, exact attention targets and hone
       title: font('h1'), buttonFont: font('.product-button'), name: font('.project-launcher-row__copy strong'),
       location: font('.file-location summary'), buttonHeight: rect('.product-button').height,
       searchHeight: rect('.collection-search').height, rowHeight: rect('.project-launcher-entry').height,
-      listWidth: rect('.projects-launcher-list').width, zoom: window.visualViewport.scale,
+      listRight: rect('.projects-launcher').right, listTop: rect('.projects-launcher').top,
+      attentionLeft: rect('.project-attention').left, attentionTop: rect('.project-attention').top,
+      zoom: window.visualViewport.scale,
     };
   });
-  expect(metrics).toMatchObject({ title: '16px', buttonFont: '13px', name: '14px', location: '12px', buttonHeight: 32, searchHeight: 32, zoom: 1 });
+  expect(metrics).toMatchObject({ title: '28px', buttonFont: '13px', name: '14px', location: '12px', buttonHeight: 32, searchHeight: 32, zoom: 1 });
   expect(metrics.rowHeight).toBeLessThanOrEqual(76);
-  expect(metrics.listWidth).toBeGreaterThan(1000);
+  expect(metrics.attentionLeft).toBeGreaterThan(metrics.listRight);
+  expect(metrics.attentionTop).toBe(metrics.listTop);
   await testInfo.attach('projects-dimensions', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
 
   const capture = async name => testInfo.attach(name, { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' });
@@ -90,6 +93,15 @@ test('compact projects retain import, browsing, exact attention targets and hone
   await page.setViewportSize({ width: 390, height: 844 });
   await capture('projects-narrow-390x844');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const list = await main.locator('.projects-launcher').boundingBox();
+  const attentionPanel = await main.locator('.project-attention').boundingBox();
+  expect(attentionPanel.y).toBeGreaterThanOrEqual(list.y + list.height);
+  expect(attentionPanel.width).toBe(list.width);
+  const navigationToggle = page.locator('.studio-topbar .studio-sidebar-toggle');
+  await navigationToggle.press('Enter');
+  await page.getByRole('link', { name: 'Projects', exact: true }).press('Escape');
+  await expect(navigationToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(navigationToggle).toBeFocused();
   expect(await entries.evaluateAll(nodes => nodes.every(node => {
     const row = node.getBoundingClientRect();
     const action = node.querySelector('.project-launcher-row__action').getBoundingClientRect();

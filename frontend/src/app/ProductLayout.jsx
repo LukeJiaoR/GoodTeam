@@ -1,22 +1,24 @@
 /**
- * [INPUT]: React Router 路由、项目侧栏与外观偏好。
- * [OUTPUT]: ProductLayout 渲染工作区外壳并提供子路由上下文。
- * [POS]: 项目页面与全局设置共用的导航布局。
+ * [INPUT]: 读取产品路由、项目导航目标与外观偏好。
+ * [OUTPUT]: 提供共享顶栏、侧栏与页面 Outlet 上下文。
+ * [POS]: 在产品路由外层协调项目与任务导航的展开和焦点。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
-
-import { BookOpen, ChevronRight, Users, Workflow } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import ProjectSidebar from './ProjectSidebar';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useAppearancePreferences } from '../hooks/useAppearancePreferences';
 import { projectNavigationDestinations, rememberProjectLocation } from '../lib/routing/projectNavigation';
 
-const PROJECT_PAGES = [
-  ['work', Workflow, 'product.workNavigation.workbench'],
-  ['team', Users, 'product.workNavigation.team'],
-  ['knowledge', BookOpen, 'product.workNavigation.knowledge'],
-];
+const PROJECT_PAGE_LABELS = {
+  work: 'product.workNavigation.workbench',
+  team: 'product.workNavigation.team',
+  knowledge: 'product.workNavigation.knowledge',
+  settings: 'product.studio.settings',
+};
+const NARROW_SIDEBAR = '(max-width: 767px)';
+const isNarrowSidebar = () => globalThis.matchMedia?.(NARROW_SIDEBAR).matches ?? false;
 
 export default function ProductLayout() {
   const { pathname, search } = useLocation();
@@ -24,12 +26,17 @@ export default function ProductLayout() {
   const { language, t } = preferences;
   const [projectNavigationHost, setProjectNavigationHost] = useState(null);
   const [workQuery, setWorkQuery] = useState('');
-  const [sidebarExpanded, setSidebarExpanded] = useState(() => !globalThis.matchMedia?.('(max-width: 767px)').matches);
+  const [narrowSidebar, setNarrowSidebar] = useState(isNarrowSidebar);
+  const [sidebarExpanded, setSidebarExpanded] = useState(() => !isNarrowSidebar());
+  const sidebarToggleRef = useRef(null);
   useEffect(() => {
-    const query = globalThis.matchMedia?.('(max-width: 767px)');
-    const closeOnNarrow = event => { if (event.matches) setSidebarExpanded(false); };
-    query?.addEventListener?.('change', closeOnNarrow);
-    return () => query?.removeEventListener?.('change', closeOnNarrow);
+    const query = globalThis.matchMedia?.(NARROW_SIDEBAR);
+    const syncSidebar = event => {
+      setNarrowSidebar(event.matches);
+      if (event.matches) setSidebarExpanded(false);
+    };
+    query?.addEventListener?.('change', syncSidebar);
+    return () => query?.removeEventListener?.('change', syncSidebar);
   }, []);
   const projectMatch = pathname.match(/^\/projects\/([^/]+)\/(?:home|team|work|knowledge|settings)(?:\/|$)/);
   const projectKey = (() => {
@@ -40,10 +47,28 @@ export default function ProductLayout() {
   useEffect(() => { rememberProjectLocation(pathname, search); }, [pathname, search]);
   const isProjectsRoute = pathname === '/projects';
   const currentSection = pathname.match(/^\/projects\/[^/]+\/(work|team|knowledge|settings)(?:\/|$)/)?.[1];
-  const currentPage = PROJECT_PAGES.find(([key]) => key === currentSection);
   const isWorkRoute = Boolean(projectKey);
-  const sectionTitle = (pathname === '/settings' || currentSection === 'settings') ? t('product.studio.settings') : currentPage ? t(currentPage[2]) : t('product.studio.projects');
+  const sectionTitle = t(PROJECT_PAGE_LABELS[pathname === '/settings' ? 'settings' : currentSection] || 'product.studio.projects');
   const workRoute = currentSection === 'work';
+  const sidebarLabel = t(sidebarExpanded ? 'work.navigation.collapse' : 'work.navigation.expand');
+  const closeProjectNavigation = () => {
+    if (!narrowSidebar || !sidebarExpanded) return;
+    if (document.activeElement?.closest('#studio-sidebar')) sidebarToggleRef.current?.focus();
+    setSidebarExpanded(false);
+  };
+  const handleSidebarEscape = event => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !sidebarExpanded) return;
+    event.preventDefault();
+    setSidebarExpanded(false);
+    sidebarToggleRef.current?.focus();
+  };
+  const sidebarToggle = (
+    <button type="button" ref={sidebarToggleRef} className="studio-sidebar-toggle"
+      aria-label={sidebarLabel} title={sidebarLabel} aria-expanded={sidebarExpanded} aria-controls="studio-sidebar-content"
+      onClick={() => setSidebarExpanded(!sidebarExpanded)} onKeyDown={handleSidebarEscape}>
+      {sidebarExpanded ? <PanelLeftClose size={18} aria-hidden="true" /> : <PanelLeftOpen size={18} aria-hidden="true" />}
+    </button>
+  );
   const openProjectNavigation = () => {
     setSidebarExpanded(true);
     const group = projectNavigationHost?.closest('details');
@@ -57,12 +82,18 @@ export default function ProductLayout() {
   return (
     <div data-sidebar={sidebarExpanded ? 'expanded' : 'collapsed'} className={`product-shell product-shell--workspace product-shell--studio${isWorkRoute ? ' product-shell--work' : ''}${isProjectsRoute ? ' product-shell--projects' : ''}`}>
       <a className="product-skip-link" href="#main-content">{t('product.navigation.skipToContent')}</a>
+      <header className="studio-topbar">
+        {narrowSidebar ? sidebarToggle : null}
+        <span className="studio-topbar__context" title={projectKey || undefined}>{projectKey || t('product.studio.workspace')}</span>
+        <ChevronRight size={13} aria-hidden="true" />
+        <strong>{sectionTitle}</strong>
+      </header>
       <ProjectSidebar projectKey={projectKey} workRoute={workRoute} destinations={destinations} settingsDestination={settingsDestination}
         preferences={preferences} navigationHost={projectNavigationHost} setNavigationHost={setProjectNavigationHost}
-        query={workQuery} setQuery={setWorkQuery} expanded={sidebarExpanded} setExpanded={setSidebarExpanded} />
+        query={workQuery} setQuery={setWorkQuery} toggle={narrowSidebar ? null : sidebarToggle}
+        onNavigate={closeProjectNavigation} onEscape={handleSidebarEscape} />
       <div className="studio-main">
-        <header className="studio-topbar"><span>{projectKey || t('product.studio.workspace')}</span><ChevronRight size={13} aria-hidden="true" /><strong>{sectionTitle}</strong><span className="studio-topbar__label">{t('product.studio.localFirst')}</span></header>
-        <Outlet context={{ language, t, preferences, projectNavigationHost, workQuery, openProjectNavigation, closeProjectNavigation: () => { if (globalThis.matchMedia?.('(max-width: 767px)').matches) setSidebarExpanded(false); } }} />
+        <Outlet context={{ language, t, preferences, projectNavigationHost, workQuery, openProjectNavigation, closeProjectNavigation }} />
       </div>
     </div>
   );
