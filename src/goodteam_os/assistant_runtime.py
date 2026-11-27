@@ -9,9 +9,8 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-from goodteam_os.manager_execution import _configured_manager_model, _manager_settings, _model_name
+from goodteam_os.manager_execution import configured_manager_provider, _configured_manager_model, _manager_settings, _model_name
 from goodteam_os.projects import load_project_target
-from goodteam_os.worker_routing import resolve_role_adapter
 
 
 def runtime_snapshot(config):
@@ -20,14 +19,13 @@ def runtime_snapshot(config):
     target = load_project_target(config)
     settings = _manager_settings(target)
     public = {
-        "provider": (resolve_role_adapter(target, "orchestrator")
-                     if resolve_role_adapter(target, "orchestrator") in {"builtin", "fake", "noop", "human"} else "codex"),
+        "provider": configured_manager_provider(target),
         "model": _model_name(_configured_manager_model(target)),
         "reasoning_depth": settings.get("reasoning_depth", "default"),
     }
-    if public["provider"] == "codex":
+    if public["provider"] in {"codex", "codebuddy"}:
         public["provider_authority"] = "native_managed"
-        public["transport"] = "app-server"
+        public["transport"] = "acp" if public["provider"] == "codebuddy" else "app-server"
     encoded = json.dumps({**public, "settings": settings}, sort_keys=True).encode()
     return {**public, "fingerprint": hashlib.sha256(encoded).hexdigest()}
 

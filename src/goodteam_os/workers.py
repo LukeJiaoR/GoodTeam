@@ -15,6 +15,7 @@ import threading
 import time
 import tomllib
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from shutil import copy2, which
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
+from goodteam_os import codebuddy_worker
 from goodteam_os.skills.pi_methods import (
     METHOD_MODES, ORDINARY_METHODS, ORDINARY_PI_METHODS, READONLY_CODEX_METHODS, RoleMethodInput,
 )
@@ -76,6 +78,7 @@ CODEX_AUTH_ENV_NAMES = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
 DEFAULT_CLAUDE_PATH = os.getenv("GOODTEAM_CLAUDE_PATH", "claude")
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 CLAUDE_AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+DEFAULT_CODEBUDDY_PATH = os.getenv("GOODTEAM_CODEBUDDY_PATH", "codebuddy")
 DEFAULT_GEMINI_PATH = os.getenv("GOODTEAM_GEMINI_PATH", "gemini")
 DEFAULT_GEMINI_MODEL = "auto"
 DEFAULT_AGY_PATH = os.getenv("GOODTEAM_AGY_PATH", "agy")
@@ -360,6 +363,7 @@ class CliBackendSpec:
     # Some CLIs (e.g. agy's bubbletea TUI) require a controlling terminal and hang
     # on a plain pipe. needs_pty routes them through a real PTY in _run_cli_worker.
     needs_pty: bool = False
+    result_from_stdout: Callable[[str], str] | None = None
 
 
 @dataclass(frozen=True)
@@ -800,6 +804,21 @@ CLAUDE_BACKEND = CliBackendSpec(
     ),
 )
 
+CODEBUDDY_BACKEND = CliBackendSpec(
+    name="codebuddy",
+    which_name="codebuddy",
+    default_path=lambda: DEFAULT_CODEBUDDY_PATH,
+    model_default="auto",
+    models=(),
+    auth_env=codebuddy_worker.AUTH_ENV,
+    capture="stdout",
+    label="CodeBuddy Code",
+    build_command=codebuddy_worker.build_command,
+    summarize=lambda code, _: "CodeBuddy Code completed." if code == 0 else f"CodeBuddy Code exited with code {code}.",
+    not_available_message="Install CodeBuddy Code or set GOODTEAM_CODEBUDDY_PATH to the local CLI.",
+    result_from_stdout=codebuddy_worker.result_from_stdout,
+)
+
 GEMINI_BACKEND = CliBackendSpec(
     name="gemini",
     which_name="gemini",
@@ -852,6 +871,7 @@ CLI_BACKENDS: dict[str, CliBackendSpec] = {
     "codex": CODEX_BACKEND,
     "anthropic": CLAUDE_BACKEND,
     "claude": CLAUDE_BACKEND,
+    "codebuddy": CODEBUDDY_BACKEND,
     "gemini": GEMINI_BACKEND,
     "agy": AGY_BACKEND,
     "antigravity": AGY_BACKEND,
@@ -862,6 +882,7 @@ PROVIDER_BY_ADAPTER = {
     "codex": "openai",
     "anthropic": "anthropic",
     "claude": "anthropic",
+    "codebuddy": "tencent",
     "gemini": "google",
     "agy": "antigravity",
     "antigravity": "antigravity",
@@ -872,6 +893,7 @@ INVOCATION_ATTEMPT_REASON_BY_ADAPTER = {
     "codex": "Codex CLI invocation attempted",
     "anthropic": "Claude Code CLI invocation attempted",
     "claude": "Claude Code CLI invocation attempted",
+    "codebuddy": "CodeBuddy Code CLI invocation attempted",
     "gemini": "Gemini CLI invocation attempted",
     "agy": "Antigravity CLI invocation attempted",
     "antigravity": "Antigravity CLI invocation attempted",
@@ -2625,8 +2647,7 @@ class WorkerJobStore:
         method_input=None,
         package_root: Path | None = None,
     ) -> dict[str, Any]:
-        """Run any registered agentic coding CLI (codex, claude, ...). Adding a
-        new CLI means adding a CliBackendSpec to CLI_BACKENDS — no new branch."""
+        """Run a registered coding CLI with the job's workspace and policy."""
         from goodteam_os.skills.worker_requests import reject_unverified_runtime_entry
 
         reject_unverified_runtime_entry(job_root, job, method_input=method_input)
@@ -2646,24 +2667,34 @@ class WorkerJobStore:
         result_path = job_root / "result.md"
         runtime_context = (method_input.runtime_context() if method_input is not None
                            else self._worker_runtime_cwd(job))
-        worker_env = self._worker_env(job_root, spec, runtime_context.runtime_cwd)
-        from goodteam_os.project_environment import runtime_environment
-
-        binding = (method_input.workspace_context if method_input is not None else job.get("sandbox_context")) or {}
-        worker_env = runtime_environment(binding.get("project_environment"),
-                                         worker_env or provider_environment(), workspace=runtime_context.runtime_cwd)
-        pythonpath_workspace_src = (runtime_context.runtime_cwd / "src").is_dir()
         preflight = _cli_preflight(spec, binary, model)
+        adapter = str(job["adapter"])
+        execution_policy = str(job.get("execution_policy") or "standard")
+        command = spec.build_command(binary, model, runtime_context.runtime_cwd, result_path)
+        if adapter == "codebuddy":
+            try:
+                if task_input is not None or runtime_context.runtime_workspace_mode != "dispatch_isolated":
+                    raise ValueError("CodeBuddy Code requires an ordinary task in an isolated dispatch workspace.")
+                worker_env = codebuddy_worker.worker_environment(runtime_context.runtime_cwd)
+                command += codebuddy_worker.file_tool_options(runtime_context.runtime_cwd, read_only=execution_policy == "read_only")
+            except ValueError as exc:
+                return self._write_status(job_root, job, "failed", str(exc), extra={"preflight": preflight,
+                    "invocation_evidence": {"kind": "unavailable", "adapter": adapter, "provider": "tencent",
+                                            "external_invocation": False, "reason": str(exc)}})
+        else:
+            from goodteam_os.project_environment import runtime_environment
+
+            worker_env = self._worker_env(job_root, spec, runtime_context.runtime_cwd)
+            binding = (method_input.workspace_context if method_input is not None else job.get("sandbox_context")) or {}
+            worker_env = runtime_environment(binding.get("project_environment"),
+                                             worker_env or provider_environment(), workspace=runtime_context.runtime_cwd)
+            command = _command_with_execution_policy(command, adapter=adapter, execution_policy=execution_policy)
+        pythonpath_workspace_src = adapter != "codebuddy" and (runtime_context.runtime_cwd / "src").is_dir()
         if connection:
             worker_env[PROVIDER_KEY_ENV] = connection["api_key"]
             preflight["auth_present"] = bool(connection["api_key"])
-        adapter = str(job.get("adapter", ""))
         command = _command_with_reasoning_depth(
-            _command_with_execution_policy(
-                spec.build_command(binary, model, runtime_context.runtime_cwd, result_path),
-                adapter=adapter,
-                execution_policy=str(job.get("execution_policy", "standard") or "standard"),
-            ),
+            command,
             adapter=adapter,
             reasoning_depth=str(job.get("reasoning_depth", "") or ""),
         )
@@ -2726,25 +2757,32 @@ class WorkerJobStore:
                     "invocation_evidence": runtime_evidence,
                 },
             )
-        return self._run_cli_worker(
-            job_root,
-            job,
-            command=command,
-            model=model,
-            preflight=preflight,
-            label=spec.label,
-            capture=spec.capture,
-            summarize=spec.summarize,
-            prompt_via=spec.prompt_via,
-            worker_env=worker_env,
-            runtime_context=runtime_context,
-            runtime_evidence=runtime_evidence,
-            use_pty=spec.needs_pty,
-            method_input=method_input,
-            package_root=package_root,
-            timeout_seconds=(CLI_WORKER_TIMEOUT_SECONDS if task_input is not None else
-                             _cli_worker_timeout_seconds(job.get("cli_timeout_seconds", CLI_WORKER_TIMEOUT_SECONDS))),
+        config_directory = (
+            tempfile.TemporaryDirectory(prefix="goodteam-codebuddy-") if adapter == "codebuddy" else nullcontext()
         )
+        with config_directory as config:
+            if config:
+                worker_env["CODEBUDDY_CONFIG_DIR"] = config
+            return self._run_cli_worker(
+                job_root,
+                job,
+                command=command,
+                model=model,
+                preflight=preflight,
+                label=spec.label,
+                capture=spec.capture,
+                summarize=spec.summarize,
+                prompt_via=spec.prompt_via,
+                worker_env=worker_env,
+                runtime_context=runtime_context,
+                runtime_evidence=runtime_evidence,
+                use_pty=spec.needs_pty,
+                method_input=method_input,
+                package_root=package_root,
+                result_from_stdout=spec.result_from_stdout,
+                timeout_seconds=(CLI_WORKER_TIMEOUT_SECONDS if task_input is not None else
+                                 _cli_worker_timeout_seconds(job.get("cli_timeout_seconds", CLI_WORKER_TIMEOUT_SECONDS))),
+            )
 
     def _run_native_correction(self, job_root, job):
         """No legacy command builder, auth projection, default model or retry."""
@@ -2854,6 +2892,7 @@ class WorkerJobStore:
         use_pty: bool = False,
         method_input=None,
         package_root: Path | None = None,
+        result_from_stdout: Callable[[str], str] | None = None,
     ) -> dict[str, Any]:
         """Run an agentic coding CLI (codex/claude) over the job protocol files.
 
@@ -2912,10 +2951,15 @@ class WorkerJobStore:
         process_input = None if prompt_via == "arg" else prompt
         started_at = self._now()
         provider_key = (worker_env or {}).get(PROVIDER_KEY_ENV, "")
+        secret_values = [provider_key] if provider_key else []
+        if job.get("adapter") == "codebuddy":
+            secret_values.extend(value for name in codebuddy_worker.AUTH_ENV if (value := (worker_env or {}).get(name)))
 
         def safe_output(value):
             text = value or ""
-            return text.replace(provider_key, "[REDACTED]") if provider_key else text
+            for secret in secret_values:
+                text = text.replace(secret, "[REDACTED]")
+            return text
 
         def observed_usage(stdout, status):
             if job.get("adapter") != "codex" or "--json" not in command or capture != "output_file":
@@ -3092,8 +3136,15 @@ class WorkerJobStore:
         returncode = int(returncode)
         status = "completed" if returncode == 0 else "failed"
         summary = summarize(returncode, stderr or "")
-        if capture == "stdout" and returncode == 0 and (stdout or "").strip():
-            result_path.write_text(stdout, encoding="utf-8")
+        if capture == "stdout" and status == "completed":
+            try:
+                response = result_from_stdout(stdout) if result_from_stdout is not None else stdout
+            except ValueError as exc:
+                status = "failed"
+                summary = str(exc)
+            else:
+                if response.strip():
+                    result_path.write_text(response, encoding="utf-8")
         if not result_path.is_file() or not result_path.read_text(encoding="utf-8").strip():
             result_path.write_text(
                 f"# Worker Result\n\nStatus: {status}\n\n{summary}\n\nSee stdout.txt and stderr.txt.\n",
@@ -3753,6 +3804,12 @@ def worker_backend_doctor(mode: str) -> dict[str, Any]:
                 "hint": _claude_auth_hint(available, auth_present),
             }
         )
+    elif spec.which_name == "codebuddy":
+        auth_present = any(auth_env.values())
+        hint = _generic_cli_hint(spec, available, auth_present)
+        if available and not auth_present:
+            hint = "Uses the CodeBuddy CLI login. Run codebuddy as the GoodTeam service user to sign in."
+        report.update(auth_present=auth_present, ready=available, hint=hint)
     else:
         auth_present = any(auth_env.values())
         report.update(
@@ -3806,7 +3863,7 @@ def worker_backend_local_preflight(
     available = bool(doctor.get("available"))
     version = _local_cli_version(spec, str(doctor.get("command_path", ""))) if available else None
     auth_present = bool(doctor.get("auth_present"))
-    auth_safe_to_determine = spec.which_name != "claude" or auth_present
+    auth_safe_to_determine = spec.which_name not in {"claude", "codebuddy"} or auth_present
     status, message = _local_preflight_outcome(spec, available, version, auth_present, auth_safe_to_determine)
     return _cli_local_preflight_report(
         spec=spec,
@@ -3941,6 +3998,7 @@ def _redacted_command_shape(spec: CliBackendSpec) -> list[str]:
             "<prompt-via-stdin>",
         ],
         "claude": ["claude", "-p", "--model", "<model>", "<prompt-via-stdin>"],
+        "codebuddy": ["codebuddy", "-p", "--output-format", "json", "<prompt-via-stdin>"],
         "gemini": ["gemini", "--model", "<model>", "-p", "<redacted-prompt>"],
         "agy": ["agy", "-p", "<redacted-prompt>", "--model", "<model>"],
         "opencode": ["opencode", "run", "--dir", "<workspace>", "--model", "<model>", "<redacted-prompt>"],

@@ -37,6 +37,7 @@ sequenceDiagram
 | `fake` | First-run demos, deterministic smoke, credential-free local tests. | Good default for onboarding and docs examples. |
 | `anthropic` | Claude CLI-backed agent work. | Requires local CLI and credential readiness. |
 | `codex` | Codex CLI-backed agent work. | Requires local CLI and credential readiness. |
+| `codebuddy` | CodeBuddy Code tasks through the isolated project batch. | Uses the local CLI and its saved sign-in. |
 | `pi` | Pi RPC persistent-session agent work. | Optional; supports resume, steering, follow-up, abort, and incremental event replay. |
 | `human` | Human-performed or externally coordinated work. | Useful when GoodTeam should track the slot but not run an agent. |
 | `noop` | Disabled or intentionally inert work. | Should not be mistaken for completed implementation. |
@@ -156,6 +157,32 @@ flowchart TD
 
 Do not discover auth failures by dispatching expensive or mutating work. Preflight
 first.
+
+## CodeBuddy Code
+
+Run `codebuddy` to sign in as the OS user that runs GoodTeam. The Worker
+invokes the local CLI directly. CodeBuddy stores and refreshes its sign-in.
+For explicit service credentials, set `CODEBUDDY_API_KEY` or
+`CODEBUDDY_AUTH_TOKEN`. The service finds `codebuddy` on its PATH or uses
+`GOODTEAM_CODEBUDDY_PATH` when the binary is outside its PATH. Keep the CLI's
+runtime on the service PATH. `goodteam-os doctor` checks CLI availability.
+The CLI validates the saved sign-in when a task runs. See Tencent's
+[headless mode](https://www.codebuddy.cn/docs/cli/headless) and
+[authentication options](https://www.codebuddy.cn/docs/cli/iam).
+
+In **Team**, configure an ordinary Worker and select `codebuddy` as its Agent.
+Leave the model empty for the CLI default or enter a CodeBuddy model ID.
+Confirm queued tasks as usual. The adapter gives CodeBuddy file tools in
+the isolated Git copy. Read-only tasks receive Read, Glob and Grep.
+Writable tasks also receive Edit and Write. Configure project batch checks
+to run shell-based tests.
+Projects carrying `.codebuddy/models.json` need a separate source
+configuration for this backend because the CLI loads that file as a model
+endpoint override.
+
+GoodTeam reads the CLI's final JSON record and saves the answer as the Worker
+result. A JSON execution error blocks the task even when the CLI exits with
+code zero. A successful task enters review with its attributed changes.
 
 ## Pi Persistent Sessions
 

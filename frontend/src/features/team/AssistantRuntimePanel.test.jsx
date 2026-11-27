@@ -12,7 +12,7 @@ import AssistantRuntimePanel from './AssistantRuntimePanel';
 
 const t = (key, params) => translate('en', key, params);
 const data = {
-  team: { roles: [], manager: { reasoning_default: 'high', reasoning_depths: ['low', 'medium', 'high', 'xhigh'], runtime: {
+  team: { roles: [], manager: { providers: ['codex', 'codebuddy'], reasoning_default: 'high', reasoning_depths: ['low', 'medium', 'high', 'xhigh'], runtime: {
     provider: 'codex', model: 'saved-model', reasoning_depth: 'high', additional_prompt: 'Keep APIs stable.',
   } } },
   start_context: { worker_backend_options: ['codex', 'pi'], worker_backend: { mode: 'codex' } },
@@ -47,8 +47,8 @@ test('invalidates a refreshing and failed catalog without changing the draft or 
     .mockResolvedValue({ agents: [{ ...catalog.agents[0], models: ['new-catalog-model'], model_default: 'new-catalog-model' }] });
   const { user, api } = setup({ getSettingsAgents });
   await waitFor(() => expect(modelOptions()).toContain('old-catalog-model'));
-  expect(screen.getByLabelText('Agent')).toBeDisabled();
-  expect([...screen.getByLabelText('Agent').options].map((option) => option.textContent)).toEqual(['Codex app-server']);
+  expect(screen.getByLabelText('Agent')).toBeEnabled();
+  expect([...screen.getByLabelText('Agent').options].map((option) => option.textContent)).toEqual(['Codex app-server', 'CodeBuddy CLI']);
   await user.selectOptions(screen.getByLabelText('Reasoning depth'), 'xhigh');
   await user.clear(screen.getByLabelText('Additional instructions'));
   await user.type(screen.getByLabelText('Additional instructions'), 'Preserve this unsaved instruction.');
@@ -78,6 +78,25 @@ test('invalidates a refreshing and failed catalog without changing the draft or 
     kind: 'change_manager_runtime', provider: 'codex', model: 'saved-model', reasoning_depth: 'xhigh',
     additional_prompt: 'Preserve this unsaved instruction.',
   }], { reason: 'Update Task Assistant runtime' });
+});
+
+test('switches Manager provider on submit and uses a fresh model selection', async () => {
+  const { user, api } = setup();
+  const provider = screen.getByLabelText('Agent');
+  await user.selectOptions(provider, 'codebuddy');
+  expect(screen.getByLabelText('Model')).toHaveValue('');
+  expect(screen.getByLabelText('Additional instructions')).toHaveValue('Keep APIs stable.');
+  expect(api.sendTeamCommands).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Save and check connection' }));
+  expect(api.sendTeamCommands).toHaveBeenLastCalledWith('DEMO', [expect.objectContaining({
+    kind: 'change_manager_runtime', provider: 'codebuddy', model: '', reasoning_depth: 'default',
+  })], { reason: 'Update Task Assistant runtime' });
+  await waitFor(() => expect(provider).toBeEnabled());
+  await user.selectOptions(provider, 'codex');
+  await user.click(screen.getByRole('button', { name: 'Save and check connection' }));
+  expect(api.sendTeamCommands).toHaveBeenLastCalledWith('DEMO', [expect.objectContaining({
+    provider: 'codex', model: '',
+  })], { reason: 'Update Task Assistant runtime' });
 });
 
 test.each([

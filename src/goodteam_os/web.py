@@ -93,7 +93,7 @@ PRD_REVIEW_ROLES = [
     "Review / QA",
 ]
 
-_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "claude", "gemini", "agy", "opencode", "pi", "fake", "noop", "human")
+_PREFERRED_WORKER_BACKEND_ORDER = ("codex", "claude", "codebuddy", "gemini", "agy", "opencode", "pi", "fake", "noop", "human")
 WORKER_BACKEND_OPTIONS = [
     mode
     for mode in _PREFERRED_WORKER_BACKEND_ORDER

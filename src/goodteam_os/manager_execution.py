@@ -71,6 +71,19 @@ def _model_name(configured_model: str) -> str:
     return model.strip()
 
 
+def configured_manager_provider(target):
+    from goodteam_os.team_control_plane import attached_team_state, manager_runtime
+    from goodteam_os.worker_routing import resolve_role_adapter
+
+    state = attached_team_state(target)
+    if state is not None:
+        return manager_runtime(state.get("manager", {}).get("runtime"))["provider"]
+    provider = resolve_role_adapter(target, "orchestrator")
+    if provider == "codebuddy" and dict(target.get("workers") or {}).get("orchestrator") != "codebuddy":
+        return "codex"
+    return manager_runtime({"provider": provider})["provider"]
+
+
 def _configured_manager_model(target: dict[str, object]) -> str:
     from goodteam_os.team_control_plane import attached_team_state
 
@@ -79,9 +92,12 @@ def _configured_manager_model(target: dict[str, object]) -> str:
         manager = dict(state.get("manager", {}) or {})
         runtime = dict(manager.get("runtime", {}) or {})
         model = str(runtime.get("model", "") or "").strip()
-        if model:
+        if model or runtime.get("provider") == "codebuddy":
             provider = str(runtime.get("provider", "") or "").strip()
             return f"{provider}:{model}" if provider else model
+    if configured_manager_provider(target) == "codebuddy":
+        override = str(dict(target.get("role_model_overrides", {})).get("orchestrator", "") or "")
+        return override if override.startswith("codebuddy:") else ""
     configured_path = str(os.getenv("GOODTEAM_MODEL_CONFIG", "") or "").strip()
     model_config = Path(configured_path).expanduser() if configured_path else Path(__file__).resolve().parents[2] / "models.yaml"
     try:

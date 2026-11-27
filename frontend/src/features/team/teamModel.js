@@ -12,6 +12,10 @@
  */
 const ROLE_FALLBACK_LABEL = (role) => String(role || '').replaceAll('_', ' ');
 
+export function managerProviderLabel(provider) {
+  return { codex: 'Codex app-server', codebuddy: 'CodeBuddy CLI' }[provider] || provider;
+}
+
 export function newWorkerRuntime(provider = 'codex') {
   return { provider, model: provider === 'codex' ? 'gpt-5.6-sol' : '', reasoningDepth: 'default' };
 }
@@ -107,7 +111,7 @@ export function buildTeamModel(data) {
     })),
   }));
   const managerRuntime = team.manager?.runtime || {};
-  const managerProvider = ['builtin', 'fake', 'noop', 'human'].includes(managerRuntime.provider)
+  const managerProvider = ['codebuddy', 'builtin', 'fake', 'noop', 'human'].includes(managerRuntime.provider)
     ? managerRuntime.provider : 'codex';
   return {
     schemaVersion: team.schema_version || '',
@@ -117,12 +121,13 @@ export function buildTeamModel(data) {
       role: team.manager?.role || 'orchestrator',
       label: team.manager?.label || 'Task Assistant',
       provider: managerProvider,
+      providers: team.manager?.providers || [],
       model: managerRuntime.model || '',
       reasoningDepth: managerRuntime.reasoning_depth || 'default',
       reasoningDefault: team.manager?.reasoning_default || 'high',
       reasoningDepths: team.manager?.reasoning_depths || [],
       additionalPrompt: managerRuntime.additional_prompt || '',
-      runtimeLabel: runtimeLabel({ ...managerRuntime, provider: managerProvider === 'codex' ? 'Codex app-server' : managerProvider }),
+      runtimeLabel: runtimeLabel({ ...managerRuntime, provider: managerProviderLabel(managerProvider) }),
       skillBinding: {
         schemaVersion: team.manager?.skill_binding?.schema_version || 'role_skill_bindings.v1',
         projectKey: team.manager?.skill_binding?.project_key || team.project_key || '',

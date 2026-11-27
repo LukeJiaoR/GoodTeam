@@ -8,6 +8,7 @@ from copy import deepcopy
 import pytest
 
 from goodteam_os.manager_execution import _manager_settings
+from goodteam_os.projects import load_project_target
 from goodteam_os.team_control_plane import (
     TeamControlPlaneError, TeamControlPlaneStore, build_team_capability_view,
     build_team_state_from_legacy_config, resolve_worker_from_state,
@@ -22,7 +23,9 @@ def test_real_manager_runtime_migrates_without_replacing_worker_backends(tmp_pat
               "worker_type_settings": {"orchestrator": {"reasoning_depth": "high", "additional_prompt": "Keep context.",
                                                         "desired_instances": 7}}}
     store = TeamControlPlaneStore(tmp_path, "DEMO")
-    store.load_or_migrate(legacy_target=target)
+    config = tmp_path / "demo.yaml"
+    config.write_text("key: DEMO\nworker_backend:\n  mode: pi\n")
+    store.load_or_migrate(legacy_target=target, config_path=config)
     state = store.read()
     runtime = state["manager"]["runtime"]
     assert runtime == dict(provider="codex", model="chosen-model", reasoning_depth="high", additional_prompt="Keep context.")
@@ -46,7 +49,7 @@ def test_real_manager_runtime_migrates_without_replacing_worker_backends(tmp_pat
     assert resolve_worker_from_state(historical, "orchestrator")["adapter"] == "codex"
     assert historical["manager"]["runtime"]["provider"] == "pi"
 
-    with pytest.raises(TeamControlPlaneError, match="Codex app-server"):
+    with pytest.raises(TeamControlPlaneError, match="Codex app-server and CodeBuddy ACP"):
         store.execute([{"kind": "change_manager_runtime", "provider": "pi"}], actor="user", surface="team_ui")
     def no_worker_catalog(_provider):
         pytest.fail("Manager must not use Worker catalog discovery")
@@ -57,6 +60,14 @@ def test_real_manager_runtime_migrates_without_replacing_worker_backends(tmp_pat
                             actor="user", surface="team_ui")
     assert changed["changed"] and changed["team"]["manager"]["runtime"]["model"] == "another-model"
     assert changed["team"]["manager"]["runtime"]["reasoning_depth"] == "xhigh"
+    switched = store.execute([{"kind": "change_manager_runtime", "provider": "codebuddy"}],
+                             actor="user", surface="team_ui", config_path=config)
+    assert switched["team"]["manager"]["runtime_kind"] == "acp"
+    assert switched["team"]["manager"]["runtime"]["model"] == ""
+    assert switched["team"]["manager"]["runtime"]["reasoning_depth"] == "default"
+    assert switched["team"]["manager"]["providers"] == ["codex", "codebuddy"]
+    assert load_project_target(config)["worker_backend"]["mode"] == "pi"
+    assert resolve_worker_from_state(store.read(), "implementation")["adapter"] == "claude"
 
 
 

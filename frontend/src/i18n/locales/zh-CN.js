@@ -947,7 +947,7 @@ export const zhCN = {
   "team.dialog.workerDescription": "设置此 Worker 的执行方式，更改用于后续新作业。",
   'team.dialog.managerEyebrow': '任务助手',
   "team.dialog.managerTitle": "任务助手配置",
-  "team.dialog.managerDescription": "Manager 由 Codex app-server 持续承载。在此设置模型、推理深度和补充指令。",
+  "team.dialog.managerDescription": "选择 Codex 或 CodeBuddy 作为 Manager，并设置模型、推理深度和补充指令。",
   'team.dialog.role': '角色',
   'team.dialog.selectRole': '选择角色',
   'team.dialog.name': '名称',

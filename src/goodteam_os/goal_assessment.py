@@ -1,4 +1,7 @@
-"""Read-only Manager assessment of a completed, exactly bound batch.
+"""[INPUT]: 已完成的 批次 证据与原 Goal 的验收条件。
+[OUTPUT]: 绑定 Manager 回执、证据引用与验收判断。
+[POS]: 只读评估 Goal 的原始范围。
+[PROTOCOL]: Update this header on change, then check AGENTS.md
 
 The Manager's assessment is not independent proof of correctness. Accepted
 criteria retain literal citations from the run's evidence for human inspection.
@@ -10,10 +13,14 @@ import hashlib
 import json
 from pathlib import Path
 
+from goodteam_os.manager_completion import recorded_manager_adapter
 from goodteam_os.manager_execution import (
     ManagerExecutionError, run_manager_analysis,
 )
 from goodteam_os.workers import WorkerJobStore
+
+
+_NATIVE_PROVIDER = {"codex-app-server": "codex", "codebuddy-acp": "codebuddy"}
 
 
 ASSESSMENT_PROMPT = (
@@ -100,7 +107,7 @@ def bound_assessment_job(project_root, goal, work, attempt, evidence):
 
 
 def verify_completed_assessment(project_root, goal, work, attempt, job_id, evidence):
-    if job_id.startswith("codex:"):
+    if job_id.startswith(("codex:", "codebuddy:")):
         _verify_native_assessment(project_root, goal, work, attempt, job_id, evidence)
         return
     # Historical completed WorkerJobs stay readable; new assessments never
@@ -124,6 +131,7 @@ def _verify_native_assessment(project_root, goal, work, attempt, execution_id, e
     session = TaskAssistantSessionStore(workspace_for_config(config), goal["project_key"]).read()
     record = session.get("manager_app_server", {}).get("requests", {}).get(identity) or {}
     native = (record.get("result") or {}).get("manager_execution") or {}
+    adapter = recorded_manager_adapter(record)
     expected_context = assessment_packet(goal, work, work_execution_run_id(work), evidence)
     try:
         context = json.loads(record.get("context", "null"))
@@ -132,10 +140,10 @@ def _verify_native_assessment(project_root, goal, work, attempt, execution_id, e
     if (record.get("status") != "completed" or record.get("phase") != "goal_assessment"
             or record.get("run_id") != work_execution_run_id(work)
             or record.get("text") != _assessment_prompt(work) or context != expected_context
-            or native.get("adapter") != "codex-app-server" or native.get("status") != "completed"
+            or adapter not in _NATIVE_PROVIDER or native.get("adapter") != adapter or native.get("status") != "completed"
             or native.get("logical_id") != identity or not record.get("thread_id") or not record.get("turn_id")
             or native.get("thread_id") != record["thread_id"] or native.get("turn_id") != record["turn_id"]
-            or execution_id != f"codex:{record['thread_id']}:{record['turn_id']}"):
+            or execution_id != f"{_NATIVE_PROVIDER[adapter]}:{record['thread_id']}:{record['turn_id']}"):
         raise ValueError("Native assessment completion and evidence cannot be proven; retry is blocked.")
 
 
@@ -222,12 +230,13 @@ def assess_goal(*, workspace, project_config, project_root, goal, work, evidence
     result = run_manager_analysis(project_config=Path(project_config), project_key=goal["project_key"],
         logical_id=identity, run_id=run_id, task=prompt, context=context, phase="goal_assessment")
     native = result.get("manager_execution") or {}
-    if native.get("status") != "completed" or not native.get("thread_id") or not native.get("turn_id"):
+    provider = _NATIVE_PROVIDER.get(native.get("adapter"))
+    if not provider or native.get("status") != "completed" or not native.get("thread_id") or not native.get("turn_id"):
         raise ManagerExecutionError("Goal assessment did not complete; inspect the Manager execution.")
     text = result.get("text")
     if not isinstance(text, str) or len(text.encode("utf-8")) > 64_000:
         raise ManagerExecutionError("Goal assessment response exceeded its bounded contract.")
-    execution_id = f"codex:{native['thread_id']}:{native['turn_id']}"
+    execution_id = f"{provider}:{native['thread_id']}:{native['turn_id']}"
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:

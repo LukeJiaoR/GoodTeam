@@ -112,6 +112,15 @@ A preference scoped to the current
 task (“这次不要做 Research”) is never persisted as a Team mutation; it is
 traceable as a `team_preference_recorded` timeline event.
 
+### Manager runtime
+
+The Team page saves the selected Codex app-server or CodeBuddy CLI provider in
+the project's Manager record. The selected provider runs new Manager requests.
+Role and Worker settings determine worker dispatch. Both Manager providers can
+read project state, submit tasks to the existing confirmation queue and read
+Worker results with their independent review status. See the
+[native Manager runtime guide](manager-app-server.md).
+
 ## Decision/Event ledger
 
 Every execution appends immutable events to `team-events.jsonl`. Events

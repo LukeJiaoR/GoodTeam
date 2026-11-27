@@ -1,4 +1,4 @@
-"""[INPUT]: Manager 请求、项目状态、既有队列与授权服务。
+"""[INPUT]: Manager 请求、项目状态、批次结果、既有队列与授权服务。
 [OUTPUT]: Manager 终止与请审规则、工具描述、委派校验错误与业务回执。
 [POS]: 接入项目工具。Skill 存储不可用时保留只读对话。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
@@ -45,10 +45,11 @@ _STRINGS = {"type": "array", "items": _STRING, "maxItems": 24}
 
 
 class ManagerTools:
-    def __init__(self, runtime, *, logical_id, background, authority_check=None):
+    def __init__(self, runtime, *, logical_id, background, authority_check=None, adapter="codex-app-server"):
         self.runtime, self.store = runtime, runtime.store
         self.logical_id, self.background = logical_id, background
         self.authority_check = authority_check
+        self.adapter = adapter
         self.skills = None
         self.skill_storage_unavailable = False
 
@@ -200,14 +201,17 @@ Do not run business work yourself in the Manager shell; delegate to the appropri
                     row["native_progress"] = workers.native_events(row["job_id"], tail=True, limit=10)
             return {"workers": rows, "available": context.get("available", False)}
         if name == "goodteam_result":
-            from goodteam_os.project_iteration_execution import iteration_batch_report
+            from goodteam_os.project_iteration_execution import batch_worker_results, iteration_batch_report
             from goodteam_os.project_iteration_quality import project_batch_quality_evidence
             run_id = arguments["run_id"]
             batch = session.get("project_task_batches", {}).get(run_id)
             if not batch or batch.get("project_root") != str(self.runtime.root):
                 raise ValueError("Result does not belong to a recorded batch in this project.")
-            return {"report": iteration_batch_report(workspace=self.runtime.workspace, project_key=self.runtime.key,
-                        root=self.runtime.root, run_id=run_id),
+            report = iteration_batch_report(workspace=self.runtime.workspace, project_key=self.runtime.key,
+                                            root=self.runtime.root, run_id=run_id)
+            results = [{**item, "summary": item["summary"][:16000], "truncated": len(item["summary"]) > 16000}
+                       for item in batch_worker_results(self.runtime.root, report)]
+            return {"report": report, "worker_results": results,
                     "review": project_batch_quality_evidence(workspace=self.runtime.workspace, project_key=self.runtime.key,
                         root=self.runtime.root, run_id=run_id), "accepted": batch.get("status") == "delivered"}
         if name == "goodteam_skill_resource":
@@ -251,7 +255,7 @@ Do not run business work yourself in the Manager shell; delegate to the appropri
                 result_session = service._handle_team_management(self.store, project_key=self.runtime.key,
                     message_id="native-tool:" + key, text=arguments["reason"],
                     commands=_parse_team_commands(arguments["commands"]), authorization="manager_proposed",
-                    manager_response="", manager_execution={"adapter": "codex-app-server", "logical_id": self.logical_id},
+                    manager_response="", manager_execution={"adapter": self.adapter, "logical_id": self.logical_id},
                     expected_team_revision=team.get("revision", -1))
             result = {"proposal": result_session.get("pending_team_decision"), "applied": False}
         else:

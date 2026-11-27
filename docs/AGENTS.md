@@ -61,7 +61,7 @@ iteration-context-inputs.md: Iteration planning and bounded context。
 live-smoke-playbook.md: Live Smoke Playbook。
 m0-product-acceptance.md: M0 product acceptance: implementation is not delivery。
 mainline-progress.md: Mainline Progress。
-manager-app-server.md: Manager on Codex app-server。
+manager-app-server.md: Codex 和 CodeBuddy 的 Manager 配置、会话与工具。
 manager-autonomous-follow-up.md: Bounded Manager progress questions (#700)。
 manager-comparison-context.md: Comparing unresolved work without authorizing it。
 manager-completion-reuse.md: Reuse original Manager completions across the Loop。

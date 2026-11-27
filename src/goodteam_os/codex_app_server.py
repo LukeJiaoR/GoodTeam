@@ -22,6 +22,7 @@ from pathlib import Path
 import queue
 import re
 import select
+import signal
 import subprocess
 import threading
 import time
@@ -74,6 +75,10 @@ class CodexAppServer:
     ``wait_turn`` returns only after the completion event callback has run.
     """
 
+    _label = "Codex app-server"
+    _jsonrpc_version = None
+    _process_group = False
+
     def __init__(
         self,
         command: Sequence[str] = ("codex", "app-server"),
@@ -121,9 +126,10 @@ class CodexAppServer:
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE if self.stderr_path else subprocess.DEVNULL,
                     bufsize=0,
+                    start_new_session=self._process_group,
                 )
             except OSError as exc:
-                raise CodexAppServerError(f"Cannot start Codex app-server: {self._redact(str(exc))}") from exc
+                raise CodexAppServerError(f"Cannot start {self._label}: {self._redact(str(exc))}") from exc
             conn = self._connection = _Connection(process)
             for target, name in ((self._read_stdout, "reader"), (self._dispatch_events, "events")):
                 thread = threading.Thread(target=target, args=(conn,), name=f"goodteam-codex-{name}", daemon=True)
@@ -134,21 +140,25 @@ class CodexAppServer:
                 conn.threads.append(thread)
                 thread.start()
             try:
-                self.request("initialize", {
-                    "clientInfo": {"name": "goodteam_manager", "title": "GoodTeam Manager", "version": "0.1.0"},
-                    "capabilities": {"experimentalApi": True},
-                }, timeout=timeout)
-                self._write(conn, {"method": "initialized", "params": {}}, timeout=timeout)
+                self._initialize(timeout)
                 conn.initialized = True
             except BaseException:
                 self.close()
                 raise
 
-    def request(self, method: str, params: dict | None = None, *, timeout: float = 30.0) -> dict[str, Any]:
+    def _initialize(self, timeout: float) -> None:
+        self.request("initialize", {
+            "clientInfo": {"name": "goodteam_manager", "title": "GoodTeam Manager", "version": "0.1.0"},
+            "capabilities": {"experimentalApi": True},
+        }, timeout=timeout)
+        self._write(self._connection, {"method": "initialized", "params": {}}, timeout=timeout)
+
+    def request(self, method: str, params: dict | None = None, *, timeout: float = 30.0,
+                request_id: str | None = None, sent: threading.Event | None = None) -> dict[str, Any]:
         conn = self._connection
         if conn is None or conn.closed.is_set():
             raise CodexAppServerExited("Codex app-server is not running")
-        request_id = f"gt-{uuid4()}"
+        request_id = request_id or f"gt-{uuid4()}"
         holder: dict[str, Any] = {}
         deadline = time.monotonic() + timeout
         with conn.condition:
@@ -157,6 +167,8 @@ class CodexAppServer:
             conn.pending[request_id] = holder
         try:
             self._write(conn, {"id": request_id, "method": method, "params": params or {}}, timeout=timeout)
+            if sent is not None:
+                sent.set()
             with conn.condition:
                 while not holder and conn.error is None:
                     remaining = deadline - time.monotonic()
@@ -195,8 +207,8 @@ class CodexAppServer:
     def steer_turn(self, thread_id: str, turn_id: str, input: list[dict]) -> dict:
         return self.request("turn/steer", {"threadId": thread_id, "expectedTurnId": turn_id, "input": input})
 
-    def interrupt_turn(self, thread_id: str, turn_id: str) -> dict:
-        return self.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+    def interrupt_turn(self, thread_id: str, turn_id: str, *, timeout: float = 30.0) -> dict:
+        return self.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id}, timeout=timeout)
 
     def wait_turn(self, thread_id: str, turn_id: str, timeout: float | None = None) -> dict:
         conn = self._connection
@@ -227,13 +239,13 @@ class CodexAppServer:
                 conn.condition.notify_all()
             conn.events.put(error)
             process = conn.process
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=grace)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=grace)
+            if self._process_group or process.poll() is None:
+                self._signal_process(process, signal.SIGTERM)
+            try:
+                process.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                self._signal_process(process, signal.SIGKILL)
+                process.wait(timeout=grace)
             for thread in conn.threads:
                 if thread is not threading.current_thread():
                     thread.join(timeout=grace)
@@ -241,7 +253,21 @@ class CodexAppServer:
                 if stream is not None:
                     stream.close()
 
+    def _signal_process(self, process, value):
+        try:
+            if self._process_group:
+                os.killpg(process.pid, value)
+            else:
+                process.send_signal(value)
+        except ProcessLookupError:
+            pass
+
+    def _notification(self, record: dict) -> dict | None:
+        return record
+
     def _write(self, conn: _Connection, record: dict, *, timeout: float = 30.0) -> None:
+        if self._jsonrpc_version:
+            record = {"jsonrpc": self._jsonrpc_version, **record}
         encoded = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
         deadline = time.monotonic() + timeout
         offset = 0
@@ -304,7 +330,9 @@ class CodexAppServer:
                         threading.Thread(target=self._serve_request, args=(conn, record), daemon=True,
                                          name="goodteam-codex-tool").start()
                     else:
-                        conn.events.put(record)
+                        translated = self._notification(record)
+                        if translated is not None:
+                            conn.events.put(translated)
                 elif "id" in record:
                     with conn.condition:
                         holder = conn.pending.get(record["id"])

@@ -1,4 +1,4 @@
-"""[INPUT]: 原生 Codex 运行时、项目状态、角色记忆与 Manager 工具。
+"""[INPUT]: 原生 Codex 或 CodeBuddy 运行时、项目状态、记忆与 Manager 工具。
 [OUTPUT]: 可恢复的 Manager 对话、后台判断与原生执行记录。
 [POS]: 先验证运行时边界，再管理原生会话。业务状态由既有服务拥有。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -24,6 +25,9 @@ from typing import Any
 
 from goodteam_os.codex_app_server import CodexAppServer, CodexAppServerRejected
 from goodteam_os.task_assistant_session import TaskAssistantSessionStore
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _now():
@@ -58,6 +62,7 @@ class _Turn:
     phase: str
     tools: Any
     client: Any = None
+    adapter: str = "codex-app-server"
     turn_id: str = ""
     messages: dict = field(default_factory=dict)
     done: threading.Event = field(default_factory=threading.Event)
@@ -121,18 +126,25 @@ class ManagerAppServer:
 
     def _runtime_config(self):
         from goodteam_os.database import provider_environment
-        from goodteam_os.manager_execution import _configured_manager_model, _manager_settings, _model_name
+        from goodteam_os.manager_execution import configured_manager_provider, _configured_manager_model, _manager_settings, _model_name
         from goodteam_os.projects import load_project_target
 
         target = load_project_target(self.config)
         settings = _manager_settings(target)
-        binary = os.environ.get("GOODTEAM_CODEX_PATH") or shutil.which("codex")
-        if not binary:
-            raise _error("Codex app-server is unavailable. Install Codex or set GOODTEAM_CODEX_PATH.")
         public = {"model": _model_name(_configured_manager_model(target)),
                   "reasoning_depth": settings.get("reasoning_depth", "high"),
                   "additional_prompt": settings.get("additional_prompt", ""),
                   "provider_authority": "native_managed"}
+        if configured_manager_provider(target) == "codebuddy":
+            binary = os.environ.get("GOODTEAM_CODEBUDDY_PATH") or shutil.which("codebuddy")
+            if not binary:
+                raise _error("CodeBuddy CLI is unavailable. Install it or set GOODTEAM_CODEBUDDY_PATH.")
+            public["adapter"] = "codebuddy-acp"
+            fingerprint = sha256(json.dumps([binary, public], sort_keys=True).encode()).hexdigest()
+            return [binary, "--acp"], {}, public, fingerprint
+        binary = os.environ.get("GOODTEAM_CODEX_PATH") or shutil.which("codex")
+        if not binary:
+            raise _error("Codex app-server is unavailable. Install Codex or set GOODTEAM_CODEX_PATH.")
         fingerprint = sha256(json.dumps(public, sort_keys=True).encode()).hexdigest()
         return [binary, "app-server"], provider_environment(), public, fingerprint
 
@@ -148,6 +160,30 @@ class ManagerAppServer:
                                     on_event=self._event, on_request=self._request)
         self.client.start()
         self.fingerprint = fingerprint
+
+    def _select_runtime(self, command, env, fingerprint, adapter):
+        if adapter == "codex-app-server":
+            self._connect(command, env, fingerprint)
+            return
+        if self.fingerprint != fingerprint and any(not turn.done.is_set() for turn in self.active.values()):
+            raise _error("Manager runtime changed while an existing turn is active.", "manager_runtime_changed")
+        if self.client is not None:
+            self.client.close()
+            self.client = None
+        self.fingerprint = fingerprint
+
+    def _open_codebuddy(self, binary, public, instructions, tools, resume, timeout):
+        from goodteam_os.codebuddy_manager import CodeBuddyManager
+
+        client = CodeBuddyManager(binary, state=self.store.path.parent / "codebuddy-manager",
+            instructions=instructions, model=public["model"], effort=public["reasoning_depth"],
+            timeout=timeout, specs=tools.specs(), on_event=self._event, on_request=self._request)
+        try:
+            client.start()
+            return client, client.open_session(resume)
+        except BaseException:
+            client.close()
+            raise
 
     def _record(self, logical_id, **values):
         def mutate(session):
@@ -202,6 +238,8 @@ class ManagerAppServer:
     @staticmethod
     def _text(turn):
         values = list(turn.messages.values())
+        if turn.adapter == "codebuddy-acp":
+            return values[-1]["text"].strip() if values else ""
         finals = [item["text"] for item in values if item.get("phase") == "final_answer" and item.get("text")]
         return "\n\n".join(finals or [item.get("text", "") for item in values]).strip()
 
@@ -275,11 +313,11 @@ class ManagerAppServer:
 
     def _finish(self, turn, *, result=None, error=None):
         """Publish one terminal receipt before releasing the in-process waiters."""
-        with self.lock:
-            if turn.stopped:
-                result, error = None, error or _error("Manager work was stopped.", "manager_stopped")
-            turn.result, turn.error = result, error
-            try:
+        try:
+            with self.lock:
+                if turn.stopped:
+                    result, error = None, error or _error("Manager work was stopped.", "manager_stopped")
+                turn.result, turn.error = result, error
                 for identifier in turn.logical_ids:
                     if result is not None and not turn.stopped:
                         self._record(identifier, status="completed", result=self._result_for(turn, identifier),
@@ -290,9 +328,17 @@ class ManagerAppServer:
                             native_status = "rejected"
                         self._record(identifier, status="stopped" if turn.stopped else "interrupted",
                                      native_status=native_status)
-            except Exception as exc:
-                turn.error = exc
-            finally:
+        except Exception as exc:
+            turn.error = exc
+        finally:
+            if turn.adapter == "codebuddy-acp":
+                try:
+                    turn.client.close()
+                except Exception:
+                    LOGGER.warning("CodeBuddy ACP shutdown failed after the Manager turn ended.")
+            with self.lock:
+                if turn.stopped and turn.error is None:
+                    turn.error = _error("Manager work was stopped.", "manager_stopped")
                 if self.active.get(turn.thread_key) is turn:
                     self.active.pop(turn.thread_key, None)
                 for identifier in turn.logical_ids:
@@ -310,9 +356,12 @@ class ManagerAppServer:
         try:
             if not turn.turn_id:
                 raise _error("Native turn acknowledgement was lost.", "manager_interrupted")
-            client.request("turn/interrupt", {"threadId": turn.thread_id, "turnId": turn.turn_id}, timeout=2)
-            client.wait_turn(turn.thread_id, turn.turn_id, timeout=2)
-            return "interrupted"
+            if turn.adapter == "codebuddy-acp":
+                client.interrupt_turn(turn.thread_id, turn.turn_id, timeout=2)
+            else:
+                client.request("turn/interrupt", {"threadId": turn.thread_id, "turnId": turn.turn_id}, timeout=2)
+            terminal = client.wait_turn(turn.thread_id, turn.turn_id, timeout=2)
+            return terminal.get("status", "interrupted")
         except CodexAppServerRejected:
             if turn.native_done.wait(0.2):
                 return turn.native_status
@@ -447,17 +496,18 @@ class ManagerAppServer:
                             turn = self.by_request[logical_id]
                     if may_start:
                         command, env, public, fingerprint = self._runtime_config()
-                        if (background and self.client is not None and self.fingerprint != fingerprint
+                        if (background and self.fingerprint != fingerprint
                                 and any(not item.done.is_set() for item in self.active.values())):
                             from goodteam_os.manager_execution import ManagerResourceBusy
 
                             raise ManagerResourceBusy("The current Manager turn is still finishing.",
                                                       code="manager_resource_busy")
-                        self._connect(command, env, fingerprint)
+                        adapter = public.get("adapter", "codex-app-server")
+                        self._select_runtime(command, env, fingerprint, adapter)
                         thread_key = "background:" + logical_id if background else "conversation"
                         turn = self.active.get(thread_key)
                         if turn is not None and not turn.done.is_set():
-                            if (turn.native_done.is_set() or memory_revision is None
+                            if (adapter == "codebuddy-acp" or turn.native_done.is_set() or memory_revision is None
                                     or turn.memory_revision != memory_revision):
                                 wait_for = turn
                             else:
@@ -486,36 +536,43 @@ class ManagerAppServer:
                                 if wait_for is None:
                                     self._record(logical_id, status="running")
                         else:
-                            tools = ManagerTools(self, logical_id=logical_id, background=background,
+                            tools = ManagerTools(self, logical_id=logical_id, background=background, adapter=adapter,
                                                  authority_check=authority_check)
                             instructions = tools.instructions(text=text, context=context)
                             thread_fingerprint = fingerprint + ":chat-only" if tools.skill_storage_unavailable else fingerprint
+                            saved_key = "codebuddy:" + thread_key if adapter == "codebuddy-acp" else thread_key
                             saved = (self.store.read().get("manager_app_server", {}).get("threads", {})
-                                     .get(thread_key) or {})
-                            params = {"cwd": str(self.root), "sandbox": "read-only", "approvalPolicy": "never",
-                                      "developerInstructions": instructions}
-                            if public["model"]:
-                                params["model"] = public["model"]
+                                     .get(saved_key) or {})
+                            resume = ""
                             saved_fingerprint = saved.get("fingerprint", "")
                             same_thread_mode = saved_fingerprint.endswith(":chat-only") == tools.skill_storage_unavailable
-                            if (saved and (saved_fingerprint == thread_fingerprint or background and same_thread_mode)
-                                    and memory_revision is not None
+                            same_runtime = (saved_fingerprint == thread_fingerprint
+                                            or adapter == "codex-app-server" and background and same_thread_mode)
+                            if (saved and same_runtime and memory_revision is not None
                                     and saved.get("memory_revision") == memory_revision):
-                                native = self.client.resume_thread(saved["thread_id"], **params)
+                                resume = saved["thread_id"]
+                            if adapter == "codebuddy-acp":
+                                client, thread_id = self._open_codebuddy(command[0], public, instructions, tools, resume, timeout)
                             else:
-                                native = self.client.start_thread(**params, dynamicTools=tools.specs())
-                            thread_id = native["thread"]["id"]
-                            def bind(session):
-                                state = session.setdefault("manager_app_server", {})
-                                state.setdefault("threads", {})[thread_key] = {"thread_id": thread_id,
-                                                  "fingerprint": thread_fingerprint, "memory_revision": memory_revision}
-                                return session
-                            self.store._mutate(bind)
-                            turn = _Turn(thread_key, thread_id, [logical_id], phase, tools, client=self.client,
-                                         memory_revision=memory_revision)
+                                client = self.client
+                                params = {"cwd": str(self.root), "sandbox": "read-only", "approvalPolicy": "never",
+                                          "developerInstructions": instructions}
+                                if public["model"]:
+                                    params["model"] = public["model"]
+                                native = client.resume_thread(resume, **params) if resume else client.start_thread(
+                                    **params, dynamicTools=tools.specs())
+                                thread_id = native["thread"]["id"]
+                            turn = _Turn(thread_key, thread_id, [logical_id], phase, tools, client=client,
+                                         adapter=adapter, memory_revision=memory_revision)
                             self.active[thread_key] = turn
                             self.by_request[logical_id] = turn
                             owner = attached = True
+                            def bind(session):
+                                state = session.setdefault("manager_app_server", {})
+                                state.setdefault("threads", {})[saved_key] = {"thread_id": thread_id,
+                                                  "fingerprint": thread_fingerprint, "memory_revision": memory_revision}
+                                return session
+                            self.store._mutate(bind)
                             self._record(logical_id, input_digest=input_digest, text=text, context=context,
                                 phase=phase, run_id=run_id, thread_id=thread_id, turn_id="", status="starting",
                                 owner_pid=os.getpid(), attempt_id=attempt_id,
@@ -563,10 +620,11 @@ class ManagerAppServer:
                     if native_turn.get("status") != "completed":
                         raise _native_turn_failure(native_turn)
                     result = {"text": self._text(turn), "manager_execution": {
-                        "adapter": "codex-app-server", "role": "orchestrator", "thread_id": turn.thread_id,
+                        "adapter": turn.adapter, "role": "orchestrator", "thread_id": turn.thread_id,
                         "turn_id": turn.turn_id, "logical_id": logical_id, "status": "completed",
                         "model": public["model"], "reasoning_depth": public["reasoning_depth"],
-                        "execution_policy": "read_only", "runtime_sandbox_mode": "read-only",
+                        "execution_policy": "read_only",
+                        "runtime_sandbox_mode": "mcp-only" if turn.adapter == "codebuddy-acp" else "read-only",
                         "runtime_approval_policy": "never", "runtime_unsafe_mode": False,
                         "runtime_policy_warning": False,
                     }}
@@ -583,16 +641,41 @@ class ManagerAppServer:
         return self._result_for(turn, logical_id)
 
     def reconcile(self, logical_id):
+        from goodteam_os.manager_completion import recorded_manager_adapter
+        from goodteam_os.manager_execution import configured_manager_provider
+        from goodteam_os.projects import load_project_target
+
         record = self.store.read().get("manager_app_server", {}).get("requests", {}).get(logical_id, {})
         if not record or record.get("status") in {"completed", "stopped"}:
             return record
         if logical_id in self.by_request:
             return {**record, "status": "running"}
+        if recorded_manager_adapter(record) != "codex-app-server":
+            # ACP 只有会话历史。丢失的 prompt 回执不能从历史推断或重放。
+            return {**record, "status": "interrupted"}
         if not record.get("thread_id") or not record.get("turn_id"):
             return {**record, "status": "interrupted"}
+        if configured_manager_provider(load_project_target(self.config)) == "codebuddy":
+            # 历史 Codex 请求始终向 Codex 查询，不能交给当前选中的 ACP。
+            if self.client is None or not self.client.alive:
+                from goodteam_os.database import provider_environment
+
+                binary = os.environ.get("GOODTEAM_CODEX_PATH") or shutil.which("codex")
+                if not binary:
+                    return {**record, "status": "interrupted"}
+                client = CodexAppServer([binary, "app-server"], cwd=self.root, env=provider_environment())
+                try:
+                    client.start()
+                    return self._reconcile_codex(client, record, logical_id)
+                finally:
+                    client.close()
+            return self._reconcile_codex(self.client, record, logical_id)
         command, env, _public, fingerprint = self._runtime_config()
         self._connect(command, env, fingerprint)
-        native = self.client.read_thread(record["thread_id"], includeTurns=True)["thread"]
+        return self._reconcile_codex(self.client, record, logical_id)
+
+    def _reconcile_codex(self, client, record, logical_id):
+        native = client.read_thread(record["thread_id"], includeTurns=True)["thread"]
         found = next((item for item in native.get("turns", []) if item.get("id") == record["turn_id"]), None)
         if found is None and not native.get("turns"):
             # Modern app-server threads have paginated history. Read the actual
@@ -602,7 +685,7 @@ class ManagerAppServer:
                 params = {"threadId": record["thread_id"], "itemsView": "full", "limit": 100}
                 if cursor:
                     params["cursor"] = cursor
-                page = self.client.request("thread/turns/list", params)
+                page = client.request("thread/turns/list", params)
                 found = next((item for item in page.get("data", []) if item.get("id") == record["turn_id"]), None)
                 cursor = page.get("nextCursor")
                 if found is not None or not cursor:
@@ -672,8 +755,12 @@ class ManagerAppServer:
 
     def close(self):
         with self.lock:
-            for turn in self.active.values():
+            turns = list(self.active.values())
+            for turn in turns:
                 turn.error = _error("Manager connection closed.", "manager_interrupted")
+        for turn in turns:
+            if turn.adapter == "codebuddy-acp":
+                turn.client.close()
         if self.client is not None:
             self.client.close()
 

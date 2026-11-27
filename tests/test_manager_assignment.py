@@ -1,8 +1,9 @@
-"""
-[INPUT]: 依赖离线 Manager 和 Worker 协议夹具及本地 Git。
-[OUTPUT]: 验证 Manager 的角色派工、确认队列与结果回流。
-[POS]: 通过隔离派工验证两个运行器之间的任务传递。
+"""[INPUT]: 模拟原生 CLI 和临时 Git 项目。
+[OUTPUT]: 验证原生工具到任务队列和 Worker 结果的链路。
+[POS]: 保留 Codex app-server 与 CodeBuddy ACP 的集成验证。
 [PROTOCOL]: Update this header on change, then check AGENTS.md
+
+Both providers are offline protocol fixtures, proving routing, not model quality.
 """
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -78,6 +79,7 @@ for line in sys.stdin:
                 tool("goodteam_result", {"run_id": batch_run_id})
         elif pending == "goodteam_result":
             assert value["report"]["jobs"][0]["job_id"] == job_id
+            assert "Observed greeting in README" in value["worker_results"][0]["summary"]
             assert value["review"]["review_status"] == "missing" and not value["accepted"]
             reply("已检查真实成果：README 有问候语，受众仍待确认；下一步需要独立审查，尚未验收。")
         else:
@@ -113,6 +115,90 @@ for line in sys.stdin:
 '''
 
 
+ACP_PROTOCOL = r'''
+import json
+import subprocess
+import sys
+
+assert "--acp" in sys.argv and sys.argv[sys.argv.index("--tools") + 1] == ""
+
+def send(value):
+    print(json.dumps({"jsonrpc": "2.0", **value}), flush=True)
+
+def mcp(peer, method, params=None):
+    peer.stdin.write(json.dumps({"jsonrpc": "2.0", "id": method,
+                                 "method": method, "params": params or {}}) + "\n")
+    peer.stdin.flush()
+    return json.loads(peer.stdout.readline())["result"]
+
+for line in sys.stdin:
+    request = json.loads(line)
+    method, params = request["method"], request["params"]
+    if method == "initialize":
+        assert params["clientCapabilities"] == {}
+        result = {"protocolVersion": 1, "agentCapabilities": {"loadSession": True}}
+    elif method == "session/new":
+        server, = params["mcpServers"]
+        assert server["name"] == "goodteam"
+        result = {"sessionId": "assignment-acp"}
+    elif method == "session/prompt":
+        with subprocess.Popen([server["command"], *server["args"]], stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, text=True) as peer:
+            assert mcp(peer, "initialize")["serverInfo"]["name"] == "goodteam"
+            assert "goodteam_delegate" in {tool["name"] for tool in mcp(peer, "tools/list")["tools"]}
+            tool = mcp(peer, "tools/call", {"name": "goodteam_delegate", "arguments": {
+                "operation_id": "read-readme", "source_message_ids": ["acp-assignment"],
+                "role": "research", "execution_policy": "read_only", "write_domains": [],
+                "acceptance_criteria": ["Quote the README greeting."],
+                "delegation": {"purpose": "Identify the project greeting.",
+                               "context": "The project documents itself in README.md.",
+                               "scope": "Read the README."}}})
+            assert tool["isError"] is False, tool
+            receipt = json.loads(tool["content"][0]["text"])
+            assert receipt["confirmed"] is False
+            peer.stdin.close()
+        send({"method": "session/update", "params": {"sessionId": "assignment-acp",
+              "update": {"sessionUpdate": "agent_message_chunk",
+                         "content": {"type": "text", "text": receipt["task_id"]}}}})
+        result = {"stopReason": "end_turn"}
+    else:
+        raise AssertionError(method)
+    send({"id": request["id"], "result": result})
+'''
+
+
+def test_codebuddy_acp_uses_the_existing_manager_assignment_queue(tmp_path, monkeypatch):
+    from goodteam_os.manager_app_server import close_runtimes
+
+    source = repository(tmp_path / "source")
+    config = tmp_path / "projects/demo.local.yaml"
+    config.parent.mkdir()
+    config.write_text(f"key: DEMO\nsource_type: existing_project\nrepos:\n  root: {source}\nworker_backend:\n  mode: fake\n")
+    ProjectRegistry().register_project(config, root=source, key="DEMO")
+    execute_team_commands(tmp_path, "DEMO", [{"kind": "change_manager_runtime", "provider": "codebuddy"}],
+                          actor="user", surface="team_ui", config_path=config)
+    binary = tmp_path / "codebuddy"
+    binary.write_text(f"#!{sys.executable}\n" + ACP_PROTOCOL)
+    binary.chmod(0o755)
+    monkeypatch.setenv("GOODTEAM_CODEBUDDY_PATH", str(binary))
+    monkeypatch.setenv("GOODTEAM_MANAGER_TURN_TIMEOUT_SECONDS", "10")
+    service = TaskAssistantService(tmp_path, project_config=config)
+    monkeypatch.setattr(service, "_readiness_state", lambda *_: {"project_mode": "existing_project", "lifecycle": "ready"})
+    request = dict(project_key="DEMO", root=source, text="请委派 Research 读取 README。", message_id="acp-assignment")
+    try:
+        session = service.send_message(**request)["session"]
+        receipt = session["manager_app_server"]["requests"]["acp-assignment"]["result"]
+        task, = LocalTaskStore(source, "DEMO").list_tasks()
+        queued, = session["queued_task_proposals"]
+        assert queued["project_task_id"] == receipt["text"] == task["id"]
+        assert task["description"] == request["text"] and not queued["confirmed"]
+        assert receipt["manager_execution"]["adapter"] == "codebuddy-acp"
+        assert not WorkerJobStore(source).list_jobs()
+        assert service.send_message(**request)["session"]["queued_task_proposals"] == [queued]
+    finally:
+        close_runtimes()
+
+
 @pytest.fixture
 def manager_protocol(tmp_path, monkeypatch):
     from goodteam_os.manager_app_server import ManagerAppServer, close_runtimes
@@ -137,6 +223,8 @@ def assignment_git(monkeypatch):
     This protocol test retains exact executable identity and real isolated Git
     operations, including on containers whose system UID ownership is remapped.
     """
+    if sys.platform == "darwin":
+        return  # 使用生产路径解析已安装的 Command Line Tools Git。
     from goodteam_os import dispatch_workspace, repository_snapshot
     from goodteam_os._trusted_system_executable import (
         SYSTEM_EXECUTION_PATH,

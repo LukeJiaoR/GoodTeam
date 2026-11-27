@@ -45,7 +45,7 @@ test_init.py: 验证 init 的行为。
 test_legacy_launch_routes.py: 验证已退役的写入口返回 404，历史操作记录仍可读取。
 test_iteration_context_inputs.py: Representative continuity, complete-prompt budget and planner replay contracts.
 test_manager_app_server_lifecycle.py: 验证 Manager 原生请求、并发控制、角色记忆与只读对话回退。
-test_manager_assignment.py: Native Manager tools traverse the real queue and isolated subprocess pool.
+test_manager_assignment.py: 验证 Codex 与 CodeBuddy 的 Manager 工具使用原确认队列。
 test_manager_completion.py: Completed native replies retain their exact thread/turn identity across restart.
 test_manager_completion_planning.py: Native planning replay keeps the original billable turn and input binding.
 test_manager_contention.py: Native Manager work overlaps while original authority and budgets remain bound.
@@ -87,7 +87,7 @@ test_project_discovery_planner.py: Planner uses existing discovery/ledger contra
 test_project_investigation_feedback.py: One report-to-decision contract with deterministic storage/dispatch seams.
 test_project_iteration.py: First-vertical-slice checks for project-level next-iteration facts.
 test_project_iteration_continuation.py: 验证按项目路径纳入待办、Git 落地和交付后的派工。
-test_project_iteration_execution.py: One real subprocess batch proves queue -> isolated pool -> original cards.
+test_project_iteration_execution.py: 验证隔离派工、CodeBuddy 结果和原任务卡。
 test_project_iteration_planner.py: 验证建议重放、执行范围与比较信息入队回归。
 test_project_iteration_quality.py: 验证 Manager 按证据交付、QA 修正链和专项质量凭据。
 test_project_iteration_recovery.py: 验证 Manager 与用户重试已结束的失败任务，保留同批成功结果。
