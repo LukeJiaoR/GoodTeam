@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 读取项目快照的新鲜度与待处理事项投影。
+ * [OUTPUT]: 提供待处理事项计数、刷新控件与精确工作台链接。
+ * [POS]: 在项目目录旁展示跨项目的待处理事项。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { ArrowRight, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Button from '../../components/ui/Button';
@@ -11,11 +17,11 @@ export default function ProjectAttentionOverview({ projects, status, onRefresh, 
   const loading = ['loading', 'refreshing'].includes(status);
   return <section className="project-attention" aria-labelledby="project-attention-title" aria-busy={loading}>
     <header className="project-attention__heading">
-      <div><h2 id="project-attention-title">{t('projects.attention.title')}</h2>
-        <p>{t('projects.attention.scope')}</p></div>
+      <h2 id="project-attention-title">{t('projects.attention.title')}</h2>
       <Button variant="secondary" busy={loading} onClick={onRefresh}>
         <RefreshCw size={15} aria-hidden="true" />{t('projects.attention.refresh')}
       </Button>
+      <p>{t('projects.attention.scope')}</p>
     </header>
     <div className="project-attention__body">
       {!current ? <p role="status">{t(`projects.attention.${status}`)}</p> : null}
@@ -30,7 +36,7 @@ export default function ProjectAttentionOverview({ projects, status, onRefresh, 
           <div><dt>{t(unavailable.length ? 'projects.attention.knownTotal' : 'projects.attention.total')}</dt><dd>{counts.total}</dd></div>
         </dl>
         {!items.length && !unavailable.length ? <p role="status">{t('projects.attention.empty')}</p> : null}
-        {items.length ? <ol className="project-attention__items">
+        {items.length ? <ol className="project-attention__items" role="list">
           {items.map(item => <li key={JSON.stringify([item.project.project_key, item.id])}>
             <Link className="project-attention__link" to={attentionHref(item.project.project_key, item)}>
               <StatusBadge tone={item.kind === 'blocked' ? 'danger' : 'active'}>{t(`projects.attention.kind.${item.kind}`)}</StatusBadge>

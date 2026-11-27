@@ -28,6 +28,18 @@ acceptance evidence. The functional basis remains
 - Superseded shared neumorphic styles and duplicate global Work chrome are
   removed rather than left as competing imported layers.
 
+## Current browser layout
+
+`studio.css` supplies the light and dark theme tokens. The project directory
+uses a container query to place attention beside the project list when both
+columns fit. On narrower screens the attention panel follows the list.
+
+`ProductLayout` places the navigation toggle in the desktop sidebar or the
+mobile header. The mobile sidebar expands above the page content. Escape
+closes it and returns focus to the toggle. The sidebar lists project pages
+before the task history. `workbench.css` shares the header size with the Work
+viewport so the conversation and composer fit below it.
+
 ## Return to the same work
 
 The project navigation remembers visited Work, Review, Knowledge and Team URLs
@@ -50,7 +62,7 @@ checks. Remembered links may reference subsequently removed resources; those
 pages continue to show their existing unavailable/error states. This does not
 capture unsaved form edits or guarantee that an old source remains available.
 
-## Scope and verification
+## Initial implementation verification
 
 Two source-baseline router regressions reproduced historical task and review
 selection loss; the fixed navigation preserves both. Focused tests cover exact
@@ -59,11 +71,7 @@ storage, bounded retention and the existing dirty-review blocker. Relevant
 page behavior suites, full frontend lint and production build are recorded in
 the implementation PR after validation.
 
-This is source/DOM/build evidence. Actual browser layout, screenshots, multi-size
-and visual acceptance remain unperformed because the supported browser routes
-are restricted in this environment. Do not infer a visual pass from CSS or
-jsdom. No new dependency, CI workflow, backend contract, runtime admission or
-deployment is part of this slice. #409 and #420 stay parked; #411/#418/#419 keep
-their real-task/browser acceptance requirements. Current-attempt context and
-result integration, full recovery journeys and observed usability remain
-separate unfinished work.
+The initial implementation used source, DOM and build checks in a restricted
+browser environment. #409 and #420 stay parked. #411/#418/#419 keep their
+real-task and browser acceptance requirements. Current-attempt context, result
+integration, full recovery journeys and observed usability remain separate work.
