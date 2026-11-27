@@ -80,16 +80,33 @@ test('invalidates a refreshing and failed catalog without changing the draft or 
   }], { reason: 'Update Task Assistant runtime' });
 });
 
-test('switches Manager provider on submit and uses a fresh model selection', async () => {
-  const { user, api } = setup();
+test('loads only the selected Manager catalog and takes CodeBuddy effort from the selected model', async () => {
+  const codebuddy = { agents: [{
+    backend: 'codebuddy', models: ['hy', 'deep'], model_default: 'hy', models_source: 'live', model_capabilities: {
+      hy: { reasoning_depths: ['high'], reasoning_default: 'enabled' },
+      deep: { reasoning_depths: ['low', 'high', 'max'], reasoning_default: 'enabled' },
+    },
+  }] };
+  const getSettingsAgents = vi.fn(({ provider }) => Promise.resolve(provider === 'codebuddy' ? codebuddy : catalog));
+  const { user, api } = setup({ getSettingsAgents });
   const provider = screen.getByLabelText('Agent');
   await user.selectOptions(provider, 'codebuddy');
-  expect(screen.getByLabelText('Model')).toHaveValue('');
+  const model = screen.getByLabelText('Model');
+  const effort = screen.getByLabelText('Reasoning depth');
+  await waitFor(() => expect(modelOptions()).toEqual(['', 'hy', 'deep']));
+  expect(model).toHaveValue('');
+  expect([...effort.options].map((option) => option.value)).toEqual(['default', 'high']);
+  await user.selectOptions(model, 'deep');
+  expect([...effort.options].map((option) => option.value)).toEqual(['default', 'low', 'high', 'max']);
+  await user.selectOptions(effort, 'max');
+  await user.selectOptions(model, 'hy');
+  expect(effort).toHaveValue('default');
+  await user.selectOptions(effort, 'high');
   expect(screen.getByLabelText('Additional instructions')).toHaveValue('Keep APIs stable.');
   expect(api.sendTeamCommands).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Save and check connection' }));
   expect(api.sendTeamCommands).toHaveBeenLastCalledWith('DEMO', [expect.objectContaining({
-    kind: 'change_manager_runtime', provider: 'codebuddy', model: '', reasoning_depth: 'default',
+    kind: 'change_manager_runtime', provider: 'codebuddy', model: 'hy', reasoning_depth: 'high',
   })], { reason: 'Update Task Assistant runtime' });
   await waitFor(() => expect(provider).toBeEnabled());
   await user.selectOptions(provider, 'codex');
@@ -97,6 +114,7 @@ test('switches Manager provider on submit and uses a fresh model selection', asy
   expect(api.sendTeamCommands).toHaveBeenLastCalledWith('DEMO', [expect.objectContaining({
     provider: 'codex', model: '',
   })], { reason: 'Update Task Assistant runtime' });
+  expect(getSettingsAgents.mock.calls.map(([options]) => options.provider)).toEqual(['codex', 'codebuddy']);
 });
 
 test.each([

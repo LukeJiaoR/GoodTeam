@@ -562,7 +562,8 @@ def _command_with_reasoning_depth(
     reasoning_depth: str,
 ) -> list[str]:
     depth = str(reasoning_depth or "default").strip().lower()
-    if depth == "default" or depth not in REASONING_DEPTHS:
+    if (depth == "default" or depth not in REASONING_DEPTHS
+            or adapter == "codebuddy" and depth not in codebuddy_worker.REASONING_EFFORTS):
         return list(command)
     normalized_adapter = {
         "anthropic": "claude",
@@ -570,6 +571,7 @@ def _command_with_reasoning_depth(
     }.get(adapter, adapter)
     arguments = {
         "codex": ["--config", f'model_reasoning_effort="{depth}"'],
+        "codebuddy": ["--effort", depth],
         "claude": ["--effort", depth],
         "agy": ["--effort", depth],
         "opencode": ["--variant", depth],
@@ -4065,7 +4067,8 @@ def _discover_installed_agents(provider: str = "") -> list[dict[str, Any]]:
 
             catalog = query_codebuddy_models(str(report["command_path"]))
             if catalog:
-                models, model_default = catalog
+                model_capabilities, model_default = catalog
+                models = tuple(model_capabilities)
                 models_source = "live"
                 report["hint"] = "CodeBuddy CLI returned its model list."
             else:

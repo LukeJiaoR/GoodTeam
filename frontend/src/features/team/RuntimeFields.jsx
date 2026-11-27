@@ -5,14 +5,17 @@
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
 import { RefreshCw } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { catalogProvider } from '../../lib/api/globalApi';
 import { changeRuntimeSelection, managerProviderLabel, newWorkerRuntime, runtimeOptions } from './teamModel';
 
-export default function RuntimeFields({ draft, setDraft, backendOptions, agents, defaultProvider, agentsLoading, onRefresh, prompt = true, managerProviders, managerReasoning, t }) {
+export default function RuntimeFields({ draft, setDraft, backendOptions, agents, defaultProvider, loadCatalog, prompt = true, managerProviders, managerReasoning, t }) {
   const [customModel, setCustomModel] = useState(false);
   const [promptOpen, setPromptOpen] = useState(Boolean(draft.additionalPrompt));
-  const options = runtimeOptions(agents, draft.provider, draft.model, defaultProvider);
-  agentsLoading = options.agent?.discovery_status ? options.agent.discovery_status === 'loading' : agentsLoading;
+  const provider = catalogProvider(draft.provider || defaultProvider);
+  const options = runtimeOptions(agents, provider || draft.provider, draft.model, defaultProvider);
+  const agentsLoading = Boolean(provider && (!options.agent || options.agent.discovery_status === 'loading'));
+  useEffect(() => { loadCatalog(provider); }, [loadCatalog, provider]);
   const providers = managerProviders ? [...new Set([...managerProviders, draft.provider || 'codex'])]
     : [...new Set([draft.provider, defaultProvider, ...backendOptions].filter(Boolean))];
   const changeSelection = (patch) => setDraft(managerReasoning ? { ...draft, ...patch }
@@ -21,6 +24,7 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
   const reasoningDepths = managerReasoning
     ? [...new Set([...managerReasoning.reasoningDepths, managerReasoning.reasoningDefault])] : options.reasoningDepths;
   const effort = managerReasoning && draft.reasoningDepth === 'default' ? managerReasoning.reasoningDefault : draft.reasoningDepth;
+  const cliDefault = options.reasoningDefault === 'enabled' ? t('team.dialog.reasoningEnabled') : options.reasoningDefault;
   const currentUnsupported = effort !== 'default' && !reasoningDepths.includes(effort);
   const catalogUnconfirmed = !options.agent || options.agent.stale || ['unavailable', 'unsupported'].includes(options.agent.models_source);
   const catalogMessage = agentsLoading ? 'team.dialog.catalogLoading'
@@ -37,9 +41,9 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
     <section className="team-runtime-fields" aria-label={t('team.config.runtime')}>
       <div className="team-runtime-fields__heading">
         <h3>{t('team.config.runtime')}</h3>
-        <button className="team-text-button" type="button" disabled={agentsLoading} onClick={onRefresh}>
+        {provider ? <button className="team-text-button" type="button" disabled={agentsLoading} onClick={() => loadCatalog(provider, { refresh: true })}>
           <RefreshCw aria-hidden="true" size={14} />{t(agentsLoading ? 'team.modelsLoading' : 'team.refreshModels')}
-        </button>
+        </button> : null}
       </div>
       <div className="team-runtime-fields__grid">
         <label>
@@ -85,7 +89,7 @@ export default function RuntimeFields({ draft, setDraft, backendOptions, agents,
             {currentUnsupported ? <option value={effort} disabled>{effortLabel(effort)} · {t(agentsLoading || catalogUnconfirmed ? 'team.dialog.reasoningUnconfirmed' : 'team.dialog.reasoningUnavailable')}</option> : null}
             {reasoningDepths.map((depth) => <option key={depth} value={depth}>{effortLabel(depth)}{managerReasoning ? ` (${depth})` : null}</option>)}
           </select>
-          {managerReasoning ? <small>{t('team.dialog.managerEffort')}</small> : <><small>{t(options.reasoningSource === 'model' ? 'team.dialog.effortModel' : 'team.dialog.effortAdapter')} {draft.reasoningDepth === 'default' ? t('team.dialog.effortAuto', { value: options.reasoningDefault || t('team.dialog.effortUnknown') }) : t('team.dialog.effortManual', { value: draft.reasoningDepth })}</small>
+          {managerReasoning ? <small>{t('team.dialog.managerEffort')}</small> : <><small>{t(options.reasoningSource === 'model' ? 'team.dialog.effortModel' : 'team.dialog.effortAdapter')} {draft.reasoningDepth === 'default' ? t('team.dialog.effortAuto', { value: cliDefault || t('team.dialog.effortUnknown') }) : t('team.dialog.effortManual', { value: draft.reasoningDepth })}</small>
           {!agentsLoading && !catalogUnconfirmed && !currentUnsupported && !options.reasoningDepths.length ? <small>{t('team.config.reasoningAutomatic')}</small> : null}</>}
         </label>
       </div>

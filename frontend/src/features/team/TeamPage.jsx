@@ -4,9 +4,9 @@
  * [POS]: 连接角色、任务助手和 Worker 的配置对话框。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
-import { finishCatalog, mergeCatalog, refreshCatalog } from './catalogState';
+import useAgentCatalog from './useAgentCatalog';
 import { AlertTriangle, Bot, ChevronDown, History, PackageOpen, Pause, Pencil, Play, Plus, Settings2, Trash2, UserRoundCog, X } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 import CollectionToolbar from '../../components/ui/CollectionToolbar';
 import Button from '../../components/ui/Button';
@@ -172,10 +172,7 @@ export default function TeamPage({ api = settingsApi }) {
   const { projectKey = '' } = useParams();
   const { t } = useOutletContext();
   const { data, error, refresh, status } = useProjectState(projectKey, { api: { getProjectState: api.getProjectSettings }, poll: true });
-  const [agents, setAgents] = useState([]);
-  const [agentsLoading, setAgentsLoading] = useState(true);
-  const [agentsRevision, setAgentsRevision] = useState(0);
-  const [loadError, setLoadError] = useState(null);
+  const { agents, error: loadError, failedProvider, loadCatalog } = useAgentCatalog(api);
   const [saving, setSaving] = useState(false);
   const [mutationError, setMutationError] = useState(null);
   const [savedNotice, setSavedNotice] = useState(false);
@@ -187,24 +184,6 @@ export default function TeamPage({ api = settingsApi }) {
   const [skillsOpen, setSkillsOpen] = useState(false);
   const commandPending = useRef(false);
   const commandAttempt = useRef(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    api.getSettingsAgents({ signal: controller.signal, onProgress: (incoming) => {
-      if (!controller.signal.aborted) setAgents((previous) => mergeCatalog(previous, incoming));
-    } })
-      .then((payload) => { if (!controller.signal.aborted) setAgents((previous) => finishCatalog(previous, Array.isArray(payload?.agents) ? payload.agents : [])); })
-      .catch((caught) => { if (!controller.signal.aborted) { setAgents((previous) => finishCatalog(previous)); setLoadError(caught); } })
-      .finally(() => { if (!controller.signal.aborted) setAgentsLoading(false); });
-    return () => controller.abort();
-  }, [api, agentsRevision]);
-
-  const refreshAgents = () => {
-    setAgentsLoading(true);
-    setAgents(refreshCatalog);
-    setLoadError(null);
-    setAgentsRevision((revision) => revision + 1);
-  };
 
   const team = useMemo(() => buildTeamModel(data), [data]);
   const backendOptions = useMemo(() => [...new Set([
@@ -290,7 +269,7 @@ export default function TeamPage({ api = settingsApi }) {
   const responsibilities = groupTeamRoles(team.roles);
   const responsibilityNames = Object.fromEntries(responsibilities.flatMap((group) => group.roles.map((role) => [role.role, t(`team.groups.${group.key}.title`)])));
   const defaultProvider = data?.start_context?.worker_backend?.mode || 'codex';
-  const runtimeProps = { agents, backendOptions, agentsLoading, onRefresh: refreshAgents, defaultProvider, error: mutationError };
+  const runtimeProps = { agents, backendOptions, loadCatalog, defaultProvider, error: mutationError };
   const visibleRoles = team.roles.filter((role) => {
     const searchTerms = [responsibilityNames[role.role], role.role, role.label];
     if (manageWorkers) searchTerms.push(...role.workers.flatMap((worker) => [worker.name, worker.runtimeLabel]));
@@ -350,7 +329,7 @@ export default function TeamPage({ api = settingsApi }) {
       {savedNotice ? <p className="team-save-notice" role="status">{t('team.config.saved')}</p> : null}
       {error ? <><p role="status">{t('team.stale')}</p><ProductError error={error} onRetry={() => refresh()} t={t} /></> : null}
       {mutationError && !dialog ? <ProductError error={mutationError} onRetry={() => setMutationError(null)} t={t} /> : null}
-      {loadError ? <ProductError error={loadError} onRetry={refreshAgents} t={t} /> : null}
+      {loadError ? <ProductError error={loadError} onRetry={() => loadCatalog(failedProvider, { refresh: true })} t={t} /> : null}
 
       {!manageWorkers ? <section className="team-manager" aria-labelledby="team-manager-title">
         <div className="team-manager__row">

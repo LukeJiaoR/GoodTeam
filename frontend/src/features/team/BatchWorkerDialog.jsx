@@ -44,7 +44,7 @@ function ResponsibilitySelection({ group, selected, setSelected, t }) {
   );
 }
 
-export default function BatchWorkerDialog({ roles, roleLabel, defaultProvider, agents, backendOptions, agentsLoading, onRefresh, saving, error, onClose, onSubmit, t }) {
+export default function BatchWorkerDialog({ roles, roleLabel, defaultProvider, agents, backendOptions, loadCatalog, saving, error, onClose, onSubmit, t }) {
   const titleId = useId();
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
@@ -91,7 +91,7 @@ export default function BatchWorkerDialog({ roles, roleLabel, defaultProvider, a
             </div>
           </section> : null}
           <div className="team-bulk-settings">
-            <RuntimeFields draft={draft} setDraft={setDraft} backendOptions={backendOptions} agents={agents} defaultProvider={defaultProvider} agentsLoading={agentsLoading} onRefresh={onRefresh} prompt={false} t={t} />
+            <RuntimeFields draft={draft} setDraft={setDraft} backendOptions={backendOptions} agents={agents} defaultProvider={defaultProvider} loadCatalog={loadCatalog} prompt={false} t={t} />
             {hasLinkedRuntime ? <p className="team-runtime-fields__note">{t('team.roleRuntime.linked')}</p> : null}
             {!roleLabel ? <section className="team-bulk-preview" aria-label={t('team.bulk.preview')} aria-live="polite">
               <p>{t('team.bulk.selectedCount', { count: selectedCount })}</p>
