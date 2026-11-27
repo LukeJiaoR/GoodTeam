@@ -1,8 +1,15 @@
+/**
+ * [INPUT]: 隔离项目与 Team 命令 API。
+ * [OUTPUT]: 验证角色和 Worker 配置的保存与重试。
+ * [POS]: 检查角色配置的写入范围。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { expect, importProject, test } from './fixtures.js';
 
 test('choosing Codex for a new worker saves the default Sol model without dispatching work', async ({ page, fixture }) => {
   await importProject(page, fixture);
   await page.goto(`/projects/${fixture.key}/team`);
+  await page.getByRole('button', { name: 'Worker management', exact: true }).click();
   await page.getByRole('button', { name: 'Add worker', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Role', { exact: true }).selectOption('research');
@@ -20,7 +27,7 @@ test('choosing Codex for a new worker saves the default Sol model without dispat
   expect(state.active_run).toBeFalsy();
 });
 
-test('bulk settings persist and keep paused workers, individual instructions and other roles intact', async ({ page, fixture }) => {
+test('role settings persist and keep paused workers, individual instructions and other roles intact', async ({ page, fixture }) => {
   await importProject(page, fixture);
   await page.goto(`/projects/${fixture.key}/team`);
   const readTeam = async () => {
@@ -33,6 +40,7 @@ test('bulk settings persist and keep paused workers, individual instructions and
   const worker = role.workers[0];
   const otherRoles = team.roles.filter((item) => item.role !== role.role);
 
+  await page.getByRole('button', { name: 'Worker management', exact: true }).click();
   await expect(page.getByRole('article')).toHaveCount(team.roles.length);
   const roleRow = page.getByRole('article', { name: role.label, exact: true });
   await roleRow.locator('.team-member > summary').click();
@@ -59,6 +67,18 @@ test('bulk settings persist and keep paused workers, individual instructions and
   expect(fixture.errors.filter(error => error.includes('503 (Service Unavailable)'))).toHaveLength(1);
   fixture.errors.splice(fixture.errors.findIndex(error => error.includes('503 (Service Unavailable)')), 1);
 
+  await page.getByRole('button', { name: 'Team responsibilities', exact: true }).click();
+  await roleRow.getByRole('button', { name: `Configure ${role.label}`, exact: true }).click();
+  dialog = page.getByRole('dialog', { name: `Configure ${role.label}` });
+  await dialog.getByLabel('Agent', { exact: true }).selectOption('fake');
+  await dialog.getByRole('button', { name: 'Enter model ID', exact: true }).click();
+  await dialog.getByLabel('Model', { exact: true }).fill('isolated-role-model');
+  await dialog.getByRole('button', { name: 'Apply configuration', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect((await readTeam()).roles.find((item) => item.role === role.role).workers[0]).toMatchObject({
+    provider: 'fake', model: 'isolated-role-model', lifecycle: 'inactive',
+  });
+
   await page.getByRole('button', { name: 'Bulk configure', exact: true }).click();
   dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: 'Clear selection', exact: true }).click();
@@ -68,11 +88,13 @@ test('bulk settings persist and keep paused workers, individual instructions and
   await dialog.getByLabel('Agent', { exact: true }).selectOption('fake');
   await dialog.getByRole('button', { name: 'Enter model ID', exact: true }).click();
   await dialog.getByLabel('Model', { exact: true }).fill('isolated-test-model');
-  await expect(dialog.getByRole('region', { name: 'Changes to apply' })).toContainText('Update 1 workers · Add 0 workers');
+  await expect(dialog.getByRole('region', { name: 'Changes to apply' })).toContainText('Selected roles · 1');
+  await expect(dialog).not.toContainText(/Worker/i);
   await dialog.getByRole('button', { name: 'Apply configuration', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.reload();
-  await expect(page.getByText('fake · isolated-test-model', { exact: true })).toBeVisible();
+  await roleRow.getByRole('button', { name: `Configure ${role.label}`, exact: true }).click();
+  await expect(page.getByRole('dialog').getByLabel('Model', { exact: true })).toHaveValue('isolated-test-model');
 
   const saved = await readTeam();
   expect(saved.roles.find((item) => item.role === role.role).workers[0]).toMatchObject({

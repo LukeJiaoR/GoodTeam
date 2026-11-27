@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 角色范围、运行配置和现有成员状态。
+ * [OUTPUT]: 验证角色配置命令与默认值。
+ * [POS]: 检查配置范围和保留的个性化字段。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { expect, test } from 'vitest';
 import { batchWorkerPlan, groupTeamRoles, initialWorkerRuntime } from './teamModel';
 
@@ -20,16 +26,16 @@ test('ignores disabled and unselected roles even when they are empty', () => {
     { role: 'qa', state: 'disabled', workers: [] },
     { role: 'research', state: 'enabled', workers: [] },
   ];
-  expect(batchWorkerPlan(roles, ['qa'], { provider: 'fake', model: '', reasoningDepth: 'default' })).toEqual({ commands: [], updated: 0, created: 0 });
+  expect(batchWorkerPlan(roles, ['qa'], { provider: 'fake', model: '', reasoningDepth: 'default' })).toEqual([]);
 });
 
 test('preserves custom prompts, names and paused states and omits unchanged workers', () => {
   const worker = { id: 'qa-a', role: 'qa', name: 'QA A', lifecycle: 'inactive', provider: 'codex', model: '', reasoningDepth: 'default', additionalPrompt: 'Keep my instructions.' };
   const roles = [{ role: 'qa', state: 'enabled', workers: [worker] }];
   const runtime = { provider: 'codex', model: '', reasoningDepth: 'default' };
-  expect(batchWorkerPlan(roles, ['qa'], runtime)).toEqual({ commands: [], updated: 0, created: 0 });
-  expect(batchWorkerPlan(roles, ['qa'], { ...runtime, provider: 'fake' })).toEqual({
-    commands: [{ kind: 'change_worker_runtime', worker_id: 'qa-a', provider: 'fake' }], updated: 1, created: 0,
-  });
+  expect(batchWorkerPlan(roles, ['qa'], runtime)).toEqual([]);
+  expect(batchWorkerPlan(roles, ['qa'], { ...runtime, provider: 'fake' })).toEqual([
+    { kind: 'change_worker_runtime', worker_id: 'qa-a', provider: 'fake' },
+  ]);
   expect(worker.provider).toBe('codex');
 });

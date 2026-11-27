@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 项目团队快照、运行配置目录与团队命令 API。
+ * [OUTPUT]: 按职责显示角色配置，提供独立的 Worker 管理入口。
+ * [POS]: 连接角色、任务助手和 Worker 的配置对话框。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { finishCatalog, mergeCatalog, refreshCatalog } from './catalogState';
 import { AlertTriangle, Bot, ChevronDown, History, PackageOpen, Pause, Pencil, Play, Plus, Settings2, Trash2, UserRoundCog, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -17,7 +23,7 @@ import ResponsibilityGroup from './ResponsibilityGroup';
 import RoleSkillsDialog from './RoleSkillsDialog';
 import SkillLibraryPanel from './SkillLibraryPanel';
 import useTeamDialog from './useTeamDialog';
-import { buildTeamModel, capabilityCounts, groupTeamRoles, rosteredWorkerCount } from './teamModel';
+import { buildTeamModel, capabilityCounts, groupTeamRoles } from './teamModel';
 
 function newCommandKey() {
   return globalThis.crypto?.randomUUID?.() || `team-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -29,6 +35,58 @@ function closeDetailsOnEscape(event) {
     event.currentTarget.open = false;
     event.currentTarget.querySelector('summary').focus();
   }
+}
+
+function WorkerRosterRole({ role, saving, openDialog, runCommands, t }) {
+  return (
+    <article className="team-worker" aria-labelledby={`team-worker-role-${role.role}`}>
+      <div className="team-worker__identity"><h3 id={`team-worker-role-${role.role}`}>{role.label}</h3></div>
+      <div className="team-worker__workers">
+        {role.workers.length ? (
+          <ul className="team-role-workers">
+            {role.workers.map((worker) => (
+              <li key={worker.id}>
+                <details className="team-member" onKeyDown={closeDetailsOnEscape}>
+                  <summary aria-label={t('team.workerSettings', { name: `${role.label} / ${worker.name} (${worker.id})` })}>
+                    <strong>{worker.name}</strong>
+                    <span className="team-role-workers__runtime">{worker.provider} · {worker.model || t('team.dialog.inheritModel')}</span>
+                    <StatusBadge tone={worker.dispatchable && role.state === 'enabled' ? 'active' : 'neutral'}>
+                      {t(role.state === 'disabled' ? 'team.availability.disabled' : worker.lifecycle !== 'active' ? 'team.availability.inactive' : worker.dispatchable ? 'team.availability.ready' : 'team.availability.unavailable')}
+                    </StatusBadge>
+                    <span className="team-member__toggle">{t('team.configuration')}<ChevronDown aria-hidden="true" size={14} /></span>
+                  </summary>
+                  <div className="team-member__details">
+                    <dl>
+                      <div><dt>Worker ID</dt><dd>{worker.id}</dd></div>
+                      <div><dt>{t('team.dialog.reasoning')}</dt><dd>{worker.reasoningDepth === 'default' ? t('team.dialog.reasoningDefault') : worker.reasoningDepth}</dd></div>
+                      {worker.additionalPrompt ? <div className="team-member__prompt"><dt>{t('team.dialog.additionalPrompt')}</dt><dd>{worker.additionalPrompt}</dd></div> : null}
+                    </dl>
+                    <span className="team-role-workers__actions">
+                      <button type="button" className="product-button product-button--secondary team-edit-button" aria-label={t('team.actions.editAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => openDialog({ type: 'worker', worker })}>
+                        <Pencil aria-hidden="true" size={14} />{t('team.config.edit')}
+                      </button>
+                      {worker.lifecycle === 'active' ? (
+                        <button type="button" className="team-icon-button" title={t('team.actions.pause')} aria-label={t('team.actions.pauseAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'inactivate_worker', worker_id: worker.id }], { reason: `Pause ${worker.name}` })}>
+                          <Pause aria-hidden="true" size={14} />
+                        </button>
+                      ) : (
+                        <button type="button" className="team-icon-button" title={t('team.actions.activate')} aria-label={t('team.actions.activateAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'activate_worker', worker_id: worker.id }], { reason: `Activate ${worker.name}` })}>
+                          <Play aria-hidden="true" size={14} />
+                        </button>
+                      )}
+                      <button type="button" className="team-icon-button" title={t('team.actions.delete')} aria-label={t('team.actions.deleteAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'delete_worker', worker_id: worker.id }], { reason: `Delete ${worker.name}` })}>
+                        <Trash2 aria-hidden="true" size={14} />
+                      </button>
+                    </span>
+                  </div>
+                </details>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="team-worker__empty">{t('team.noWorkers')}</p>}
+      </div>
+    </article>
+  );
 }
 
 function HistoryPanel({ onClose, events, t }) {
@@ -121,7 +179,8 @@ export default function TeamPage({ api = settingsApi }) {
   const [saving, setSaving] = useState(false);
   const [mutationError, setMutationError] = useState(null);
   const [savedNotice, setSavedNotice] = useState(false);
-  const [dialog, setDialog] = useState(null); // {type, roleEntry?, worker?, roleKeys?}
+  const [dialog, setDialog] = useState(null);
+  const [manageWorkers, setManageWorkers] = useState(false);
   const [events, setEvents] = useState([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
@@ -228,59 +287,72 @@ export default function TeamPage({ api = settingsApi }) {
   }
 
   const counts = capabilityCounts(team.roles);
-  const workers = rosteredWorkerCount(team.roles);
   const responsibilities = groupTeamRoles(team.roles);
   const responsibilityNames = Object.fromEntries(responsibilities.flatMap((group) => group.roles.map((role) => [role.role, t(`team.groups.${group.key}.title`)])));
   const defaultProvider = data?.start_context?.worker_backend?.mode || 'codex';
   const runtimeProps = { agents, backendOptions, agentsLoading, onRefresh: refreshAgents, defaultProvider, error: mutationError };
   const visibleRoles = team.roles.filter((role) => {
-    const matches = [responsibilityNames[role.role], role.role, role.label, ...role.workers.flatMap((worker) => [worker.name, worker.runtimeLabel])]
-      .join(' ').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+    const searchTerms = [responsibilityNames[role.role], role.role, role.label];
+    if (manageWorkers) searchTerms.push(...role.workers.flatMap((worker) => [worker.name, worker.runtimeLabel]));
+    const matches = searchTerms.join(' ').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
     const ready = role.state === 'enabled' && role.capability === 'ready';
     const needsSetup = role.state === 'enabled' && role.capability !== 'ready';
     return matches && (filter === 'all' || (filter === 'ready' ? ready : filter === 'disabled' ? role.state === 'disabled' : needsSetup));
   });
   const visibleGroups = groupTeamRoles(visibleRoles);
+  const switchView = () => {
+    setManageWorkers(!manageWorkers);
+    setQuery('');
+    setFilter('all');
+    setSavedNotice(false);
+  };
 
   return (
     <main id="main-content" className="team-page">
       <PageHeading
         compact
         eyebrow={data?.start_context?.project_name || projectKey}
-        title={t('team.title')}
-        description={t('team.description')}
+        title={t(manageWorkers ? 'team.manageWorkers' : 'team.title')}
+        description={manageWorkers ? undefined : t('team.description')}
         actions={(
           <>
-            <button type="button" className="product-button product-button--secondary team-configure-button" onClick={openHistory}>
-              <History aria-hidden="true" size={16} />
-              {t('team.history.button')}
+            <button type="button" className="product-button product-button--secondary team-configure-button" disabled={saving} onClick={switchView}>
+              {t(manageWorkers ? 'team.rolesTitle' : 'team.manageWorkers')}
             </button>
-            <button type="button" className="product-button product-button--secondary team-configure-button" onClick={() => setSkillsOpen(true)}>
-              <PackageOpen aria-hidden="true" size={16} />
-              {t('team.skills.button')}
-            </button>
-            <button type="button" className="product-button product-button--secondary team-configure-button" disabled={saving} onClick={() => openDialog({ type: 'create' })}>
-              <Plus aria-hidden="true" size={16} />
-              {t('team.addWorker')}
-            </button>
-            <button type="button" className="product-button product-button--primary team-configure-button" disabled={saving || !team.roles.some((role) => role.state === 'enabled')} onClick={() => openDialog({ type: 'batch' })}>
-              <Settings2 aria-hidden="true" size={16} />{t('team.bulk.button')}
-            </button>
+            {manageWorkers ? (
+              <button type="button" className="product-button product-button--primary team-configure-button" disabled={saving} onClick={() => openDialog({ type: 'create' })}>
+                <Plus aria-hidden="true" size={16} />{t('team.addWorker')}
+              </button>
+            ) : (
+              <>
+                <button type="button" className="product-button product-button--secondary team-configure-button" onClick={openHistory}>
+                  <History aria-hidden="true" size={16} />
+                  {t('team.history.button')}
+                </button>
+                <button type="button" className="product-button product-button--secondary team-configure-button" onClick={() => setSkillsOpen(true)}>
+                  <PackageOpen aria-hidden="true" size={16} />
+                  {t('team.skills.button')}
+                </button>
+                <button type="button" className="product-button product-button--primary team-configure-button" disabled={saving || !team.roles.some((role) => role.state === 'enabled')} onClick={() => openDialog({ type: 'batch' })}>
+                  <Settings2 aria-hidden="true" size={16} />{t('team.bulk.button')}
+                </button>
+              </>
+            )}
           </>
         )}
       />
 
-      <p className="team-summary" aria-label={t('team.summary.label')}>
+      {!manageWorkers ? <p className="team-summary" aria-label={t('team.summary.label')}>
         <span><strong>{responsibilities.length}</strong> {t('team.groups.summary')}</span>
-        <span><strong>{workers}</strong> {t('team.summary.workers')}</span>
-      </p>
+        <span><strong>{team.roles.length}</strong> {t('team.summary.roles')}</span>
+      </p> : null}
 
       {savedNotice ? <p className="team-save-notice" role="status">{t('team.config.saved')}</p> : null}
       {error ? <><p role="status">{t('team.stale')}</p><ProductError error={error} onRetry={() => refresh()} t={t} /></> : null}
       {mutationError && !dialog ? <ProductError error={mutationError} onRetry={() => setMutationError(null)} t={t} /> : null}
       {loadError ? <ProductError error={loadError} onRetry={refreshAgents} t={t} /> : null}
 
-      <section className="team-manager" aria-labelledby="team-manager-title">
+      {!manageWorkers ? <section className="team-manager" aria-labelledby="team-manager-title">
         <div className="team-manager__row">
           <div className="team-worker__identity">
             <span className="team-worker__icon"><UserRoundCog aria-hidden="true" size={17} /></span>
@@ -298,14 +370,14 @@ export default function TeamPage({ api = settingsApi }) {
             {t('team.manager.edit')}
           </button>
         </div>
-      </section>
+      </section> : null}
 
-      <section className="team-roster" aria-labelledby="team-roster-title">
-        <div className="team-roster__heading">
-          <h2 id="team-roster-title">{t('team.rolesTitle')}</h2>
+      <section className="team-roster" aria-label={t(manageWorkers ? 'team.manageWorkers' : 'team.rolesTitle')}>
+        {!manageWorkers ? <div className="team-roster__heading">
+          <h2>{t('team.rolesTitle')}</h2>
           <p>{t('team.availability.scope')} <Link to={`/projects/${encodeURIComponent(projectKey)}/work`}>{t('team.execution.link')}</Link></p>
-        </div>
-        <CollectionToolbar label={t('team.search')} query={query} onQueryChange={setQuery}
+        </div> : null}
+        <CollectionToolbar label={t(manageWorkers ? 'team.workerSearch' : 'team.search')} query={query} onQueryChange={setQuery}
           filters={['all', 'attention', 'ready', 'disabled'].map((key) => [key, t(key === 'all' ? 'collection.all' : key === 'disabled' ? 'team.state.disabled' : `team.filter.${key}`), key === 'all' ? team.roles.length : key === 'attention' ? counts.unstaffed + counts.degraded : counts[key]])}
           selected={filter} onSelect={setFilter} count={visibleRoles.length} t={t} />
         {!visibleRoles.length ? <div className="collection-empty"><p>{t('collection.noResults')}</p><Button variant="secondary" onClick={() => { setQuery(''); setFilter('all'); }}>{t('collection.reset')}</Button></div> : null}
@@ -313,11 +385,13 @@ export default function TeamPage({ api = settingsApi }) {
           {visibleGroups.map((group) => (
             <ResponsibilityGroup key={group.key} group={group} t={t} saving={saving} forceOpen
               expansionContext={`${query.trim()}:${filter}`}
-              onConfigure={() => openDialog({ type: 'batch', roleKeys: group.roles.map((role) => role.role) })}>
+              onConfigure={manageWorkers ? undefined : () => openDialog({ type: 'batch', roleKeys: group.roles.map((role) => role.role) })}>
               <div className="team-worker-list">
-                {group.roles.map((role) => (
-                  <article className="team-worker" data-role-state={role.state} key={role.role} aria-labelledby={`team-role-${role.role}`}>
-                    <div className="team-worker__identity">
+                {group.roles.map((role) => manageWorkers ? (
+                  <WorkerRosterRole key={role.role} role={role} saving={saving} openDialog={openDialog} runCommands={runCommands} t={t} />
+                ) : (
+                  <article className="team-role" key={role.role} aria-labelledby={`team-role-${role.role}`}>
+                    <div className="team-role__identity">
                       <h3 id={`team-role-${role.role}`}>{role.label}</h3>
                       <details className="team-role-settings" onKeyDown={closeDetailsOnEscape}>
                         <summary aria-label={t('team.roleSettings', { name: role.label })}>
@@ -326,7 +400,6 @@ export default function TeamPage({ api = settingsApi }) {
                           </StatusBadge>
                           <ChevronDown aria-hidden="true" size={14} />
                         </summary>
-                        <code>{role.role}</code>
                         <div className="team-role-actions">
                           {role.state === 'enabled' ? (
                             <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => runCommands([{ kind: 'disable_role', role: role.role }], { reason: `Disable ${role.label}` })}>
@@ -341,10 +414,6 @@ export default function TeamPage({ api = settingsApi }) {
                             <PackageOpen aria-hidden="true" size={14} />
                             {t('team.roleSkills.button')}
                           </button>
-                          <button type="button" className="product-button product-button--secondary" disabled={saving} onClick={() => openDialog({ type: 'create', roleEntry: role })}>
-                            <Plus aria-hidden="true" size={14} />
-                            {t('team.actions.addWorker')}
-                          </button>
                         </div>
                         <p className="team-role-method-status" data-status={role.skillBinding.status}>
                           <span>{t(`team.roleSkills.status.${role.skillBinding.status}`)}</span>
@@ -357,50 +426,11 @@ export default function TeamPage({ api = settingsApi }) {
                         ) : null}
                       </details>
                     </div>
-                    <div className="team-worker__workers">
-                      {role.workers.length ? (
-                        <ul className="team-role-workers">
-                          {role.workers.map((worker) => (
-                            <li key={worker.id}>
-                              <details className="team-member" onKeyDown={closeDetailsOnEscape}>
-                                <summary aria-label={t('team.workerSettings', { name: `${role.label} / ${worker.name} (${worker.id})` })}>
-                                  <strong>{worker.name}</strong>
-                                  <span className="team-role-workers__runtime">{worker.provider} · {worker.model || t('team.dialog.inheritModel')}</span>
-                                  <StatusBadge tone={worker.dispatchable && role.state === 'enabled' ? 'active' : 'neutral'}>
-                                    {t(role.state === 'disabled' ? 'team.availability.disabled' : worker.lifecycle !== 'active' ? 'team.availability.inactive' : worker.dispatchable ? 'team.availability.ready' : 'team.availability.unavailable')}
-                                  </StatusBadge>
-                                  <span className="team-member__toggle">{t('team.configuration')}<ChevronDown aria-hidden="true" size={14} /></span>
-                                </summary>
-                                <div className="team-member__details">
-                                  <dl>
-                                    <div><dt>Worker ID</dt><dd>{worker.id}</dd></div>
-                                    <div><dt>{t('team.dialog.reasoning')}</dt><dd>{worker.reasoningDepth === 'default' ? t('team.dialog.reasoningDefault') : worker.reasoningDepth}</dd></div>
-                                    {worker.additionalPrompt ? <div className="team-member__prompt"><dt>{t('team.dialog.additionalPrompt')}</dt><dd>{worker.additionalPrompt}</dd></div> : null}
-                                  </dl>
-                                  <span className="team-role-workers__actions">
-                                    <button type="button" className="product-button product-button--secondary team-edit-button" aria-label={t('team.actions.editAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => openDialog({ type: 'worker', worker })}>
-                                      <Pencil aria-hidden="true" size={14} />{t('team.config.edit')}
-                                    </button>
-                                    {worker.lifecycle === 'active' ? (
-                                      <button type="button" className="team-icon-button" title={t('team.actions.pause')} aria-label={t('team.actions.pauseAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'inactivate_worker', worker_id: worker.id }], { reason: `Pause ${worker.name}` })}>
-                                        <Pause aria-hidden="true" size={14} />
-                                      </button>
-                                    ) : (
-                                      <button type="button" className="team-icon-button" title={t('team.actions.activate')} aria-label={t('team.actions.activateAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'activate_worker', worker_id: worker.id }], { reason: `Activate ${worker.name}` })}>
-                                        <Play aria-hidden="true" size={14} />
-                                      </button>
-                                    )}
-                                    <button type="button" className="team-icon-button" title={t('team.actions.delete')} aria-label={t('team.actions.deleteAria', { name: `${role.label} / ${worker.name} (${worker.id})` })} disabled={saving} onClick={() => runCommands([{ kind: 'delete_worker', worker_id: worker.id }], { reason: `Delete ${worker.name}` })}>
-                                      <Trash2 aria-hidden="true" size={14} />
-                                    </button>
-                                  </span>
-                                </div>
-                              </details>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : <p className="team-worker__empty">{t('team.noWorkers')}</p>}
-                    </div>
+                    <button type="button" className="product-button product-button--secondary" disabled={saving || role.state !== 'enabled'}
+                      aria-label={t('team.roleRuntime.title', { name: role.label })}
+                      onClick={() => openDialog({ type: 'batch', roleKeys: [role.role], roleLabel: role.label })}>
+                      {t('team.config.edit')}
+                    </button>
                   </article>
                 ))}
               </div>
@@ -435,7 +465,17 @@ export default function TeamPage({ api = settingsApi }) {
         );
       })() : null}
       {dialog?.type === 'history' ? <HistoryPanel events={events} onClose={closeDialog} t={t} /> : null}
-      {dialog?.type === 'batch' ? <BatchWorkerDialog {...runtimeProps} roles={dialog.roleKeys ? team.roles.filter((role) => dialog.roleKeys.includes(role.role)) : team.roles} saving={saving} onClose={closeDialog} onSubmit={(commands) => runCommands(commands, { reason: 'Configure workers in selected roles' })} t={t} /> : null}
+      {dialog?.type === 'batch' ? (
+        <BatchWorkerDialog
+          {...runtimeProps}
+          roleLabel={dialog.roleLabel}
+          roles={dialog.roleKeys ? team.roles.filter((role) => dialog.roleKeys.includes(role.role)) : team.roles}
+          saving={saving}
+          onClose={closeDialog}
+          onSubmit={(commands) => runCommands(commands, { reason: dialog.roleLabel ? `Configure ${dialog.roleLabel}` : 'Configure workers in selected roles' })}
+          t={t}
+        />
+      ) : null}
       {dialog?.type === 'worker' ? (
         <WorkerDialog
           {...runtimeProps}
@@ -451,7 +491,6 @@ export default function TeamPage({ api = settingsApi }) {
           {...runtimeProps}
           onClose={closeDialog}
           onSubmit={(commands) => runCommands(commands, { reason: 'Add worker' })}
-          roleEntry={dialog.roleEntry}
           roles={team.roles}
           saving={saving}
           t={t}

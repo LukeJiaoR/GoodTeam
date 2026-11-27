@@ -1,6 +1,11 @@
+/**
+ * [INPUT]: 职责组、角色内容与可选的组配置操作。
+ * [OUTPUT]: 可展开的职责组与角色数量。
+ * [POS]: 角色配置和 Worker 管理复用职责组。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import { ChevronDown, Settings2 } from 'lucide-react';
 import { useId, useState } from 'react';
-import { rosteredWorkerCount } from './teamModel';
 
 export default function ResponsibilityGroup({ group, children, forceOpen, expansionContext, onConfigure, saving, t }) {
   const [expanded, setExpanded] = useState(null);
@@ -16,13 +21,13 @@ export default function ResponsibilityGroup({ group, children, forceOpen, expans
           <ChevronDown aria-hidden="true" size={18} />
           <span>
             <strong>{label}</strong>
-            <small>{t('team.groups.counts', { roles: group.roles.length, workers: rosteredWorkerCount(group.roles) })}</small>
+            <small>{t('team.groups.counts', { count: group.roles.length })}</small>
           </span>
         </button>
-        <button type="button" className="product-button product-button--secondary" disabled={saving || !group.roles.some((role) => role.state === 'enabled')}
+        {onConfigure ? <button type="button" className="product-button product-button--secondary" disabled={saving || !group.roles.some((role) => role.state === 'enabled')}
           onClick={onConfigure} aria-label={t('team.groups.configureAria', { name: label })}>
           <Settings2 aria-hidden="true" size={15} />{t('team.groups.configure')}
-        </button>
+        </button> : null}
       </header>
       <div id={contentId} className="team-responsibility__roles" hidden={!open}>{open ? children : null}</div>
     </section>
